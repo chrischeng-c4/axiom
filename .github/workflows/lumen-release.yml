@@ -220,6 +220,10 @@ jobs:
           tar -xzf pkg/amd64/lumen-x86_64-unknown-linux-musl.tar.gz -C dist/linux/amd64 --strip-components=1 lumen-x86_64-unknown-linux-musl/lumen
           tar -xzf pkg/arm64/lumen-aarch64-unknown-linux-musl.tar.gz -C dist/linux/arm64 --strip-components=1 lumen-aarch64-unknown-linux-musl/lumen
           chmod +x dist/linux/amd64/lumen dist/linux/arm64/lumen
+          amd64_file="$(file -b dist/linux/amd64/lumen)"
+          arm64_file="$(file -b dist/linux/arm64/lumen)"
+          [[ "$amd64_file" == *"ELF 64-bit"* && "$amd64_file" == *"x86-64"* ]] || { echo "amd64 artifact has wrong architecture: $amd64_file" >&2; exit 1; }
+          [[ "$arm64_file" == *"ELF 64-bit"* && "$arm64_file" == *"ARM aarch64"* ]] || { echo "arm64 artifact has wrong architecture: $arm64_file" >&2; exit 1; }
       - name: Resolve image repository and candidate tag
         id: tags
         shell: bash

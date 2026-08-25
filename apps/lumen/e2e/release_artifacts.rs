@@ -184,6 +184,9 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     for target in ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"] {
         require!(checksum.contains(&format!("sha256sum -c lumen-{target}.tar.gz.sha256")) && checksum.contains(&format!("shasum -a 256 -c lumen-{target}.tar.gz.sha256")), "MUSL_CHECKSUM", format!("{target} checksum proof missing"));
     }
+    for needle in ["tar -xzf pkg/amd64/lumen-x86_64-unknown-linux-musl.tar.gz -C dist/linux/amd64 --strip-components=1 lumen-x86_64-unknown-linux-musl/lumen", "tar -xzf pkg/arm64/lumen-aarch64-unknown-linux-musl.tar.gz -C dist/linux/arm64 --strip-components=1 lumen-aarch64-unknown-linux-musl/lumen", "amd64_file=\"$(file -b dist/linux/amd64/lumen)\"", "arm64_file=\"$(file -b dist/linux/arm64/lumen)\"", "\"$amd64_file\" == *\"ELF 64-bit\"*", "\"$amd64_file\" == *\"x86-64\"*", "\"$arm64_file\" == *\"ELF 64-bit\"*", "\"$arm64_file\" == *\"ARM aarch64\"*"] {
+        require!(checksum.contains(needle), "MUSL_ARCH", format!("binary architecture proof missing: {needle}"));
+    }
     let sign = named(image, "Sign root image index with keyless cosign");
     require!(sign.is_some() && enabled(sign.unwrap()) && run(sign.unwrap()).matches("cosign sign --yes").count() == 1 && run(sign.unwrap()).contains("steps.push.outputs.digest"), "ROOT_SIGNATURE", "root signature changed or disabled");
     let signature_count: usize = jobs.unwrap().values().flat_map(steps).map(|step| run(step).matches("cosign sign --yes").count()).sum();
@@ -301,7 +304,14 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     }
     require!(input.kind.lines().any(|line| line == "BATCH_SIZE=1000") && input.kind.contains("MAX_INDEX_BATCH_SIZE=1000") && input.kind.contains("    --items-per-batch \"$BATCH_SIZE\" \\\n"), "KIND_INDEX_BATCH", "kind fixture generator must use the public HTTP index-batch cap");
     let normalize = shell_fn(&input.kind, "normalize_runtime_image_id");
-    require!(normalize.matches("://").count() == 2 && normalize.contains("docker-pullable://ghcr\\.io/chrischeng-c4/lumen@") && normalize.contains("(containerd|cri-o|docker)://") && normalize.matches("elif [[").count() == 1, "KIND_RUNTIME_ID", "runtime imageID allowlist changed");
+    for line in ["if [[ \"$raw\" =~ ^ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then", "elif [[ \"$raw\" =~ ^docker-pullable://ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then", "elif [[ \"$raw\" =~ ^(containerd|cri-o|docker)://(sha256:[0-9a-f]{64})$ ]]; then"] {
+        require!(normalize.lines().any(|got| got.trim() == line), "KIND_RUNTIME_ID", format!("anchored runtime imageID form missing: {line}"));
+    }
+    require!(normalize.matches("if [[").count() == 3 && normalize.matches("elif [[").count() == 2 && normalize.matches("return 1").count() == 1, "KIND_RUNTIME_ID", "runtime imageID allowlist branch inventory changed");
+    let runtime_digest = shell_fn(&input.kind, "runtime_digest_is_expected");
+    require!(runtime_digest.contains("[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]") && runtime_digest.matches("sha256").count() == 0, "KIND_RUNTIME_ID", "runtime digest must match the exact root or platform child");
+    let named_pods = shell_fn(&input.kind, "assert_named_pods");
+    require!(named_pods.contains("normalized=\"$(normalize_runtime_image_id \"$runtime_id\")\" || die \"unrecognized $container runtime imageID: $runtime_id\"") && named_pods.contains("runtime_digest_is_expected \"$normalized\"") && !named_pods.contains("== \"$EXPECTED_RUNTIME_DIGEST\""), "KIND_RUNTIME_ID", "pod runtime identity must normalize fail closed and use the exact root-or-platform helper");
     let identity_fn = shell_fn(&input.kind, "assert_cluster_identity");
     for needle in ["deploy/lumen-operator -o json", ".name == \"operator\" and .image == $image", "get lumen/", ".spec.image", "get statefulset/", ".name == \"server\" and .image == $image", "assert_named_pods \"$OPERATOR_NS\"", "assert_named_pods \"$NAMESPACE\"", "/version", "(.version | type) == \"string\"", ".version != \"unknown\""] {
         require!(identity_fn.contains(needle), "KIND_DESIRED_STATE", format!("identity surface missing: {needle}"));
@@ -323,6 +333,8 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     for needle in ["ARG SOURCE=fetch", "FROM debian:bookworm-slim AS seed", "FROM binary-source-${SOURCE} AS binary-source", "gcr.io/distroless/static-debian12:nonroot", "ENV LUMEN_HOST=0.0.0.0", "ENTRYPOINT [\"/usr/local/bin/lumen\"]", "CMD [\"serve\"]"] {
         require!(input.dockerfile.contains(needle), "DOCKERFILE_CONTRACT", format!("Dockerfile release contract missing: {needle}"));
     }
+    require!(input.dockerfile.matches("ARG TARGETARCH\n").count() == 2 && !input.dockerfile.contains("ARG TARGETARCH="), "TARGETARCH_SELECTION", "TARGETARCH must expose BuildKit's automatic target without a fallback");
+    require!(fetch.contains("amd64) t=x86_64-unknown-linux-musl") && fetch.contains("arm64) t=aarch64-unknown-linux-musl") && staged.contains("COPY dist/linux/${TARGETARCH}/lumen /tmp/lumen"), "TARGETARCH_SELECTION", "TARGETARCH must select the matching fetched and staged binaries");
     require!(fetch.contains("releases/download/${LUMEN_VERSION}") && fetch.contains("sha256sum -c \"${asset}.sha256\"") && !["curl", "apt-get", "releases/download"].iter().any(|v| staged.contains(v)), "DOCKERFILE_CONTRACT", "fetch/staged sources are not isolated");
     let cargo: toml::Value = toml::from_str(&input.cargo).map_err(|e| Finding { code: "TOML_PARSE", detail: e.to_string() })?;
     let registered = cargo.get("test").and_then(toml::Value::as_array).map_or(0, |tests| tests.iter().filter(|t| t.get("name").and_then(toml::Value::as_str) == Some("release_artifacts") && t.get("path").and_then(toml::Value::as_str) == Some("e2e/release_artifacts.rs")).count());
@@ -385,6 +397,29 @@ fn function_replace(source: &str, name: &str, from: &str, to: &str) -> String {
     let changed = replace_once(&source[start..end], from, to);
     format!("{}{}{}", &source[..start], changed, &source[end..])
 }
+
+fn run_runtime_image_id_fixture(kind: &str, raw: &str, root: &str, child: &str) -> Output {
+    let normalize = shell_fn(kind, "normalize_runtime_image_id");
+    let expected = shell_fn(kind, "runtime_digest_is_expected");
+    let script = format!(
+        "normalize_runtime_image_id() {{\n{normalize}\n}}\n\
+         runtime_digest_is_expected() {{\n{expected}\n}}\n\
+         ROOT_DIGEST=\"$2\"\n\
+         EXPECTED_RUNTIME_DIGEST=\"$3\"\n\
+         normalized=\"$(normalize_runtime_image_id \"$1\")\" && \
+         runtime_digest_is_expected \"$normalized\""
+    );
+    Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .arg("runtime-image-id-fixture")
+        .arg(raw)
+        .arg(root)
+        .arg(child)
+        .output()
+        .expect("run runtime imageID fixture")
+}
+
 fn expect(mutated: Inputs, code: &'static str) {
     let finding = validate(&mutated).expect_err("negative mutation passed");
     assert_eq!(finding.code, code, "wrong finding: {finding:?}");
@@ -716,6 +751,46 @@ fn live_release_artifacts_satisfy_contract() {
 }
 
 #[test]
+fn runtime_image_id_allowlist_and_digest_binding_are_executable() {
+    let kind = live().kind;
+    let root = format!("sha256:{}", "1".repeat(64));
+    let child = format!("sha256:{}", "2".repeat(64));
+    let third = format!("sha256:{}", "3".repeat(64));
+    for raw in [
+        format!("ghcr.io/chrischeng-c4/lumen@{root}"),
+        format!("docker-pullable://ghcr.io/chrischeng-c4/lumen@{child}"),
+        format!("containerd://{root}"),
+        format!("cri-o://{child}"),
+        format!("docker://{root}"),
+    ] {
+        assert!(
+            run_runtime_image_id_fixture(&kind, &raw, &root, &child)
+                .status
+                .success(),
+            "accepted runtime imageID failed: {raw}"
+        );
+    }
+    for raw in [
+        format!("ghcr.io/other/lumen@{root}"),
+        format!("unknown://{root}"),
+        "ghcr.io/chrischeng-c4/lumen:0.4.27".into(),
+        "ghcr.io/chrischeng-c4/lumen@sha256:1234".into(),
+        format!("ghcr.io/chrischeng-c4/lumen@sha256:{}", "A".repeat(64)),
+        format!("junk-ghcr.io/chrischeng-c4/lumen@{root}"),
+        format!("ghcr.io/chrischeng-c4/lumen@{root}-junk"),
+        format!("ghcr.io/chrischeng-c4/lumen@@{root}"),
+        format!("ghcr.io/chrischeng-c4/lumen@{third}"),
+    ] {
+        assert!(
+            !run_runtime_image_id_fixture(&kind, &raw, &root, &child)
+                .status
+                .success(),
+            "rejected runtime imageID passed: {raw}"
+        );
+    }
+}
+
+#[test]
 #[rustfmt::skip]
 fn scoped_negative_mutations_fail_with_stable_findings() {
     let cases = [
@@ -733,6 +808,8 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
         ("ghcr-image-and-attest", "SOURCE=staged", "SOURCE=fetch", "STAGED_SOURCE"),
         ("ghcr-image-and-attest", "sha256sum -c lumen-x86_64-unknown-linux-musl.tar.gz.sha256", "true", "MUSL_CHECKSUM"),
         ("ghcr-image-and-attest", "sha256sum -c lumen-aarch64-unknown-linux-musl.tar.gz.sha256", "true", "MUSL_CHECKSUM"),
+        ("ghcr-image-and-attest", "tar -xzf pkg/arm64/lumen-aarch64-unknown-linux-musl.tar.gz -C dist/linux/arm64", "tar -xzf pkg/arm64/lumen-aarch64-unknown-linux-musl.tar.gz -C dist/linux/amd64", "MUSL_ARCH"),
+        ("ghcr-image-and-attest", "\"$arm64_file\" == *\"ARM aarch64\"*", "\"$arm64_file\" == *\"x86-64\"*", "MUSL_ARCH"),
     ];
     for (job, from, to, code) in cases {
         let mut fixture = live(); fixture.workflow = job_replace(&fixture.workflow, job, from, to); expect(fixture, code);
@@ -760,6 +837,11 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
     }
     let mut fixture = live(); fixture.docs = replace_nth(&fixture.docs, "--image \"$IMAGE\"", "--image ghcr.io/chrischeng-c4/lumen:latest", 0); expect(fixture, "DEPLOYMENT_DIGEST");
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$", "^ghcr\\.io/chrischeng-c4/lumen:.+$"); expect(fixture, "KIND_INPUTS");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "normalize_runtime_image_id", "^ghcr\\.io/chrischeng-c4/lumen@", "^ghcr\\.io/.+@"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "normalize_runtime_image_id", "^ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$", "^ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", "\"$digest\" == \"$ROOT_DIGEST\" || ", ""); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", " || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\"", ""); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "assert_named_pods", "normalized=\"$(normalize_runtime_image_id \"$runtime_id\")\"", "normalized=\"$ROOT_DIGEST\""); expect(fixture, "KIND_RUNTIME_ID");
     let mut fixture = live(); fixture.kind = replace_nth(&fixture.kind, "if [[ \"$IMAGE_MODE\" == \"prebuilt\" ]]; then\n", "if [[ \"$IMAGE_MODE\" == \"prebuilt\" ]]; then\n  docker login ghcr.io\n", 0); expect(fixture, "KIND_PREBUILT_LOCAL");
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "deploy_via_operator", "  prepare_operator_capacity_fixture\n", ""); expect(fixture, "KIND_CAPACITY");
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "deploy_via_operator", "  prepare_operator_capacity_fixture\n", "  : prepare_operator_capacity_fixture\n"); expect(fixture, "KIND_CAPACITY");
@@ -793,4 +875,9 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
     let mut fixture = live(); fixture.installer = replace_once(&fixture.installer, "[ \"${actual_version}\" = \"${expected_version}\" ]", "true || [ \"${actual_version}\" = \"${expected_version}\" ]"); expect(fixture, "INSTALLER_INTEGRITY");
     let mut fixture = live(); fixture.verifier_mode = 0o644; expect(fixture, "VERIFIER_MODE");
     let mut fixture = live(); fixture.dockerfile = replace_once(&fixture.dockerfile, "ARG SOURCE=fetch", "ARG SOURCE=staged"); expect(fixture, "DOCKERFILE_CONTRACT");
+    for nth in 0..2 {
+        let mut fixture = live(); fixture.dockerfile = replace_nth(&fixture.dockerfile, "ARG TARGETARCH\n", "ARG TARGETARCH=amd64\n", nth); expect(fixture, "TARGETARCH_SELECTION");
+    }
+    let mut fixture = live(); fixture.dockerfile = replace_once(&fixture.dockerfile, "COPY dist/linux/${TARGETARCH}/lumen /tmp/lumen", "COPY dist/linux/amd64/lumen /tmp/lumen"); expect(fixture, "TARGETARCH_SELECTION");
+    let mut fixture = live(); fixture.dockerfile = replace_once(&fixture.dockerfile, "arm64) t=aarch64-unknown-linux-musl", "arm64) t=x86_64-unknown-linux-musl"); expect(fixture, "TARGETARCH_SELECTION");
 }

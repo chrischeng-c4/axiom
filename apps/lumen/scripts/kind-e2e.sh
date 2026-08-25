@@ -473,13 +473,20 @@ api_search_probe() {
 
 normalize_runtime_image_id() {
   local raw="$1"
-  if [[ "$raw" =~ ^docker-pullable://ghcr\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then
+  if [[ "$raw" =~ ^ghcr\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^docker-pullable://ghcr\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then
     echo "${BASH_REMATCH[1]}"
   elif [[ "$raw" =~ ^(containerd|cri-o|docker)://(sha256:[0-9a-f]{64})$ ]]; then
     echo "${BASH_REMATCH[2]}"
   else
     return 1
   fi
+}
+
+runtime_digest_is_expected() {
+  local digest="$1"
+  [[ "$digest" == "$ROOT_DIGEST" || "$digest" == "$EXPECTED_RUNTIME_DIGEST" ]]
 }
 
 assert_named_pods() {
@@ -496,7 +503,8 @@ assert_named_pods() {
   [[ "$named_statuses" -eq "$desired" && "$image_ids" -eq "$desired" ]] || die "$container runtime imageID count mismatch"
   while IFS= read -r runtime_id; do
     normalized="$(normalize_runtime_image_id "$runtime_id")" || die "unrecognized $container runtime imageID: $runtime_id"
-    [[ "$normalized" == "$EXPECTED_RUNTIME_DIGEST" ]] || die "$container runtime imageID $runtime_id != expected $EXPECTED_RUNTIME_DIGEST"
+    runtime_digest_is_expected "$normalized" || \
+      die "$container runtime imageID $runtime_id is neither root $ROOT_DIGEST nor platform $EXPECTED_RUNTIME_DIGEST"
   done < <(jq -r --arg name "$container" '.items[] | .status.containerStatuses[] | select(.name == $name) | .imageID' <<<"$pods")
 }
 

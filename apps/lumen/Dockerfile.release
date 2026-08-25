@@ -9,7 +9,10 @@
 #     --build-arg LUMEN_VERSION=lumen@0.4.5 .
 #
 # The image arch selects the matching linux tarball. BuildKit supplies
-# TARGETARCH automatically; classic Docker builders use the amd64 default:
+# TARGETARCH for each requested target platform. Each stage redeclares that
+# automatic argument without a value so a multi-platform build cannot silently
+# use one architecture for both images. A non-BuildKit builder must pass
+# TARGETARCH explicitly:
 #   --platform linux/amd64 → x86_64-unknown-linux-musl
 #   --platform linux/arm64 → aarch64-unknown-linux-musl
 
@@ -22,7 +25,7 @@ RUN mkdir -p -m 0750 /out/lumen-data && touch /out/lumen-data/.lumen-volume-seed
 FROM debian:bookworm-slim AS binary-source-fetch
 ARG LUMEN_VERSION=lumen@0.4.5
 ARG LUMEN_REPO=chrischeng-c4/axiom
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
@@ -42,7 +45,7 @@ RUN set -eux; \
 
 # ---- stage 1b: copy pre-staged release binary (workflow path) ---------------
 FROM debian:bookworm-slim AS binary-source-staged
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 COPY dist/linux/${TARGETARCH}/lumen /tmp/lumen
 
 FROM binary-source-${SOURCE} AS binary-source
