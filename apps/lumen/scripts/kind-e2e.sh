@@ -184,40 +184,6 @@ build_and_load_image() {
   kind load docker-image "$IMAGE_TAG" --name "$CLUSTER_NAME"
 }
 
-# The current Managed contract requires a platform-owned capacity catalog.
-# A local kind cluster has no Terraform substrate, so install one exact test
-# entry and label its node before the operator sees the Lumen resource.
-prepare_operator_capacity_fixture() {
-  local selector_key="lumen.axiom.dev/capacity-profile"
-  local machine_type="e2-standard-2"
-  kubectl label nodes --all "${selector_key}=${machine_type}" --overwrite
-  kubectl -n "$OPERATOR_NS" apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: lumen-capacity-catalog
-data:
-  catalog.json: |
-    {
-      "version": "1.0.0",
-      "entries": [
-        {
-          "machine_type": "${machine_type}",
-          "selector": "${selector_key}=${machine_type}",
-          "stable_selector": {
-            "key": "${selector_key}",
-            "value": "${machine_type}"
-          },
-          "max_nodes": 1,
-          "min_nodes": 1,
-          "lifecycle_state": "ready",
-          "pool_group": "lumen-data"
-        }
-      ]
-    }
-EOF
-}
-
 # Deploy lumen by the selected mode.
 deploy_lumen() {
   if [[ "$E2E_MODE" == "operator" ]]; then
@@ -288,7 +254,6 @@ deploy_via_operator() {
     kubectl apply -k "${LUMEN_DIR}/k8s/operator"
     kubectl -n "$OPERATOR_NS" set image deploy/lumen-operator operator="$IMAGE_TAG"
   fi
-  prepare_operator_capacity_fixture
   echo "   waiting for the Lumen CRD to be Established"
   kubectl wait --for=condition=established crd/lumens.lumen.dev --timeout=60s
   echo "   waiting for the operator Deployment to roll out"
@@ -312,6 +277,11 @@ spec:
   # #2678: auth defaults to required, so this local-only rig opts out
   # explicitly rather than shipping a data plane that never goes Ready.
   auth: disabled
+  # Native compatibility placement: the default machine type plus this exact
+  # selector must reconcile without the legacy capacity catalog.
+  placement:
+    nodeSelector:
+      kubernetes.io/os: linux
   serving:
     cpu: "${SERVING_CPU}"
     memory: "${SERVING_MEMORY}"
@@ -322,6 +292,8 @@ EOF
   while [[ $(date +%s) -lt $deadline ]]; do
     if kubectl -n "$NAMESPACE" get statefulset/"${LUMEN_CR_NAME}" >/dev/null 2>&1; then
       echo "   operator reconciled StatefulSet/${LUMEN_CR_NAME}"
+      assert_native_placement
+      assert_legacy_missing_catalog_event
       return 0
     fi
     sleep 2
@@ -329,6 +301,63 @@ EOF
   echo "!! operator did not render StatefulSet/${LUMEN_CR_NAME} within 60s" >&2
   kubectl -n "$OPERATOR_NS" logs deploy/lumen-operator --tail=60 >&2 || true
   return 1
+}
+
+assert_native_placement() {
+  if [[ "$E2E_MODE" != "operator" ]]; then
+    return 0
+  fi
+  local selector
+  selector="$(kubectl -n "$NAMESPACE" get statefulset/"${LUMEN_CR_NAME}" -o json | jq -er '.spec.template.spec.nodeSelector["kubernetes.io/os"]')" \
+    || die "native placement StatefulSet has no kubernetes.io/os selector"
+  [[ "$selector" == "linux" ]] \
+    || die "native placement selector changed: expected kubernetes.io/os=linux, got $selector"
+  if kubectl -n "$OPERATOR_NS" get configmap/lumen-capacity-catalog >/dev/null 2>&1; then
+    die "native placement unexpectedly depends on a fake capacity catalog"
+  fi
+  echo "   native placement preserved kubernetes.io/os=linux without a capacity catalog"
+}
+
+assert_legacy_missing_catalog_event() {
+  if [[ "$E2E_MODE" != "operator" ]]; then
+    return 0
+  fi
+  local legacy_namespace="${NAMESPACE}-legacy"
+  local legacy_name="${LUMEN_CR_NAME}-legacy-missing-catalog"
+  kubectl create namespace "$legacy_namespace" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n "$legacy_namespace" apply -f - <<EOF
+apiVersion: lumen.dev/v1alpha1
+kind: Lumen
+metadata:
+  name: ${legacy_name}
+  namespace: ${legacy_namespace}
+spec:
+  image: ${IMAGE_TAG}
+  imagePullPolicy: IfNotPresent
+  shardCount: 1
+  replicasPerShard: 1
+  voterCount: 1
+  logFormat: pretty
+  auth: disabled
+  serving:
+    cpu: "1"
+    memory: "1Gi"
+EOF
+
+  local deadline=$(( $(date +%s) + 60 ))
+  while [[ $(date +%s) -lt $deadline ]]; do
+    local message
+    message="$(kubectl -n "$legacy_namespace" get events \
+      --field-selector "involvedObject.name=${legacy_name},reason=ReconcileFailed" \
+      -o json | jq -r '[.items[] | (.message // .note // "")] | join("\n")')"
+    if [[ "$message" == *"capacity catalog"* ]]; then
+      echo "   legacy empty-selector failure Event names missing capacity catalog"
+      return 0
+    fi
+    sleep 2
+  done
+  kubectl -n "$legacy_namespace" get events --sort-by=.lastTimestamp >&2 || true
+  die "legacy empty-selector CR did not publish a namespaced ReconcileFailed Event naming the capacity catalog"
 }
 
 configure_lumen_only_deployment() {
@@ -498,7 +527,7 @@ normalize_runtime_image_id() {
 
 runtime_digest_is_expected() {
   local digest="$1"
-  [[ "$digest" == "$ROOT_DIGEST" || "$digest" == "$EXPECTED_RUNTIME_DIGEST" ]]
+  [[ "$digest" == "$EXPECTED_RUNTIME_DIGEST" ]]
 }
 
 assert_named_pods() {
@@ -516,7 +545,7 @@ assert_named_pods() {
   while IFS= read -r runtime_id; do
     normalized="$(normalize_runtime_image_id "$runtime_id")" || die "unrecognized $container runtime imageID: $runtime_id"
     runtime_digest_is_expected "$normalized" || \
-      die "$container runtime imageID $runtime_id is neither root $ROOT_DIGEST nor platform $EXPECTED_RUNTIME_DIGEST"
+      die "$container runtime imageID $runtime_id is not the expected platform child digest $EXPECTED_RUNTIME_DIGEST"
   done < <(jq -r --arg name "$container" '.items[] | .status.containerStatuses[] | select(.name == $name) | .imageID' <<<"$pods")
 }
 

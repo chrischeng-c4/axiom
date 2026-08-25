@@ -149,6 +149,7 @@ fn valid(content: &str, exp_seed: &str, exp_base: &str) -> Result<(), &'static s
 
 const CC_BASE: &str = "gcr.io/distroless/cc-debian12:nonroot";
 const STATIC_BASE: &str = "gcr.io/distroless/static-debian12:nonroot";
+const RELEASE_STATIC_BASE: &str = "gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab";
 const COPY: &str =
     "COPY --from=builder --chown=65532:65532 /out/lumen-data/ /var/lib/lumen/data/\n";
 
@@ -173,7 +174,7 @@ fn test_checked_in_and_rendered_dockerfiles_satisfy_contract() {
     );
     let targets = [
         ("apps/lumen/Dockerfile", "builder", CC_BASE),
-        ("apps/lumen/Dockerfile.release", "seed", STATIC_BASE),
+        ("apps/lumen/Dockerfile.release", "seed", RELEASE_STATIC_BASE),
         ("apps/lumen/Dockerfile.test", "seed", STATIC_BASE),
     ];
     for (rel, seed, base) in targets {
@@ -182,7 +183,7 @@ fn test_checked_in_and_rendered_dockerfiles_satisfy_contract() {
     }
     for (v, seed, base) in [
         ("source", "builder", CC_BASE),
-        ("release", "seed", STATIC_BASE),
+        ("release", "seed", RELEASE_STATIC_BASE),
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_lumen"))
             .args(["dockerfile", "render", "--variant", v])
@@ -191,6 +192,14 @@ fn test_checked_in_and_rendered_dockerfiles_satisfy_contract() {
         assert!(out.status.success());
         valid(&String::from_utf8_lossy(&out.stdout), seed, base).unwrap();
     }
+}
+
+#[test]
+fn test_release_dockerfile_rejects_mutable_final_base() {
+    let root = repo_root();
+    let content = std::fs::read_to_string(root.join("apps/lumen/Dockerfile.release")).unwrap();
+    let mutated = one(&content, RELEASE_STATIC_BASE, STATIC_BASE);
+    assert_eq!(valid(&mutated, "seed", RELEASE_STATIC_BASE), Err("final-base"));
 }
 
 const FIXTURE: &str = "\

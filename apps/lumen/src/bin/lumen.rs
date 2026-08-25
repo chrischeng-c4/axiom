@@ -2500,7 +2500,7 @@ fn profile_spec_body(body: InstanceBody, image: &str) -> String {
             // agrees with the CRD default (#2678). `auth` fails closed, so a
             // rendered CR that stayed silent would be a `required` instance
             // with no token source: a pod that never passes readiness.
-            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  auth: disabled\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  auth: disabled\n  placement:\n    nodeSelector:\n      kubernetes.io/os: linux\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
         InstanceBody::Staging => {
             // #3113 R8: `servingTlsSecret` is stated for the same reason as

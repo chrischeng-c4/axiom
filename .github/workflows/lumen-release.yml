@@ -1,567 +1,262 @@
-# Build `lumen` binaries for all supported targets and publish container images.
 name: lumen-release
 
 on:
-  push:
-    tags:
-      - "lumen@*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: Exact Lumen semver without the lumen@ prefix.
+        required: true
+        type: string
+      candidate_run_id:
+        description: Exact successful lumen-release-candidate run ID.
+        required: true
+        type: string
+
+concurrency:
+  group: lumen-release-promotion-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { target: aarch64-apple-darwin, os: macos-14, cross: false, musl: false }
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, cross: false, musl: false }
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest, cross: true, musl: false }
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, cross: false, musl: true }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, cross: false, musl: true }
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-      - name: Install cross-compilation toolchain (Linux aarch64)
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p .cargo
-          cat >> .cargo/config.toml <<'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
-      - name: Install musl toolchain (Linux musl targets)
-        if: matrix.musl
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: lumen-${{ matrix.target }}
-      - name: Build lumen binary
-        run: cargo build --release --locked -p lumen --bin lumen --features release --target ${{ matrix.target }}
-      - name: Package artifact
-        id: package
-        shell: bash
-        run: |
-          set -euo pipefail
-          name="lumen-${{ matrix.target }}"
-          stage="pkg/${name}"
-          mkdir -p "${stage}" out
-          cp "target/${{ matrix.target }}/release/lumen" "${stage}/lumen"
-          cp apps/lumen/README.md "${stage}/README.md"
-          tarball="out/${name}.tar.gz"
-          tar -C pkg -czf "${tarball}" "${name}"
-          (
-            cd out
-            if command -v shasum >/dev/null; then
-              shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
-            else
-              sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
-            fi
-          )
-          {
-            echo "tarball=${tarball}"
-            echo "sha=${tarball}.sha256"
-          } >> "${GITHUB_OUTPUT}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: lumen-${{ matrix.target }}
-          path: |
-            ${{ steps.package.outputs.tarball }}
-            ${{ steps.package.outputs.sha }}
-          if-no-files-found: error
-          overwrite: true
-
-  release-identity:
-    name: release identity
-    needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/lumen@')
+  verify-inputs:
+    name: prove immutable tag and candidate receipt
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      attestations: read
       contents: read
+      packages: read
       pull-requests: read
     outputs:
-      tag: ${{ steps.id.outputs.tag }}
-      version: ${{ steps.id.outputs.version }}
-      commit: ${{ steps.id.outputs.commit }}
-      pr_number: ${{ steps.id.outputs.pr_number }}
-      pr_url: ${{ steps.id.outputs.pr_url }}
+      root_digest: ${{ steps.contract.outputs.root_digest }}
+      amd64_digest: ${{ steps.contract.outputs.amd64_digest }}
+      arm64_digest: ${{ steps.contract.outputs.arm64_digest }}
+      candidate_attempt: ${{ steps.contract.outputs.candidate_attempt }}
+      candidate_url: ${{ steps.contract.outputs.candidate_url }}
+      pr_url: ${{ steps.contract.outputs.pr_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Validate release identity and source ancestry
-        id: id
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Refuse the retired tag-first route
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF#refs/tags/}"
-          [[ "$tag" =~ ^lumen@[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid tag format: $tag" >&2; exit 1; }
-          version="${tag#lumen@}"
-          cargo_version="$(grep '^version = ' apps/lumen/Cargo.toml | head -n1 | cut -d'"' -f2)"
-          if [[ "$version" != "$cargo_version" ]]; then
-            echo "tag version '$version' does not match Cargo.toml version '$cargo_version'" >&2
-            exit 1
-          fi
-          tag_type="$(git cat-file -t "$GITHUB_REF")"
-          if [[ "$tag_type" != "tag" ]]; then
-            echo "release ref $GITHUB_REF is not an annotated tag" >&2
-            exit 1
-          fi
-          tag_commit="$(git rev-parse "${GITHUB_REF}^{commit}")"
-          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
-            echo "peeled tag commit '$tag_commit' != github.sha '$GITHUB_SHA'" >&2
-            exit 1
-          fi
-          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "commit $GITHUB_SHA is not an ancestor of origin/main" >&2
-            exit 1
-          fi
-          prs="$(
-            gh api --paginate \
-              -H "Accept: application/vnd.github+json" \
-              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls?per_page=100" \
-              | jq -cs --arg sha "$GITHUB_SHA" \
-                  '[.[][] | select(.base.ref == "main" and .merged_at != null and .merge_commit_sha == $sha)]'
-          )"
-          if [[ "$(echo "$prs" | jq 'length')" -ne 1 ]]; then
-            echo "expected exactly 1 merged PR to main for commit $GITHUB_SHA" >&2
-            exit 1
-          fi
-          {
-            echo "tag=${tag}"
-            echo "version=${version}"
-            echo "commit=${GITHUB_SHA}"
-            echo "pr_number=$(echo "$prs" | jq -r '.[0].number')"
-            echo "pr_url=$(echo "$prs" | jq -r '.[0].html_url')"
-          } >> "$GITHUB_OUTPUT"
-
-  draft-release:
-    name: draft release
-    needs: [build, release-identity]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/lumen@')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo "promotion is workflow_dispatch only" >&2; exit 1; }
+          [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version input" >&2; exit 1; }
+          [[ "$GITHUB_REF" == "refs/tags/lumen@${{ inputs.version }}" ]] || { echo "promotion must dispatch the exact annotated release tag" >&2; exit 1; }
+          [[ "$GITHUB_WORKFLOW_REF" == "${GITHUB_REPOSITORY}/.github/workflows/lumen-release.yml@${GITHUB_REF}" ]] || { echo "promotion workflow identity mismatch" >&2; exit 1; }
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Create draft GitHub release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          tag_name: ${{ needs.release-identity.outputs.tag }}
-          target_commitish: ${{ needs.release-identity.outputs.commit }}
-          draft: true
-          files: |
-            dist/**/lumen-*.tar.gz
-            dist/**/lumen-*.tar.gz.sha256
-          body: |
-            `lumen` draft release built from tag ${{ needs.release-identity.outputs.tag }}.
-
-  ghcr-image-and-attest:
-    name: build ghcr image and attest
-    needs: [build, release-identity, draft-release]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/lumen@')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    outputs:
-      root_digest: ${{ steps.push.outputs.digest }}
-      amd64_digest: ${{ steps.platform_digests.outputs.amd64_digest }}
-      arm64_digest: ${{ steps.platform_digests.outputs.arm64_digest }}
-      candidate_tag: ${{ steps.tags.outputs.candidate_tag }}
-      image_repo: ${{ steps.tags.outputs.image_repo }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: lumen-x86_64-unknown-linux-musl
-          path: pkg/amd64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: lumen-aarch64-unknown-linux-musl
-          path: pkg/arm64
-      - name: Verify musl checksums and extract binaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          (cd pkg/amd64 && if command -v sha256sum >/dev/null; then sha256sum -c lumen-x86_64-unknown-linux-musl.tar.gz.sha256; else shasum -a 256 -c lumen-x86_64-unknown-linux-musl.tar.gz.sha256; fi)
-          (cd pkg/arm64 && if command -v sha256sum >/dev/null; then sha256sum -c lumen-aarch64-unknown-linux-musl.tar.gz.sha256; else shasum -a 256 -c lumen-aarch64-unknown-linux-musl.tar.gz.sha256; fi)
-          mkdir -p dist/linux/amd64 dist/linux/arm64
-          tar -xzf pkg/amd64/lumen-x86_64-unknown-linux-musl.tar.gz -C dist/linux/amd64 --strip-components=1 lumen-x86_64-unknown-linux-musl/lumen
-          tar -xzf pkg/arm64/lumen-aarch64-unknown-linux-musl.tar.gz -C dist/linux/arm64 --strip-components=1 lumen-aarch64-unknown-linux-musl/lumen
-          chmod +x dist/linux/amd64/lumen dist/linux/arm64/lumen
-          amd64_file="$(file -b dist/linux/amd64/lumen)"
-          arm64_file="$(file -b dist/linux/arm64/lumen)"
-          [[ "$amd64_file" == *"ELF 64-bit"* && "$amd64_file" == *"x86-64"* ]] || { echo "amd64 artifact has wrong architecture: $amd64_file" >&2; exit 1; }
-          [[ "$arm64_file" == *"ELF 64-bit"* && "$arm64_file" == *"ARM aarch64"* ]] || { echo "arm64 artifact has wrong architecture: $arm64_file" >&2; exit 1; }
-      - name: Resolve image repository and candidate tag
-        id: tags
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            echo "image_repo=ghcr.io/chrischeng-c4/lumen"
-            echo "candidate_tag=release-candidate-${{ github.run_id }}-${{ github.run_attempt }}"
-          } >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+          cosign-release: v3.1.3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push multi-arch image
-        id: push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: apps/lumen/Dockerfile.release
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          build-args: |
-            SOURCE=staged
-          tags: ${{ steps.tags.outputs.image_repo }}:${{ steps.tags.outputs.candidate_tag }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ needs.release-identity.outputs.commit }}
-            org.opencontainers.image.version=${{ needs.release-identity.outputs.version }}
-            org.opencontainers.image.url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      - name: Inspect image index and extract platform child digests
-        id: platform_digests
-        shell: bash
-        run: |
-          set -euo pipefail
-          root_digest="${{ steps.push.outputs.digest }}"
-          [[ "$root_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid root digest" >&2; exit 1; }
-          root_ref="${{ steps.tags.outputs.image_repo }}@${root_digest}"
-          manifest_json="$(docker buildx imagetools inspect --raw "$root_ref")"
-          if ! jq -e '
-            (.manifests | type == "array" and length == 2) and
-            all(.manifests[];
-              .platform.os == "linux" and
-              (.platform | has("variant") | not) and
-              (.platform.architecture == "amd64" or .platform.architecture == "arm64") and
-              (.digest | type == "string") and
-              (.digest | test("^sha256:[0-9a-f]{64}$"))
-            ) and
-            ([.manifests[].platform.architecture] | sort == ["amd64", "arm64"]) and
-            ([.manifests[].digest] | unique | length == 2)
-          ' <<<"$manifest_json" >/dev/null; then
-            echo "image index must contain exactly one linux/amd64 and one linux/arm64 descriptor without variants" >&2
-            exit 1
-          fi
-          amd64_digest="$(echo "$manifest_json" | jq -re '.manifests[] | select(.platform.architecture == "amd64" and .platform.os == "linux") | .digest')"
-          arm64_digest="$(echo "$manifest_json" | jq -re '.manifests[] | select(.platform.architecture == "arm64" and .platform.os == "linux") | .digest')"
-          if [[ "$amd64_digest" == "$arm64_digest" || "$amd64_digest" == "$root_digest" || "$arm64_digest" == "$root_digest" ]]; then
-            echo "digests must be pairwise distinct" >&2
-            exit 1
-          fi
-          {
-            echo "amd64_digest=${amd64_digest}"
-            echo "arm64_digest=${arm64_digest}"
-          } >> "$GITHUB_OUTPUT"
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v3.1.3
-      - name: Sign root image index with keyless cosign
-        shell: bash
-        run: |
-          set -euo pipefail
-          cosign sign --yes "${{ steps.tags.outputs.image_repo }}@${{ steps.push.outputs.digest }}"
-      - name: Attest root index provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-name: ${{ steps.tags.outputs.image_repo }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
-          create-storage-record: false
-      - name: Generate SPDX SBOM for linux/amd64
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ${{ steps.tags.outputs.image_repo }}@${{ steps.platform_digests.outputs.amd64_digest }}
-          format: spdx-json
-          syft-version: v1.51.0
-          output-file: spdx-amd64.json
-          upload-artifact: false
-          upload-release-assets: false
-          dependency-snapshot: false
-      - name: Attest linux/amd64 SBOM
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-name: ${{ steps.tags.outputs.image_repo }}
-          subject-digest: ${{ steps.platform_digests.outputs.amd64_digest }}
-          sbom-path: spdx-amd64.json
-          push-to-registry: true
-          create-storage-record: false
-      - name: Generate SPDX SBOM for linux/arm64
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ${{ steps.tags.outputs.image_repo }}@${{ steps.platform_digests.outputs.arm64_digest }}
-          format: spdx-json
-          syft-version: v1.51.0
-          output-file: spdx-arm64.json
-          upload-artifact: false
-          upload-release-assets: false
-          dependency-snapshot: false
-      - name: Attest linux/arm64 SBOM
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-name: ${{ steps.tags.outputs.image_repo }}
-          subject-digest: ${{ steps.platform_digests.outputs.arm64_digest }}
-          sbom-path: spdx-arm64.json
-          push-to-registry: true
-          create-storage-record: false
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: lumen-spdx-sboms
-          path: |
-            spdx-amd64.json
-            spdx-arm64.json
-          if-no-files-found: error
-          overwrite: true
-
-  verify-artifacts:
-    name: verify release artifacts
-    needs: [release-identity, draft-release, ghcr-image-and-attest]
-    runs-on: ubuntu-latest
-    permissions:
-      # GitHub hides draft releases from tokens without push-level contents access.
-      contents: write
-      packages: read
-      attestations: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v3.1.3
-      - name: Verify release artifacts against draft release
+          password: ${{ github.token }}
+      - name: Verify tag ruleset, candidate receipt, and supply chain
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           apps/lumen/scripts/verify-release-artifacts.sh \
             --repo chrischeng-c4/axiom \
-            --tag "${{ needs.release-identity.outputs.tag }}" \
-            --commit "${{ needs.release-identity.outputs.commit }}" \
-            --image "${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}" \
-            --release-state draft
-
-  kind-amd64:
-    name: kind e2e (amd64)
-    needs: [release-identity, ghcr-image-and-attest, verify-artifacts]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - name: Assert native x86_64 runner architecture
-        shell: bash
-        run: test "$(uname -m)" = "x86_64"
-      - name: Install verified kind v0.32.0 (amd64)
+            --tag "lumen@${{ inputs.version }}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "${{ inputs.candidate_run_id }}" \
+            --mode candidate \
+            --output promotion-contract.json
+      - name: Export immutable candidate contract
+        id: contract
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64 -o /tmp/kind
-          echo "50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54  /tmp/kind" | sha256sum -c -
-          chmod +x /tmp/kind
-          sudo mv /tmp/kind /usr/local/bin/kind
-      - name: Run kind e2e in prebuilt mode (amd64)
-        shell: bash
-        run: |
-          set -euo pipefail
-          short_sha="${{ needs.release-identity.outputs.commit }}"
-          LUMEN_E2E_MODE=operator \
-          LUMEN_E2E_IMAGE_MODE=prebuilt \
-          LUMEN_E2E_IMAGE="${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}" \
-          LUMEN_E2E_EXPECTED_VERSION="${{ needs.release-identity.outputs.version }}" \
-          LUMEN_E2E_EXPECTED_GIT_SHA="${short_sha:0:8}" \
-          LUMEN_E2E_EXPECTED_RUNTIME_DIGEST="${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}" \
-          apps/lumen/scripts/kind-e2e.sh
-
-  kind-arm64:
-    name: kind e2e (arm64)
-    needs: [release-identity, ghcr-image-and-attest, verify-artifacts]
-    runs-on: ubuntu-24.04-arm
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - name: Assert native aarch64 runner architecture
-        shell: bash
-        run: test "$(uname -m)" = "aarch64"
-      - name: Install verified kind v0.32.0 (arm64)
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSL https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-arm64 -o /tmp/kind
-          echo "b92cd615e97585de8ddade28ed5cd7feb4248d717c233eea5b03c37298900f5d  /tmp/kind" | sha256sum -c -
-          chmod +x /tmp/kind
-          sudo mv /tmp/kind /usr/local/bin/kind
-      - name: Run kind e2e in prebuilt mode (arm64)
-        shell: bash
-        run: |
-          set -euo pipefail
-          short_sha="${{ needs.release-identity.outputs.commit }}"
-          LUMEN_E2E_MODE=operator \
-          LUMEN_E2E_IMAGE_MODE=prebuilt \
-          LUMEN_E2E_IMAGE="${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}" \
-          LUMEN_E2E_EXPECTED_VERSION="${{ needs.release-identity.outputs.version }}" \
-          LUMEN_E2E_EXPECTED_GIT_SHA="${short_sha:0:8}" \
-          LUMEN_E2E_EXPECTED_RUNTIME_DIGEST="${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}" \
-          apps/lumen/scripts/kind-e2e.sh
+          jq -e --arg commit "$GITHUB_SHA" --arg run "${{ inputs.candidate_run_id }}" '
+            .commit == $commit and .candidate_run_id == $run and
+            [.root_digest,.amd64_digest,.arm64_digest] | all(test("^sha256:[0-9a-f]{64}$"))
+          ' promotion-contract.json >/dev/null
+          {
+            echo "root_digest=$(jq -r .root_digest promotion-contract.json)"
+            echo "amd64_digest=$(jq -r .amd64_digest promotion-contract.json)"
+            echo "arm64_digest=$(jq -r .arm64_digest promotion-contract.json)"
+            echo "candidate_attempt=$(jq -r .candidate_attempt promotion-contract.json)"
+            echo "candidate_url=$(jq -r .candidate_url promotion-contract.json)"
+            echo "pr_url=$(jq -r .pr_url promotion-contract.json)"
+          } >> "$GITHUB_OUTPUT"
 
   publish-release:
-    name: publish release
-    needs: [release-identity, draft-release, ghcr-image-and-attest, verify-artifacts, kind-amd64, kind-arm64]
-    concurrency:
-      group: lumen-release-publication
-      cancel-in-progress: false
+    name: promote exact candidate root and publish release
+    needs: verify-inputs
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      attestations: read
       contents: write
       packages: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          name: lumen-spdx-sboms
-          path: dist-sbom
-      - name: Reconfirm release publication eligibility
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.release-identity.outputs.tag }}"
-          release_json="$(gh release view "$tag" --repo "${{ github.repository }}" --json isDraft,tagName)"
-          [[ "$(jq -er '.tagName | select(type == "string")' <<<"$release_json")" == "$tag" ]] || { echo "release tag changed" >&2; exit 1; }
-          [[ "$(jq -er '.isDraft | select(type == "boolean") | tostring' <<<"$release_json")" == "true" ]] || { echo "release is no longer draft" >&2; exit 1; }
-          git fetch --force --tags origin
-          newest_tag=""
-          while IFS= read -r candidate; do
-            if [[ "$candidate" =~ ^lumen@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              newest_tag="$candidate"
-              break
-            fi
-          done < <(git tag --list 'lumen@*' --sort=-v:refname)
-          [[ "$newest_tag" == "$tag" ]] || { echo "refusing to move latest from newer tag '$newest_tag' to '$tag'" >&2; exit 1; }
-      - name: Upload SBOM assets to draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release upload "${{ needs.release-identity.outputs.tag }}" dist-sbom/spdx-amd64.json dist-sbom/spdx-arm64.json --repo "${{ github.repository }}" --clobber
+          cosign-release: v3.1.3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Promote verified root digest to semver and latest tags
-        shell: bash
-        run: |
-          set -euo pipefail
-          image_repo="${{ needs.ghcr-image-and-attest.outputs.image_repo }}"
-          root_digest="${{ needs.ghcr-image-and-attest.outputs.root_digest }}"
-          semver="${{ needs.release-identity.outputs.version }}"
-          docker buildx imagetools create -t "${image_repo}:${semver}" "${image_repo}@${root_digest}"
-          docker buildx imagetools create -t "${image_repo}:latest" "${image_repo}@${root_digest}"
-          semver_digest="$(docker buildx imagetools inspect "${image_repo}:${semver}" --format '{{json .Manifest}}' | jq -er '.digest')"
-          latest_digest="$(docker buildx imagetools inspect "${image_repo}:latest" --format '{{json .Manifest}}' | jq -er '.digest')"
-          [[ "$semver_digest" == "$root_digest" ]] || { echo "semver tag digest mismatch" >&2; exit 1; }
-          [[ "$latest_digest" == "$root_digest" ]] || { echo "latest tag digest mismatch" >&2; exit 1; }
-      - name: Finalize release notes and publish release
+          password: ${{ github.token }}
+      - name: Re-query exact candidate immediately before stable writes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ needs.release-identity.outputs.tag }}"
-          commit="${{ needs.release-identity.outputs.commit }}"
-          pr_num="${{ needs.release-identity.outputs.pr_number }}"
-          pr_url="${{ needs.release-identity.outputs.pr_url }}"
-          workflow_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          image_repo="${{ needs.ghcr-image-and-attest.outputs.image_repo }}"
-          root_digest="${{ needs.ghcr-image-and-attest.outputs.root_digest }}"
-          amd64_digest="${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}"
-          arm64_digest="${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}"
+          apps/lumen/scripts/verify-release-artifacts.sh \
+            --repo chrischeng-c4/axiom \
+            --tag "lumen@${{ inputs.version }}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "${{ inputs.candidate_run_id }}" \
+            --mode candidate \
+            --output promotion-contract.json
+          jq -e \
+            --arg root "${{ needs.verify-inputs.outputs.root_digest }}" \
+            --arg amd64 "${{ needs.verify-inputs.outputs.amd64_digest }}" \
+            --arg arm64 "${{ needs.verify-inputs.outputs.arm64_digest }}" \
+            '.root_digest == $root and .amd64_digest == $amd64 and .arm64_digest == $arm64' \
+            promotion-contract.json >/dev/null
+      - name: Exit safely if this exact public release already exists
+        id: existing_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="query(\$owner:String!, \$name:String!, \$tag:String!) { repository(owner:\$owner, name:\$name) { release(tagName:\$tag) { id } } }"
+          json="$(gh api graphql -f query="$query" -f owner="$GITHUB_REPOSITORY_OWNER" -f name="${GITHUB_REPOSITORY#*/}" -f tag="lumen@${{ inputs.version }}")"
+          if [[ "$(jq -r '.data.repository.release | if . == null then "absent" else "present" end' <<<"$json")" == present ]]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Verify existing public release without moving latest
+        if: steps.existing_release.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apps/lumen/scripts/verify-release-artifacts.sh \
+            --repo chrischeng-c4/axiom \
+            --tag "lumen@${{ inputs.version }}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "${{ inputs.candidate_run_id }}" \
+            --mode public \
+            --output promotion-contract.json
+      - name: Download exact candidate release bytes
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "${{ inputs.candidate_run_id }}" --repo "$GITHUB_REPOSITORY" --name "lumen-release-candidate-${{ inputs.candidate_run_id }}-${{ needs.verify-inputs.outputs.candidate_attempt }}" --dir candidate
+          [[ -f candidate/final-candidate-manifest.json && -f candidate/final-candidate-manifest.json.sha256 ]] || { echo "candidate receipt bytes are incomplete" >&2; exit 1; }
+      - name: Promote exact root digest to semver and safe latest
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_repo=ghcr.io/chrischeng-c4/lumen
+          root_digest="${{ needs.verify-inputs.outputs.root_digest }}"
+          version="${{ inputs.version }}"
+          root_ref="${image_repo}@${root_digest}"
+          semver_ref="${image_repo}:${version}"
+          digest_or_absent() {
+            local ref="$1" error manifest status
+            error="$(mktemp)"
+            set +e
+            manifest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2>"$error")"
+            status=$?
+            set -e
+            if [[ "$status" == 0 ]]; then
+              rm -f "$error"
+              jq -er '.digest' <<<"$manifest"
+              return 0
+            fi
+            if grep -Eqi 'manifest unknown|not found' "$error"; then
+              rm -f "$error"
+              return 0
+            fi
+            cat "$error" >&2
+            rm -f "$error"
+            echo "cannot prove GHCR image state: $ref" >&2
+            exit 1
+          }
+          semver_current="$(digest_or_absent "$semver_ref")"
+          [[ -z "$semver_current" || "$semver_current" == "$root_digest" ]] || { echo "semver tag already points at a different root" >&2; exit 1; }
+          latest_current="$(digest_or_absent "${image_repo}:latest")"
+          latest_target=true
+          if [[ -n "$latest_current" && "$latest_current" != "$root_digest" ]]; then
+            newer=false
+            while IFS= read -r tag; do
+              next="${tag#lumen@}"
+              [[ "$tag" =~ ^lumen@[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              [[ "$(printf '%s\n%s\n' "$version" "$next" | sort -V | tail -n1)" == "$next" && "$next" != "$version" ]] || continue
+              digest="$(digest_or_absent "${image_repo}:${next}")"
+              [[ -n "$digest" ]] || { echo "newer published semver image is absent: $next" >&2; exit 1; }
+              [[ "$digest" == "$latest_current" ]] && newer=true && break
+            done < <(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft | jq -r '.[] | select(.isDraft == false) | .tagName')
+            if [[ "$newer" == true ]]; then
+              latest_target=false
+            else
+              echo "latest is neither this root nor a newer published root" >&2
+              exit 1
+            fi
+          fi
+          docker buildx imagetools create --tag "$semver_ref" "$root_ref"
+          [[ "$(docker buildx imagetools inspect "$semver_ref" --format '{{json .Manifest}}' | jq -er '.digest')" == "$root_digest" ]] || { echo "semver tag did not bind candidate root" >&2; exit 1; }
+          if [[ "$latest_target" == true ]]; then
+            docker buildx imagetools create --tag "${image_repo}:latest" "$root_ref"
+            [[ "$(docker buildx imagetools inspect "${image_repo}:latest" --format '{{json .Manifest}}' | jq -er '.digest')" == "$root_digest" ]] || { echo "latest tag did not bind candidate root" >&2; exit 1; }
+          fi
+      - name: Create exact GitHub Release with candidate bytes
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          # lumen@${{ inputs.version }}
 
-          cat > notes.md <<EOF
-          \`lumen\` release built from tag ${tag}.
-
-          ## Source and Verification Metadata
-
-          - Source commit: \`${commit}\`
-          - Pull request: [#${pr_num}](${pr_url})
-          - Workflow run: [${workflow_url}](${workflow_url})
-          - Root index digest: \`${image_repo}@${root_digest}\`
-          - linux/amd64 digest: \`${image_repo}@${amd64_digest}\`
-          - linux/arm64 digest: \`${image_repo}@${arm64_digest}\`
-
-          ## Verify Artifacts
-
-          \`\`\`bash
-          apps/lumen/scripts/verify-release-artifacts.sh \\
-            --repo chrischeng-c4/axiom \\
-            --tag ${tag} \\
-            --commit ${commit} \\
-            --image ${image_repo}@${root_digest} \\
-            --release-state published
-          \`\`\`
-
-          ## Install
-
-          \`\`\`sh
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${tag}/apps/lumen/install.sh | sh
-          \`\`\`
+          - Source commit: $GITHUB_SHA
+          - Pull request: ${{ needs.verify-inputs.outputs.pr_url }}
+          - Candidate run: ${{ needs.verify-inputs.outputs.candidate_url }}
+          - Promotion run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT
+          - Root index digest: ${{ needs.verify-inputs.outputs.root_digest }}
+          - linux/amd64 digest: ${{ needs.verify-inputs.outputs.amd64_digest }}
+          - linux/arm64 digest: ${{ needs.verify-inputs.outputs.arm64_digest }}
+          - Release path: landed main -> untagged candidate verification -> protected annotated tag -> promotion of the same candidate digest.
+          - Placement path: a non-empty nodeSelector with the default initialMachineType skips the legacy capacity catalog.
+          - Legacy placement path: an empty selector, tolerations-only placement, or a non-default initialMachineType still requires lumen-system/lumen-capacity-catalog.
+          - Compatibility: no API, CRD, or runtime-default migration.
           EOF
-
-          gh release edit "${tag}" --repo "${{ github.repository }}" --draft=false --notes-file notes.md
+          gh release create "lumen@${{ inputs.version }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "lumen@${{ inputs.version }}" --notes-file release-notes.md \
+            candidate/lumen-*.tar.gz candidate/lumen-*.tar.gz.sha256 candidate/spdx-amd64.json candidate/spdx-arm64.json
+      - name: Publicly verify immutable tag, release bytes, and promoted image
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apps/lumen/scripts/verify-release-artifacts.sh \
+            --repo chrischeng-c4/axiom \
+            --tag "lumen@${{ inputs.version }}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "${{ inputs.candidate_run_id }}" \
+            --mode public \
+            --output promotion-contract.json

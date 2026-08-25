@@ -234,7 +234,9 @@ objects.
 
 ## Capacity catalog
 
-Every current Managed reconcile reads this ConfigMap:
+Legacy Managed placement reconciles read this ConfigMap. A non-empty
+`nodeSelector` with the default machine type uses the native compatibility path
+and does not read it:
 
 ```bash
 kubectl -n lumen-system get configmap lumen-capacity-catalog
@@ -251,15 +253,16 @@ kubectl -n <namespace> get lumen <name> \
 kubectl -n lumen-system describe configmap lumen-capacity-catalog
 ```
 
-A missing, malformed, draining, full, or incompatible catalog stops the child
-reconcile before workload apply. Current code does not provide a plain
-Kubernetes fallback. Reconcile the Terraform capacity module or restore the
-expected ConfigMap. Do not hand-edit a generated catalog while Terraform still
-owns it.
+A missing, malformed, draining, full, or incompatible catalog stops a legacy
+child reconcile before workload apply. For that path, reconcile the Terraform
+capacity module or restore the expected ConfigMap. Do not hand-edit a generated
+catalog while Terraform still owns it. For native compatibility placement,
+check the rendered StatefulSet for the exact user selector and tolerations.
 
-This catalog is the current legacy placement path. Kubernetes-native placement
-and the GKE Standard Regional profile are not implemented. Do not treat the
-current zonal GKE acceptance result as regional HA evidence. See the
+This catalog is the current legacy placement path. The bounded Kubernetes-native
+compatibility path is Limited; the full Kubernetes-native placement target is
+not implemented. Do not treat the current zonal GKE acceptance result as
+regional HA evidence. See the
 [GKE guide](../gke.md) for the exact support tiers.
 
 ## Child runtime status

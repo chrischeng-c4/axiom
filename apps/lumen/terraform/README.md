@@ -9,9 +9,10 @@ modules/lumen-capacity/  shared GKE node pools and the in-cluster catalog
 examples/installation/   one root that composes both against an existing cluster
 ```
 
-The current operator always reads
-`lumen-system/lumen-capacity-catalog` before it renders a Managed instance.
-This makes the capacity module a current Managed prerequisite. A plain
+The current operator reads `lumen-system/lumen-capacity-catalog` for legacy
+Managed placement cases. A non-empty `nodeSelector` with the default machine
+type uses a bounded Kubernetes-native compatibility path and does not need the
+catalog. A plain
 Kubernetes-native placement contract is a future outcome in
 [Kubernetes-native placement](../ROADMAP.md#kubernetes-native-placement). The
 catalog is a compatibility substrate. It is not the long-term public API.
@@ -65,10 +66,11 @@ Default identity:
 | Selector key | `lumen.axiom.dev/capacity-profile` |
 
 Each `capacity_profiles` entry needs a direct machine type and explicit
-`max_nodes`. A Managed `Lumen` also selects a direct machine type through
+`max_nodes`. A legacy Managed `Lumen` also selects a direct machine type through
 `spec.placement.initialMachineType`. The operator rejects a missing, malformed,
-draining, full, or incompatible catalog. It has no current fallback to plain
-`nodeSelector` and `tolerations` alone.
+draining, full, or incompatible catalog on that path. A non-empty selector
+with the default machine type is the bounded fallback to plain `nodeSelector`
+and `tolerations`.
 
 The module can retain a draining profile and requires an explicit retirement
 acknowledgement before it removes a pool recorded as in use. Terraform owns the

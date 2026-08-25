@@ -7,11 +7,11 @@ usage() {
 Usage: apps/lumen/build.sh <debug|release>
 
 debug    Build lumen and install target/debug/lumen to ~/.cargo/bin/lumen.
-release  Build/install lumen, create a release commit, and print the tag to push after git:land.
+release  Prepare the local release candidate and print the next candidate workflow step.
 
 Note: this is the LOCAL/host dev install. Cross-platform release binaries
-(macOS arm64 + Linux x64/arm64) are built by .github/workflows/lumen-release.yml
-when the lumen@<version> tag is pushed.
+(macOS arm64 + Linux x64/arm64) are built by the candidate workflow after
+git land main.
 EOF
 }
 
@@ -95,21 +95,15 @@ fi
 
 VERSION_FILES=(apps/lumen/Cargo.toml)
 CURRENT_VERSION="$(project_build_read_version apps/lumen/Cargo.toml)"
-export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
-project_build_prepare_release_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
-sync_lumen_release_image_pins "$PROJECT_BUILD_RELEASE_VERSION" \
+sync_lumen_release_image_pins "$CURRENT_VERSION" \
   apps/lumen/k8s/base/deployment.yaml \
   apps/lumen/k8s/operator/deployment.yaml
 
-cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p lumen --bin lumen --features release
+cargo build --release --locked -p lumen --bin lumen --features release
 target/release/lumen spec --format openapi > apps/lumen/clients/openapi.json
 cargo test -p lumen --test spec_cli openapi_committed_snapshot_matches_live_generation -- --exact
 install_lumen release
 
-TAG="${PROJECT_BUILD_RELEASE_TAG}"
-git add Cargo.lock apps/lumen
-git commit --allow-empty -m "release(lumen): ${TAG}"
-
-project_build_print_release_next_steps lumen "$TAG"
+echo "Local release preparation complete for lumen@${CURRENT_VERSION}."
+echo "Next: git land main, then run lumen-release-candidate from main."
 # CODEGEN-END

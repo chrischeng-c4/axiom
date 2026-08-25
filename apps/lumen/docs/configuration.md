@@ -65,8 +65,11 @@ security paths, command, and required environment values. A direct namespaced
 `Lumen` object bypasses Fleet merging, but it uses the same operator rendering
 and validation.
 
-Current placement also requires `placement.initialMachineType` and the shared
-capacity catalog. These are legacy compatibility inputs. The planned
+Current placement uses a compatibility split. A non-empty
+`placement.nodeSelector` with the default `placement.initialMachineType` uses
+the Kubernetes-native compatibility path and does not read the capacity
+catalog. Empty selectors, tolerations-only placement, and a non-default
+machine type use the legacy catalog. These are compatibility inputs. The planned
 [Kubernetes-native placement](../ROADMAP.md#kubernetes-native-placement) uses
 resource requests, StorageClass, selectors, tolerations, and topology intent.
 GKE ComputeClass selection belongs to the GKE profile, not to a portable GCE
@@ -122,7 +125,7 @@ map, but that mechanism is not a general runtime-configuration rollout.
 
 | Setting | Current rule |
 |---|---|
-| `placement.initialMachineType` | Treated as create-time placement input by the current capacity workflow. |
+| `placement.initialMachineType` | Create-time input for the legacy catalog path. The default value is retained with a non-empty `nodeSelector` on the compatibility path. |
 | StatefulSet volume claim template | Kubernetes does not update existing PVC size from a template edit. The resize command can grow an expandable PVC. Shrink is unsupported. |
 | `shardCount`, `shardMap`, `reshardPolicy.workflow` after Fleet creation | The Lumen reshard driver owns these paths. Fleet omits them from steady-state apply. |
 | Existing collection field type | Drop and recreate the field. Online schema extension only adds fields. |

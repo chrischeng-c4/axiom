@@ -81,11 +81,13 @@ ComputeClass object. A GKE installation profile maps the portable intent to
 platform configuration. Other Kubernetes platforms can supply a different
 profile without changing Lumen's search contract.
 
-Current Managed reconciliation is not at this target. It reads the
-`lumen-system/lumen-capacity-catalog` ConfigMap and resolves
-`placement.initialMachineType`. Those fields are legacy compatibility inputs.
-Existing manifests must keep materializing while new manifests move to the
-portable placement contract.
+Current Managed reconciliation has a bounded compatibility path. A non-empty
+`placement.nodeSelector` with the default machine type renders that selector
+and its tolerations directly, without reading the catalog. Empty selectors,
+tolerations-only placement, and non-default machine types still read
+`lumen-system/lumen-capacity-catalog` and resolve `placement.initialMachineType`.
+These fields remain legacy compatibility inputs. Existing manifests must keep
+materializing while new manifests move to the full portable placement contract.
 
 Cluster, namespace, ComputeClass, node-pool, StorageClass, issuer, bucket, and
 monitoring-backend lifecycle stays with the platform. Lumen owns the search
@@ -210,7 +212,8 @@ row for the regional profile.
 - GKE Standard Regional is the selected production target, not a current
   support claim.
 - The current live GKE harness is zonal.
-- Current Managed instances require the GCE-specific capacity catalog.
+- Legacy Managed placement cases require the GCE-specific capacity catalog.
+- The bounded native compatibility path supports a non-empty selector with the default machine type.
 - Current placement does not prove per-shard three-zone distribution.
 - Current PDB settings do not make application rollouts quorum-aware.
 - Current leaf certificates and Secrets are supplied outside Fleet.

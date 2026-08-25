@@ -95,12 +95,18 @@ docs-only change does not claim that product gates ran.
 | default features and refusal paths | `cargo test -p lumen` |
 | operator and delegated-auth e2e targets | `cargo test -p lumen --features "operator delegated-auth"` |
 | release feature set | `cargo test -p lumen --locked --features release --test release_feature_set` |
+| landed-main release candidate oracle | `cargo test -p lumen --test release_candidate` |
+| protected-tag promotion oracle | `cargo test -p lumen --test release_promotion` |
+| full candidate verifier | `apps/lumen/scripts/verify-release-candidate.sh --repo chrischeng-c4/axiom --version <version> --commit <commit> --run-id <id> --run-attempt <attempt> --manifest <path> --manifest-sidecar <path> --artifacts-dir <path> --image <image> --candidate-tag <tag> --amd64-digest <digest> --arm64-digest <digest> --mode full` |
+| public release verifier | `apps/lumen/scripts/verify-release-artifacts.sh --repo chrischeng-c4/axiom --tag lumen@<version> --commit <commit> --candidate-run-id <id> --mode public --output <path>` |
 | standalone container bind smoke | `bash apps/lumen/scripts/standalone-container-smoke.sh bind` |
 
-All four rows are required for a full Lumen behavior claim. None is a superset
+All eight rows are required for a full Lumen behavior claim. None is a superset
 of the others. Do not replace the second or third row with `--all-features`;
 enabling `jieba` changes the behavior that the fallback test is meant to check.
 
-Run narrower named tests during development. Run all four rows before claiming
-that an app behavior change is complete. Use the exact capability gates in the
-README when the claim is narrower or requires a live-cluster script.
+Run narrower named tests during development. Run each of the eight gates at its
+applicable candidate or promotion lifecycle stage before claiming that a release
+is complete. Run the public verifier only after publication. Use the exact
+capability gates in the README when the claim is narrower or requires a
+live-cluster script.
