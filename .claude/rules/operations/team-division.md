@@ -27,6 +27,10 @@ cheap, and every step that needs a human runs where a human can answer.
   (`leg.LEG_TEST_FILES`) refuses the logic phase touching a test file. Weak
   self-serving unit tests are caught by the planner's independent e2e cases
   and by `/aw:codex-code-review`, which the dev runs as a verbatim pipe.
+- The model tiers above are defaults, not ceilings. For a hard case the
+  controller may raise the model at dispatch time via the Agent call's `model`
+  override — planner to opus, dev to sonnet — without editing the agent
+  definitions. Phase ownership does not move with the model.
 - `<app>-research` (opus/max, read-only) is optional and rarely dispatched:
   a long read-only investigation the controller does not want in its own
   context. It may also run `/aw:meta-check` and `/aw:prepare-goal` Route A;
