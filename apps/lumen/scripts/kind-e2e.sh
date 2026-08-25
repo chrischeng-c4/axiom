@@ -66,6 +66,7 @@ DOC_COUNT="${LUMEN_E2E_DOC_COUNT:-10000}"
 BATCH_SIZE=1000
 
 FIXTURE_FILE=""
+INDEX_BODIES=()
 IMAGE_TAG="${LUMEN_E2E_IMAGE:-lumen:latest}"
 IMAGE_MODE="${LUMEN_E2E_IMAGE_MODE:-local}"
 
@@ -113,11 +114,16 @@ step() {
 # Cleanup on exit
 # ---------------------------------------------------------------------------
 
+cleanup_fixture_files() {
+  local fixture="$1"
+  if [[ -n "$fixture" ]]; then
+    rm -f "$fixture" "${fixture%.json}".req.*.json
+  fi
+}
+
 cleanup() {
   local ec=$?
-  if [[ -n "$FIXTURE_FILE" ]]; then
-    rm -f "$FIXTURE_FILE" "${FIXTURE_FILE%.json}".req.*.json
-  fi
+  cleanup_fixture_files "$FIXTURE_FILE"
   if [[ "${LUMEN_KEEP_CLUSTER:-0}" != "1" ]]; then
     kind delete cluster --name "$CLUSTER_NAME" >/dev/null 2>&1 || true
   fi
@@ -128,6 +134,12 @@ trap cleanup EXIT INT TERM
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+discover_fixture_bodies() {
+  shopt -s nullglob
+  INDEX_BODIES=( "${FIXTURE_FILE%.json}".req.*.json )
+  shopt -u nullglob
+}
 
 # Poll until ≥1 pod matches the label (so a subsequent `kubectl wait` does not
 # error with "no matching resources" — the operator creates the workload a beat
@@ -587,9 +599,7 @@ step "4c. generate ${DOC_COUNT}-doc fixture (batched ≤${BATCH_SIZE} items/req)
 # The fixture script emits one NDJSON doc per line *and* one or more batched
 # IndexRequest bodies (<fixture>.req.000.json, .001.json, …). POST each in
 # order — a real bulk client batches within the per-request item cap.
-shopt -s nullglob
-INDEX_BODIES=( "${FIXTURE_FILE%.json}".req.*.json )
-shopt -u nullglob
+discover_fixture_bodies
 if [[ ${#INDEX_BODIES[@]} -eq 0 ]]; then
   echo "!! fixture script emitted no request bodies" >&2
   exit 1
