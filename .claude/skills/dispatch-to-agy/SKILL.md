@@ -16,7 +16,7 @@ controller-only acceptance stay exactly as that skill defines them.
 ## Rules
 
 - One persistent AGY Project is one persistent worktree: `main`, `app/<name>`,
-  `lib/<name>`, `project-mamba`, or `project-lumen`
+  `lib/<name>`, `project-mamba`, `project-lumen`, or `examples`
   (`.claude/rules/operations/persistent-branches.md`). Resolve every task's
   target Project before scheduling it.
 - Classify every task exactly as `references/lifecycle.md` phase 0 does:
@@ -65,7 +65,7 @@ it and tell the user what is missing.
 
 For each authorized task, record:
 - `project` — the persistent worktree it targets (`app/<name>`, `lib/<name>`,
-  `project-mamba`, `project-lumen`, or `main`).
+  `project-mamba`, `project-lumen`, `examples`, or `main`).
 - `mode` — `bounded-write` or `measure-only`, per the Rules above.
 
 ### Step 3: Build the concurrency plan
