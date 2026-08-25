@@ -35,16 +35,17 @@ IMAGE="ghcr.io/chrischeng-c4/lumen@${RAW_DIGEST}"
 printf '%s\n' "$IMAGE" > lumen-image.ref
 ```
 
-Verify the host binary checksum and version, release identity, image signature,
-and supply chain attestations before deployment:
+Create one protected annotated `lumen@<version>` tag at the exact candidate
+commit before promotion. Then verify the public release before deployment:
 
 ```bash
 apps/lumen/scripts/verify-release-artifacts.sh \
   --repo chrischeng-c4/axiom \
   --tag lumen@<version> \
   --commit <commit> \
-  --image "$IMAGE" \
-  --release-state published
+  --candidate-run-id <id> \
+  --mode public \
+  --output /tmp/lumen-public-release.json
 ```
 
 Each release image carries a keyless Cosign signature and SLSA v1 provenance on the
@@ -116,11 +117,13 @@ creating an instance:
 
 - A cluster that can run the operator and StatefulSets.
 - Target namespaces for every Fleet entry. The operator does not create them.
-- The current legacy GCE capacity catalog at
-  `lumen-system/lumen-capacity-catalog`. Every current Managed reconcile reads
-  it.
-- A catalog entry compatible with each instance's
+- The legacy GCE capacity catalog at `lumen-system/lumen-capacity-catalog`
+  when using an empty selector, tolerations-only placement, or a non-default
   `placement.initialMachineType`.
+- A catalog entry compatible with each legacy instance's
+  `placement.initialMachineType`. A non-empty `placement.nodeSelector` with
+  the default machine type uses the compatibility path and keeps the selector
+  and tolerations from the manifest.
 - A serving TLS Secret when `servingTlsSecret` is set.
 - A peer TLS Secret when `replicasPerShard` is greater than one.
 - Any StorageClass, ServiceAccount, monitoring CRDs, and backup destination
@@ -168,7 +171,8 @@ kubectl apply -f /tmp/lumen-install/crd.yaml
 kubectl apply -f /tmp/lumen-install/operator.yaml
 ```
 
-Confirm the two operator replicas and the capacity catalog:
+Confirm the two operator replicas. Confirm the capacity catalog too when the
+instance uses the legacy placement path:
 
 ```bash
 kubectl -n lumen-system rollout status deploy/lumen-operator

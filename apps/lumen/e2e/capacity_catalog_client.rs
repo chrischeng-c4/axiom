@@ -7,12 +7,15 @@
 //! direct literal values.
 
 use std::convert::Infallible;
+use std::sync::{Arc, Mutex};
 
 use axum::http::{Request, Response, StatusCode};
 use kube::client::Body;
 use kube::Client;
 use lumen::operator::capacity::{fetch_capacity_catalog, RejectionReason};
+use lumen::operator::Lumen;
 use serde_json::json;
+use service_k8s::ManagedService;
 use tower::service_fn;
 
 fn stub_client(status: StatusCode, body: serde_json::Value) -> Client {
@@ -29,6 +32,172 @@ fn stub_client(status: StatusCode, body: serde_json::Value) -> Client {
         }
     });
     Client::new(service, "default")
+}
+
+fn recording_client(catalog_status: StatusCode) -> (Client, Arc<Mutex<Vec<(String, String)>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    let service = service_fn(move |req: Request<Body>| {
+        let seen = seen.clone();
+        async move {
+            let method = req.method().to_string();
+            let path = req.uri().path().to_string();
+            seen.lock().unwrap().push((method.clone(), path.clone()));
+            let (status, body) = if method == "PATCH" {
+                (
+                    StatusCode::OK,
+                    json!({
+                        "apiVersion": "rbac.authorization.k8s.io/v1",
+                        "kind": "ClusterRoleBinding",
+                        "metadata": {"name": "auth-delegation"}
+                    }),
+                )
+            } else {
+                (
+                    catalog_status,
+                    json!({
+                        "apiVersion": "v1",
+                        "kind": "Status",
+                        "status": "Failure",
+                        "message": "configmaps \\\"lumen-capacity-catalog\\\" not found",
+                        "reason": "NotFound",
+                        "code": 404
+                    }),
+                )
+            };
+            let response = Response::builder()
+                .status(status)
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap();
+            Ok::<_, Infallible>(response)
+        }
+    });
+    (Client::new(service, "default"), requests)
+}
+
+fn reconcile_lumen(placement: serde_json::Value) -> Lumen {
+    serde_json::from_value(json!({
+        "apiVersion": "lumen.dev/v1alpha1",
+        "kind": "Lumen",
+        "metadata": {"name": "search", "namespace": "acme", "uid": "uid-1234"},
+        "spec": {"image": "lumen:test", "placement": placement}
+    }))
+    .expect("valid test Lumen")
+}
+
+#[tokio::test]
+async fn reconcile_plan_native_selector_skips_catalog_and_preserves_placement() {
+    let (client, requests) = recording_client(StatusCode::NOT_FOUND);
+    let expected_tolerations = json!([{
+        "key": "dedicated",
+        "operator": "Equal",
+        "value": "lumen",
+        "effect": "NoSchedule"
+    }]);
+    let lumen = reconcile_lumen(json!({
+        "nodeSelector": {"cloud.google.com/gke-nodepool": "lumen-ssd"},
+        "tolerations": expected_tolerations.clone()
+    }));
+    let plan = lumen.reconcile_plan(client).await.expect("native plan");
+
+    let seen = requests.lock().unwrap().clone();
+    assert!(seen.iter().any(|(method, _)| method == "PATCH"));
+    assert!(
+        !seen
+            .iter()
+            .any(|(method, path)| method == "GET" && path.contains("configmaps")),
+        "native placement must not read the catalog: {seen:?}"
+    );
+    let statefulset = plan
+        .children
+        .iter()
+        .find(|child| child["kind"] == "StatefulSet")
+        .unwrap_or_else(|| {
+            panic!(
+                "native plan did not render a StatefulSet; kinds: {:?}",
+                plan.children
+                    .iter()
+                    .map(|child| child["kind"].clone())
+                    .collect::<Vec<_>>()
+            )
+        });
+    let pod = &statefulset["spec"]["template"]["spec"];
+    assert_eq!(
+        pod["nodeSelector"],
+        json!({"cloud.google.com/gke-nodepool": "lumen-ssd"})
+    );
+    assert_eq!(pod["tolerations"], expected_tolerations);
+}
+
+#[tokio::test]
+async fn reconcile_plan_empty_selector_keeps_catalog_failure_on_legacy_path() {
+    let (client, requests) = recording_client(StatusCode::NOT_FOUND);
+    let lumen = reconcile_lumen(json!({}));
+    let error = match lumen.reconcile_plan(client).await {
+        Ok(_) => panic!("empty selector must require the catalog"),
+        Err(error) => error,
+    };
+    let seen = requests.lock().unwrap().clone();
+    assert!(seen.iter().any(|(method, _)| method == "PATCH"));
+    assert!(
+        seen.iter()
+            .any(|(method, path)| method == "GET" && path.contains("configmaps")),
+        "legacy path must GET the catalog: {seen:?}"
+    );
+    assert!(error
+        .to_string()
+        .contains("failed to read capacity catalog ConfigMap"));
+}
+
+#[tokio::test]
+async fn reconcile_plan_tolerations_only_keeps_catalog_failure_on_legacy_path() {
+    let (client, requests) = recording_client(StatusCode::NOT_FOUND);
+    let lumen = reconcile_lumen(json!({
+        "tolerations": [{
+            "key": "dedicated",
+            "operator": "Equal",
+            "value": "lumen",
+            "effect": "NoSchedule"
+        }]
+    }));
+    let error = match lumen.reconcile_plan(client).await {
+        Ok(_) => panic!("tolerations-only placement must require the catalog"),
+        Err(error) => error,
+    };
+    let seen = requests.lock().unwrap().clone();
+    assert!(seen.iter().any(|(method, _)| method == "PATCH"));
+    assert!(
+        seen.iter()
+            .any(|(method, path)| method == "GET" && path.contains("configmaps")),
+        "tolerations-only placement must GET the catalog: {seen:?}"
+    );
+    assert!(error
+        .to_string()
+        .contains("failed to read capacity catalog ConfigMap"));
+}
+
+#[tokio::test]
+async fn reconcile_plan_non_default_machine_type_keeps_catalog_failure_on_legacy_path() {
+    let (client, requests) = recording_client(StatusCode::NOT_FOUND);
+    let lumen = reconcile_lumen(json!({
+        "initialMachineType": "n2-standard-4",
+        "nodeSelector": {"cloud.google.com/gke-nodepool": "lumen-ssd"}
+    }));
+    let error = match lumen.reconcile_plan(client).await {
+        Ok(_) => panic!("non-default machine type must require the catalog"),
+        Err(error) => error,
+    };
+    let seen = requests.lock().unwrap().clone();
+    assert!(seen.iter().any(|(method, _)| method == "PATCH"));
+    assert!(
+        seen.iter()
+            .any(|(method, path)| method == "GET" && path.contains("configmaps")),
+        "non-default machine type must GET the catalog: {seen:?}"
+    );
+    assert!(error
+        .to_string()
+        .contains("failed to read capacity catalog ConfigMap"));
 }
 
 #[tokio::test]

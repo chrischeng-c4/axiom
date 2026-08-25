@@ -1,337 +1,280 @@
 #!/usr/bin/env bash
+# Verify a Lumen promotion. This script never creates or changes a tag, image,
+# release, signature, provenance, or attestation.
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 --repo <owner/repo> --tag <lumen@semver> --commit <40-hex> --image <ghcr-image@sha256:64-hex> --release-state <draft|published>" >&2
-  exit 1
+  cat >&2 <<'EOF'
+Usage: verify-release-artifacts.sh \
+  --repo <owner/repo> --tag <lumen@semver> --commit <40-hex> \
+  --candidate-run-id <id> --mode <candidate|fixture|public> \
+  [--candidate-receipt-dir <dir> --release-assets-dir <dir> --output <path>]
+
+candidate: prove the immutable tag, tag ruleset, candidate run, receipt, image,
+and existing attestations. fixture: compare supplied candidate and release bytes
+without network access. public: also verify the published GitHub Release.
+EOF
+  exit 2
 }
 
-verify_downloaded_binary_assets() {
-  local download_dir="$1"
-  local host_target="$2"
-  local tag="$3"
-  local target asset checksum expected listed extra actual
+fail() { printf '%s\n' "$*" >&2; exit 1; }
+require_file() { [[ -f "$1" && ! -L "$1" ]] || fail "required regular file is absent: $1"; }
+sha256_file() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
 
-  for target in \
-    aarch64-apple-darwin \
-    x86_64-unknown-linux-gnu \
-    aarch64-unknown-linux-gnu \
-    x86_64-unknown-linux-musl \
-    aarch64-unknown-linux-musl
-  do
-    asset="lumen-${target}.tar.gz"
-    checksum="${asset}.sha256"
-    [[ -f "$download_dir/$asset" && -f "$download_dir/$checksum" ]] || {
-      echo "downloaded release pair is incomplete: $asset" >&2
-      return 1
-    }
-    if ! read -r expected listed extra <"$download_dir/$checksum"; then
-      echo "cannot read checksum sidecar: $checksum" >&2
-      return 1
-    fi
-    [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$listed" == "$asset" && -z "${extra:-}" ]] || {
-      echo "invalid checksum sidecar: $checksum" >&2
-      return 1
-    }
-    expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
-    if command -v sha256sum >/dev/null 2>&1; then
-      actual="$(sha256sum "$download_dir/$asset" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-      actual="$(shasum -a 256 "$download_dir/$asset" | awk '{print $1}')"
-    else
-      echo "missing sha256sum or shasum" >&2
-      return 1
-    fi
-    [[ "$actual" == "$expected" ]] || {
-      echo "release checksum mismatch: $asset" >&2
-      return 1
-    }
+image_digest_or_absent() {
+  local ref="$1" error manifest status
+  error="$(mktemp)"
+  set +e
+  manifest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2>"$error")"
+  status=$?
+  set -e
+  if [[ "$status" == 0 ]]; then
+    rm -f "$error"
+    jq -er '.digest' <<<"$manifest"
+    return 0
+  fi
+  if grep -Eqi 'manifest unknown|not found' "$error"; then
+    rm -f "$error"
+    return 0
+  fi
+  cat "$error" >&2
+  rm -f "$error"
+  fail "cannot prove GHCR image state: $ref"
+}
 
-    local expected_members actual_members binary_mode
-    expected_members="$(printf '%s\n' \
-      "lumen-${target}/" \
-      "lumen-${target}/README.md" \
-      "lumen-${target}/lumen" | LC_ALL=C sort)"
-    if ! actual_members="$(tar -tzf "$download_dir/$asset" | LC_ALL=C sort)"; then
-      echo "release archive cannot be listed: $asset" >&2
-      return 1
-    fi
-    [[ "$actual_members" == "$expected_members" ]] || {
-      echo "release archive members changed: $asset" >&2
-      return 1
-    }
-    if ! binary_mode="$(tar -tvzf "$download_dir/$asset" | awk -v path="lumen-${target}/lumen" '$NF == path { print $1 }')"; then
-      echo "release binary metadata cannot be read: $asset" >&2
-      return 1
-    fi
-    [[ "$binary_mode" =~ ^-.{2}x ]] || {
-      echo "release archive binary is not a regular executable: $asset" >&2
-      return 1
-    }
+targets() {
+  cat <<'EOF'
+aarch64-apple-darwin
+x86_64-unknown-linux-gnu
+aarch64-unknown-linux-gnu
+x86_64-unknown-linux-musl
+aarch64-unknown-linux-musl
+EOF
+}
+
+host_target() {
+  case "$(uname -s):$(uname -m)" in
+    Darwin:arm64|Darwin:aarch64) printf '%s\n' aarch64-apple-darwin ;;
+    Linux:x86_64|Linux:amd64) printf '%s\n' x86_64-unknown-linux-gnu ;;
+    Linux:aarch64|Linux:arm64) printf '%s\n' aarch64-unknown-linux-gnu ;;
+    *) fail "unsupported verifier host: $(uname -s) $(uname -m)" ;;
+  esac
+}
+
+validate_receipt() {
+  local manifest="$1" sidecar="$2" receipt_dir="$3" actual expected name extra target archive sidecar_name
+  require_file "$manifest"; require_file "$sidecar"
+  actual="$(sha256_file "$manifest")"
+  read -r expected name extra <"$sidecar" || fail "cannot read final receipt sidecar"
+  [[ "$expected" == "$actual" && "$name" == "${manifest##*/}" && -z "${extra:-}" ]] || fail "final receipt sidecar does not bind exact bytes"
+  jq -e --arg repo "$REPO" --arg tag "$TAG" --arg commit "$COMMIT" --arg run "$CANDIDATE_RUN_ID" '
+    (keys | sort) == ["artifacts","candidate_tag","commit","image","jobs","pr","repository","run_attempt","run_id","run_url","sboms","schema","source_ref","tag","version","workflow_id","workflow_path","workflow_ref"] and
+    .schema == "cclab.lumen.candidate-manifest.v2" and .repository == $repo and .tag == $tag and .commit == $commit and
+    .run_id == $run and .source_ref == "refs/heads/main" and .workflow_path == ".github/workflows/lumen-release-candidate.yml" and
+    .workflow_ref == ($repo + "/.github/workflows/lumen-release-candidate.yml@refs/heads/main") and
+    .run_url == ("https://github.com/" + $repo + "/actions/runs/" + .run_id + "/attempts/" + .run_attempt) and
+    .jobs == {identity:"success",build:"success",manifest:"success","ghcr-image-and-attest":"success","verify-candidate":"success","kind-amd64":"success","kind-arm64":"success",result:"success"} and
+    (.image | (
+      (keys | sort) == ["amd64_digest","arm64_digest","repository","root_digest"] and
+      .repository == "ghcr.io/chrischeng-c4/lumen" and
+      ([.root_digest,.amd64_digest,.arm64_digest] | all(test("^sha256:[0-9a-f]{64}$")))
+    )) and
+    (.artifacts | type == "array" and length == 5 and all(.[]; .archive == ("lumen-" + .target + ".tar.gz") and .sidecar == (.archive + ".sha256") and (.archive_sha256 | test("^[0-9a-f]{64}$")) and (.sidecar_sha256 | test("^[0-9a-f]{64}$")))) and
+    (.sboms.amd64.file == "spdx-amd64.json" and (.sboms.amd64.sha256 | test("^[0-9a-f]{64}$")) and .sboms.arm64.file == "spdx-arm64.json" and (.sboms.arm64.sha256 | test("^[0-9a-f]{64}$")))
+  ' "$manifest" >/dev/null || fail "candidate final receipt contract changed"
+  while IFS= read -r target; do
+    archive="$(jq -er --arg t "$target" '.artifacts[] | select(.target == $t) | .archive' "$manifest")"
+    sidecar_name="$(jq -er --arg t "$target" '.artifacts[] | select(.target == $t) | .sidecar' "$manifest")"
+    require_file "$receipt_dir/$archive"; require_file "$receipt_dir/$sidecar_name"
+    [[ "$(sha256_file "$receipt_dir/$archive")" == "$(jq -er --arg t "$target" '.artifacts[] | select(.target == $t) | .archive_sha256' "$manifest")" ]] || fail "candidate archive hash mismatch: $archive"
+    [[ "$(sha256_file "$receipt_dir/$sidecar_name")" == "$(jq -er --arg t "$target" '.artifacts[] | select(.target == $t) | .sidecar_sha256' "$manifest")" ]] || fail "candidate checksum-sidecar hash mismatch: $sidecar_name"
+  done < <(targets)
+  for target in amd64 arm64; do
+    require_file "$receipt_dir/spdx-${target}.json"
+    [[ "$(sha256_file "$receipt_dir/spdx-${target}.json")" == "$(jq -er --arg t "$target" '.sboms[$t].sha256' "$manifest")" ]] || fail "candidate SPDX hash mismatch: $target"
+    jq -e '.spdxVersion == "SPDX-2.3"' "$receipt_dir/spdx-${target}.json" >/dev/null || fail "candidate SPDX is invalid: $target"
   done
-
-  local host_asset="lumen-${host_target}.tar.gz"
-  local unpack_dir="$download_dir/unpacked"
-  local downloaded_binary downloaded_version expected_version
-  if ! mkdir "$unpack_dir" || ! tar -xzf "$download_dir/$host_asset" -C "$unpack_dir"; then
-    echo "release host archive cannot be extracted: $host_asset" >&2
-    return 1
-  fi
-  downloaded_binary="$unpack_dir/lumen-${host_target}/lumen"
-  [[ -f "$downloaded_binary" && -x "$downloaded_binary" ]] || {
-    echo "release archive does not contain an executable lumen binary" >&2
-    return 1
-  }
-  if ! downloaded_version="$("$downloaded_binary" --version)"; then
-    echo "downloaded binary did not report a version" >&2
-    return 1
-  fi
-  expected_version="lumen ${tag#lumen@}"
-  [[ "$downloaded_version" == "$expected_version" ]] || {
-    echo "downloaded binary version mismatch: expected '$expected_version', got '$downloaded_version'" >&2
-    return 1
-  }
-  printf '%s\n' "$downloaded_version"
 }
 
-verify_release_asset_inventory() {
-  local release_json="$1"
-  local target expected_binary_assets actual_binary_assets
-
-  expected_binary_assets="$({
-    for target in \
-      aarch64-apple-darwin \
-      x86_64-unknown-linux-gnu \
-      aarch64-unknown-linux-gnu \
-      x86_64-unknown-linux-musl \
-      aarch64-unknown-linux-musl
-    do
-      printf 'lumen-%s.tar.gz\nlumen-%s.tar.gz.sha256\n' "$target" "$target"
-    done
-  } | LC_ALL=C sort)"
-  if ! actual_binary_assets="$(
-    jq -er '.assets[].name | select(test("^lumen-.*\\.tar\\.gz(\\.sha256)?$"))' \
-      <<<"$release_json" | LC_ALL=C sort
-  )"; then
-    echo "release binary asset inventory cannot be read" >&2
-    return 1
-  fi
-  [[ "$actual_binary_assets" == "$expected_binary_assets" ]] || {
-    echo "release binary asset set is not the exact five archive/checksum pairs" >&2
-    return 1
-  }
+verify_archive_pair() {
+  local dir="$1" target="$2" archive="lumen-${2}.tar.gz" sidecar="lumen-${2}.tar.gz.sha256" expected listed extra actual members mode
+  require_file "$dir/$archive"; require_file "$dir/$sidecar"
+  read -r expected listed extra <"$dir/$sidecar" || fail "cannot read release checksum: $sidecar"
+  actual="$(sha256_file "$dir/$archive")"
+  [[ "$expected" == "$actual" && "$listed" == "$archive" && -z "${extra:-}" ]] || fail "release checksum mismatch: $archive"
+  members="$(tar -tzf "$dir/$archive" | LC_ALL=C sort)" || fail "cannot list release archive: $archive"
+  [[ "$members" == "$(printf '%s\n' "lumen-${target}/" "lumen-${target}/README.md" "lumen-${target}/lumen" | LC_ALL=C sort)" ]] || fail "release archive members changed: $archive"
+  mode="$(tar -tvzf "$dir/$archive" | awk -v path="lumen-${target}/lumen" '$NF == path { print $1 }')" || fail "cannot read release binary mode: $archive"
+  [[ "$mode" =~ ^-.{2}x ]] || fail "release binary is not executable: $archive"
 }
 
-if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
-  return 0
-fi
+verify_release_assets_against_receipt() {
+  local receipt_dir release_dir manifest expected actual target archive sidecar host private_home unpack binary version
+  receipt_dir="$1"; release_dir="$2"; manifest="$receipt_dir/final-candidate-manifest.json"
+  expected="$({ while IFS= read -r target; do printf 'lumen-%s.tar.gz\nlumen-%s.tar.gz.sha256\n' "$target" "$target"; done < <(targets); printf 'spdx-amd64.json\nspdx-arm64.json\n'; } | LC_ALL=C sort)"
+  actual="$(find "$release_dir" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)"
+  [[ "$actual" == "$expected" ]] || fail "public release assets are not the exact receipt asset set"
+  while IFS= read -r target; do
+    archive="lumen-${target}.tar.gz"
+    sidecar="${archive}.sha256"
+    verify_archive_pair "$release_dir" "$target"
+    [[ "$(sha256_file "$release_dir/$archive")" == "$(jq -er --arg t "$target" '.artifacts[] | select(.target == $t) | .archive_sha256' "$manifest")" ]] || fail "public archive hash differs from final candidate receipt: $archive"
+    [[ "$(sha256_file "$release_dir/$sidecar")" == "$(jq -er --arg t "$target" '.artifacts[] | select(.target == $t) | .sidecar_sha256' "$manifest")" ]] || fail "public checksum-sidecar hash differs from final candidate receipt: $sidecar"
+  done < <(targets)
+  for target in amd64 arm64; do
+    jq -en --slurpfile candidate "$receipt_dir/spdx-${target}.json" --slurpfile release "$release_dir/spdx-${target}.json" '$candidate[0] == $release[0]' >/dev/null || fail "published SPDX bytes differ from candidate: $target"
+  done
+  host="$(host_target)"; private_home="$(mktemp -d)"; unpack="$(mktemp -d)"
+  trap 'rm -rf "${private_home:-}" "${unpack:-}"' RETURN
+  tar -xzf "$release_dir/lumen-${host}.tar.gz" -C "$unpack"
+  binary="$unpack/lumen-${host}/lumen"
+  [[ -x "$binary" ]] || fail "host binary is missing from public asset"
+  version="$(env -i HOME="$private_home" PATH="$PATH" TMPDIR="$private_home" "$binary" --version)" || fail "public host binary cannot report version"
+  [[ "$version" == "lumen ${TAG#lumen@}" ]] || fail "public host binary version mismatch: $version"
+  [[ ! -e "$private_home/.aws" && ! -e "$private_home/.config/gcloud" ]] || fail "public host binary wrote credential state"
+  rm -rf "$private_home" "$unpack"; trap - RETURN
+}
 
-REPO=""
-TAG=""
-COMMIT=""
-IMAGE=""
-RELEASE_STATE=""
+verify_annotated_tag_and_ruleset() {
+  local encoded_tag ref tag_object rulesets details id
+  encoded_tag="${TAG/@/%40}"
+  ref="$(gh api "repos/${REPO}/git/ref/tags/${encoded_tag}")"
+  [[ "$(jq -r '.object.type' <<<"$ref")" == tag ]] || fail "release tag is not annotated"
+  tag_object="$(gh api "repos/${REPO}/git/tags/$(jq -er '.object.sha' <<<"$ref")")"
+  [[ "$(jq -r '.object.type' <<<"$tag_object")" == commit && "$(jq -r '.object.sha' <<<"$tag_object")" == "$COMMIT" ]] || fail "annotated tag does not peel to the exact candidate commit"
+  rulesets='[]'
+  while IFS= read -r id; do
+    details="$(gh api "repos/${REPO}/rulesets/${id}")"
+    rulesets="$(jq -c --argjson detail "$details" '. + [$detail]' <<<"$rulesets")"
+  done < <(gh api --paginate "repos/${REPO}/rulesets?per_page=100" | jq -r '.[] | .id')
+  jq -e '
+    any(.[];
+      .target == "tag" and .enforcement == "active" and
+      (.conditions.ref_name.include == ["refs/tags/lumen@*"]) and
+      ((.conditions.ref_name.exclude // []) == []) and
+      ([.rules[].type] | sort == ["deletion","update"]) and
+      ((.bypass_actors // []) | length == 0))
+  ' <<<"$rulesets" >/dev/null || fail "exact active immutable lumen tag ruleset is absent"
+}
 
+fetch_candidate_receipt() {
+  local run attempt candidate_workflow_id jobs artifact_name artifacts artifact_id zip
+  run="$(gh api "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}")"
+  attempt="$(jq -er '.run_attempt' <<<"$run")"
+  candidate_workflow_id="$(gh api "repos/${REPO}/actions/workflows/lumen-release-candidate.yml" --jq '.id')"
+  jq -e --arg commit "$COMMIT" --argjson workflow "$candidate_workflow_id" '
+    .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success" and
+    .head_branch == "main" and .head_sha == $commit and .workflow_id == $workflow and
+    .head_repository.full_name == "chrischeng-c4/axiom"
+  ' <<<"$run" >/dev/null || fail "candidate run identity or conclusion changed"
+  jobs="$(gh api --paginate "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}/attempts/${attempt}/jobs?filter=latest&per_page=100" | jq -cs '[.[][]]')"
+  jq -e '
+    length == 12 and all(.[]; .status == "completed" and .conclusion == "success") and
+    ([.[].name] | sort == ["bind candidate inputs","build (aarch64-apple-darwin)","build (aarch64-unknown-linux-gnu)","build (aarch64-unknown-linux-musl)","build (x86_64-unknown-linux-gnu)","build (x86_64-unknown-linux-musl)","build candidate image and attest","candidate identity","final candidate receipt","kind e2e (amd64)","kind e2e (arm64)","verify exact candidate gates"])
+  ' <<<"$jobs" >/dev/null || fail "candidate attempt does not contain the exact successful execution set"
+  artifact_name="lumen-release-candidate-${CANDIDATE_RUN_ID}-${attempt}"
+  artifacts="$(gh api --paginate "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}/artifacts?per_page=100" | jq -cs '[.[][].artifacts[]]')"
+  artifact_id="$(jq -er --arg name "$artifact_name" '[.[] | select(.name == $name and .expired == false)] | if length == 1 then .[0].id else error("exact receipt artifact absent") end' <<<"$artifacts")"
+  zip="$(mktemp)"
+  gh api -H 'Accept: application/vnd.github+json' "repos/${REPO}/actions/artifacts/${artifact_id}/zip" >"$zip"
+  mkdir -p "$CANDIDATE_RECEIPT_DIR"
+  unzip -q "$zip" -d "$CANDIDATE_RECEIPT_DIR"
+  rm -f "$zip"
+  CANDIDATE_ATTEMPT="$attempt"
+  validate_receipt "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json" "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json.sha256" "$CANDIDATE_RECEIPT_DIR"
+}
+
+verify_candidate_supply_chain() {
+  local manifest="$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json" root amd64 arm64 candidate_tag
+  root="$(jq -er '.image.root_digest' "$manifest")"; amd64="$(jq -er '.image.amd64_digest' "$manifest")"; arm64="$(jq -er '.image.arm64_digest' "$manifest")"; candidate_tag="$(jq -er '.candidate_tag' "$manifest")"
+  apps/lumen/scripts/verify-release-candidate.sh \
+    --repo "$REPO" --version "${TAG#lumen@}" --commit "$COMMIT" --run-id "$CANDIDATE_RUN_ID" --run-attempt "$CANDIDATE_ATTEMPT" \
+    --manifest "$manifest" --manifest-sidecar "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json.sha256" --artifacts-dir "$CANDIDATE_RECEIPT_DIR" \
+    --image "ghcr.io/chrischeng-c4/lumen@${root}" --candidate-tag "$candidate_tag" --amd64-digest "$amd64" --arm64-digest "$arm64" --mode full
+}
+
+write_identity() {
+  local manifest="$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json"
+  jq -nc --arg repo "$REPO" --arg tag "$TAG" --arg commit "$COMMIT" --arg candidate_run_id "$CANDIDATE_RUN_ID" --arg candidate_attempt "$CANDIDATE_ATTEMPT" --arg root "$(jq -er '.image.root_digest' "$manifest")" --arg amd64 "$(jq -er '.image.amd64_digest' "$manifest")" --arg arm64 "$(jq -er '.image.arm64_digest' "$manifest")" --arg pr "$(jq -er '.pr.url' "$manifest")" --arg candidate_url "$(jq -er '.run_url' "$manifest")" '{repository:$repo,tag:$tag,commit:$commit,candidate_run_id:$candidate_run_id,candidate_attempt:$candidate_attempt,root_digest:$root,amd64_digest:$amd64,arm64_digest:$arm64,pr_url:$pr,candidate_url:$candidate_url}' >"$OUTPUT"
+}
+
+verify_latest_is_safe() {
+  local root="$1" image_repo="ghcr.io/chrischeng-c4/lumen" latest releases tag version digest
+  latest="$(image_digest_or_absent "${image_repo}:latest")"
+  [[ -n "$latest" ]] || fail "public latest image tag is absent"
+  [[ "$latest" == "$root" ]] && return 0
+  releases="$(gh release list --repo "$REPO" --limit 100 --json tagName,isDraft)"
+  while IFS= read -r tag; do
+    version="${tag#lumen@}"
+    [[ "$tag" =~ ^lumen@[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    [[ "$(printf '%s\n%s\n' "${TAG#lumen@}" "$version" | sort -V | tail -n1)" == "$version" && "$version" != "${TAG#lumen@}" ]] || continue
+    digest="$(image_digest_or_absent "${image_repo}:${version}")"
+    [[ -n "$digest" ]] || fail "newer published semver image tag is absent: $version"
+    [[ "$digest" == "$latest" ]] && return 0
+  done < <(jq -r '.[] | select(.isDraft == false) | .tagName' <<<"$releases")
+  fail "latest points to neither this root nor a newer published semver root"
+}
+
+verify_public_release() {
+  local release_json release_dir manifest root amd64 arm64 pr_url candidate_url semver image_repo expected_assets actual_assets
+  release_json="$(gh release view "$TAG" --repo "$REPO" --json assets,isDraft,tagName,targetCommitish,url,body)"
+  jq -e --arg tag "$TAG" --arg commit "$COMMIT" '.tagName == $tag and .isDraft == false and .targetCommitish == $commit' <<<"$release_json" >/dev/null || fail "public GitHub Release identity changed"
+  manifest="$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json"
+  root="$(jq -er '.image.root_digest' "$manifest")"; amd64="$(jq -er '.image.amd64_digest' "$manifest")"; arm64="$(jq -er '.image.arm64_digest' "$manifest")"; pr_url="$(jq -er '.pr.url' "$manifest")"; candidate_url="$(jq -er '.run_url' "$manifest")"
+  jq -e --arg repo "$REPO" --arg commit "$COMMIT" --arg pr_url "$pr_url" --arg candidate_url "$candidate_url" --arg root "$root" --arg amd64 "$amd64" --arg arm64 "$arm64" '
+    (.body | if type == "string" then split("\n") else error("release body is not a string") end) as $lines |
+    ($lines | index("- Source commit: " + $commit) != null) and
+    ($lines | index("- Pull request: " + $pr_url) != null) and
+    ($lines | index("- Candidate run: " + $candidate_url) != null) and
+    ($lines | index("- Root index digest: " + $root) != null) and
+    ($lines | index("- linux/amd64 digest: " + $amd64) != null) and
+    ($lines | index("- linux/arm64 digest: " + $arm64) != null) and
+    ($lines | index("- Release path: landed main -> untagged candidate verification -> protected annotated tag -> promotion of the same candidate digest.") != null) and
+    ($lines | index("- Placement path: a non-empty nodeSelector with the default initialMachineType skips the legacy capacity catalog.") != null) and
+    ($lines | index("- Legacy placement path: an empty selector, tolerations-only placement, or a non-default initialMachineType still requires lumen-system/lumen-capacity-catalog.") != null) and
+    ($lines | index("- Compatibility: no API, CRD, or runtime-default migration.") != null) and
+    any($lines[]; test("^- Promotion run: https://github\\.com/" + $repo + "/actions/runs/[0-9]+/attempts/[0-9]+$"))
+  ' <<<"$release_json" >/dev/null || fail "public GitHub Release notes do not bind exact promotion evidence"
+  expected_assets="$({ while IFS= read -r target; do printf 'lumen-%s.tar.gz\nlumen-%s.tar.gz.sha256\n' "$target" "$target"; done < <(targets); printf 'spdx-amd64.json\nspdx-arm64.json\n'; } | LC_ALL=C sort)"
+  actual_assets="$(jq -r '.assets[].name' <<<"$release_json" | LC_ALL=C sort)"
+  [[ "$actual_assets" == "$expected_assets" ]] || fail "public GitHub Release asset inventory is not exact"
+  release_dir="$(mktemp -d)"; trap 'rm -rf "${release_dir:-}"' RETURN
+  gh release download "$TAG" --repo "$REPO" --dir "$release_dir" --pattern 'lumen-*.tar.gz' --pattern 'lumen-*.tar.gz.sha256' --pattern 'spdx-*.json'
+  verify_release_assets_against_receipt "$CANDIDATE_RECEIPT_DIR" "$release_dir"
+  semver="${TAG#lumen@}"; image_repo="ghcr.io/chrischeng-c4/lumen"
+  [[ "$(docker buildx imagetools inspect "${image_repo}:${semver}" --format '{{json .Manifest}}' | jq -er '.digest')" == "$root" ]] || fail "semver image tag does not bind candidate root"
+  verify_latest_is_safe "$root"
+  rm -rf "$release_dir"; trap - RETURN
+}
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
+REPO=""; TAG=""; COMMIT=""; CANDIDATE_RUN_ID=""; MODE=""; CANDIDATE_RECEIPT_DIR=""; RELEASE_ASSETS_DIR=""; OUTPUT=""
 while [[ $# -gt 0 ]]; do
   [[ $# -ge 2 ]] || usage
   case "$1" in
-    --repo)
-      [[ -z "$REPO" ]] || usage
-      REPO="$2"
-      ;;
-    --tag)
-      [[ -z "$TAG" ]] || usage
-      TAG="$2"
-      ;;
-    --commit)
-      [[ -z "$COMMIT" ]] || usage
-      COMMIT="$2"
-      ;;
-    --image)
-      [[ -z "$IMAGE" ]] || usage
-      IMAGE="$2"
-      ;;
-    --release-state)
-      [[ -z "$RELEASE_STATE" ]] || usage
-      RELEASE_STATE="$2"
-      ;;
-    *)
-      echo "unknown argument: $1" >&2
-      usage
-      ;;
+    --repo) REPO="$2" ;; --tag) TAG="$2" ;; --commit) COMMIT="$2" ;; --candidate-run-id) CANDIDATE_RUN_ID="$2" ;;
+    --mode) MODE="$2" ;; --candidate-receipt-dir) CANDIDATE_RECEIPT_DIR="$2" ;; --release-assets-dir) RELEASE_ASSETS_DIR="$2" ;; --output) OUTPUT="$2" ;;
+    *) usage ;;
   esac
   shift 2
 done
+[[ "$REPO" == "chrischeng-c4/axiom" && "$TAG" =~ ^lumen@[0-9]+\.[0-9]+\.[0-9]+$ && "$COMMIT" =~ ^[0-9a-f]{40}$ && "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]] || fail "invalid promotion identity"
+[[ "$MODE" == candidate || "$MODE" == fixture || "$MODE" == public ]] || usage
 
-[[ -n "$REPO" && -n "$TAG" && -n "$COMMIT" && -n "$IMAGE" && -n "$RELEASE_STATE" ]] || usage
-
-if [[ "$REPO" != "chrischeng-c4/axiom" ]]; then
-  echo "unsupported repository: $REPO" >&2
-  exit 1
+if [[ "$MODE" == fixture ]]; then
+  [[ -n "$CANDIDATE_RECEIPT_DIR" && -n "$RELEASE_ASSETS_DIR" ]] || usage
+  validate_receipt "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json" "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json.sha256" "$CANDIDATE_RECEIPT_DIR"
+  verify_release_assets_against_receipt "$CANDIDATE_RECEIPT_DIR" "$RELEASE_ASSETS_DIR"
+  printf 'LOCAL FIXTURE ONLY: release bytes verified; this is not public release acceptance.\n'
+  exit 0
 fi
 
-if [[ ! "$TAG" =~ ^lumen@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "invalid tag shape: $TAG" >&2
-  exit 1
-fi
-
-if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "invalid commit shape: $COMMIT" >&2
-  exit 1
-fi
-
-if [[ ! "$IMAGE" =~ ^ghcr\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$ ]]; then
-  echo "invalid image shape: $IMAGE" >&2
-  exit 1
-fi
-
-if [[ "$RELEASE_STATE" != "draft" && "$RELEASE_STATE" != "published" ]]; then
-  echo "invalid release state: $RELEASE_STATE" >&2
-  exit 1
-fi
-
-root_digest="${IMAGE#*@}"
-source_ref="refs/tags/${TAG}"
-expected_cert_id="https://github.com/${REPO}/.github/workflows/lumen-release.yml@${source_ref}"
-expected_issuer="https://token.actions.githubusercontent.com"
-
-case "$(uname -s):$(uname -m)" in
-  Darwin:arm64|Darwin:aarch64)
-    host_target="aarch64-apple-darwin"
-    ;;
-  Linux:x86_64|Linux:amd64)
-    host_target="x86_64-unknown-linux-gnu"
-    ;;
-  Linux:aarch64|Linux:arm64)
-    host_target="aarch64-unknown-linux-gnu"
-    ;;
-  *)
-    echo "unsupported verifier host: $(uname -s) $(uname -m)" >&2
-    exit 1
-    ;;
-esac
-
-echo ">> verifying GitHub release identity and state"
-release_json="$(gh release view "$TAG" --repo "$REPO" --json assets,isDraft,tagName)"
-release_tag="$(jq -er '.tagName | select(type == "string")' <<<"$release_json")"
-is_draft="$(jq -er '.isDraft | select(type == "boolean") | tostring' <<<"$release_json")"
-
-[[ "$release_tag" == "$TAG" ]] || { echo "release tag mismatch: $release_tag" >&2; exit 1; }
-if [[ "$RELEASE_STATE" == "draft" ]]; then
-  [[ "$is_draft" == "true" ]] || { echo "expected draft release" >&2; exit 1; }
-else
-  [[ "$is_draft" == "false" ]] || { echo "expected published release" >&2; exit 1; }
-fi
-
-tag_commit="$(gh api "repos/${REPO}/commits/${TAG}" --jq '.sha')"
-[[ "$tag_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "tag did not resolve to a commit" >&2; exit 1; }
-[[ "$tag_commit" == "$COMMIT" ]] || { echo "tag commit mismatch" >&2; exit 1; }
-
-echo ">> verifying published binary asset inventory"
-if ! verify_release_asset_inventory "$release_json"; then
-  exit 1
-fi
-
-download_dir="$(mktemp -d)"
-trap 'rm -rf "$download_dir"' EXIT
-gh release download "$TAG" \
-  --repo "$REPO" \
-  --pattern 'lumen-*.tar.gz' \
-  --pattern 'lumen-*.tar.gz.sha256' \
-  --dir "$download_dir"
-if ! downloaded_version="$(verify_downloaded_binary_assets "$download_dir" "$host_target" "$TAG")"; then
-  exit 1
-fi
-
-echo ">> verifying keyless root signature"
-cosign verify \
-  --certificate-identity "$expected_cert_id" \
-  --certificate-oidc-issuer "$expected_issuer" \
-  "$IMAGE" >/dev/null
-
-verify_attestation() {
-  local label="$1"
-  local subject="$2"
-  local digest="$3"
-  local predicate="$4"
-  local result
-
-  result="$(gh attestation verify "oci://${subject}" \
-    --bundle-from-oci \
-    --repo "$REPO" \
-    --source-ref "$source_ref" \
-    --source-digest "$COMMIT" \
-    --cert-identity "$expected_cert_id" \
-    --cert-oidc-issuer "$expected_issuer" \
-    --predicate-type "$predicate" \
-    --format json)"
-
-  if ! jq -e --arg digest "${digest#sha256:}" --arg predicate "$predicate" '
-    type == "array" and length > 0 and
-    all(.[];
-      .verificationResult.statement.predicateType == $predicate and
-      (.verificationResult.statement.subject | type == "array" and length > 0) and
-      all(.verificationResult.statement.subject[];
-        (.digest | type == "object" and keys == ["sha256"]) and
-        .digest.sha256 == $digest
-      )
-    )
-  ' <<<"$result" >/dev/null; then
-    echo "$label attestation subject or predicate mismatch" >&2
-    exit 1
-  fi
-}
-
-echo ">> verifying root SLSA v1 provenance"
-verify_attestation \
-  "root provenance" \
-  "$IMAGE" \
-  "$root_digest" \
-  "https://slsa.dev/provenance/v1"
-
-echo ">> inspecting the two-platform image index"
-index_json="$(docker buildx imagetools inspect --raw "$IMAGE")"
-if ! jq -e '
-  (.manifests | type == "array" and length == 2) and
-  all(.manifests[];
-    .platform.os == "linux" and
-    (.platform | has("variant") | not) and
-    (.platform.architecture == "amd64" or .platform.architecture == "arm64") and
-    (.digest | type == "string") and
-    (.digest | test("^sha256:[0-9a-f]{64}$"))
-  ) and
-  ([.manifests[].platform.architecture] | sort == ["amd64", "arm64"]) and
-  ([.manifests[].digest] | unique | length == 2)
-' <<<"$index_json" >/dev/null; then
-  echo "root index is not exactly linux/amd64 plus linux/arm64" >&2
-  exit 1
-fi
-
-amd64_digest="$(jq -er '.manifests[] | select(.platform.architecture == "amd64") | .digest' <<<"$index_json")"
-arm64_digest="$(jq -er '.manifests[] | select(.platform.architecture == "arm64") | .digest' <<<"$index_json")"
-if [[ "$amd64_digest" == "$arm64_digest" || "$amd64_digest" == "$root_digest" || "$arm64_digest" == "$root_digest" ]]; then
-  echo "root and child digests must be pairwise distinct" >&2
-  exit 1
-fi
-
-image_repo="${IMAGE%@*}"
-echo ">> verifying linux/amd64 SPDX 2.3 SBOM"
-verify_attestation \
-  "linux/amd64 SBOM" \
-  "${image_repo}@${amd64_digest}" \
-  "$amd64_digest" \
-  "https://spdx.dev/Document/v2.3"
-
-echo ">> verifying linux/arm64 SPDX 2.3 SBOM"
-verify_attestation \
-  "linux/arm64 SBOM" \
-  "${image_repo}@${arm64_digest}" \
-  "$arm64_digest" \
-  "https://spdx.dev/Document/v2.3"
-
-echo "Artifact verification PASS"
-echo "  binaries: five archives verified; host reports $downloaded_version"
-echo "  identity: $expected_cert_id"
-echo "  root: $root_digest (keyless signature and SLSA v1 provenance)"
-echo "  linux/amd64: $amd64_digest (SPDX 2.3 SBOM)"
-echo "  linux/arm64: $arm64_digest (SPDX 2.3 SBOM)"
+[[ -n "$OUTPUT" ]] || usage
+CANDIDATE_RECEIPT_DIR="$(mktemp -d)"; trap 'rm -rf "${CANDIDATE_RECEIPT_DIR:-}"' EXIT
+verify_annotated_tag_and_ruleset
+fetch_candidate_receipt
+verify_candidate_supply_chain
+write_identity
+if [[ "$MODE" == public ]]; then verify_public_release; fi
+printf 'PROMOTION VERIFICATION PASS: %s %s candidate=%s/%s\n' "$TAG" "$COMMIT" "$CANDIDATE_RUN_ID" "$CANDIDATE_ATTEMPT"

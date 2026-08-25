@@ -18,11 +18,11 @@
 
 ARG SOURCE=fetch
 
-FROM debian:bookworm-slim AS seed
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS seed
 RUN mkdir -p -m 0750 /out/lumen-data && touch /out/lumen-data/.lumen-volume-seed
 
 # ---- stage 1a: fetch + verify the release binary (needs shell + curl) --------
-FROM debian:bookworm-slim AS binary-source-fetch
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS binary-source-fetch
 ARG LUMEN_VERSION=lumen@0.4.5
 ARG LUMEN_REPO=chrischeng-c4/axiom
 ARG TARGETARCH
@@ -44,7 +44,7 @@ RUN set -eux; \
     /tmp/lumen --version
 
 # ---- stage 1b: copy pre-staged release binary (workflow path) ---------------
-FROM debian:bookworm-slim AS binary-source-staged
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS binary-source-staged
 ARG TARGETARCH
 COPY dist/linux/${TARGETARCH}/lumen /tmp/lumen
 
@@ -57,7 +57,7 @@ FROM binary-source-${SOURCE} AS binary-source
 # whenever the release runner's glibc outpaced Debian 12's — see #1195).
 # :nonroot = uid 65532. A single tokio binary handles SIGTERM itself (graceful
 # drain) and spawns no children, so no tini/init shim is required.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=seed --chown=65532:65532 /out/lumen-data/ /var/lib/lumen/data/
 COPY --from=binary-source /tmp/lumen /usr/local/bin/lumen
 # 7373 = client API. WAL storage is embedded locally or Lumen-owned raft state.

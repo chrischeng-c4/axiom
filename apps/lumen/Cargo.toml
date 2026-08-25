@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.27"
+version = "0.4.28"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -473,6 +473,14 @@ path = "e2e/reindex_stream_e2e.rs"
 [[test]]
 name = "release_artifacts"
 path = "e2e/release_artifacts.rs"
+
+[[test]]
+name = "release_promotion"
+path = "e2e/release_promotion.rs"
+
+[[test]]
+name = "release_candidate"
+path = "e2e/release_candidate.rs"
 
 [[test]]
 name = "release_feature_set"

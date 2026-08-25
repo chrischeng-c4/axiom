@@ -1335,6 +1335,30 @@ fn dx_topics_teach_the_private_clusterip_tls_contract() {
 }
 
 #[test]
+fn dx_deploy_kubernetes_teaches_bounded_placement_split() {
+    let rendered = dx::render_llm("deploy-kubernetes", cli_std::llm::Format::Json).unwrap();
+    let value: Value = serde_json::from_str(&rendered).expect("deploy topic JSON parses");
+    let markdown = value["markdown"]
+        .as_str()
+        .expect("deploy topic contains rendered Markdown");
+
+    for needle in [
+        "Placement support is Limited",
+        "not the full kubernetes-native-placement roadmap target",
+        "non-empty placement.nodeSelector with the default placement.initialMachineType skips the legacy capacity catalog",
+        "preserves the exact selector and tolerations",
+        "An empty placement.nodeSelector, tolerations-only placement, or a non-default placement.initialMachineType stays on the legacy capacity-catalog path",
+        "The dev instance renderer supplies kubernetes.io/os: linux",
+        "Staging and prod remain on the legacy placement path in 0.4.28",
+    ] {
+        assert!(
+            markdown.contains(needle),
+            "`deploy-kubernetes` topic missing `{needle}`:\n{markdown}"
+        );
+    }
+}
+
+#[test]
 fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
     let protocol = dx::llm_protocol();
     assert_eq!(protocol.topics().len(), 14);
@@ -1434,6 +1458,24 @@ fn dx_llm_composes_library_owned_provider_content() {
         .unwrap()
         .iter()
         .any(|source| source == "apps/lumen/e2e/release_artifacts.rs"));
+    for source in [
+        ".github/workflows/lumen-release-candidate.yml",
+        "apps/lumen/scripts/verify-release-candidate.sh",
+        "apps/lumen/e2e/release_candidate.rs",
+        ".github/workflows/lumen-release.yml",
+        "apps/lumen/scripts/verify-release-artifacts.sh",
+        "apps/lumen/e2e/release_promotion.rs",
+        ".agents/skills/lumen-build-release/SKILL.md",
+    ] {
+        assert!(
+            release_value["task"]["reads"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|got| got == source),
+            "verify-release discovery omits {source}"
+        );
+    }
     assert!(release_value["task"]["reads"]
         .as_array()
         .unwrap()
@@ -1448,8 +1490,29 @@ fn dx_llm_composes_library_owned_provider_content() {
     );
     let release_markdown = release_value["markdown"].as_str().unwrap();
     for needle in [
-        "Run kind before publication",
-        "Land each release to main exactly once",
+        "Follow the exact release order",
+        "release_candidate.rs",
+        "verify-release-candidate.sh",
+        "release_promotion.rs",
+        "verify-release-artifacts.sh",
+        "git land main",
+        "one protected annotated tag",
+        "candidate_run_id",
+        "public verifier",
+        "tracker closure",
+        "target tag",
+        "refs/tags/lumen@*",
+        "update",
+        "deletion",
+        "no bypass actors",
+        "must not rebuild",
+        "re-sign",
+        "re-attest",
+        "never move latest backward",
+        "do not create a stable Git tag",
+        "semver/latest image tag",
+        "Run kind before public promotion",
+        "Land each release to main exactly once before public promotion",
         "GHCR root and platform digests",
         "downloaded host archive passes its checksum",
         "scripts/raft-implementor-build.sh",

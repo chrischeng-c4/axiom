@@ -430,6 +430,19 @@ fn k8s_instance_render_every_profile_states_its_auth_posture() {
     }
 }
 
+#[test]
+fn k8s_instance_render_dev_uses_linux_native_placement_only() {
+    let dev = run_lumen(&["k8s", "instance", "render", "--profile", "dev"]);
+    assert!(dev.contains("  placement:\n    nodeSelector:\n      kubernetes.io/os: linux\n"));
+    for profile in ["staging", "prod", "template"] {
+        let rendered = run_lumen(&["k8s", "instance", "render", "--profile", profile]);
+        assert!(
+            !rendered.contains("kubernetes.io/os"),
+            "legacy profile `{profile}` must not inherit the dev selector:\n{rendered}"
+        );
+    }
+}
+
 /// #963: file-writing modes end with exactly one `next: <command>` tail line
 /// (shape `^next: \S`); stream-to-stdout modes (no `--out`) emit none, and
 /// the streamed artifact bytes stay untouched. Offline, no network/server.
