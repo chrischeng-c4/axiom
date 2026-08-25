@@ -7,7 +7,8 @@ Preserve the one-project, one-worktree allocation and converge persistent branch
 ## Rules
 
 - Use `app/<name>` for application work areas, `lib/<name>` for library work areas, and the retained `project-mamba` or `project-lumen` branches for those legacy roots.
-- Treat `main`, `app/*`, `lib/*`, `project-mamba`, and `project-lumen` as persistent refs.
+- Use `examples` for the repo-root `examples/` tree, so it gets its own AGY Project instead of sharing `main`'s single bounded-write slot. Worktree at `/Users/chrischeng/axiom/examples`. Branching does not remove `examples/` from `main`'s tree -- day-to-day edits to `examples/` must go through the `examples` branch/worktree only, with periodic rebase-merge back into `main`, the same discipline `app/lumen` already relies on.
+- Treat `main`, `app/*`, `lib/*`, `project-mamba`, `project-lumen`, and `examples` as persistent refs.
 - Do not delete or force-overwrite a persistent ref without explicit user confirmation.
 - Preserve dirty worktree changes and prefer rebase-based non-destructive convergence.
 - Let the work-item scripts manage tracker state without creating or switching git branches.
