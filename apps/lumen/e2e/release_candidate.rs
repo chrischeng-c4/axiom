@@ -943,6 +943,28 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     ] {
         expect_workflow(&source, from, to, code);
     }
+    let changed = replace_occurrence(
+        &source,
+        "LUMEN_E2E_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\"",
+        "LUMEN_E2E_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\"",
+        0,
+    );
+    assert_eq!(
+        validate_workflow(&changed, &dockerfile()).unwrap_err(),
+        Finding("GATE_COMMANDS")
+    );
+    expect_workflow(
+        &source,
+        "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\"",
+        "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\"",
+        "GATE_COMMANDS",
+    );
+    expect_workflow(
+        &source,
+        "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\"",
+        "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\"",
+        "GATE_COMMANDS",
+    );
     expect_workflow(
         &source,
         "schema:\"cclab.lumen.candidate-manifest.v3\"",
