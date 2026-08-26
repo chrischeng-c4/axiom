@@ -1,4 +1,3 @@
-<!-- HANDWRITE-BEGIN gap="missing-generator:logic:e2141d18" tracker="pending-tracker" reason="New docs page (mirrors apps/lumen/docs/deployment-handoff.md): image/binary (dockerfile render + serve), CLI surface, runbooks (binary/docker/k8s kustomize-equivalent operator path #1328), environment variables (TAPE_BIND/STORE/GRACE_SECS/AUTH/TOKEN_REGISTRY_FILE/DATA_DIR/PEER_SERVICE/PEERS #1326 #1327), HTTP surface and probes, smoke sequence, backup/restore runbook (#1329), and release-readiness gates." -->
 # tape — test-environment deployment handoff
 
 > One verified path for another team to stand up tape (topic replay journal)
@@ -159,11 +158,24 @@ Registered in `src/server.rs` (standard probes via the shared
 | `GET /readyz` | Readiness — `503` while draining after SIGTERM. | no |
 | `GET /metrics` | Prometheus text. | no |
 | `GET /openapi.json`, `GET /docs` | OpenAPI 3 + Swagger UI. | no |
-| `POST /topics/{topic}/append` | Append one event envelope. | per `TAPE_AUTH` (write) |
-| `GET /topics/{topic}/replay` | Replay by offset or timestamp. | per `TAPE_AUTH` (read) |
-| `GET /topics/{topic}/replay/stream` | Compact read-only h2c bulk replay. | per `TAPE_AUTH` (read) |
-| `PUT /topics/{topic}/consumers/{consumer}/checkpoint` | Advance a consumer cursor. | per `TAPE_AUTH` (write) |
-| `GET /admin/backup` | Stream a whole-journal snapshot (#1329). | per `TAPE_AUTH` (needs `admin` role on `*` when `--auth required`) |
+| `GET /admin/backup` | Stream a whole-journal snapshot. | per `TAPE_AUTH` (needs `admin` role on `*` when `--auth required`) |
+| `POST /topics/{topic}/append` | Append one message envelope; returns the assigned offset after the durable write. | per `TAPE_AUTH` (write) |
+| `POST /topics/{topic}/subscriptions` | Create a named subscription on the topic. | per `TAPE_AUTH` (write) |
+| `GET /topics/{topic}/subscriptions` | List the topic's subscriptions. | per `TAPE_AUTH` (read) |
+| `GET /topics/{topic}/subscriptions/{subscription}` | Show one subscription. | per `TAPE_AUTH` (read) |
+| `DELETE /topics/{topic}/subscriptions/{subscription}` | Delete a subscription. | per `TAPE_AUTH` (write) |
+| `POST /topics/{topic}/subscriptions/{subscription}/pull` | Pull a bounded window from the subscription cursor. | per `TAPE_AUTH` (read) |
+| `POST /topics/{topic}/subscriptions/{subscription}/ack` | Advance the subscription cursor cumulatively. | per `TAPE_AUTH` (write) |
+| `PUT /topics/{topic}/retention` | Set the topic retention policy. | per `TAPE_AUTH` (write) |
+| `GET /topics/{topic}/retention` | Read the topic retention policy. | per `TAPE_AUTH` (read) |
+| `GET /topics/{topic}/replay` | Legacy: replay by offset or timestamp. Leaves with the seek outcome in `ROADMAP.md`. | per `TAPE_AUTH` (read) |
+| `GET /topics/{topic}/replay/stream` | Legacy: compact read-only h2c bulk replay. Leaves with the seek outcome. | per `TAPE_AUTH` (read) |
+| `PUT /topics/{topic}/consumers/{consumer}/checkpoint` | Legacy: advance a consumer cursor without a subscription. Leaves with the seek outcome. | per `TAPE_AUTH` (write) |
+| `GET /topics/{topic}/consumers/{consumer}/checkpoint` | Legacy: read a consumer cursor. Leaves with the seek outcome. | per `TAPE_AUTH` (read) |
+
+The served set equals `tape spec --format routes`; `cargo test -p tape --test
+spec_route_parity` refuses any drift between the router, the spec inventory,
+and `clients/openapi.json`.
 
 ---
 
@@ -299,7 +311,7 @@ TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh
 
 > Shared service hardening is runnable here: topic authz, projected-secret
 > rotation, bounded request admission, redacted management audit, and the
-> bounded replay/checkpoint soak and shared raft-host peer mTLS. Retention/
+> bounded replay/checkpoint soak and shared raft-runtime peer mTLS. Retention/
 > backfill and compaction are Tape domain work; multi-hour production soak
 > remains separate evidence and is not claimed by this gate.
 
@@ -309,4 +321,3 @@ TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh
 #1324). Coordinates (env names, ports, paths) are sourced from
 `src/bin/tape.rs`, `src/server.rs`, `src/auth.rs`, `libs/raft-runtime/src/
 cluster.rs`, `k8s/`, `Dockerfile.release`.*
-<!-- HANDWRITE-END -->
