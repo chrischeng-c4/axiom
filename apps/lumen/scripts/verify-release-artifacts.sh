@@ -69,11 +69,11 @@ validate_receipt() {
   [[ "$expected" == "$actual" && "$name" == "${manifest##*/}" && -z "${extra:-}" ]] || fail "final receipt sidecar does not bind exact bytes"
   jq -e --arg repo "$REPO" --arg tag "$TAG" --arg commit "$COMMIT" --arg run "$CANDIDATE_RUN_ID" '
     (keys | sort) == ["artifacts","candidate_tag","commit","image","jobs","pr","repository","run_attempt","run_id","run_url","sboms","schema","source_ref","tag","version","workflow_id","workflow_path","workflow_ref"] and
-    .schema == "cclab.lumen.candidate-manifest.v2" and .repository == $repo and .tag == $tag and .commit == $commit and
+    .schema == "cclab.lumen.candidate-manifest.v3" and .repository == $repo and .tag == $tag and .commit == $commit and
     .run_id == $run and .source_ref == "refs/heads/main" and .workflow_path == ".github/workflows/lumen-release-candidate.yml" and
     .workflow_ref == ($repo + "/.github/workflows/lumen-release-candidate.yml@refs/heads/main") and
     .run_url == ("https://github.com/" + $repo + "/actions/runs/" + .run_id + "/attempts/" + .run_attempt) and
-    .jobs == {identity:"success",build:"success",manifest:"success","ghcr-image-and-attest":"success","verify-candidate":"success","kind-amd64":"success","kind-arm64":"success",result:"success"} and
+    .jobs == {identity:"success",build:"success",manifest:"success","ghcr-image-and-attest":"success","verify-candidate":"success","verify-libraries":"success","kind-amd64":"success","kind-arm64":"success",result:"success"} and
     (.image | (
       (keys | sort) == ["amd64_digest","arm64_digest","repository","root_digest"] and
       .repository == "ghcr.io/chrischeng-c4/lumen" and
@@ -157,6 +157,15 @@ verify_annotated_tag_and_ruleset() {
   ' <<<"$rulesets" >/dev/null || fail "exact active immutable lumen tag ruleset is absent"
 }
 
+flatten_paginated_jobs() { jq -cs '[.[] | .jobs[]]'; }
+flatten_paginated_artifacts() { jq -cs '[.[] | .artifacts[]]'; }
+validate_candidate_job_inventory() {
+  jq -e '
+    length == 13 and all(.[]; .status == "completed" and .conclusion == "success") and
+    ([.[].name] | sort == ["bind candidate inputs","build (aarch64-apple-darwin)","build (aarch64-unknown-linux-gnu)","build (aarch64-unknown-linux-musl)","build (x86_64-unknown-linux-gnu)","build (x86_64-unknown-linux-musl)","build candidate image and attest","candidate identity","final candidate receipt","kind e2e (amd64)","kind e2e (arm64)","verify exact candidate gates","verify service and Raft library gates"])
+  ' >/dev/null || fail "candidate attempt does not contain the exact successful execution set"
+}
+
 fetch_candidate_receipt() {
   local run attempt candidate_workflow_id jobs artifact_name artifacts artifact_id zip
   run="$(gh api "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}")"
@@ -167,13 +176,10 @@ fetch_candidate_receipt() {
     .head_branch == "main" and .head_sha == $commit and .workflow_id == $workflow and
     .head_repository.full_name == "chrischeng-c4/axiom"
   ' <<<"$run" >/dev/null || fail "candidate run identity or conclusion changed"
-  jobs="$(gh api --paginate "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}/attempts/${attempt}/jobs?filter=latest&per_page=100" | jq -cs '[.[][]]')"
-  jq -e '
-    length == 12 and all(.[]; .status == "completed" and .conclusion == "success") and
-    ([.[].name] | sort == ["bind candidate inputs","build (aarch64-apple-darwin)","build (aarch64-unknown-linux-gnu)","build (aarch64-unknown-linux-musl)","build (x86_64-unknown-linux-gnu)","build (x86_64-unknown-linux-musl)","build candidate image and attest","candidate identity","final candidate receipt","kind e2e (amd64)","kind e2e (arm64)","verify exact candidate gates"])
-  ' <<<"$jobs" >/dev/null || fail "candidate attempt does not contain the exact successful execution set"
+  jobs="$(gh api --paginate "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}/attempts/${attempt}/jobs?filter=latest&per_page=100" | flatten_paginated_jobs)"
+  validate_candidate_job_inventory <<<"$jobs"
   artifact_name="lumen-release-candidate-${CANDIDATE_RUN_ID}-${attempt}"
-  artifacts="$(gh api --paginate "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}/artifacts?per_page=100" | jq -cs '[.[][].artifacts[]]')"
+  artifacts="$(gh api --paginate "repos/${REPO}/actions/runs/${CANDIDATE_RUN_ID}/artifacts?per_page=100" | flatten_paginated_artifacts)"
   artifact_id="$(jq -er --arg name "$artifact_name" '[.[] | select(.name == $name and .expired == false)] | if length == 1 then .[0].id else error("exact receipt artifact absent") end' <<<"$artifacts")"
   zip="$(mktemp)"
   gh api -H 'Accept: application/vnd.github+json' "repos/${REPO}/actions/artifacts/${artifact_id}/zip" >"$zip"

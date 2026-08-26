@@ -11,13 +11,13 @@ const EXPECTED_DIRECT_FEATURES: &[&str] = &[
     "self-update",
 ];
 const RELEASE_SKILL_SHA256: &str =
-    "11455871dc5c9d6a04416bbbf3d424efddd1e022c399d1facf545de2a103ad48";
+    "a587fedda5b0872eadd70c12fff961ff17b5e7980f445fa7fa8d9016c29e39ce";
 
 fn validate_release_skill_order(content: &str) -> Result<(), String> {
     let markers = [
         "2. Run `git:land`",
         "3. Dispatch `lumen-release-candidate`",
-        "Wait for the final receipt.",
+        "Wait for the final v3 receipt.",
         "4. Independently run the candidate verifier in full mode.",
         "5. The controller creates one annotated `lumen@<version>` tag",
         "6. Dispatch `lumen-release`",
@@ -692,7 +692,7 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
         "tag-first fixture must fail the release-order oracle"
     );
 
-    let receipt = "Wait for the final receipt.";
+    let receipt = "Wait for the final v3 receipt.";
     let receipt_after_tag = agents.replace(receipt, "").replace(
         "5. The controller creates one annotated `lumen@<version>` tag",
         &format!("5. The controller creates one annotated `lumen@<version>` tag\n{receipt}"),

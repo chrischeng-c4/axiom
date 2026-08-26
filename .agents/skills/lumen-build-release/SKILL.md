@@ -20,9 +20,7 @@ after candidate acceptance.
    commit.
 2. Run `git:land`. Record the landed `main` SHA and merged pull request.
 3. Dispatch `lumen-release-candidate` from `main`, with `version` and the exact
-   landed SHA. Wait for the final receipt. It must have all eight logical job
-   conclusions, the five archive pairs, two SPDX files, root and child digests,
-   and successful native amd64 and arm64 kind gates.
+   landed SHA. Wait for the final v3 receipt. It must bind all nine logical job conclusions, including the isolated service and Raft library gate, the five archive pairs, two SPDX files, root and child digests, and successful native amd64 and arm64 kind gates.
 4. Independently run the candidate verifier in full mode. Stop on any mismatch.
 5. The controller creates one annotated `lumen@<version>` tag at the exact
    landed SHA. It must not force, move, or delete a tag. Verify the active tag

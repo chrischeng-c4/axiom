@@ -71,12 +71,12 @@ validate_manifest() {
   actual_keys="$(jq -cer 'keys | sort' "$MANIFEST")" || fail "candidate manifest is not JSON"
   if jq -e 'has("jobs")' "$MANIFEST" >/dev/null; then
     expected_keys='["artifacts","candidate_tag","commit","image","jobs","pr","repository","run_attempt","run_id","run_url","sboms","schema","source_ref","tag","version","workflow_id","workflow_path","workflow_ref"]'
-    jq -e '.jobs == {identity:"success",build:"success",manifest:"success","ghcr-image-and-attest":"success","verify-candidate":"success","kind-amd64":"success","kind-arm64":"success",result:"success"}' "$MANIFEST" >/dev/null || fail "final candidate manifest does not bind all successful jobs"
+    jq -e '.jobs == {identity:"success",build:"success",manifest:"success","ghcr-image-and-attest":"success","verify-candidate":"success","verify-libraries":"success","kind-amd64":"success","kind-arm64":"success",result:"success"}' "$MANIFEST" >/dev/null || fail "final candidate manifest does not bind all successful jobs"
   fi
   [[ "$actual_keys" == "$expected_keys" ]] || fail "candidate manifest keys changed: $actual_keys"
   targets="$(target_list | jq -Rsc 'split("\n") | map(select(length > 0))')"
   jq -e --arg repo "$REPO" --arg version "$VERSION" --arg commit "$COMMIT" --arg run_id "$RUN_ID" --arg attempt "$RUN_ATTEMPT" --arg tag "lumen@${VERSION}" --arg candidate "release-candidate-${RUN_ID}-${RUN_ATTEMPT}" --arg workflow_ref "${REPO}/.github/workflows/lumen-release-candidate.yml@refs/heads/main" --argjson targets "$targets" '
-    .schema == "cclab.lumen.candidate-manifest.v2" and
+    .schema == "cclab.lumen.candidate-manifest.v3" and
     .repository == $repo and .workflow_path == ".github/workflows/lumen-release-candidate.yml" and
     (.workflow_id | type == "number" and . > 0) and .run_id == $run_id and .run_attempt == $attempt and
     .run_url == ("https://github.com/" + $repo + "/actions/runs/" + $run_id + "/attempts/" + $attempt) and
