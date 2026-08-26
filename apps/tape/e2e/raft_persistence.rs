@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:f910ee9b" tracker="pending-tracker" reason="Restart-recovery tests over TapeRaft prove the shared persisted commit watermark/log restore journal state before new proposals without duplicate apply."
 //! Restart-recovery tests (#1327): shared Raft hard state persists the commit
 //! watermark and resident log/snapshot, so a fresh `TapeRaft` restores every

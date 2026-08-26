@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: apps/tape/tech-design/semantic/tape-apps-tape.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # tape Agent Context
 

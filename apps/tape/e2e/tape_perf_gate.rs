@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/semantic/source/apps-tape-tests-tape-perf-gate-rs.md#unit-test
 // <HANDWRITE gap="missing-generator:test:tape-competitor-performance" tracker="#768" reason="Initial local performance regression and external calibration-status gate.">
 use std::process::Command;
 

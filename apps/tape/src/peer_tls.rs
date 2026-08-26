@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:f0da944f" tracker="#1704" reason="Tape owns only its TAPE_PEER environment prefix; peer-tls owns validated material and raft-runtime owns the reloadable transport."
 //! Tape's peer TLS prefix binding.
 //!

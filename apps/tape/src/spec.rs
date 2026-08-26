@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/semantic/source/apps-tape-src-spec-rs.md#schema
 // <HANDWRITE gap="missing-generator:logic:tape-bootstrap" tracker="#768" reason="Initial offline route/spec/LLM contract before Tape has generated OpenAPI artifacts.">
 use serde_json::{json, Value};
 
