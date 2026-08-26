@@ -1,11 +1,11 @@
 ---
-name: wi-change-grill
+name: aw:grill-me-to-change
 description: Interview the human through AskUserQuestion until a change work item's Goal/How/Acceptance/Never sections are answerable by a command, then author it through `change.py create` or `change.py update`. Use when a change must be opened for a worker to implement, or when an existing change's body is thin, stale, or unvalidatable.
 version: 0.1.0
 user-invocable: true
 ---
 
-# /aw:wi-change-grill
+# /aw-grill-me-to-change
 
 Grill the human, then let the script write. This skill owns exactly one thing:
 turning an underspecified intent into a change body that `change.py validate`
@@ -156,7 +156,7 @@ change.py update <iid> --body-file <path>
 `change.py create` fixes the type from the axis — there is no `--type` flag.
 `--epic` is optional and carries ownership: it attaches the label that makes
 this change a child of that epic, which is the same link
-`/aw:wi-epic-reconcile` reads when it audits an epic's child set. Omit it only
+`/aw-grill-epic-to-changes` reads when it audits an epic's child set. Omit it only
 for a change that genuinely belongs to no epic. Both verbs accept `--dry-run`,
 which prints the exact tracker command without running it.
 
@@ -177,7 +177,7 @@ This addresses the agent running the interview, not the human answering it.
 - Never write the tracker body or any `src/**` path by hand, and never reach
   past the script to the tracker's own CLI; `change.py` is the only writer here.
 - Never implement the change here, and never open its sibling work items —
-  scope carving belongs to `/aw:wi-epic-reconcile`.
+  scope carving belongs to `/aw-grill-epic-to-changes`.
 - Never report the change as authored on a create or update exit code alone —
   `change.py validate` passing is the signal. The two exit codes answer
   different questions: one says the write landed, the other says the body is

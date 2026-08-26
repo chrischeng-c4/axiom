@@ -336,7 +336,7 @@ name on either side, the work is not yet bounded.
 **Refused when** the section still carries the skeleton placeholder, is written
 as a list, or runs to more than one paragraph. That is the whole of what a
 script can see. The rest of the shape — an observation point, a current value,
-a target value, and exactly one of each — is what `/aw:wi-change-grill`
+a target value, and exactly one of each — is what `/aw-grill-me-to-change`
 interviews for; nothing measures it, so a one-paragraph sentence naming nothing
 passes `validate` and is still an unbounded goal.
 

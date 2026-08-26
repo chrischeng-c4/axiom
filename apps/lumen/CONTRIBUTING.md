@@ -44,7 +44,7 @@ edit generated schema as a substitute for changing its source.
 
 Application behavior follows the repository phase ladder. Write the failing
 black-box case in `apps/lumen/e2e/` before changing `apps/lumen/src/`. Use the
-current `/aw:wi-tdd` route when the work is tied to a change item.
+current `/aw-go-tdd-for-change` route when the work is tied to a change item.
 
 Keep Lumen-specific search, schema, shard, and health policy in `apps/lumen`.
 Put reusable Kubernetes mechanisms in `libs/service-k8s` after their shared

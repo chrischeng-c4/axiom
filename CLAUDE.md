@@ -15,10 +15,11 @@ whole of it. `AGENTS.md` is deliberately not imported here.
 Both halves of that were measured. `codex exec` loads `AGENTS.md` from its
 workdir into its instructions with no tool call; Claude Code loads no
 `AGENTS.md` at all unless a `CLAUDE.md` imports one. So the two files have one
-reader each, and **editing `AGENTS.md` changes what the reviewer is told, not
-what you are told**. It is a production input to `/aw:codex-e2e-review` and
-`/aw:codex-code-review`. Do not treat it as documentation and do not move
-repo facts into it for tidiness.
+reader each, and **editing `AGENTS.md` changes what codex is told, not what
+you are told**. Until 2026-08-26 it was a production input to two codex review
+skills; those left the ladder, so it is now codex's bootstrap for a
+human-driven session and nothing here reads it. Do not treat it as
+documentation and do not move repo facts into it for tidiness.
 
 `.claude/rules/**/*.md` are hand-maintained — nothing generates them and nothing
 detects drift — so a rule that has stopped being true stays in every session's
@@ -30,19 +31,19 @@ verification live in its `CONTRIBUTING.md`. There is no third META-doc —
 `<project>/CAPABILITIES.md` was deleted on 2026-08-17 and its content merged
 into the README.
 
-## `aw` is `.claude/aw` plus `.claude/skills/aw:*`
+## `aw` is `.claude/aw` plus `.claude/skills/aw-*`
 
-`aw` is the phase scripts under `.claude/aw/scripts/` and the eight skills under
-`.claude/skills/aw:*/`. There is no CLI behind them — the protocol is their
+`aw` is the phase scripts under `.claude/aw/scripts/` and the eleven skills
+under `.claude/skills/aw-*/`. There is no CLI behind them — the protocol is their
 stdout and their exit codes.
 
 It was a Claude Code plugin at `plugins/aw/` until 2026-08-21. That tree is
 deleted: the scripts moved to `.claude/aw/scripts/`, the verification suite to
 `.claude/aw/verification/`, and `plugins/aw/skills/`, `plugins/aw/.claude-plugin/plugin.json`
 and `.claude-plugin/marketplace.json` were removed outright, along with the
-`enabledPlugins` entry in `.claude/settings.json`. The eight skills in
-`.claude/skills/` were already the copy every session read, so nothing about
-what loads changed — what changed is that there is now one copy of each file
+`enabledPlugins` entry in `.claude/settings.json`. The skills in
+`.claude/skills/` — eight then, eleven since 2026-08-26 — were already the copy
+every session read, so nothing about what loads changed — what changed is that there is now one copy of each file
 instead of two, and `${CLAUDE_PLUGIN_ROOT}` resolves nowhere.
 
 Launch every one of them through `uv run --python 3.13 --no-project`. They read
@@ -59,43 +60,56 @@ into the script that replaced it.
 
 ## Skills
 
-Nine entry points. Each is invoked by a human. Lifecycle skills hand off to a
-phase script that can refuse them; the project-document checker uses its own
-read-only validators and a clean-context reader.
+Twelve entry points. Each is invoked by a human. Lifecycle skills hand off to
+a phase script that can refuse them; the four document grills write prose
+under the owning project's `docs/` and hand off to nothing; the
+project-document checker uses its own read-only validators and a clean-context
+reader.
 
 They load as project skills out of `.claude/skills/`, not as the `aw` plugin,
 and that copy is what a session actually reads. Each directory is named
-`aw:<skill>`, so the invocation keeps the namespace the plugin gave it and
-every `/aw:…` in this repository still resolves. The prefix has to be in the
-directory name because the loader keys off the path and ignores the frontmatter
-`name:` — measured with a probe whose two names disagreed, and the directory
-won. These eight are the only copy. A second set lived under
+`aw-<skill>`, and the directory name is the command — `/aw-<skill>` — because
+the loader keys off the path and ignores the frontmatter `name:`, measured with
+a probe whose two names disagreed, and the directory won. The frontmatter
+`name:` is `aw:<skill>` and is only the label the skill list shows; since the
+rename on 2026-08-26 no `/aw:<skill>` resolves, and `check_plugin.py` refuses a
+body that still writes one. These eleven are the only copy. A second set lived
+under
 `plugins/aw/skills/` with `${CLAUDE_PLUGIN_ROOT}` paths where these write
 `.claude/aw/scripts/`, nothing detected drift between them, and that pair was
 collapsed on 2026-08-21 by deleting the plugin.
 
 | Skill | Reach for it when | It does |
 |---|---|---|
-| `/aw:wi-change-grill` | a change must be opened, or its body is thin, stale, or unvalidatable | interviews you, then `change.py create\|update` writes the body |
-| `/aw:wi-epic-grill` | the same, for an epic | interviews you, then `epic.py create\|update` |
-| `/aw:wi-epic-reconcile` | before driving an epic, or whenever its child set is suspect | opens what the epic promises but never opened, and resolves duplicates and misfiled children |
-| `/aw:wi-tdd` | the work item is ready to implement | drives one change — or an epic's children in dependency order — through the ladder below |
-| `/aw:codex-e2e-review` | the `e2e` phase printed it as the next command | routes the case to the other model and binds its verdict to the reviewed bytes |
-| `/aw:codex-code-review` | the `logic` phase printed it as the next command | the same, for the implementation and its colocated tests |
-| `/aw:prepare-goal` | a work item, or a bare intent, has to become a `/goal` the session's evaluator can actually decide | interviews you or reads the tracker through `epic.py`/`change.py`, then prints conditions for you to paste |
-| `/aw:meta-check` | before trusting a `CLAUDE.md`, `README.md` or `CONTRIBUTING.md`, and after editing one | `meta.py check` reports every doc fact whose owner is gone |
+| `/aw-grill-me-to-epic` | an epic must be opened, or its body is thin, stale, or unvalidatable | interviews you, then `epic.py create\|update` writes the body |
+| `/aw-grill-epic-to-changes` | before driving an epic, or whenever its child set is suspect | opens what the epic promises but never opened, and resolves duplicates and misfiled children |
+| `/aw-grill-me-to-change` | a change must be opened, or its body is thin, stale, or unvalidatable | interviews you, then `change.py create\|update` writes the body |
+| `/aw-grill-epic-to-prd` | an epic is on the tracker and its product promise is not yet written down | interviews you, then writes one `## <title> (#<iid>)` section into the owning project's `docs/product/<capability-area>.md` |
+| `/aw-grill-change-to-prd` | the same, for a change | the same |
+| `/aw-grill-epic-to-td` | an epic has its PRD and its design — premises, change points, interfaces, the e2e case that will judge it — is not yet written down | interviews you, then writes one `## <title> (#<iid>)` section into `docs/technical/<subsystem>.md`, plus an ADR under `docs/technical/adr/` for each decision that outlives the item |
+| `/aw-grill-change-to-td` | the same, for a change | the same |
+| `/aw-go-tdd-for-epic` | an epic's children are ready to implement | asks `epic.py order` for the dependency order and runs `/aw-go-tdd-for-change` on each child; stops when the script prints no order |
+| `/aw-go-tdd-for-change` | one change is ready to implement | drives it through the ladder below |
+| `/aw-prepare-goal` | a work item, or a bare intent, has to become a `/goal` the session's evaluator can actually decide | interviews you or reads the tracker through `epic.py`/`change.py`, then prints conditions for you to paste |
+| `/aw-check-meta` | before trusting a `CLAUDE.md`, `README.md` or `CONTRIBUTING.md`, and after editing one | `meta.py check` reports every doc fact whose owner is gone |
 | `/project-readme-check` | after creating or editing an app or library README, STATUS, ROADMAP, protocol, generated-client, indexing, querying, GKE, client-integration, or migration guide | validates the adopted product-document set and cross-file references, then asks a context-free reader to restate the current, future, and interface contract |
 
-The usual sequence is grill → reconcile (epics only) → `wi-tdd`; the two review
-skills are reached from the phase that prints them, not chosen, and
-`prepare-goal` and `meta-check` stand outside the lifecycle entirely.
+The usual sequence is grill → `grill-epic-to-changes` (epics only) →
+`grill-*-to-prd` → `grill-*-to-td` → `go-tdd-for-*`. Nothing in the ladder
+checks that the two documents exist, so that order is the convention rather
+than a gate. `prepare-goal` and `check-meta` stand outside the lifecycle
+entirely.
 
 - A grill never writes product source and never invents an answer you did not
   give. It offers only gates the repository already runs, and it stops asking
   once the body's own sections are answered.
-- On reconcile, the label is what makes a child a child. An unlabelled issue is
-  not one, whatever its body claims.
-- `wi-tdd` on an epic reads the order out of the epic's own `Depends On`
+- On `grill-epic-to-changes`, the label is what makes a child a child. An
+  unlabelled issue is not one, whatever its body claims.
+- A `grill-*-to-prd` or `grill-*-to-td` writes only under the owning project's
+  `docs/`, one `## <title> (#<iid>)` section per work item, into a file named
+  for its topic — a capability area for a PRD, a subsystem for a TD — never for
+  the issue number. Without a work item there is no section to write.
+- `go-tdd-for-epic` reads the order out of the epic's own `Depends On`
   column. A line beginning `!` means there is no order to follow: report it and
   stop. An epic body you edited to make the graph parse is an epic whose
   dependencies you decided.
@@ -103,7 +117,7 @@ skills are reached from the phase that prints them, not chosen, and
   built-in that nothing here implements, and a goal exists only once the human
   pastes one of the printed lines — which starts a turn on the spot, and
   supersedes whatever goal was already running.
-- `meta-check` reads and never writes. Its baseline was 103 findings over 182
+- `check-meta` reads and never writes. Its baseline was 103 findings over 182
   documents, nearly all of them markers left behind by the deleted CLI. Those
   are cleared, and so are the three rules added on 2026-08-20 — `M5` a gate
   whose test-name filter cargo exits 0 on, `M6` a gate naming a package or
@@ -174,16 +188,10 @@ beside it, not a second adapter someone might go looking for.
 
 The lifecycle is linear: `wi → e2e → unit → logic`. Each phase runs `start`,
 `verify`, `test`, and `commit`, and each prints the command that follows it.
-`e2e` and `logic` additionally carry `review-prompt` and `verdict`.
 
 A phase's green must be attributable to a named red measured immediately before
 it in the same tree. That is what the commit trailers `E2E-Red:`, `Unit-Red:`,
 and `Logic-Contract:` carry, and what the next phase's predecessor check reads.
-
-A review verdict is the other model's answer, never yours. Run the reviewer,
-relay verbatim what it returned, and treat a rejection as blocking; a verdict
-you wrote yourself is a fabricated approval and the commit gate that reads it is
-measuring nothing.
 
 ### Work-item terminal states
 
@@ -226,6 +234,14 @@ red first. A phase does not start until its predecessor has landed its commit.
   surfaces, and a `// SPEC-MANAGED: <path>#<anchor>` header names a producer that
   no longer exists. The `.rs` file is the authoring surface; editing the markdown
   a header names propagates nowhere.
+- `docs/product/`, `docs/technical/` and `docs/technical/adr/` exist under every
+  `apps/*` and `libs/*` since 2026-08-26 and are where the four
+  `grill-*-to-{prd,td}` skills write. They are not `tech-design/` under a new
+  name: nothing generates from them, no source header points at them, and they
+  are prose a human was interviewed into, one `(#<iid>)` section at a time. Nor
+  are they ladder write roots — `C0` refuses a dirty `docs/` path like any
+  other path outside a phase's write root, so land a PRD or TD before
+  `e2e.py start`, not during.
 
 ## Test Layout
 

@@ -1,11 +1,11 @@
 ---
-name: wi-epic-reconcile
+name: aw:grill-epic-to-changes
 description: Reconcile an epic's declared scope against its actual child work items — missing children get opened, duplicates and misfiled children get resolved. Structural findings are applied automatically; semantic findings are confirmed with the human through AskUserQuestion first. Use before driving an epic to its terminal state, or whenever an epic's child set is suspect.
 version: 0.1.0
 user-invocable: true
 ---
 
-# /aw:wi-epic-reconcile
+# /aw-grill-epic-to-changes
 
 An epic is terminal when every owned child is terminal — which is only
 meaningful if the child set is actually right. This skill answers four
@@ -103,7 +103,7 @@ answer must not commit two different writes.
 
 `epic.py` exposes no child-creating verb — it owns the epic, not the axis — and
 this skill does not open one either. A new child is a `type=change` work item,
-and authoring one is `/aw:wi-change-grill`'s whole job: it interviews for the
+and authoring one is `/aw-grill-me-to-change`'s whole job: it interviews for the
 body and writes it through its own facade. Reconcile decides **which** children
 should exist; the grill decides what each one says.
 
@@ -117,7 +117,7 @@ Two rounds, in this order, and the order carries the reasoning:
    exactly that, because each answer is given without the others in view.
 
 2. **Then grill and land them one at a time.** For each accepted child, hand
-   `/aw:wi-change-grill` the epic's iid, the title, the Goal sentence, the
+   `/aw-grill-me-to-change` the epic's iid, the title, the Goal sentence, the
    `R<n>` it discharges, and the project. Let that child land before starting
    the next one. A batch of half-authored bodies is a set of work items nobody
    can validate, and an interrupted reconcile should leave whole children
@@ -163,4 +163,4 @@ This addresses the agent reconciling the epic, not the human answering it.
 - Never change a work item's type in place, and never edit any `src/**` path
   by hand.
 - Never rewrite the epic's own body here; a thin or unvalidatable epic goes
-  back to `/aw:wi-epic-grill`.
+  back to `/aw-grill-me-to-epic`.

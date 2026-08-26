@@ -15,10 +15,11 @@ longer carries repository facts on any other runtime's behalf. `CLAUDE.md` is
 Claude Code's bootstrap and holds the authoring rules for anyone driving work
 here.
 
-Almost every Codex process started in this checkout is a **reviewer**. The two
-skills `/aw:codex-e2e-review` and `/aw:codex-code-review` pipe a built prompt
-into `codex exec -` and parse what comes back. Assume that is you unless the
-prompt you were given says otherwise.
+Until 2026-08-26 almost every Codex process started in this checkout was a
+**reviewer**: two skills piped a built prompt into `codex exec -` and parsed
+what came back. Those skills are deleted and no phase script builds a review
+prompt any more. A human can still hand you one, so the section below stays;
+absent one, a human is driving you directly.
 
 ## If you were given a review prompt
 
@@ -41,9 +42,9 @@ asking you to stay in bounds.
 stops you from editing, staging, or committing, so the restraint has to be
 yours.
 
-- Never edit a file you are reviewing. The verdict is bound to a `sha256` over
-  the reviewed bytes; an edit does not fail loudly, it silently makes the record
-  describe bytes that no longer exist.
+- Never edit a file you are reviewing. Each phase commit carries a
+  `*-Change-Digest:` trailer over the bytes it measured; an edit does not fail
+  loudly, it silently makes the trailer describe bytes that no longer exist.
 - Never run `git add`, `git commit`, or any other command that writes to the
   index or to a ref.
 - Never run `.claude/aw/scripts/*.py`. Those verbs advance and record the
@@ -55,15 +56,15 @@ yours.
 
 ## The limit on this file
 
-This file enters your context automatically, and it is **outside the digest the
-verdict binds to**. A change here alters what every future reviewer is told
-without invalidating a single recorded approval.
+This file enters your context automatically, and it is **outside every digest a
+phase commit records**. A change here alters what every future Codex session is
+told without invalidating a single measured red.
 
 So it may constrain what you do to the checkout, and it may not bear on what you
 conclude. Nothing about what makes a change good, what "done" looks like, or how
 much benefit of the doubt to extend belongs here — that standard lives in the
-prompt, where its bytes travel with the verdict that cites them. Keep this file
-short for the same reason.
+prompt, where its bytes travel with whatever cites them. Keep this file short
+for the same reason.
 
 ## If you were not given a review prompt
 
@@ -113,7 +114,7 @@ from the repository root as
 legacy dispatcher copy.
 
 One thing that will otherwise waste your time: `aw` names the scripts at
-`.claude/aw/scripts/` and the skills at `.claude/skills/aw:*/`, and nothing
+`.claude/aw/scripts/` and the skills at `.claude/skills/aw-*/`, and nothing
 else. The Rust application that used to carry the name
 is deleted and its binary is uninstalled, so an `aw` verb you reach for fails
 with "command not found" — correct, but it tells you nothing about what to

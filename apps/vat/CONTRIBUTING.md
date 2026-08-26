@@ -7,9 +7,9 @@ How to change `apps/vat`. What it promises and the work roots it owns live in
 in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 Changes here are authored one phase at a time, red first: `e2e` writes
-`apps/vat/e2e/`, then `unit` and `logic` write `apps/vat/src/`. `/aw:wi-tdd`
-drives the ladder, and every phase refuses a dirty path outside its own write
-root.
+`apps/vat/e2e/`, then `unit` and `logic` write `apps/vat/src/`.
+`/aw-go-tdd-for-change` drives the ladder, and every phase refuses a dirty path
+outside its own write root.
 
 ## Verification
 
