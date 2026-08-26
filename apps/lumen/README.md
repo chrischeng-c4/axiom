@@ -221,7 +221,8 @@ contract. Each source below states its direct contribution.
   - [`libs/raft-runtime`](../../libs/raft-runtime/README.md) hosts replication,
     snapshots, and the replicated log lifecycle.
 - Gate: `cargo test -p lumen --test api_e2e --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e`
-- Gate: `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
+- Gate: `cargo test -p lumen --test perf_gate_vs_db`
+- Gate: `cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture`
 
 ### Querying
 
