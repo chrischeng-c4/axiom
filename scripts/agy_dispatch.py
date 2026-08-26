@@ -942,6 +942,53 @@ def agy_project_id(profile: dict) -> str:
     return project_id.strip()
 
 
+@contextmanager
+def project_concurrency_lock(profile: dict, task_key: str, operation: str):
+    """Serialize a persistent AGY Project between at most one exclusive
+    bounded-write task and any number of concurrent measure-only tasks, per
+    dispatch-to-agy's scheduling contract. Nest this outside
+    task_operation_lock at any call site that snapshots or launches AGY."""
+    project = agy_project_id(profile)
+    lock_path = TEMP_ROOT / project / "project.concurrency.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    exclusive = profile.get("mode") == "bounded-write"
+    flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    handle = lock_path.open("a+")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), flag | fcntl.LOCK_NB)
+        except BlockingIOError:
+            kind = "bounded-write" if exclusive else "measure-only"
+            blocking = "another task" if exclusive else "an active bounded-write task"
+            raise SystemExit(
+                f"refusing {operation}: {kind} task {task_key} cannot start "
+                f"in Project {project} while {blocking} holds it"
+            )
+        if exclusive:
+            # Only the exclusive holder may safely own the file's content —
+            # concurrent LOCK_SH holders writing here would race each other.
+            handle.seek(0)
+            handle.truncate()
+            handle.write(
+                json.dumps(
+                    {
+                        "task_key": task_key,
+                        "operation": operation,
+                        "mode": profile.get("mode"),
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                + "\n"
+            )
+            handle.flush()
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
 def read_json_or_empty(path: Path) -> dict:
     if not path.is_file():
         return {}
@@ -2146,8 +2193,9 @@ def assert_ignored_paths_unchanged(root: Path, snapshot_data: dict) -> None:
 
 
 def snapshot(profile: dict, task_key: str) -> Path:
-    with task_operation_lock(profile, task_key, "snapshot"):
-        return snapshot_under_lock(profile, task_key)
+    with project_concurrency_lock(profile, task_key, "snapshot"):
+        with task_operation_lock(profile, task_key, "snapshot"):
+            return snapshot_under_lock(profile, task_key)
 
 
 def snapshot_under_lock(profile: dict, task_key: str) -> Path:
@@ -3589,8 +3637,9 @@ def agy_launch_cwd(profile: dict) -> Path:
 
 def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
     operation = "resume" if resume else "dispatch"
-    with task_operation_lock(profile, task_key, operation):
-        run_agent_under_lock(profile, task_key, resume=resume)
+    with project_concurrency_lock(profile, task_key, operation):
+        with task_operation_lock(profile, task_key, operation):
+            run_agent_under_lock(profile, task_key, resume=resume)
 
 
 def run_agent_under_lock(profile: dict, task_key: str, *, resume: bool) -> None:

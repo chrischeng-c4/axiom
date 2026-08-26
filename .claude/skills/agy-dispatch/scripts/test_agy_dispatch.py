@@ -2182,6 +2182,89 @@ class DispatchControllerTest(unittest.TestCase):
                 ):
                     self.fail("the second task operation lock must not be acquired")
 
+    def test_project_concurrency_lock_rejects_second_bounded_write_in_same_project(
+        self,
+    ) -> None:
+        first = self.one_shot_profile(self.repo_a, "project-a", "writer-1")
+        first["mode"] = "bounded-write"
+        second = self.one_shot_profile(self.repo_a, "project-a", "writer-2")
+        second["mode"] = "bounded-write"
+
+        with agy_dispatch.project_concurrency_lock(first, "writer-1", "dispatch"):
+            with self.assertRaisesRegex(SystemExit, "refusing dispatch.*Project"):
+                with agy_dispatch.project_concurrency_lock(
+                    second, "writer-2", "dispatch"
+                ):
+                    self.fail("a second bounded-write task must not start")
+
+    def test_project_concurrency_lock_rejects_measure_only_while_bounded_write_active(
+        self,
+    ) -> None:
+        writer = self.one_shot_profile(self.repo_a, "project-a", "writer")
+        writer["mode"] = "bounded-write"
+        reader = self.one_shot_profile(self.repo_a, "project-a", "reader")
+        reader["mode"] = "measure-only"
+
+        with agy_dispatch.project_concurrency_lock(writer, "writer", "dispatch"):
+            with self.assertRaisesRegex(SystemExit, "refusing dispatch.*Project"):
+                with agy_dispatch.project_concurrency_lock(
+                    reader, "reader", "dispatch"
+                ):
+                    self.fail(
+                        "a measure-only task must not start against an active "
+                        "bounded-write task"
+                    )
+
+    def test_project_concurrency_lock_rejects_bounded_write_while_measure_only_active(
+        self,
+    ) -> None:
+        reader = self.one_shot_profile(self.repo_a, "project-a", "reader")
+        reader["mode"] = "measure-only"
+        writer = self.one_shot_profile(self.repo_a, "project-a", "writer")
+        writer["mode"] = "bounded-write"
+
+        with agy_dispatch.project_concurrency_lock(reader, "reader", "dispatch"):
+            with self.assertRaisesRegex(SystemExit, "refusing dispatch.*Project"):
+                with agy_dispatch.project_concurrency_lock(
+                    writer, "writer", "dispatch"
+                ):
+                    self.fail(
+                        "a bounded-write task must not start against an active "
+                        "measure-only task"
+                    )
+
+    def test_project_concurrency_lock_allows_concurrent_measure_only_in_same_project(
+        self,
+    ) -> None:
+        first = self.one_shot_profile(self.repo_a, "project-a", "reader-1")
+        first["mode"] = "measure-only"
+        second = self.one_shot_profile(self.repo_a, "project-a", "reader-2")
+        second["mode"] = "measure-only"
+
+        entered: list[str] = []
+        with agy_dispatch.project_concurrency_lock(first, "reader-1", "dispatch"):
+            entered.append("reader-1")
+            with agy_dispatch.project_concurrency_lock(second, "reader-2", "dispatch"):
+                entered.append("reader-2")
+
+        self.assertEqual(entered, ["reader-1", "reader-2"])
+
+    def test_project_concurrency_lock_does_not_block_across_different_projects(
+        self,
+    ) -> None:
+        writer_a = self.one_shot_profile(self.repo_a, "project-a", "writer")
+        writer_a["mode"] = "bounded-write"
+        writer_b = self.one_shot_profile(self.repo_b, "project-b", "writer")
+        writer_b["mode"] = "bounded-write"
+
+        entered: list[str] = []
+        with agy_dispatch.project_concurrency_lock(writer_a, "writer", "dispatch"):
+            entered.append("project-a")
+            with agy_dispatch.project_concurrency_lock(writer_b, "writer", "dispatch"):
+                entered.append("project-b")
+
+        self.assertEqual(entered, ["project-a", "project-b"])
+
     def test_agy_launch_cwd_is_exact_task_worktree(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "cwd")
 

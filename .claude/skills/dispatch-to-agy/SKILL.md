@@ -79,6 +79,15 @@ Group tasks by `project`. Within each group:
 
 Tasks in different groups never affect each other's plan.
 
+This grouping is now mechanically enforced, not only a scheduling
+convention: `agy_dispatch.py`'s `snapshot` and `dispatch`/`resume` verbs hold
+a per-Project `fcntl` lock (exclusive for `bounded-write`, shared for
+`measure-only`) and exit nonzero with a `refusing ...` message if this plan
+is violated — so a controller that mis-scheduled a round gets a clean
+refusal instead of silent concurrent corruption. Still build the plan
+correctly up front: a task cleared here that then gets refused at dispatch
+time means the round was mis-scheduled, not that the safeguard is optional.
+
 ### Step 4: Dispatch the cleared tasks
 
 Spawn one fresh `agy-operator` subagent per task cleared in Step 3, all in one
