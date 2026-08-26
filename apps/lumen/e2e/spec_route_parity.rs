@@ -7,7 +7,7 @@
 //! copies of a path string drifting apart. This test extracts every
 //! `.route("<path>", <methods>)` literal from `api.rs` (balanced-paren scan
 //! + method tokens + ident-prefix rejection, mirroring
-//! `apps/tape/tests/spec_route_parity.rs`) and diffs the (method, path) set
+//! `apps/tape/e2e/spec_route_parity.rs`) and diffs the (method, path) set
 //! against `lumen::spec::openapi_json()`'s `paths` object in both
 //! directions.
 //!

@@ -2,7 +2,7 @@
 #
 # Editing an alert here? The operator renders a twin of this rule from
 # `spec.observability` (#2575, src/operator/render.rs::prometheus_rule), and
-# tests/operator.rs fails if the alert set, `for`, severity, summary, runbook
+# e2e/operator.rs fails if the alert set, `for`, severity, summary, runbook
 # text, metric names, or thresholds drift apart. The label SELECTORS are
 # expected to differ — this file targets the static base's `app`/`role` labels,
 # the operator targets the `app.kubernetes.io/*` set it stamps — so change both
