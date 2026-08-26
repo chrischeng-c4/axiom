@@ -315,6 +315,7 @@ evidence; it does not define the current contract.
 
 | Document | Use it for |
 |---|---|
+| [Product requirements](docs/product/README.md) | What tape promises per capability area, one section per shipped capability or ROADMAP outcome; epics are carved from it |
 | [STATUS.md](STATUS.md) | Current support per Cloud Pub/Sub surface, with limits and gates |
 | [ROADMAP.md](ROADMAP.md) | Future outcomes and explicit non-goals |
 | [Generated clients](clients/README.md) | Client generation, language matrix, connection inputs, and current limits |
