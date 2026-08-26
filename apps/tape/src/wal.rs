@@ -191,9 +191,9 @@ pub struct WalStore {
     ///
     /// Deliberately NOT `#[cfg(test)]` (unlike the older
     /// [`Self::inject_next_sync_failure`] this replaces the body of below):
-    /// an integration test under `apps/tape/tests/` links this crate as an
+    /// an integration test under `apps/tape/e2e/` links this crate as an
     /// ordinary, non-`cfg(test)` dependency, so a `#[cfg(test)]`-gated seam
-    /// would not exist for `tests/durable_write_path.rs` to call at all.
+    /// would not exist for `e2e/durable_write_path.rs` to call at all.
     /// This is an honestly-named, always-present fault-injection hook, not a
     /// hidden backdoor: it only ever fires when a caller explicitly arms it,
     /// and arming requires holding a `&WalStore` in the first place.
@@ -424,7 +424,7 @@ impl WalStore {
     /// INSIDE the WAL (as opposed to `AppState::set_inject_storage_full`,
     /// which short-circuits BEFORE the durable backend is ever reached and
     /// so cannot exercise this path -- see
-    /// `apps/tape/tests/durable_write_path.rs`). Frames from the armed batch
+    /// `apps/tape/e2e/durable_write_path.rs`). Frames from the armed batch
     /// still land on disk (matching a real crash-during-sync), and the
     /// failure poisons the store exactly as a genuine sync failure would --
     /// see the `poisoned` field doc comment.

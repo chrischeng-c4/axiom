@@ -10,6 +10,10 @@ authors.workspace = true
 license.workspace = true
 description = "tape - topic replay journal service"
 build = "build.rs"
+# Every e2e case is declared below as its own `[[test]]` stanza, so the
+# manifest is the inventory: nothing under `e2e/` starts or stops running
+# without showing up in a diff (CLAUDE.md "Test Layout").
+autotests = false
 
 [lib]
 name = "tape"
@@ -80,19 +84,17 @@ storage-durable = { path = "../../libs/storage-durable" }
 # coordinator over a real HTTP socket, so it needs a real temp dir and a real
 # HTTP client from the library itself (not just from tests) -- both `tape-bench`
 # (a normal [[bin]], which cargo never grants dev-dependencies) and
-# `tests/tape_perf_gate.rs` call into it.
+# `e2e/tape_perf_gate.rs` call into it.
 tempfile = "3"
 reqwest = { workspace = true }
 
 [dev-dependencies]
-async-nats = { workspace = true }
 futures = { workspace = true }
 rig = { path = "../rig" }
 tokio = { workspace = true, features = ["full"] }
 transport-h2c = { path = "../../libs/transport-h2c" }
 http-body-util = "0.1"
 tower = { workspace = true, features = ["util"] }
-rskafka = "0.6.0"
 chrono = { workspace = true }
 rcgen = "0.13"
 
@@ -118,3 +120,126 @@ backup = ["service-backup/http-client", "service-backup/s3"]
 # enables service-http's stable identity, fallback, and W3C propagation path.
 otel = ["service-http/otlp"]
 # </HANDWRITE>
+
+# e2e cases — one file per case under `e2e/`, run by `cargo test -p tape`.
+# Feature-gated cases name their feature so `cargo test -p tape` skips them
+# instead of failing to compile; run those with `--features operator,backup`.
+
+[[test]]
+name = "audit_contract"
+path = "e2e/audit_contract.rs"
+
+[[test]]
+name = "backup"
+path = "e2e/backup.rs"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_destination_docs"
+path = "e2e/backup_destination_docs.rs"
+
+[[test]]
+name = "bootstrap"
+path = "e2e/bootstrap.rs"
+
+[[test]]
+name = "cli_contract"
+path = "e2e/cli_contract.rs"
+
+[[test]]
+name = "deploy_cli"
+path = "e2e/deploy_cli.rs"
+
+[[test]]
+name = "direct_k8s_assets"
+path = "e2e/direct_k8s_assets.rs"
+
+[[test]]
+name = "durable_crash_recovery"
+path = "e2e/durable_crash_recovery.rs"
+
+[[test]]
+name = "durable_write_path"
+path = "e2e/durable_write_path.rs"
+
+[[test]]
+name = "http_transport"
+path = "e2e/http_transport.rs"
+
+[[test]]
+name = "long_running_stability"
+path = "e2e/long_running_stability.rs"
+
+[[test]]
+name = "network_policy_assets"
+path = "e2e/network_policy_assets.rs"
+
+[[test]]
+name = "observability_assets"
+path = "e2e/observability_assets.rs"
+
+[[test]]
+name = "operator"
+path = "e2e/operator.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "operator_render_provision_topics"
+path = "e2e/operator_render_provision_topics.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "provision_topics_via_spec"
+path = "e2e/provision_topics_via_spec.rs"
+
+[[test]]
+name = "raft_cluster"
+path = "e2e/raft_cluster.rs"
+
+[[test]]
+name = "raft_failover"
+path = "e2e/raft_failover.rs"
+
+[[test]]
+name = "raft_peer_mtls"
+path = "e2e/raft_peer_mtls.rs"
+
+[[test]]
+name = "raft_persistence"
+path = "e2e/raft_persistence.rs"
+
+[[test]]
+name = "retention_backfill"
+path = "e2e/retention_backfill.rs"
+
+[[test]]
+name = "rig_stateful_adapter"
+path = "e2e/rig_stateful_adapter.rs"
+
+[[test]]
+name = "seed_ha_bootstrap"
+path = "e2e/seed_ha_bootstrap.rs"
+
+[[test]]
+name = "service_admission"
+path = "e2e/service_admission.rs"
+
+[[test]]
+name = "service_auth"
+path = "e2e/service_auth.rs"
+
+[[test]]
+name = "shared_otlp_tracing"
+path = "e2e/shared_otlp_tracing.rs"
+
+[[test]]
+name = "spec_generated_clients"
+path = "e2e/spec_generated_clients.rs"
+
+[[test]]
+name = "spec_route_parity"
+path = "e2e/spec_route_parity.rs"
+
+[[test]]
+name = "tape_perf_gate"
+path = "e2e/tape_perf_gate.rs"

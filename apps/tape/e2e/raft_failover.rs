@@ -1,7 +1,7 @@
 // SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:2f55cb8a" tracker="pending-tracker" reason="Live 3-node kill -9 failover test: spawns three real `tape` OS subprocesses (REPLICAS_PER_SHARD=3, TAPE_PEERS local override, distinct --data-dir/--bind per node), waits for a leader, appends events through it, SIGKILLs (not SIGTERM) the leader's process, waits for the survivors to re-elect and keep accepting appends, then asserts every previously committed event is still replayable on every surviving node -- proving no committed event loss across a real process crash, not just an in-process task abort."
 //! Live 3-node `kill -9` failover (#1327): three real `tape` OS processes,
-//! not in-process task aborts (`tests/raft_cluster.rs` covers the
+//! not in-process task aborts (`e2e/raft_cluster.rs` covers the
 //! in-process shape). This is the requirement's load-bearing proof: a real
 //! process crash of the raft leader must not lose any event a client was
 //! already told was committed.

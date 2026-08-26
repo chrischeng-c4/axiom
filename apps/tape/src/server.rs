@@ -1579,7 +1579,7 @@ mod tests {
     /// R1: `GET /admin/backup` denies a non-admin principal (403) and
     /// streams exactly the `raft::snapshot_bytes` bytes to an admin-on-`*`
     /// principal (200), over an in-process `oneshot` request (no real
-    /// socket — `tests/backup.rs` covers the live-HTTP + 401 case).
+    /// socket — `e2e/backup.rs` covers the live-HTTP + 401 case).
     #[tokio::test]
     async fn admin_backup_requires_admin_and_streams_snapshot() {
         use tower::ServiceExt;
@@ -1663,7 +1663,7 @@ mod tests {
     }
 
     // Small oneshot helpers so both this module's tests and
-    // `tests/http_transport.rs` share one shape (the integration test drives
+    // `e2e/http_transport.rs` share one shape (the integration test drives
     // the router over real HTTP instead — these stay unit-level).
     pub(crate) async fn get(app: Router, path: &str) -> (StatusCode, String) {
         use http_body_util::BodyExt;

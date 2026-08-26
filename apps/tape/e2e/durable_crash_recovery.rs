@@ -4,7 +4,7 @@
 //! `serve --data-dir <dir>` -- the same single-node WAL wiring
 //! `tape.rs::serve_main` uses in production (no `REPLICAS_PER_SHARD`, so
 //! `resolve_journal_store` picks the WAL arm, not Raft or the legacy
-//! whole-file store). See `tests/durable_write_path.rs` for the other three
+//! whole-file store). See `e2e/durable_write_path.rs` for the other three
 //! criteria (AC2, AC6, AC7), which run in-process instead.
 //!
 //! Skipped here (covered elsewhere, per the accepted dispatch): AC1

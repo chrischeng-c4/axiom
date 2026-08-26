@@ -3415,15 +3415,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc32c"
-version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
-dependencies = [
- "rustc_version",
-]
-
-[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6760,12 +6751,6 @@ checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
 dependencies = [
  "cfg-if",
 ]
-
-[[package]]
-name = "integer-encoding"
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14c00403deb17c3221a1fe4fb571b9ed0370b3dcd116553c77fa294a3d918699"
 
 [[package]]
 name = "interpolate_name"
@@ -12231,47 +12216,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsasl"
-version = "2.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed828a88913fd477c73bc3768b05d4b335ee775e29f2397bb59b9a4dd69ffb83"
-dependencies = [
- "base64 0.22.1",
- "digest 0.10.7",
- "hmac 0.12.1",
- "pbkdf2",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "stringprep",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "rskafka"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "849b87417a191e37e16b8893eba8928bbd10e1989e6b57c4f8531549eaa29bdc"
-dependencies = [
- "bytes",
- "chrono",
- "crc32c",
- "flate2",
- "futures",
- "integer-encoding",
- "lz4",
- "parking_lot",
- "rand 0.8.6",
- "rsasl",
- "snap",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "zstd",
-]
-
-[[package]]
 name = "rusqlite"
 version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13669,12 +13613,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
 
 [[package]]
-name = "snap"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
-
-[[package]]
 name = "socket2"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14365,7 +14303,6 @@ name = "tape"
 version = "0.4.11"
 dependencies = [
  "anyhow",
- "async-nats",
  "axum 0.8.9",
  "build-stamp",
  "chrono",
@@ -14382,7 +14319,6 @@ dependencies = [
  "rcgen",
  "reqwest 0.12.28",
  "rig",
- "rskafka",
  "schemars 0.8.22",
  "serde",
  "serde_json",

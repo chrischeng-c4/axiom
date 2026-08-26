@@ -5,7 +5,7 @@
 # `spec.observability` (#2575, src/operator/render.rs::service_monitor) against
 # the `app.kubernetes.io/*` labels it stamps instead — so the two selectors are
 # deliberately different and neither can be copied onto the other's path.
-# tests/operator.rs holds the two in step on everything that is NOT a label.
+# e2e/operator.rs holds the two in step on everything that is NOT a label.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

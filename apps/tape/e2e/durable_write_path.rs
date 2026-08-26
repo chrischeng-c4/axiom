@@ -2,7 +2,7 @@
 //! Acceptance tests for WI #3052's single-node durable write path that run
 //! entirely in-process against a real axum router bound on
 //! `127.0.0.1:0` -- no `tape` OS subprocess (see
-//! `tests/durable_crash_recovery.rs` for the two criteria, AC3 and AC4, that
+//! `e2e/durable_crash_recovery.rs` for the two criteria, AC3 and AC4, that
 //! genuinely need a real process).
 //!
 //! Skipped here (covered elsewhere, per the accepted dispatch): AC1
