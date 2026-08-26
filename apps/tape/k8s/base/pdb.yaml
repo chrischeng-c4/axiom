@@ -14,7 +14,7 @@ spec:
   # Consequence: `kubectl drain` on this pod's node will block indefinitely
   # and GKE node auto-upgrade will not proceed. This is deliberate: with
   # exactly one durable member, permitting eviction means accepting data-plane
-  # downtime. See the runbook in apps/tape/README.md for the safe sequence
+  # downtime. See apps/tape/docs/runbooks/node-drain-and-pdb.md for the safe sequence
   # when a drain hangs on this pod.
   maxUnavailable: 0
   selector:
