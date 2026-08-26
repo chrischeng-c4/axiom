@@ -10,7 +10,7 @@ cannot drift from the code it governs while both still look maintained.
 - Write the design into the `.rs` file that owns it. A module's `//!` block
   carries the rules that module owns; a type's `///` block carries its own.
 - Do not create a `tech-design/` or an `external-contracts/` directory under a
-  project the TD/EC retirement emptied. The fifteen are `apps/lumen` and
+  project the TD/EC retirement emptied. The sixteen are `apps/lumen`, `apps/tape` and
   `libs/{build-stamp, cli-std, metrics-prometheus, openapi-codegen, peer-tls,
   raft-core, raft-runtime, service-auth, service-backup, service-http,
   service-k8s, service-observability, storage-durable, transport-h2c}`.
@@ -21,9 +21,9 @@ cannot drift from the code it governs while both still look maintained.
 - Prose that mentions a retired tree is not the regression. Several files in
   these projects record that the tree is gone, and saying so is what a `//!`
   block is for.
-- This rule is scoped to those fifteen and not to the repository. That is a
+- This rule is scoped to those sixteen and not to the repository. That is a
   measurement: at the commit that introduced the gate below, 560 design-tree
-  files were still tracked across 26 other owners — `apps/tape`, `apps/pgpool`,
+  files were still tracked across 26 other owners — `apps/tape` (since retired), `apps/pgpool`,
   `apps/jet`, `projects/mamba` and the rest. None of them is covered here, and a
   repository-wide assertion would have been red on its first run.
 
@@ -31,7 +31,7 @@ cannot drift from the code it governs while both still look maintained.
 
 - Run `cargo test -p lumen --test design_trees_stay_retired`. Three cases: the
   tree assertion is structural and reads no file contents, the pointer assertion
-  reads every text file under the fifteen, and `the_sweep_is_not_vacuous`
+  reads every text file under the sixteen, and `the_sweep_is_not_vacuous`
   measures the instrument — every project root must resolve, every exemption
   must resolve to a real file, and the walk must reach at least 400 files.
 - That command is a strict subset of `cargo test -p lumen`, which
@@ -58,7 +58,7 @@ cannot drift from the code it governs while both still look maintained.
   `.rs` file is the authoring surface.
 - `CLAUDE.md` section “Test Layout”, which supersedes those trees along with
   `tests/`.
-- `apps/lumen/docs/td-ec-retirement.md` — the campaign that emptied the fifteen,
+- `apps/lumen/docs/td-ec-retirement.md` — the campaign that emptied the first fifteen,
   and the thirty-four hazards it measured on the way. Hazards 29, 30, 31 and 33
   are four instances of one failure: a gate whose scan was narrower than its
   declaration. `the_sweep_is_not_vacuous` exists because of them.

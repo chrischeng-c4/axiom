@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/logic/eliminate-production-ec-false-green-paths.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:tape-openapi-route-inventory" tracker="#2159" reason="Tape-specific utoipa path/schema inventory consumed by offline generated-client verification."
 //! utoipa OpenAPI document for tape's HTTP transport.
 //!

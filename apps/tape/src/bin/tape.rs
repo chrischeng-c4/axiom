@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/semantic/source/apps-tape-src-bin-tape-rs.md#logic
 // <HANDWRITE gap="missing-generator:logic:tape-bootstrap" tracker="#768" reason="Initial Tape CLI surface before generated command wiring exists.">
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -756,7 +755,6 @@ fn checkpoint(args: CheckpointArgs) -> Result<()> {
     }
 }
 
-// @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
 fn subscription(args: SubscriptionArgs) -> Result<()> {
     match args.command {
         SubscriptionCommand::Create(args) => {

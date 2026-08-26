@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# SPEC-MANAGED: apps/tape/tech-design/semantic/tape-build-script.md#logic
 # <HANDWRITE gap="missing-generator:project-bootstrap" tracker="#768" reason="Initial Tape local build/install wrapper matching the service-project shape.">
 set -euo pipefail
 

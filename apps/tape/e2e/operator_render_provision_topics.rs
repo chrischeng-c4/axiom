@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/external-contracts/claim-closure/production-claims.md#tape-operator-provision
 
 // Operator render test: verify that spec.topics is threaded to TAPE_PROVISION_TOPICS env.
 

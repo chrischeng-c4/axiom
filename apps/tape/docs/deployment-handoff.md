@@ -295,12 +295,6 @@ cargo build -p tape
 cargo test -p tape
 
 TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh
-
-aw health --project tape
-aw td code-check <wi-id>   # per-slice terminal gate
-
-cd apps/tape && ../../target/debug/vat run meter-perf
-cd apps/tape && ../../target/debug/vat run guard-security
 ```
 
 > Shared service hardening is runnable here: topic authz, projected-secret
