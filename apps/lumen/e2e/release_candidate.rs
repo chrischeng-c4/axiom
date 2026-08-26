@@ -17,6 +17,7 @@ const ACTIONS: &[&str] = &[
     "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
     "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9",
     "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
     "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
     "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
@@ -62,6 +63,60 @@ fn replace_once(source: &str, from: &str, to: &str) -> String {
     let changed = source.replacen(from, to, 1);
     assert_ne!(changed, source, "mutation did not change bytes");
     changed
+}
+
+fn validate_uv_setup(workflow: &Yaml) -> Result<(), Finding> {
+    const UV_SETUP: &str = "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9";
+    const GATE_NAME: &str = "Run required source and library gates without GKE";
+    let steps = field(
+        job(workflow, "verify-candidate").ok_or(Finding("UV_SETUP"))?,
+        "steps",
+    )
+    .and_then(Yaml::as_sequence)
+    .ok_or(Finding("UV_SETUP"))?;
+    let setup_indices: Vec<usize> = steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| {
+            field(step, "uses")
+                .and_then(Yaml::as_str)
+                .and_then(|uses| uses.strip_prefix("astral-sh/setup-uv@"))
+                .map(|_| index)
+        })
+        .collect();
+    require(setup_indices.len() == 1, "UV_SETUP")?;
+    let gate_indices: Vec<usize> = steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| {
+            (field(step, "name").and_then(Yaml::as_str) == Some(GATE_NAME)).then_some(index)
+        })
+        .collect();
+    require(gate_indices.len() == 1, "UV_SETUP")?;
+    require(setup_indices[0] < gate_indices[0], "UV_SETUP")?;
+
+    let setup = steps[setup_indices[0]]
+        .as_mapping()
+        .ok_or(Finding("UV_SETUP"))?;
+    require(setup.len() == 2, "UV_SETUP")?;
+    require(
+        setup.get(&key("uses")).and_then(Yaml::as_str) == Some(UV_SETUP),
+        "UV_SETUP",
+    )?;
+    let with = setup
+        .get(&key("with"))
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding("UV_SETUP"))?;
+    require(with.len() == 2, "UV_SETUP")?;
+    require(
+        with.get(&key("version")).and_then(Yaml::as_str) == Some("0.12.1"),
+        "UV_SETUP",
+    )?;
+    require(
+        with.get(&key("enable-cache")).and_then(Yaml::as_bool) == Some(false),
+        "UV_SETUP",
+    )?;
+    Ok(())
 }
 
 fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
@@ -112,6 +167,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         jobs.len() == names.len() && names.iter().all(|name| job(&workflow, name).is_some()),
         "JOBS",
     )?;
+    validate_uv_setup(&workflow)?;
     let graph = [
         ("identity", &[][..]),
         ("build", &["identity"][..]),
@@ -423,6 +479,7 @@ fn candidate_source_mutations_fail_with_stable_categories() {
             "dtolnay/rust-toolchain@stable",
             "ACTION_PIN",
         ),
+        ("version: 0.12.1", "version: 0.12.2", "UV_SETUP"),
         (
             "imagetools inspect --raw",
             "imagetools create",
@@ -431,6 +488,16 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     ] {
         expect_workflow(&source, from, to, code);
     }
+    let uv_setup = "      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0\n        with:\n          version: 0.12.1\n          enable-cache: false\n";
+    let without_uv = replace_once(&source, uv_setup, "");
+    let gate_following_step = "      - name: Verify full run-scoped candidate supply chain\n";
+    let moved_uv = format!("{uv_setup}{gate_following_step}");
+    let setup_after_gate = replace_once(&without_uv, gate_following_step, &moved_uv);
+    assert_ne!(setup_after_gate, source);
+    assert_eq!(
+        validate_workflow(&setup_after_gate, &dockerfile()).unwrap_err(),
+        Finding("UV_SETUP")
+    );
     let (script, _) = verifier();
     for (from, to, code) in [
         (
