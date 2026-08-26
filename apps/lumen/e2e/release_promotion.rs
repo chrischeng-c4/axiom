@@ -1,10 +1,12 @@
 //! Stable release-promotion oracle. Keep it independent from `release_candidate`.
 
+use serde_json::json;
 use serde_yaml::{Mapping, Value};
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const TAG: &str = "lumen@0.4.28";
@@ -13,6 +15,8 @@ const COMMIT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
     "00ea2d2d6e0ec181096a89fe2689b9d44ccd36bb154984d587df302007c5a738";
+const PROMOTION_VERIFIER_BYTES_SHA256: &str =
+    "2ef49bea62c290cf9e336e22a36abd6fd555d33e10c2ec5ead44b0f16528fe84";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const COSIGN_INSTALLER: &str = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6";
 const SETUP_BUILDX: &str = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f";
@@ -23,6 +27,24 @@ const PUBLIC_RELEASE_NOTE_STATEMENTS: &[&str] = &[
     "- Legacy placement path: an empty selector, tolerations-only placement, or a non-default initialMachineType still requires lumen-system/lumen-capacity-catalog.",
 ];
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut child = Command::new("shasum")
+        .args(["-a", "256"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "shasum failed");
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned()
+}
 
 struct TempDir(PathBuf);
 
@@ -143,7 +165,7 @@ fn release_fixture() -> ReleaseFixture {
         .unwrap();
     }
     let manifest = format!(
-        r#"{{"schema":"cclab.lumen.candidate-manifest.v2","repository":"chrischeng-c4/axiom","workflow_path":".github/workflows/lumen-release-candidate.yml","workflow_id":1,"run_id":"{RUN_ID}","run_attempt":"1","run_url":"https://github.com/chrischeng-c4/axiom/actions/runs/{RUN_ID}/attempts/1","source_ref":"refs/heads/main","workflow_ref":"chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main","commit":"{COMMIT}","version":"{VERSION}","tag":"{TAG}","candidate_tag":"release-candidate-{RUN_ID}-1","pr":{{"number":1,"url":"https://github.com/chrischeng-c4/axiom/pull/1"}},"image":{{"repository":"ghcr.io/chrischeng-c4/lumen","root_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","amd64_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","arm64_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"}},"artifacts":[{}],"sboms":{{"amd64":{{"file":"spdx-amd64.json","sha256":"{}"}},"arm64":{{"file":"spdx-arm64.json","sha256":"{}"}}}},"jobs":{{"identity":"success","build":"success","manifest":"success","ghcr-image-and-attest":"success","verify-candidate":"success","kind-amd64":"success","kind-arm64":"success","result":"success"}}}}"#,
+        r#"{{"schema":"cclab.lumen.candidate-manifest.v3","repository":"chrischeng-c4/axiom","workflow_path":".github/workflows/lumen-release-candidate.yml","workflow_id":1,"run_id":"{RUN_ID}","run_attempt":"1","run_url":"https://github.com/chrischeng-c4/axiom/actions/runs/{RUN_ID}/attempts/1","source_ref":"refs/heads/main","workflow_ref":"chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main","commit":"{COMMIT}","version":"{VERSION}","tag":"{TAG}","candidate_tag":"release-candidate-{RUN_ID}-1","pr":{{"number":1,"url":"https://github.com/chrischeng-c4/axiom/pull/1"}},"image":{{"repository":"ghcr.io/chrischeng-c4/lumen","root_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","amd64_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","arm64_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"}},"artifacts":[{}],"sboms":{{"amd64":{{"file":"spdx-amd64.json","sha256":"{}"}},"arm64":{{"file":"spdx-arm64.json","sha256":"{}"}}}},"jobs":{{"identity":"success","build":"success","manifest":"success","ghcr-image-and-attest":"success","verify-candidate":"success","verify-libraries":"success","kind-amd64":"success","kind-arm64":"success","result":"success"}}}}"#,
         artifacts.join(","),
         sha256(&candidate.join("spdx-amd64.json")),
         sha256(&candidate.join("spdx-arm64.json")),
@@ -187,6 +209,249 @@ fn run_fixture(fixture: &ReleaseFixture) -> std::process::Output {
 
 fn workflow_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/lumen-release.yml")
+}
+
+const CANDIDATE_EXECUTION_NAMES: &[&str] = &[
+    "bind candidate inputs",
+    "build (aarch64-apple-darwin)",
+    "build (aarch64-unknown-linux-gnu)",
+    "build (aarch64-unknown-linux-musl)",
+    "build (x86_64-unknown-linux-gnu)",
+    "build (x86_64-unknown-linux-musl)",
+    "build candidate image and attest",
+    "candidate identity",
+    "final candidate receipt",
+    "kind e2e (amd64)",
+    "kind e2e (arm64)",
+    "verify exact candidate gates",
+    "verify service and Raft library gates",
+];
+
+fn shell_function_lines<'a>(source: &'a str, name: &str) -> Result<Vec<&'a str>, String> {
+    let header = format!("{name}() {{");
+    let starts = source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| (line.trim() == header).then_some(index))
+        .collect::<Vec<_>>();
+    if starts.len() != 1 {
+        return Err(format!("{name} definition count changed: {}", starts.len()));
+    }
+    let lines = source.lines().collect::<Vec<_>>();
+    let next_function = lines
+        .iter()
+        .enumerate()
+        .skip(starts[0] + 1)
+        .find_map(|(index, line)| {
+            let trimmed = line.trim();
+            (line.len() == line.trim_start().len()
+                && trimmed.ends_with("() {")
+                && trimmed[..trimmed.len() - 4]
+                    .chars()
+                    .all(|ch| ch == '_' || ch.is_ascii_alphanumeric()))
+            .then_some(index)
+        })
+        .unwrap_or(lines.len());
+    let closing = lines[starts[0] + 1..next_function]
+        .iter()
+        .rposition(|line| line.trim() == "}")
+        .map(|offset| starts[0] + 1 + offset)
+        .ok_or_else(|| format!("{name} closing brace is missing"))?;
+    if lines[closing + 1..next_function]
+        .iter()
+        .any(|line| !line.trim().is_empty())
+    {
+        return Err(format!(
+            "{name} has executable text after its closing brace"
+        ));
+    }
+    Ok(lines[starts[0] + 1..closing]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect())
+}
+
+fn validate_candidate_execution_bindings(verifier: &str) -> Result<(), String> {
+    let lines = shell_function_lines(verifier, "fetch_candidate_receipt")?;
+    for forbidden in ["if ", "case ", "for ", "while ", "until ", "{", "}"] {
+        if lines
+            .iter()
+            .any(|line| *line == forbidden.trim() || line.starts_with(forbidden))
+        {
+            return Err(format!(
+                "fetch_candidate_receipt gained unsupported control flow: {forbidden}"
+            ));
+        }
+    }
+    for assignment in ["jobs=", "artifacts="] {
+        if lines
+            .iter()
+            .filter(|line| line.starts_with(assignment))
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "fetch_candidate_receipt assignment count changed: {assignment}"
+            ));
+        }
+    }
+    for marker in [
+        "jobs?filter=latest&per_page=100\" | flatten_paginated_jobs)",
+        "validate_candidate_job_inventory <<<\"$jobs\"",
+        "artifacts?per_page=100\" | flatten_paginated_artifacts)",
+    ] {
+        if lines.iter().filter(|line| line.contains(marker)).count() != 1 {
+            return Err(format!("candidate execution binding changed: {marker}"));
+        }
+    }
+    for (label, jobs, expect_download) in [
+        (
+            "valid",
+            candidate_jobs(CANDIDATE_EXECUTION_NAMES, None),
+            true,
+        ),
+        (
+            "missing",
+            candidate_jobs(&CANDIDATE_EXECUTION_NAMES[..12], None),
+            false,
+        ),
+        (
+            "failed",
+            candidate_jobs(CANDIDATE_EXECUTION_NAMES, Some(0)),
+            false,
+        ),
+        (
+            "extra",
+            candidate_jobs(
+                &[CANDIDATE_EXECUTION_NAMES, &["unexpected execution"]].concat(),
+                None,
+            ),
+            false,
+        ),
+        (
+            "duplicate",
+            candidate_jobs(
+                &CANDIDATE_EXECUTION_NAMES
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        if index == 12 {
+                            CANDIDATE_EXECUTION_NAMES[0]
+                        } else {
+                            name
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            false,
+        ),
+    ] {
+        let downloaded = execute_candidate_fetch(verifier, &jobs);
+        if downloaded != expect_download {
+            return Err(format!(
+                "{label} inventory did not produce expected artifact-download behavior"
+            ));
+        }
+    }
+    if sha256_bytes(verifier.as_bytes()) != PROMOTION_VERIFIER_BYTES_SHA256 {
+        return Err("PROMOTION_VERIFIER_BYTES".to_owned());
+    }
+    Ok(())
+}
+
+fn execute_candidate_fetch(verifier: &str, jobs: &str) -> bool {
+    let temp = TempDir::new("candidate-fetch");
+    let bin = temp.0.join("bin");
+    let receipt = temp.0.join("receipt");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(&receipt).unwrap();
+    let pages = serde_json::from_str::<serde_json::Value>(jobs).unwrap();
+    let split = pages.as_array().unwrap().len() / 2;
+    let first = serde_json::to_string(&json!({"total_count": pages.as_array().unwrap().len(), "jobs": &pages.as_array().unwrap()[..split]})).unwrap();
+    let second = serde_json::to_string(&json!({"total_count": pages.as_array().unwrap().len(), "jobs": &pages.as_array().unwrap()[split..]})).unwrap();
+    let gh = format!(
+        "#!/usr/bin/env bash\nset -e\ncase \"$*\" in\n  *'/actions/runs/123'*) printf '%s\\n' '{{\"run_attempt\":\"1\",\"event\":\"workflow_dispatch\",\"status\":\"completed\",\"conclusion\":\"success\",\"head_branch\":\"main\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workflow_id\":99,\"head_repository\":{{\"full_name\":\"chrischeng-c4/axiom\"}}}}' ;;\n  *'/actions/workflows/lumen-release-candidate.yml'*) printf '99\\n' ;;\n  *'/attempts/1/jobs'*) printf '%s\\n%s\\n' '{first}' '{second}' ;;\n  *'/artifacts?per_page=100'*) printf '%s\\n' '{{\"total_count\":1,\"artifacts\":[{{\"name\":\"lumen-release-candidate-123-1\",\"expired\":false,\"id\":7}}]}}' ;;\n  *'/artifacts/7/zip'*) touch \"$ARTIFACT_DOWNLOAD\"; exit 1 ;;\n  *) exit 2 ;;\nesac\n"
+    );
+    let gh = gh.replace(
+        "case \"$*\" in\n",
+        &format!(
+            "if [[ \"$*\" == */attempts/1/jobs* ]]; then printf '%s\\n%s\\n' '{first}' '{second}'; exit 0; fi\nif [[ \"$*\" == */artifacts\\?per_page=100* ]]; then printf '%s\\n' '{{\"total_count\":1,\"artifacts\":[{{\"name\":\"lumen-release-candidate-123-1\",\"expired\":false,\"id\":7}}]}}'; exit 0; fi\nif [[ \"$*\" == */artifacts/7/zip* ]]; then touch \"$ARTIFACT_DOWNLOAD\"; exit 1; fi\ncase \"$*\" in\n"
+        ),
+    );
+    let gh_path = bin.join("gh");
+    fs::write(&gh_path, gh).unwrap();
+    fs::set_permissions(&gh_path, fs::Permissions::from_mode(0o755)).unwrap();
+    let script = temp.0.join("verifier.sh");
+    fs::write(&script, verifier).unwrap();
+    let marker = temp.0.join("downloaded");
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg("source \"$1\"; fetch_candidate_receipt")
+        .arg("bash")
+        .arg(&script)
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("REPO", "chrischeng-c4/axiom")
+        .env("TAG", "lumen@0.4.28")
+        .env("COMMIT", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .env("CANDIDATE_RUN_ID", "123")
+        .env("CANDIDATE_RECEIPT_DIR", &receipt)
+        .env("ARTIFACT_DOWNLOAD", &marker)
+        .output()
+        .unwrap();
+    let _ = output;
+    marker.exists()
+}
+
+fn execute_verifier_function(verifier: &str, function: &str, input: &str) -> Output {
+    let temp = TempDir::new("pagination");
+    let script_path = temp.0.join("verifier.sh");
+    let input_path = temp.0.join("input.json");
+    fs::write(&script_path, verifier).unwrap();
+    fs::write(&input_path, input).unwrap();
+    Command::new("bash")
+        .args(["-c", "source \"$1\"; \"$2\" < \"$3\""])
+        .arg("bash")
+        .arg(&script_path)
+        .arg(function)
+        .arg(&input_path)
+        .output()
+        .unwrap()
+}
+
+fn execute_page_flattener(function: &str, pages: &str) -> Value {
+    let output = execute_verifier_function(
+        include_str!("../scripts/verify-release-artifacts.sh"),
+        function,
+        pages,
+    );
+    assert!(
+        output.status.success(),
+        "{function} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_yaml::from_slice(&output.stdout).unwrap()
+}
+
+fn candidate_jobs(names: &[&str], failed: Option<usize>) -> String {
+    serde_json::to_string(
+        &names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                serde_json::json!({
+                    "name": name,
+                    "status": "completed",
+                    "conclusion": if failed == Some(index) { "failure" } else { "success" },
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
 }
 
 fn yaml_mapping<'a>(value: &'a Value, path: &str) -> Result<&'a Mapping, String> {
@@ -923,6 +1188,157 @@ fn public_release_notes_are_bound_to_candidate_and_promotion_evidence() {
 }
 
 #[test]
+fn candidate_execution_inventory_is_exact_and_fail_closed() {
+    let verifier = include_str!("../scripts/verify-release-artifacts.sh");
+    validate_candidate_execution_bindings(verifier)
+        .expect("candidate verifier must call the exact pagination and inventory helpers");
+    let bypassed_candidate_check = verifier.replacen(
+        "\nverify_candidate_supply_chain\n",
+        "\ntrue # verify_candidate_supply_chain\n",
+        1,
+    );
+    assert_eq!(
+        validate_candidate_execution_bindings(&bypassed_candidate_check),
+        Err("PROMOTION_VERIFIER_BYTES".to_owned())
+    );
+
+    let valid = candidate_jobs(CANDIDATE_EXECUTION_NAMES, None);
+    assert!(
+        execute_verifier_function(verifier, "validate_candidate_job_inventory", &valid)
+            .status
+            .success(),
+        "exact successful execution inventory was rejected"
+    );
+
+    let mut fewer = CANDIDATE_EXECUTION_NAMES.to_vec();
+    fewer.pop();
+    let mut more = CANDIDATE_EXECUTION_NAMES.to_vec();
+    more.push("extra execution");
+    let mut duplicate = CANDIDATE_EXECUTION_NAMES.to_vec();
+    *duplicate.last_mut().unwrap() = CANDIDATE_EXECUTION_NAMES[0];
+    for (name, jobs) in [
+        ("fewer executions", candidate_jobs(&fewer, None)),
+        ("more executions", candidate_jobs(&more, None)),
+        ("duplicate execution", candidate_jobs(&duplicate, None)),
+        (
+            "failed execution",
+            candidate_jobs(CANDIDATE_EXECUTION_NAMES, Some(0)),
+        ),
+    ] {
+        assert!(
+            !execute_verifier_function(verifier, "validate_candidate_job_inventory", &jobs)
+                .status
+                .success(),
+            "candidate execution inventory accepted {name} fixture"
+        );
+    }
+
+    let binding = "validate_candidate_job_inventory <<<\"$jobs\"";
+    let comment_shadow = format!("# {binding}\n{}", verifier.replacen(binding, "true", 1));
+    assert!(
+        validate_candidate_execution_bindings(&comment_shadow).is_err(),
+        "comment shadow hid a disabled operative inventory check"
+    );
+
+    let fetch_lines = shell_function_lines(verifier, "fetch_candidate_receipt").unwrap();
+    let job_assignment = fetch_lines
+        .iter()
+        .find(|line| line.starts_with("jobs=") && line.contains("flatten_paginated_jobs"))
+        .unwrap();
+    let dead_group =
+        format!("if false; then\n    {job_assignment}\n    {binding}\n  fi\n  jobs='[]'");
+    let dead_group = verifier.replacen(*job_assignment, &dead_group, 1);
+    assert!(
+        validate_candidate_execution_bindings(&dead_group).is_err(),
+        "dead grouped bindings hid weakened operative fetch code"
+    );
+
+    let quoted = verifier.replacen(
+        "validate_candidate_job_inventory <<<\"$jobs\"",
+        "printf '%s\\n' 'validate_candidate_job_inventory <<<\"$jobs\"'",
+        1,
+    );
+    assert!(
+        validate_candidate_execution_bindings(&quoted).is_err(),
+        "quoted inventory prose passed executable oracle"
+    );
+    let nested = verifier.replacen(
+        "validate_candidate_job_inventory <<<\"$jobs\"",
+        "noop_inventory() { :; }; noop_inventory # validate_candidate_job_inventory <<<\"$jobs\"",
+        1,
+    );
+    assert!(
+        validate_candidate_execution_bindings(&nested).is_err(),
+        "nested no-op inventory passed executable oracle"
+    );
+}
+
+#[test]
+fn candidate_pagination_helpers_flatten_page_items_not_object_values() {
+    let jobs = execute_page_flattener(
+        "flatten_paginated_jobs",
+        "{\"total_count\":3,\"jobs\":[{\"name\":\"a\"},{\"name\":\"b\"}]}\n{\"total_count\":3,\"jobs\":[{\"name\":\"c\"}]}\n",
+    );
+    let job_names = jobs
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|job| job["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(job_names, ["a", "b", "c"]);
+
+    let artifacts = execute_page_flattener(
+        "flatten_paginated_artifacts",
+        "{\"total_count\":2,\"artifacts\":[{\"name\":\"one\"}]}\n{\"total_count\":2,\"artifacts\":[{\"name\":\"two\"}]}\n",
+    );
+    let artifact_names = artifacts
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|artifact| artifact["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(artifact_names, ["one", "two"]);
+
+    let verifier = include_str!("../scripts/verify-release-artifacts.sh");
+    let old_jobs = verifier.replacen(
+        "flatten_paginated_jobs() { jq -cs '[.[] | .jobs[]]'; }",
+        "flatten_paginated_jobs() { jq -cs '[.[][]]'; }",
+        1,
+    );
+    let output = execute_verifier_function(
+        &old_jobs,
+        "flatten_paginated_jobs",
+        "{\"total_count\":1,\"jobs\":[{\"name\":\"a\"}]}\n",
+    );
+    assert!(output.status.success());
+    let wrong_shape: Value = serde_yaml::from_slice(&output.stdout).unwrap();
+    assert!(
+        wrong_shape
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .any(|item| !item.is_mapping()),
+        "object-value job flatten unexpectedly returned only job objects"
+    );
+
+    let old_artifacts = verifier.replacen(
+        "flatten_paginated_artifacts() { jq -cs '[.[] | .artifacts[]]'; }",
+        "flatten_paginated_artifacts() { jq -cs '[.[][].artifacts[]]'; }",
+        1,
+    );
+    assert!(
+        !execute_verifier_function(
+            &old_artifacts,
+            "flatten_paginated_artifacts",
+            "{\"total_count\":1,\"artifacts\":[{\"name\":\"one\"}]}\n",
+        )
+        .status
+        .success(),
+        "object-value artifact flatten unexpectedly succeeded"
+    );
+}
+
+#[test]
 fn promotion_oracle_freezes_the_exact_tag_ruleset_shape() {
     let verifier = include_str!("../scripts/verify-release-artifacts.sh");
     for needle in [
@@ -958,6 +1374,50 @@ fn fixture_mode_requires_exact_candidate_bytes_and_private_home_binary() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("LOCAL FIXTURE ONLY"));
+}
+
+#[test]
+fn fixture_mode_rejects_v2_and_job_map_drift() {
+    for (name, from, to) in [
+        (
+            "v2 schema",
+            "cclab.lumen.candidate-manifest.v3",
+            "cclab.lumen.candidate-manifest.v2",
+        ),
+        ("missing job key", "\"verify-libraries\":\"success\",", ""),
+        (
+            "extra job key",
+            "\"verify-libraries\":\"success\",",
+            "\"verify-libraries\":\"success\",\"extra\":\"success\",",
+        ),
+        (
+            "failed library job",
+            "\"verify-libraries\":\"success\"",
+            "\"verify-libraries\":\"failure\"",
+        ),
+    ] {
+        let fixture = release_fixture();
+        let path = fixture.candidate.join("final-candidate-manifest.json");
+        let manifest = fs::read_to_string(&path).unwrap();
+        assert_eq!(manifest.matches(from).count(), 1, "{name} fixture target");
+        let mutated = manifest.replacen(from, to, 1);
+        assert_ne!(mutated, manifest, "{name} fixture must change bytes");
+        fs::write(&path, mutated).unwrap();
+        let digest = sha256(&path);
+        fs::write(
+            path.with_extension("json.sha256"),
+            format!("{digest}  final-candidate-manifest.json\n"),
+        )
+        .unwrap();
+        let output = run_fixture(&fixture);
+        assert!(!output.status.success(), "{name} fixture passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("candidate final receipt contract changed"),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]

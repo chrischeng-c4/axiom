@@ -3,9 +3,10 @@ use serde_json::{json, Value};
 use serde_yaml::Value as Yaml;
 use std::{
     fs,
+    io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -26,6 +27,28 @@ const ACTIONS: &[&str] = &[
     "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
+const WORKFLOW_BYTES_SHA256: &str =
+    "787a4b4af150c3985b98658f0b9ee3fe79d4a3950369953c170b448b519cb13b";
+const VERIFIER_BYTES_SHA256: &str =
+    "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7";
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut child = Command::new("shasum")
+        .args(["-a", "256"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "shasum failed");
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned()
+}
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -65,9 +88,25 @@ fn replace_once(source: &str, from: &str, to: &str) -> String {
     changed
 }
 
+fn replace_occurrence(source: &str, from: &str, to: &str, occurrence: usize) -> String {
+    let offsets = source
+        .match_indices(from)
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    assert!(
+        occurrence < offsets.len(),
+        "mutation target {from:?} occurrence {occurrence} is missing"
+    );
+    let mut changed = source.to_owned();
+    let start = offsets[occurrence];
+    changed.replace_range(start..start + from.len(), to);
+    assert_ne!(changed, source, "mutation did not change bytes");
+    changed
+}
+
 fn validate_uv_setup(workflow: &Yaml) -> Result<(), Finding> {
     const UV_SETUP: &str = "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9";
-    const GATE_NAME: &str = "Run required source and library gates without GKE";
+    const GATE_NAME: &str = "Run required Lumen product gates without GKE";
     let steps = field(
         job(workflow, "verify-candidate").ok_or(Finding("UV_SETUP"))?,
         "steps",
@@ -119,6 +158,381 @@ fn validate_uv_setup(workflow: &Yaml) -> Result<(), Finding> {
     Ok(())
 }
 
+fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
+    let library_job = job(workflow, "verify-libraries").ok_or(Finding("LIBRARIES"))?;
+    let library_map = library_job.as_mapping().ok_or(Finding("LIBRARIES"))?;
+    require(
+        library_map.len() == 5
+            && ["name", "needs", "runs-on", "permissions", "steps"]
+                .iter()
+                .all(|name| library_map.contains_key(&key(name))),
+        "LIBRARIES",
+    )?;
+    require(
+        field(library_job, "name").and_then(Yaml::as_str)
+            == Some("verify service and Raft library gates"),
+        "LIBRARIES",
+    )?;
+    require(
+        field(library_job, "runs-on").and_then(Yaml::as_str) == Some("ubuntu-latest"),
+        "LIBRARIES",
+    )?;
+    let steps = field(library_job, "steps")
+        .and_then(Yaml::as_sequence)
+        .ok_or(Finding("LIBRARIES"))?;
+    require(steps.len() == 2, "LIBRARIES")?;
+    require(
+        field(&steps[0], "uses").and_then(Yaml::as_str)
+            == Some("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
+        "LIBRARIES",
+    )?;
+    let checkout_step = steps[0].as_mapping().ok_or(Finding("LIBRARIES"))?;
+    require(
+        checkout_step.len() == 2
+            && checkout_step.contains_key(&key("uses"))
+            && checkout_step.contains_key(&key("with")),
+        "LIBRARIES",
+    )?;
+    let checkout_with = field(&steps[0], "with")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding("LIBRARIES"))?;
+    require(
+        checkout_with.len() == 2
+            && checkout_with.contains_key(&key("ref"))
+            && checkout_with.contains_key(&key("fetch-depth")),
+        "LIBRARIES",
+    )?;
+    require(
+        checkout_with.get(&key("ref")).and_then(Yaml::as_str)
+            == Some("${{ needs.identity.outputs.commit }}"),
+        "LIBRARIES",
+    )?;
+    require(
+        checkout_with
+            .get(&key("fetch-depth"))
+            .and_then(Yaml::as_i64)
+            == Some(0),
+        "LIBRARIES",
+    )?;
+    let run_step = steps[1].as_mapping().ok_or(Finding("LIBRARIES"))?;
+    require(
+        run_step.len() == 3
+            && ["name", "shell", "run"]
+                .iter()
+                .all(|name| run_step.contains_key(&key(name))),
+        "LIBRARIES",
+    )?;
+    require(
+        field(&steps[1], "shell").and_then(Yaml::as_str) == Some("bash"),
+        "LIBRARIES",
+    )?;
+    require(
+        field(&steps[1], "name").and_then(Yaml::as_str)
+            == Some("Run required service and Raft library gates without GKE"),
+        "LIBRARIES",
+    )?;
+    let run = field(&steps[1], "run")
+        .and_then(Yaml::as_str)
+        .ok_or(Finding("LIBRARIES"))?;
+    require(
+        exact_shell_lines(
+            run,
+            &[
+                "set -euo pipefail",
+                "cargo test -p service-k8s",
+                "bash scripts/raft-implementor-build.sh",
+                "cargo test -p raft-runtime",
+                "python3 scripts/meta/test_readme_contract.py",
+                "python3 scripts/meta/test_project_docs_contract.py",
+                "python3 scripts/meta/project_docs_contract.py check apps/lumen libs/service-k8s --format json",
+                "git -c core.fsmonitor=false diff --check",
+            ],
+        ),
+        "LIBRARIES",
+    )?;
+    Ok(())
+}
+
+fn exact_shell_lines(content: &str, expected: &[&str]) -> bool {
+    shell_logical_lines(content) == expected
+}
+
+fn shell_logical_lines(content: &str) -> Vec<String> {
+    let mut logical = Vec::new();
+    let mut pending = String::new();
+    for line in content.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let continued = line.ends_with('\\');
+        let part = line.strip_suffix('\\').unwrap_or(line).trim_end();
+        if !pending.is_empty() {
+            pending.push(' ');
+        }
+        pending.push_str(part);
+        if !continued {
+            logical.push(std::mem::take(&mut pending));
+        }
+    }
+    if !pending.is_empty() {
+        logical.push(pending);
+    }
+    logical
+}
+
+fn named_step<'a>(workflow: &'a Yaml, job_name: &str, step_name: &str) -> Option<&'a Yaml> {
+    let steps = field(job(workflow, job_name)?, "steps")?.as_sequence()?;
+    let matches = steps
+        .iter()
+        .filter(|step| field(step, "name").and_then(Yaml::as_str) == Some(step_name))
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then_some(matches[0])
+}
+
+fn validate_exact_run_step(
+    workflow: &Yaml,
+    job_name: &str,
+    step_name: &str,
+    expected_keys: &[&str],
+    expected_lines: &[&str],
+) -> Result<(), Finding> {
+    let step = named_step(workflow, job_name, step_name).ok_or(Finding("GATE_COMMANDS"))?;
+    let map = step.as_mapping().ok_or(Finding("GATE_COMMANDS"))?;
+    require(
+        map.len() == expected_keys.len()
+            && expected_keys
+                .iter()
+                .all(|name| map.contains_key(&key(name))),
+        "GATE_COMMANDS",
+    )?;
+    require(
+        field(step, "shell").and_then(Yaml::as_str) == Some("bash"),
+        "GATE_COMMANDS",
+    )?;
+    let run = field(step, "run")
+        .and_then(Yaml::as_str)
+        .ok_or(Finding("GATE_COMMANDS"))?;
+    require(exact_shell_lines(run, expected_lines), "GATE_COMMANDS")
+}
+
+fn validate_candidate_and_kind_commands(workflow: &Yaml) -> Result<(), Finding> {
+    validate_exact_run_step(
+        workflow,
+        "verify-candidate",
+        "Verify full run-scoped candidate supply chain",
+        &["name", "env", "shell", "run"],
+        &[
+            "set -euo pipefail",
+            "apps/lumen/scripts/verify-release-candidate.sh --repo chrischeng-c4/axiom --version \"${{ needs.identity.outputs.version }}\" --commit \"${{ needs.identity.outputs.commit }}\" --run-id \"${{ github.run_id }}\" --run-attempt \"${{ github.run_attempt }}\" --manifest candidate/candidate-manifest.json --manifest-sidecar candidate/candidate-manifest.json.sha256 --artifacts-dir candidate --image \"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" --candidate-tag \"${{ needs.ghcr-image-and-attest.outputs.candidate_tag }}\" --amd64-digest \"${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\" --arm64-digest \"${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\" --mode full",
+        ],
+    )?;
+    let supply_chain = named_step(
+        workflow,
+        "verify-candidate",
+        "Verify full run-scoped candidate supply chain",
+    )
+    .and_then(|step| field(step, "env"))
+    .and_then(Yaml::as_mapping)
+    .ok_or(Finding("GATE_COMMANDS"))?;
+    require(
+        supply_chain.len() == 1
+            && supply_chain.get(&key("GH_TOKEN")).and_then(Yaml::as_str)
+                == Some("${{ github.token }}"),
+        "GATE_COMMANDS",
+    )?;
+
+    for (job_name, digest) in [
+        (
+            "kind-amd64",
+            "${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}",
+        ),
+        (
+            "kind-arm64",
+            "${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}",
+        ),
+    ] {
+        let command = format!(
+            "LUMEN_E2E_MODE=operator LUMEN_E2E_IMAGE_MODE=prebuilt LUMEN_E2E_IMAGE=\"${{{{ needs.ghcr-image-and-attest.outputs.image_repo }}}}@${{{{ needs.ghcr-image-and-attest.outputs.root_digest }}}}\" LUMEN_E2E_EXPECTED_VERSION=\"${{{{ needs.identity.outputs.version }}}}\" LUMEN_E2E_EXPECTED_GIT_SHA=\"${{short_sha:0:8}}\" LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"{digest}\" apps/lumen/scripts/kind-e2e.sh"
+        );
+        validate_exact_run_step(
+            workflow,
+            job_name,
+            "Run prebuilt candidate kind e2e",
+            &["name", "shell", "run"],
+            &[
+                "set -euo pipefail",
+                "short_sha=\"${{ needs.identity.outputs.commit }}\"",
+                &command,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_gate_step_inventory(workflow: &Yaml) -> Result<(), Finding> {
+    let expected: &[(&str, &[&str])] = &[
+        (
+            "verify-candidate",
+            &[
+                "uses:actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "uses:sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+                "uses:docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+                "Log in to GHCR with read-only job access",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9",
+                "Run required Lumen product gates without GKE",
+                "Verify full run-scoped candidate supply chain",
+            ][..],
+        ),
+        (
+            "kind-amd64",
+            &[
+                "uses:actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "Assert native x86_64 runner architecture",
+                "Install verified kind v0.32.0",
+                "Run prebuilt candidate kind e2e",
+            ][..],
+        ),
+        (
+            "kind-arm64",
+            &[
+                "uses:actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "Assert native aarch64 runner architecture",
+                "Install verified kind v0.32.0",
+                "Run prebuilt candidate kind e2e",
+            ][..],
+        ),
+        (
+            "result",
+            &[
+                "uses:actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+                "Verify exact preflight manifest sidecar",
+                "Bind all successful job conclusions into final receipt",
+                "Verify final receipt as local fixture only",
+                "uses:actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            ][..],
+        ),
+    ];
+    for &(job_name, expected_names) in expected {
+        let steps = field(
+            job(workflow, job_name).ok_or(Finding("GATE_STEPS"))?,
+            "steps",
+        )
+        .and_then(Yaml::as_sequence)
+        .ok_or(Finding("GATE_STEPS"))?;
+        let actual = steps
+            .iter()
+            .map(|step| {
+                field(step, "name")
+                    .and_then(Yaml::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        field(step, "uses")
+                            .and_then(Yaml::as_str)
+                            .map(|uses| format!("uses:{uses}"))
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        require(
+            actual
+                .iter()
+                .map(String::as_str)
+                .eq(expected_names.iter().copied()),
+            "GATE_STEPS",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_fail_closed_gate_conditions(workflow: &Yaml) -> Result<(), Finding> {
+    for name in [
+        "verify-candidate",
+        "verify-libraries",
+        "kind-amd64",
+        "kind-arm64",
+        "result",
+    ] {
+        let job = job(workflow, name).ok_or(Finding("CONDITIONS"))?;
+        let job_map = job.as_mapping().ok_or(Finding("CONDITIONS"))?;
+        for forbidden in ["if", "continue-on-error"] {
+            require(!job_map.contains_key(&key(forbidden)), "CONDITIONS")?;
+        }
+        let steps = field(job, "steps")
+            .and_then(Yaml::as_sequence)
+            .ok_or(Finding("CONDITIONS"))?;
+        for step in steps {
+            let step = step.as_mapping().ok_or(Finding("CONDITIONS"))?;
+            for forbidden in ["if", "continue-on-error"] {
+                require(!step.contains_key(&key(forbidden)), "CONDITIONS")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), Finding> {
+    let steps = field(
+        job(workflow, "verify-candidate").ok_or(Finding("GATES"))?,
+        "steps",
+    )
+    .and_then(Yaml::as_sequence)
+    .ok_or(Finding("GATES"))?;
+    let run = steps
+        .iter()
+        .find(|step| {
+            field(step, "name").and_then(Yaml::as_str)
+                == Some("Run required Lumen product gates without GKE")
+        })
+        .and_then(|step| field(step, "run"))
+        .and_then(Yaml::as_str)
+        .ok_or(Finding("GATES"))?;
+    require(
+        exact_shell_lines(
+            run,
+            &[
+                "set -euo pipefail",
+                "cargo test -p lumen --features operator --test capacity_catalog_client",
+                "cargo test -p lumen --features operator --test capacity_catalog_contract",
+                "cargo test -p lumen --test cli_convention",
+                "cargo test -p lumen --test release_artifacts",
+                "cargo test -p lumen --test release_candidate",
+                "cargo test -p lumen",
+                "cargo test -p lumen --features \"operator delegated-auth\"",
+                "cargo test -p lumen --locked --features release --test release_feature_set",
+                "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
+            ],
+        ),
+        "GATES",
+    )?;
+    for gate in [
+        "cargo test -p service-k8s",
+        "bash scripts/raft-implementor-build.sh",
+        "cargo test -p raft-runtime",
+        "python3 scripts/meta/test_readme_contract.py",
+        "python3 scripts/meta/test_project_docs_contract.py",
+        "python3 scripts/meta/project_docs_contract.py check apps/lumen libs/service-k8s --format json",
+        "git -c core.fsmonitor=false diff --check",
+    ] {
+        require(!run.contains(gate), "LIBRARIES")?;
+        require(source.matches(gate).count() == 1, "LIBRARIES")?;
+    }
+    Ok(())
+}
+
 fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
     let workflow: Yaml = serde_yaml::from_str(source).map_err(|_| Finding("YAML"))?;
     let events = field(&workflow, "on")
@@ -156,6 +570,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         "ghcr-image-and-attest",
         "manifest",
         "verify-candidate",
+        "verify-libraries",
         "kind-amd64",
         "kind-arm64",
         "result",
@@ -168,6 +583,11 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         "JOBS",
     )?;
     validate_uv_setup(&workflow)?;
+    validate_libraries_job(&workflow)?;
+    validate_product_gate_partition(&workflow, source)?;
+    validate_fail_closed_gate_conditions(&workflow)?;
+    validate_gate_step_inventory(&workflow)?;
+    validate_candidate_and_kind_commands(&workflow)?;
     let graph = [
         ("identity", &[][..]),
         ("build", &["identity"][..]),
@@ -180,13 +600,24 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
             "verify-candidate",
             &["identity", "manifest", "ghcr-image-and-attest"][..],
         ),
+        ("verify-libraries", &["identity"][..]),
         (
             "kind-amd64",
-            &["identity", "verify-candidate", "ghcr-image-and-attest"][..],
+            &[
+                "identity",
+                "verify-candidate",
+                "verify-libraries",
+                "ghcr-image-and-attest",
+            ][..],
         ),
         (
             "kind-arm64",
-            &["identity", "verify-candidate", "ghcr-image-and-attest"][..],
+            &[
+                "identity",
+                "verify-candidate",
+                "verify-libraries",
+                "ghcr-image-and-attest",
+            ][..],
         ),
         (
             "result",
@@ -196,6 +627,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
                 "manifest",
                 "ghcr-image-and-attest",
                 "verify-candidate",
+                "verify-libraries",
                 "kind-amd64",
                 "kind-arm64",
             ][..],
@@ -222,6 +654,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
             "verify-candidate",
             "attestations: read\ncontents: read\npackages: read",
         ),
+        ("verify-libraries", "contents: read"),
         ("kind-amd64", "contents: read\npackages: read"),
         ("kind-arm64", "contents: read\npackages: read"),
         ("result", "contents: read"),
@@ -329,7 +762,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         require(source.contains(&format!("target: {target}")), "ARTIFACTS")?;
     }
     require(
-        source.contains("schema:\"cclab.lumen.candidate-manifest.v2\""),
+        source.contains("schema:\"cclab.lumen.candidate-manifest.v3\""),
         "MANIFEST",
     )?;
     for binding in [
@@ -343,14 +776,23 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
     ] {
         require(source.contains(binding), "MANIFEST")?;
     }
-    require(source.contains(". + {jobs:{identity:"), "MANIFEST")?;
+    require(
+        source.contains(
+            ". + {jobs:{identity:\"${{ needs.identity.result }}\",build:\"${{ needs.build.result }}\",manifest:\"${{ needs.manifest.result }}\",\"ghcr-image-and-attest\":\"${{ needs.ghcr-image-and-attest.result }}\",\"verify-candidate\":\"${{ needs.verify-candidate.result }}\",\"verify-libraries\":\"${{ needs.verify-libraries.result }}\",\"kind-amd64\":\"${{ needs.kind-amd64.result }}\",\"kind-arm64\":\"${{ needs.kind-arm64.result }}\",result:\"success\"}}",
+        ),
+        "MANIFEST",
+    )?;
     require(source.contains("LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\""), "KIND")?;
     require(source.contains("LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\""), "KIND")?;
     require(
         source.contains("--manifest-sidecar candidate/final-candidate-manifest.json.sha256"),
         "MANIFEST",
     )?;
-    validate_dockerfile(dockerfile)
+    validate_dockerfile(dockerfile)?;
+    require(
+        sha256_bytes(source.as_bytes()) == WORKFLOW_BYTES_SHA256,
+        "WORKFLOW_BYTES",
+    )
 }
 
 fn validate_dockerfile(source: &str) -> Result<(), Finding> {
@@ -383,10 +825,10 @@ fn validate_verifier(source: &str, mode: u32) -> Result<(), Finding> {
     require(mode & 0o777 == 0o755, "MODE")?;
     for needle in [
         "`local` validates synthetic files only. It is not candidate acceptance.",
-        "`full` also validates the run-scoped GHCR image", "cclab.lumen.candidate-manifest.v2",
+        "`full` also validates the run-scoped GHCR image", "cclab.lumen.candidate-manifest.v3",
         "run_url == (\"https://github.com/\" + $repo + \"/actions/runs/\" + $run_id + \"/attempts/\" + $attempt)",
         ".source_ref == \"refs/heads/main\"", ".workflow_ref == $workflow_ref",
-        ".jobs == {identity:\"success\",build:\"success\",manifest:\"success\"",
+        ".jobs == {identity:\"success\",build:\"success\",manifest:\"success\",\"ghcr-image-and-attest\":\"success\",\"verify-candidate\":\"success\",\"verify-libraries\":\"success\",\"kind-amd64\":\"success\",\"kind-arm64\":\"success\",result:\"success\"}",
         "archive members changed", "archive binary is not executable", "invalid SPDX 2.3 SBOM",
         "predicate == $sbom[0]", "--certificate-identity \"$EXPECTED_CERT_ID\"",
         "--cert-oidc-issuer https://token.actions.githubusercontent.com",
@@ -404,7 +846,10 @@ fn validate_verifier(source: &str, mode: u32) -> Result<(), Finding> {
     ] {
         require(!source.contains(forbidden), "VERIFIER_SIDE_EFFECT")?;
     }
-    Ok(())
+    require(
+        sha256_bytes(source.as_bytes()) == VERIFIER_BYTES_SHA256,
+        "VERIFIER_BYTES",
+    )
 }
 
 fn expect_workflow(source: &str, from: &str, to: &str, code: &'static str) {
@@ -447,6 +892,16 @@ fn live_candidate_contract_is_fail_closed() {
 #[test]
 fn candidate_source_mutations_fail_with_stable_categories() {
     let source = workflow();
+    let same_name_step = replace_once(
+        &source,
+        "      - name: Log in to GHCR with read-only job access\n        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0\n        with:\n          registry: ghcr.io\n          username: ${{ github.actor }}\n          password: ${{ github.token }}\n",
+        "      - name: Log in to GHCR with read-only job access\n        shell: bash\n        run: |\n          # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9\n          printf '#!/usr/bin/env bash\\nexit 0\\n' > apps/lumen/scripts/verify-release-candidate.sh\n",
+    );
+    assert_ne!(same_name_step, source);
+    assert_eq!(
+        validate_workflow(&same_name_step, &dockerfile()).unwrap_err(),
+        Finding("WORKFLOW_BYTES")
+    );
     for (from, to, code) in [
         (
             "description: Exact Lumen semver without the lumen@ prefix.\n        required: true",
@@ -488,6 +943,165 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     ] {
         expect_workflow(&source, from, to, code);
     }
+    expect_workflow(
+        &source,
+        "schema:\"cclab.lumen.candidate-manifest.v3\"",
+        "schema:\"cclab.lumen.candidate-manifest.v2\"",
+        "MANIFEST",
+    );
+    expect_workflow(
+        &source,
+        "  verify-libraries:\n",
+        "  verify-libraries-missing:\n",
+        "JOBS",
+    );
+    expect_workflow(
+        &source,
+        "\n  kind-amd64:\n",
+        "\n  extra-job:\n    name: extra\n    needs: [identity]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps: []\n\n  kind-amd64:\n",
+        "JOBS",
+    );
+    expect_workflow(
+        &source,
+        "\"verify-libraries\":\"${{ needs.verify-libraries.result }}\"",
+        "\"verify-libraries\":\"failure\"",
+        "MANIFEST",
+    );
+    expect_workflow(
+        &source,
+        "  kind-amd64:\n    name: kind e2e (amd64)\n    needs: [identity, verify-candidate, verify-libraries, ghcr-image-and-attest]",
+        "  kind-amd64:\n    name: kind e2e (amd64)\n    needs: [identity, verify-candidate, ghcr-image-and-attest]",
+        "GRAPH",
+    );
+    expect_workflow(&source, "cargo test -p service-k8s", "true", "LIBRARIES");
+    expect_workflow(
+        &source,
+        "          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
+        "          bash scripts/raft-implementor-build.sh\n          cargo test -p service-k8s",
+        "LIBRARIES",
+    );
+    expect_workflow(
+        &source,
+        "          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
+        "          cargo test -p service-k8s\n          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
+        "LIBRARIES",
+    );
+    for (from, to) in [
+        (
+            "      - name: Run required Lumen product gates without GKE\n        shell: bash",
+            "      - name: Run required Lumen product gates without GKE\n        if: false\n        shell: bash",
+        ),
+        (
+            "      - name: Verify full run-scoped candidate supply chain\n        env:",
+            "      - name: Verify full run-scoped candidate supply chain\n        continue-on-error: true\n        env:",
+        ),
+        (
+            "  kind-amd64:\n    name: kind e2e (amd64)",
+            "  kind-amd64:\n    name: kind e2e (amd64)\n    if: always()",
+        ),
+        (
+            "  kind-arm64:\n    name: kind e2e (arm64)",
+            "  kind-arm64:\n    name: kind e2e (arm64)\n    continue-on-error: true",
+        ),
+        (
+            "  result:\n    name: final candidate receipt",
+            "  result:\n    name: final candidate receipt\n    if: always()",
+        ),
+        (
+            "      - name: Bind all successful job conclusions into final receipt\n        shell: bash",
+            "      - name: Bind all successful job conclusions into final receipt\n        if: false\n        shell: bash",
+        ),
+    ] {
+        expect_workflow(&source, from, to, "CONDITIONS");
+    }
+    for occurrence in 0..2 {
+        let changed = replace_occurrence(
+            &source,
+            "      - name: Run prebuilt candidate kind e2e\n        shell: bash",
+            "      - name: Run prebuilt candidate kind e2e\n        if: false\n        shell: bash",
+            occurrence,
+        );
+        assert_eq!(
+            validate_workflow(&changed, &dockerfile()).unwrap_err(),
+            Finding("CONDITIONS"),
+            "kind YAML condition occurrence {occurrence} passed",
+        );
+    }
+    for (job, gate, marker) in [
+        (
+            "verify-candidate",
+            "Verify full run-scoped candidate supply chain",
+            "apps/lumen/scripts/verify-release-candidate.sh \\",
+        ),
+        (
+            "kind-amd64",
+            "Run prebuilt candidate kind e2e",
+            "apps/lumen/scripts/kind-e2e.sh",
+        ),
+        (
+            "kind-arm64",
+            "Run prebuilt candidate kind e2e",
+            "apps/lumen/scripts/kind-e2e.sh",
+        ),
+    ] {
+        let insertion = format!(
+            "      - name: Unrecognized overwrite step\n        shell: bash\n        run: |\n          printf '#!/usr/bin/env bash\\nexit 0\\n' > {marker}\n"
+        );
+        let anchor = format!("      - name: {gate}\n");
+        let occurrence = if job == "verify-candidate" {
+            0
+        } else if job == "kind-amd64" {
+            0
+        } else {
+            1
+        };
+        let changed = replace_occurrence(
+            &source,
+            &anchor,
+            &format!("{insertion}{anchor}"),
+            occurrence,
+        );
+        assert_eq!(
+            validate_workflow(&changed, &dockerfile()).unwrap_err(),
+            Finding("GATE_STEPS"),
+            "unrecognized step before {job} gate passed",
+        );
+    }
+    expect_workflow(
+        &source,
+        "  verify-libraries:\n    name: verify service and Raft library gates\n    needs: [identity]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: ${{ needs.identity.outputs.commit }}",
+        "  verify-libraries:\n    name: verify service and Raft library gates\n    needs: [identity]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: ${{ github.sha }}",
+        "LIBRARIES",
+    );
+    for occurrence in 0..2 {
+        let changed = replace_occurrence(
+            &source,
+            "          apps/lumen/scripts/kind-e2e.sh",
+            "          if false; then apps/lumen/scripts/kind-e2e.sh; fi",
+            occurrence,
+        );
+        assert_eq!(
+            validate_workflow(&changed, &dockerfile()).unwrap_err(),
+            Finding("GATE_COMMANDS"),
+            "kind dead-branch occurrence {occurrence} passed",
+        );
+    }
+    let supply_chain_dead = replace_occurrence(
+        &source,
+        "          apps/lumen/scripts/verify-release-candidate.sh \\",
+        "          if false; then\n          apps/lumen/scripts/verify-release-candidate.sh \\",
+        0,
+    );
+    let supply_chain_dead = replace_once(
+        &supply_chain_dead,
+        "            --mode full",
+        "            --mode full\n          fi",
+    );
+    assert_eq!(
+        validate_workflow(&supply_chain_dead, &dockerfile()).unwrap_err(),
+        Finding("GATE_COMMANDS"),
+        "candidate supply-chain dead branch passed",
+    );
     let uv_setup = "      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0\n        with:\n          version: 0.12.1\n          enable-cache: false\n";
     let without_uv = replace_once(&source, uv_setup, "");
     let gate_following_step = "      - name: Verify full run-scoped candidate supply chain\n";
@@ -499,6 +1113,15 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         Finding("UV_SETUP")
     );
     let (script, _) = verifier();
+    let bypassed_supply_chain = replace_once(
+        &script,
+        "\n  verify_full_supply_chain\n",
+        "\n  true # verify_full_supply_chain\n",
+    );
+    assert_eq!(
+        validate_verifier(&bypassed_supply_chain, 0o755).unwrap_err(),
+        Finding("VERIFIER_BYTES")
+    );
     for (from, to, code) in [
         (
             "LOCAL FIXTURE ONLY: artifacts verified; this is not candidate acceptance.",
@@ -602,7 +1225,7 @@ fn local_fixture() -> tempfile::TempDir {
         "aarch64-unknown-linux-musl",
     ];
     let artifacts_json: Vec<_> = targets.iter().map(|target| json!({"target":target,"archive":format!("lumen-{target}.tar.gz"),"archive_sha256":sha(&artifacts.join(format!("lumen-{target}.tar.gz"))),"sidecar":format!("lumen-{target}.tar.gz.sha256"),"sidecar_sha256":sha(&artifacts.join(format!("lumen-{target}.tar.gz.sha256")))})).collect();
-    let manifest = json!({"schema":"cclab.lumen.candidate-manifest.v2","repository":"chrischeng-c4/axiom","workflow_path":".github/workflows/lumen-release-candidate.yml","workflow_id":42,"run_id":"7","run_attempt":"2","run_url":"https://github.com/chrischeng-c4/axiom/actions/runs/7/attempts/2","source_ref":"refs/heads/main","workflow_ref":"chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main","commit":"0123456789012345678901234567890123456789","version":"0.4.27","tag":"lumen@0.4.27","candidate_tag":"release-candidate-7-2","pr":{"number":42,"url":"https://github.com/chrischeng-c4/axiom/pull/42"},"image":{"repository":"ghcr.io/chrischeng-c4/lumen","root_digest":format!("sha256:{}", "1".repeat(64)),"amd64_digest":format!("sha256:{}", "2".repeat(64)),"arm64_digest":format!("sha256:{}", "3".repeat(64))},"artifacts":artifacts_json,"sboms":{"amd64":{"file":"spdx-amd64.json","sha256":sha(&artifacts.join("spdx-amd64.json"))},"arm64":{"file":"spdx-arm64.json","sha256":sha(&artifacts.join("spdx-arm64.json"))}},"jobs":{"identity":"success","build":"success","manifest":"success","ghcr-image-and-attest":"success","verify-candidate":"success","kind-amd64":"success","kind-arm64":"success","result":"success"}});
+    let manifest = json!({"schema":"cclab.lumen.candidate-manifest.v3","repository":"chrischeng-c4/axiom","workflow_path":".github/workflows/lumen-release-candidate.yml","workflow_id":42,"run_id":"7","run_attempt":"2","run_url":"https://github.com/chrischeng-c4/axiom/actions/runs/7/attempts/2","source_ref":"refs/heads/main","workflow_ref":"chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main","commit":"0123456789012345678901234567890123456789","version":"0.4.27","tag":"lumen@0.4.27","candidate_tag":"release-candidate-7-2","pr":{"number":42,"url":"https://github.com/chrischeng-c4/axiom/pull/42"},"image":{"repository":"ghcr.io/chrischeng-c4/lumen","root_digest":format!("sha256:{}", "1".repeat(64)),"amd64_digest":format!("sha256:{}", "2".repeat(64)),"arm64_digest":format!("sha256:{}", "3".repeat(64))},"artifacts":artifacts_json,"sboms":{"amd64":{"file":"spdx-amd64.json","sha256":sha(&artifacts.join("spdx-amd64.json"))},"arm64":{"file":"spdx-arm64.json","sha256":sha(&artifacts.join("spdx-arm64.json"))}},"jobs":{"identity":"success","build":"success","manifest":"success","ghcr-image-and-attest":"success","verify-candidate":"success","verify-libraries":"success","kind-amd64":"success","kind-arm64":"success","result":"success"}});
     write_manifest(&artifacts.join("final-candidate-manifest.json"), &manifest);
     dir
 }

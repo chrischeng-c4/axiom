@@ -363,7 +363,7 @@ jobs:
             [[ -f "$archive" && -f "$sidecar" ]] || { echo "missing archive pair: $target" >&2; exit 1; }
             artifacts="$(jq -c --arg target "$target" --arg archive "$archive" --arg archive_sha "$(sha "$archive")" --arg sidecar "$sidecar" --arg sidecar_sha "$(sha "$sidecar")" '. + [{target:$target,archive:$archive,archive_sha256:$archive_sha,sidecar:$sidecar,sidecar_sha256:$sidecar_sha}]' <<<"$artifacts")"
           done
-          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow_path '.github/workflows/lumen-release-candidate.yml' --argjson workflow_id '${{ needs.identity.outputs.workflow_id }}' --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" --arg run_url '${{ needs.identity.outputs.run_url }}' --arg source_ref '${{ needs.identity.outputs.source_ref }}' --arg workflow_ref '${{ needs.identity.outputs.workflow_ref }}' --arg commit '${{ needs.identity.outputs.commit }}' --arg version '${{ needs.identity.outputs.version }}' --arg tag '${{ needs.identity.outputs.tag }}' --arg candidate_tag '${{ needs.ghcr-image-and-attest.outputs.candidate_tag }}' --argjson pr_number '${{ needs.identity.outputs.pr_number }}' --arg pr_url '${{ needs.identity.outputs.pr_url }}' --arg image_repo '${{ needs.ghcr-image-and-attest.outputs.image_repo }}' --arg root_digest '${{ needs.ghcr-image-and-attest.outputs.root_digest }}' --arg amd64_digest '${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}' --arg arm64_digest '${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}' --argjson artifacts "$artifacts" --arg amd64_sbom "$(sha spdx-amd64.json)" --arg arm64_sbom "$(sha spdx-arm64.json)" '{schema:"cclab.lumen.candidate-manifest.v2",repository:$repository,workflow_path:$workflow_path,workflow_id:$workflow_id,run_id:$run_id,run_attempt:$run_attempt,run_url:$run_url,source_ref:$source_ref,workflow_ref:$workflow_ref,commit:$commit,version:$version,tag:$tag,candidate_tag:$candidate_tag,pr:{number:$pr_number,url:$pr_url},image:{repository:$image_repo,root_digest:$root_digest,amd64_digest:$amd64_digest,arm64_digest:$arm64_digest},artifacts:$artifacts,sboms:{amd64:{file:"spdx-amd64.json",sha256:$amd64_sbom},arm64:{file:"spdx-arm64.json",sha256:$arm64_sbom}}}' > candidate-manifest.json
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow_path '.github/workflows/lumen-release-candidate.yml' --argjson workflow_id '${{ needs.identity.outputs.workflow_id }}' --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" --arg run_url '${{ needs.identity.outputs.run_url }}' --arg source_ref '${{ needs.identity.outputs.source_ref }}' --arg workflow_ref '${{ needs.identity.outputs.workflow_ref }}' --arg commit '${{ needs.identity.outputs.commit }}' --arg version '${{ needs.identity.outputs.version }}' --arg tag '${{ needs.identity.outputs.tag }}' --arg candidate_tag '${{ needs.ghcr-image-and-attest.outputs.candidate_tag }}' --argjson pr_number '${{ needs.identity.outputs.pr_number }}' --arg pr_url '${{ needs.identity.outputs.pr_url }}' --arg image_repo '${{ needs.ghcr-image-and-attest.outputs.image_repo }}' --arg root_digest '${{ needs.ghcr-image-and-attest.outputs.root_digest }}' --arg amd64_digest '${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}' --arg arm64_digest '${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}' --argjson artifacts "$artifacts" --arg amd64_sbom "$(sha spdx-amd64.json)" --arg arm64_sbom "$(sha spdx-arm64.json)" '{schema:"cclab.lumen.candidate-manifest.v3",repository:$repository,workflow_path:$workflow_path,workflow_id:$workflow_id,run_id:$run_id,run_attempt:$run_attempt,run_url:$run_url,source_ref:$source_ref,workflow_ref:$workflow_ref,commit:$commit,version:$version,tag:$tag,candidate_tag:$candidate_tag,pr:{number:$pr_number,url:$pr_url},image:{repository:$image_repo,root_digest:$root_digest,amd64_digest:$amd64_digest,arm64_digest:$arm64_digest},artifacts:$artifacts,sboms:{amd64:{file:"spdx-amd64.json",sha256:$amd64_sbom},arm64:{file:"spdx-arm64.json",sha256:$arm64_sbom}}}' > candidate-manifest.json
           if command -v sha256sum >/dev/null 2>&1; then sha256sum candidate-manifest.json > candidate-manifest.json.sha256; else shasum -a 256 candidate-manifest.json > candidate-manifest.json.sha256; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -429,7 +429,7 @@ jobs:
         with:
           version: 0.12.1
           enable-cache: false
-      - name: Run required source and library gates without GKE
+      - name: Run required Lumen product gates without GKE
         shell: bash
         run: |
           set -euo pipefail
@@ -442,13 +442,6 @@ jobs:
           cargo test -p lumen --features "operator delegated-auth"
           cargo test -p lumen --locked --features release --test release_feature_set
           bash apps/lumen/scripts/standalone-container-smoke.sh bind
-          cargo test -p service-k8s
-          bash scripts/raft-implementor-build.sh
-          cargo test -p raft-runtime
-          python3 scripts/meta/test_readme_contract.py
-          python3 scripts/meta/test_project_docs_contract.py
-          python3 scripts/meta/project_docs_contract.py check apps/lumen libs/service-k8s --format json
-          git -c core.fsmonitor=false diff --check
       - name: Verify full run-scoped candidate supply chain
         env:
           GH_TOKEN: ${{ github.token }}
@@ -470,9 +463,32 @@ jobs:
             --arm64-digest "${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}" \
             --mode full
 
+  verify-libraries:
+    name: verify service and Raft library gates
+    needs: [identity]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.identity.outputs.commit }}
+          fetch-depth: 0
+      - name: Run required service and Raft library gates without GKE
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p service-k8s
+          bash scripts/raft-implementor-build.sh
+          cargo test -p raft-runtime
+          python3 scripts/meta/test_readme_contract.py
+          python3 scripts/meta/test_project_docs_contract.py
+          python3 scripts/meta/project_docs_contract.py check apps/lumen libs/service-k8s --format json
+          git -c core.fsmonitor=false diff --check
+
   kind-amd64:
     name: kind e2e (amd64)
-    needs: [identity, verify-candidate, ghcr-image-and-attest]
+    needs: [identity, verify-candidate, verify-libraries, ghcr-image-and-attest]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -507,7 +523,7 @@ jobs:
 
   kind-arm64:
     name: kind e2e (arm64)
-    needs: [identity, verify-candidate, ghcr-image-and-attest]
+    needs: [identity, verify-candidate, verify-libraries, ghcr-image-and-attest]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -542,7 +558,7 @@ jobs:
 
   result:
     name: final candidate receipt
-    needs: [identity, build, manifest, ghcr-image-and-attest, verify-candidate, kind-amd64, kind-arm64]
+    needs: [identity, build, manifest, ghcr-image-and-attest, verify-candidate, verify-libraries, kind-amd64, kind-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -594,8 +610,8 @@ jobs:
         run: |
           set -euo pipefail
           cd candidate
-          jq -e '.schema == "cclab.lumen.candidate-manifest.v2"' candidate-manifest.json >/dev/null
-          jq -c '. + {jobs:{identity:"${{ needs.identity.result }}",build:"${{ needs.build.result }}",manifest:"${{ needs.manifest.result }}","ghcr-image-and-attest":"${{ needs.ghcr-image-and-attest.result }}","verify-candidate":"${{ needs.verify-candidate.result }}","kind-amd64":"${{ needs.kind-amd64.result }}","kind-arm64":"${{ needs.kind-arm64.result }}",result:"success"}}' candidate-manifest.json > final-candidate-manifest.json
+          jq -e '.schema == "cclab.lumen.candidate-manifest.v3"' candidate-manifest.json >/dev/null
+          jq -c '. + {jobs:{identity:"${{ needs.identity.result }}",build:"${{ needs.build.result }}",manifest:"${{ needs.manifest.result }}","ghcr-image-and-attest":"${{ needs.ghcr-image-and-attest.result }}","verify-candidate":"${{ needs.verify-candidate.result }}","verify-libraries":"${{ needs.verify-libraries.result }}","kind-amd64":"${{ needs.kind-amd64.result }}","kind-arm64":"${{ needs.kind-arm64.result }}",result:"success"}}' candidate-manifest.json > final-candidate-manifest.json
           if command -v sha256sum >/dev/null 2>&1; then sha256sum final-candidate-manifest.json > final-candidate-manifest.json.sha256; else shasum -a 256 final-candidate-manifest.json > final-candidate-manifest.json.sha256; fi
       - name: Verify final receipt as local fixture only
         shell: bash
