@@ -6,19 +6,21 @@ that follows it, and an agent reading that line runs it verbatim -- so a printed
 command the receiving parser rejects is a dead end at the exact point where the
 work is supposed to continue, and it is invisible to every other gate here.
 
-That is not hypothetical. Both of the defects this gate was written to refuse
-were live in a tree whose eighteen other gates were all green:
+That is not hypothetical. The defect this gate was written to refuse was live
+in a tree whose eighteen other gates were all green:
 
   * `e2e.py`, `unit.py` and `logic.py` each end their `commit` verb by printing
     `change.py lifecycle <wi> --leg <PHASE> ...`, and `change.py` took its
     `--leg` choices from `workitem.LEGS`, which still read `("ec", "td", "cb")`.
     All three phases printed a command that exits 2. The one step that records a
     landed commit on the work item could not be reached from any phase.
-  * `leg.py` ends an accepted review by printing `<phase>.py commit <wi>`, but
-    `--project` is `required=True` on all three phase scripts and has no
-    default. The review-to-commit handoff exited 2 as well.
 
-Nothing else could have caught either one. The strings are built in one module
+  (A second one -- `leg.py` printing `<phase>.py commit <wi>` without the
+  required `--project` after an accepted review -- left with the review itself
+  on 2026-08-26. The shape is still live in every phase script, and the
+  negative control keeps a mutation of it.)
+
+Nothing else could have caught it. The strings are built in one module
 and parsed in another, so a reader of either half sees something consistent; the
 flow gates drive the verbs by constructing argv themselves, which measures the
 parser but never the printed line. This gate is the only place the two meet.
@@ -50,12 +52,6 @@ sys.path.insert(0, str(SCRIPTS))
 PLACEHOLDERS = {"wi": "4242", "project": "demo", "iid": "4242",
                 "sha": "0" * 40, "digest": "f" * 64}
 GENERIC = "PLACEHOLDER"
-
-# A free name that ranges over the phases is expanded over all three rather than
-# stubbed. `leg.py` prints `f"{phase}.py commit {args.wi}"` from code shared by
-# every phase, so stubbing it would leave the line classified as prose and the
-# defect unmeasured.
-RANGES_OVER_PHASES = ("phase",)
 
 MARKER = "next.command:"
 SCRIPT_TOKEN = re.compile(r"^[a-z0-9_]+\.py$")
@@ -100,32 +96,13 @@ def free_names(expr: ast.expr, known: dict) -> set[str]:
             and n.id not in dir(__builtins__)}
 
 
-def render(expr: ast.expr, module) -> list[str]:
-    """The strings this print site can emit, using the module's own constants."""
+def render(expr: ast.expr, module) -> str:
+    """The string this print site emits, using the module's own constants."""
     namespace = dict(vars(module))
     namespace["args"] = Args()
-    names = free_names(expr, namespace)
-    phase_vars = [n for n in names if n in RANGES_OVER_PHASES]
-    for name in names - set(phase_vars):
+    for name in free_names(expr, namespace):
         namespace[name] = PLACEHOLDERS.get(name, GENERIC)
-
-    source = ast.unparse(expr)
-    if not phase_vars:
-        return [eval(source, namespace)]  # noqa: S307 -- repo-controlled source
-
-    # Resolved here rather than above, so a module printing only prose never
-    # reaches for the ladder at all. It used to be looked up unconditionally,
-    # which meant a scripts directory without a `leg.py` crashed the gate on
-    # lines that had no phase in them -- a traceback where the answer was
-    # "nothing to compare".
-    phases = getattr(module, "PHASES", None) or _paths.load_script_module(
-        SCRIPTS / "leg.py", "legmod").PHASES
-    out = []
-    for phase in phases:
-        for name in phase_vars:
-            namespace[name] = phase
-        out.append(eval(source, namespace))  # noqa: S307
-    return out
+    return eval(ast.unparse(expr), namespace)  # noqa: S307 -- repo-controlled source
 
 
 def payload(text: str) -> str:
@@ -166,23 +143,22 @@ def main() -> int:
     for path in emitting_scripts():
         module = _paths.load_script_module(path, f"emit_{path.stem}")
         for lineno, expr in print_sites(path):
-            for text in render(expr, module):
-                line = payload(text)
-                head = line.split()[0] if line.split() else ""
-                where = f"{path.name}:{lineno}"
-                if not SCRIPT_TOKEN.match(head):
-                    prose += 1
-                    continue
-                target = SCRIPTS / head
-                if not target.is_file():
-                    failures.append(f"FAIL {where}: names `{head}`, which is not "
-                                    f"a script under {SCRIPTS}")
-                    continue
-                commands += 1
-                why = accepts(target, line.split()[1:])
-                if why:
-                    failures.append(f"FAIL {where}: prints `{line}`\n"
-                                    f"       {head} refuses it -- {why}")
+            line = payload(render(expr, module))
+            head = line.split()[0] if line.split() else ""
+            where = f"{path.name}:{lineno}"
+            if not SCRIPT_TOKEN.match(head):
+                prose += 1
+                continue
+            target = SCRIPTS / head
+            if not target.is_file():
+                failures.append(f"FAIL {where}: names `{head}`, which is not "
+                                f"a script under {SCRIPTS}")
+                continue
+            commands += 1
+            why = accepts(target, line.split()[1:])
+            if why:
+                failures.append(f"FAIL {where}: prints `{line}`\n"
+                                f"       {head} refuses it -- {why}")
 
     print(f"read {commands} printed command(s) and {prose} prose line(s)")
     if commands == 0:

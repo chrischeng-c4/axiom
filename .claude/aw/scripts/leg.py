@@ -34,7 +34,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib.util
-import json
 import re
 import shutil
 import subprocess
@@ -371,10 +370,11 @@ def contract_set(repo: Path, ec: Path, iid: int, leg: str) -> list[str]:
 def change_digest(repo: Path, iid: int, paths: list[str]) -> str:
     """One digest over the work item and every byte of the change.
 
-    The body is in here on purpose. The question a reviewer answers is "does
-    this change satisfy this work item", so an edit to *either* side can flip
-    the answer -- and a verdict that survives an edit to the work item is an
-    approval of a requirement nobody reviewed.
+    The body is in here on purpose. The trailer names the bytes a phase
+    measured, and what it measured was "does this change satisfy this work
+    item" -- so an edit to *either* side is a different change, and a digest
+    that survived an edit to the work item would name a measurement against a
+    requirement nobody measured.
     """
     h = hashlib.sha256()
     h.update(wi_body_path(repo, iid).read_bytes())
@@ -601,195 +601,6 @@ def p4_predecessor_landed(chk: Check, repo: Path, iid: int, leg: str) -> None:
         return
     chk.add("PASS", "P4 predecessor",
             f"{', '.join(earlier)} already landed for #{iid}")
-
-
-# --------------------------------------------------------------------------
-# the semantic review
-# --------------------------------------------------------------------------
-# A phase gate decides only what a machine can decide. Whether a case observes
-# the behaviour its name claims, or whether a test would refuse a wrong
-# implementation, is not one of those things -- so two phases send the change
-# to an independent reviewer and will not commit without its answer.
-#
-# Everything below is the part of that which is the same for both: how a
-# transcript is read, where the answer is kept, and what a commit gate checks
-# it against. What differs is the rubric and the surface, and those live in the
-# phase scripts, because they are the two things the phases genuinely disagree
-# about.
-VERDICT_LINE = re.compile(r"^VERDICT:\s*(accepted|rejected)\s*$", re.M)
-FINDING_LINE = re.compile(r"^FINDING:\s*(\S.*)$", re.M)
-
-# The last thing every rubric says, held once. It is parsed mechanically at the
-# other end, so a phase that worded it its own way would be describing a
-# contract `parse_transcript` does not implement.
-OUTPUT_CONTRACT = """\
-OUTPUT CONTRACT -- parsed mechanically, not read by a human first.
-
-Emit zero or more finding lines, then the verdict line, last:
-
-  FINDING: <one line, name the question number, the artifact, and what is wrong>
-  VERDICT: accepted
-
-Rules: `VERDICT:` must be the final non-empty line, and every `VERDICT:` line
-in the output must say the same thing. `rejected` requires at least one
-`FINDING:` line.
-"""
-
-
-def record_path(repo: Path, phase: str, iid: int) -> Path:
-    """Where `phase`'s verdict for `iid` is kept.
-
-    Keyed by phase as well as by work item. Both reviewed phases record an
-    answer about the same `#<iid>`, and one shared path would put the later
-    phase's record exactly where the earlier phase's gate looks for it. The
-    digests would not match, so nothing would be wrongly accepted -- but the
-    refusal would read as a stale verdict rather than as two phases writing to
-    one file.
-    """
-    return repo / ".aw" / "review" / f"{phase}-wi-{iid}.json"
-
-
-def parse_transcript(raw: str) -> tuple[str, list[str]]:
-    """The reviewer's answer, read out of its output rather than reported.
-
-    An agent that pipes a reviewer's transcript into this has no discretion
-    over what the verdict says; an agent that reports the verdict in prose has
-    all of it. So the parsing is here, and every shape it refuses raises rather
-    than guessing.
-    """
-    verdicts = VERDICT_LINE.findall(raw)
-    if not verdicts:
-        raise SystemExit("transcript carries no `VERDICT: accepted|rejected` line")
-
-    # Measured, not assumed: `codex exec` prints its final answer twice -- once
-    # in the streamed body and once as the closing message -- so "exactly one
-    # VERDICT line" refused every real transcript. What has to stay refused is
-    # the tampering shape, which is *disagreement*: a `rejected` in the body
-    # with an `accepted` appended, or the reverse. Requiring unanimity plus a
-    # VERDICT as the final non-empty line keeps both halves of that, and
-    # neither is satisfied by echoing the same answer n times.
-    distinct = sorted(set(verdicts))
-    if len(distinct) > 1:
-        raise SystemExit(
-            f"transcript carries disagreeing verdicts {distinct}; a reviewer that "
-            "says both has not decided, and picking one here would be this verb "
-            "choosing the answer it was supposed to read"
-        )
-    tail = [line for line in raw.strip().splitlines() if line.strip()]
-    if not VERDICT_LINE.match(tail[-1].strip()):
-        raise SystemExit(f"VERDICT must be the final non-empty line; found {tail[-1][:80]!r}")
-
-    # The same duplication reaches the findings. `dict.fromkeys` dedupes while
-    # keeping the order they were raised in, so one objection echoed twice is
-    # recorded once rather than as two independent objections.
-    findings = list(dict.fromkeys(FINDING_LINE.findall(raw)))
-    if distinct[0] == "rejected" and not findings:
-        raise SystemExit("a rejected verdict with no FINDING line cannot be acted on")
-    return distinct[0], findings
-
-
-def run_verdict(args: Any, phase: str, reviewer: str, chk: Check, repo: Path,
-                dirty: list[str], subjects: list[str]) -> int:
-    """Bind a reviewer transcript to the exact bytes it reviewed.
-
-    `subjects` is whatever the phase considers the reviewed population -- case
-    ids for `e2e`, test files for the code review. It is recorded rather than
-    checked: the binding that matters is the digest, and the list is what makes
-    a record readable afterwards without re-deriving it.
-    """
-    if args.wi is None:
-        raise SystemExit(
-            "verdict needs a work item.\n"
-            "The whole-surface review is advisory: it has no change to bind an "
-            "answer to, so recording one would produce a file shaped exactly "
-            "like the thing a commit gate reads, holding an approval of nothing."
-        )
-    if chk.failed:
-        print(f"verdict gate: #{args.wi}")
-        chk.report()
-        print("\nno verdict was recorded. A verdict binds to a change that passed")
-        print("the mechanical list; recording one over a change that did not would")
-        print("produce an approval nobody could act on, since `commit` re-runs")
-        print("these same rows and would refuse it anyway.")
-        print("next.command: fix the FAIL rows above, then re-run the reviewer")
-        return 1
-
-    transcript = Path(args.transcript)
-    if not transcript.is_file():
-        raise SystemExit(f"no transcript at {transcript}")
-    raw = transcript.read_text(encoding="utf-8", errors="replace")
-    result, findings = parse_transcript(raw)
-
-    record = {
-        "work_item": args.wi,
-        "phase": phase,
-        "result": result,
-        "reviewer": reviewer,
-        "change_digest": change_digest(repo, args.wi, dirty),
-        "subjects": subjects,
-        "paths": dirty,
-        "transcript_digest": hashlib.sha256(raw.encode()).hexdigest(),
-        "findings": findings,
-    }
-    out = record_path(repo, phase, args.wi)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    # The transcript itself, beside the record. The record states the digest of
-    # what was read; without the bytes it was taken over, that digest is a claim
-    # about something nobody kept.
-    shutil.copyfile(transcript, out.with_suffix(".transcript.txt"))
-
-    print(f"recorded {result} by {reviewer}")
-    print(f"  change     {record['change_digest'][:16]} over {len(dirty)} path(s)")
-    print(f"  transcript {record['transcript_digest'][:16]} -> "
-          f"{out.with_suffix('.transcript.txt')}")
-    for finding in findings:
-        print(f"  FINDING: {finding}")
-    if result != "accepted":
-        print("\nnext.command: address the findings, then re-run the reviewer")
-        return 1
-    # Through `phase_command`, not spelled here. `--project` is required with no
-    # default on all three phase scripts and has to precede the verb, so the
-    # `f"{phase}.py commit {args.wi}"` this used to print exited 2 -- the review
-    # was accepted and the command offered to act on it could not run.
-    print(f"\nnext.command: {phase_command(phase, args.project, 'commit', args.wi)}")
-    return 0
-
-
-def c7_verdict(chk: Check, repo: Path, phase: str, iid: int, dirty: list[str],
-               reviewer: str) -> None:
-    """An accepted verdict exists, and it is about these bytes.
-
-    The digest covers the work-item body as well as the change, so this row
-    refuses two different things with one comparison: an edit to the change
-    after it was approved, and an edit to the requirement it was approved
-    against. Neither is visible in a diff of the other.
-    """
-    path = record_path(repo, phase, iid)
-    if not path.is_file():
-        chk.add("FAIL", "C7 reviewed",
-                f"no {phase} verdict has been recorded for #{iid}\n"
-                f"run the reviewer -- {reviewer} -- and pipe its transcript "
-                f"into: {phase}.py verdict {iid} --transcript <file>")
-        return
-    record = json.loads(path.read_text(encoding="utf-8"))
-    want = change_digest(repo, iid, dirty)
-    if record.get("change_digest") != want:
-        chk.add("FAIL", "C7 reviewed",
-                f"the recorded verdict is about different bytes\n"
-                f"  reviewed {str(record.get('change_digest'))[:16]}\n"
-                f"  now      {want[:16]}\n"
-                "the work item or the change moved after the review, so the "
-                "answer on file is about something that is no longer here")
-        return
-    if record.get("result") != "accepted":
-        chk.add("FAIL", "C7 reviewed",
-                f"the recorded verdict is `{record.get('result')}`:\n"
-                + "\n".join(f"  {f}" for f in record.get("findings", [])))
-        return
-    chk.add("PASS", "C7 reviewed",
-            f"{record.get('reviewer')} accepted {want[:16]} "
-            f"over {len(dirty)} path(s)")
 
 
 def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> None:

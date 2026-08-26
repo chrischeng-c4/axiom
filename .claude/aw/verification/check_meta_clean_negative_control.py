@@ -43,13 +43,16 @@ CONTRIBUTING = REPO / "apps/cube/CONTRIBUTING.md"
 README = REPO / "apps/cube/README.md"
 
 # Every mutation trips two rows, not one, and the second is the same for all
-# four: the gate asserts the exit code separately from the counts it read out of
-# the JSON. That is not a duplicate of the rule row. `aw ec verify --wi` printed
-# its failures and exited 0 for months, and a report whose status disagrees with
-# its own body makes every row that reads the body unfalsifiable. So the row is
-# declared here rather than filtered out -- a mutation that stopped tripping it
-# would mean the gate had gone back to certifying by JSON alone.
-EXIT_ROW = "FAIL the live run exits 0"
+# four: besides the per-rule count, the gate asserts over the *ratcheted set* of
+# the live report as a whole. That is not a duplicate of the rule row. The
+# gate's exit-code row ("agrees with its own report") stays green under every
+# mutation here -- a planted finding makes `meta.py` exit 1 and report it, which
+# is agreement -- so the row that has to go red is the one reading the ratcheted
+# findings. It is declared here rather than filtered out: a mutation that
+# stopped tripping it would mean the gate had gone back to certifying by the
+# per-rule counters alone. (The label is the gate's own row text; the two
+# drifted apart once, and the control was red on every round for it.)
+EXIT_ROW = "FAIL the live run reports no ratcheted finding"
 
 # (label, target, anchor, mutant, the reds it must produce and no others)
 MUTATIONS = [

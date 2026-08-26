@@ -1,11 +1,11 @@
 ---
-name: prepare-goal
+name: aw:prepare-goal
 description: Turn a work item — or an intent interviewed out of the human — into a list of copy-pasteable `/goal` conditions, each written so the session's goal evaluator can actually decide it. Given an iid it reads the tracker through `epic.py`/`change.py`; given nothing it interviews through AskUserQuestion. It prepares text and sets no goal itself.
 version: 0.1.0
 user-invocable: true
 ---
 
-# /aw:prepare-goal
+# /aw-prepare-goal
 
 `/goal` is a Claude Code built-in. It is not a skill, not a script in this
 plugin, and nothing in this repository implements it: the human types one

@@ -58,13 +58,6 @@ The controls:
                           suite is not collateral; and the case that accepts
                           the implementation is a case that refused `HEAD`.
 
-  3 review controls    -- the two reviewed phases refuse to commit without a
-                          verdict bound to the bytes being committed. The
-                          transcript parser itself is not measured here:
-                          `leg.py` owns it, both phases call the same code, and
-                          `check_review_flow.py` drives every shape of it
-                          without paying a compile per row.
-
   2 outcome controls    -- the names reach the commit, and a phase cannot be
                           folded into its predecessor.
 """
@@ -508,12 +501,6 @@ def land_unit(work: Path, *, tests: str = TESTS_SRC,
         f"unit(demo): pin the marker invariant\n\nRefs #{WI}\nUnit-Red: {red}")
 
 
-# What a reviewer that agrees produces. Two of the three phases will not commit
-# without one of these bound to the exact bytes going in, so it appears in the
-# positive control as a step rather than only in the controls that refuse it.
-GOOD_TRANSCRIPT = "Reviewed the change.\n\nVERDICT: accepted\n"
-
-
 def write_logic(work: Path) -> None:
     """The `logic` phase's output, left uncommitted -- which is its real shape."""
     (work / LIB_REL).write_text(LIB_IMPLEMENTED)
@@ -579,18 +566,6 @@ class Harness:
     def logic(self, work: Path, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.phase(LOGIC_SCRIPT, work, *args, **kw)
 
-    def accept(self, script: Path, work: Path, tag: str,
-               transcript: str = GOOD_TRANSCRIPT) -> subprocess.CompletedProcess:
-        """Record a semantic verdict over the change as it currently stands.
-
-        Named after the work dir rather than a counter: the work dir is already
-        unique per control, and a counter read outside the lock would hand two
-        concurrent controls the same transcript file.
-        """
-        t = self.root / f"{work.name}-{tag}.txt"
-        t.write_text(transcript)
-        return self.phase(script, work, "verdict", str(WI), "--transcript", str(t))
-
     def record(self, name: str, want: str, got: str, ok: bool) -> None:
         row = (getattr(self.slot, "i", -1),
                "PASS" if ok else "**FAIL**", name, f"want {want}; got {got}")
@@ -648,28 +623,18 @@ def main() -> int:
         # under test is the ladder, and a positive control that only ran the
         # last phase would leave the first two unmeasured in the one place they
         # are supposed to be green.
-        # The two reviewed phases carry their `verdict` as its own step rather
-        # than folded into the commit lambda, so a review that stopped working
-        # is attributed to the review rather than reported as the commit gate
-        # refusing for reasons unknown.
         w = h.fresh()
 
-        def write_e2e_and_review():
-            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
-            (w / CASE_REL).write_text(CASE_SRC)
-            return h.accept(E2E_SCRIPT, w, "e2e")
-
         steps = [
-            ("e2e review", write_e2e_and_review),
-            ("e2e commit", lambda: h.e2e(w, "commit", str(WI))),
+            ("e2e", lambda: (
+                (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED),
+                (w / CASE_REL).write_text(CASE_SRC),
+                h.e2e(w, "commit", str(WI)))[-1]),
             ("unit", lambda: (
                 (w / LIB_REL).write_text(LIB_SKELETON),
                 (w / TESTS_REL).write_text(TESTS_SRC),
                 h.unit(w, "commit", str(WI)))[-1]),
-            ("logic review", lambda: (
-                write_logic(w),
-                h.accept(LOGIC_SCRIPT, w, "logic"))[-1]),
-            ("logic commit", lambda: h.logic(w, "commit", str(WI))),
+            ("logic", lambda: (write_logic(w), h.logic(w, "commit", str(WI)))[-1]),
         ]
         for name, step in steps:
             r = step()
@@ -1021,7 +986,6 @@ def main() -> int:
         def commit_lands_the_implementation() -> None:
             """The commit is exactly the implementation, with the names on it."""
             w = h.staged(through="logic")
-            h.accept(LOGIC_SCRIPT, w, "logic")
             r = h.logic(w, "commit", str(WI))
             left = git(w, "status", "--porcelain", "-uall").stdout.strip()
             landed = sorted(
@@ -1034,51 +998,6 @@ def main() -> int:
                      "clean tree, lib.rs and main.rs only, a 64-char digest",
                      f"exit {r.returncode}; left {left!r}; landed {landed}; "
                      f"digest {len(digest)} chars", ok)
-
-        # -- the review gate ---------------------------------------------------
-        #
-        # Two of the three phases will not commit without a semantic verdict
-        # bound to the exact bytes going in. Both halves are here -- the absence
-        # and the staleness -- because they fail for different reasons and want
-        # opposite fixes: one says run the reviewer, the other says the change
-        # moved out from under a review that already happened.
-        #
-        # `unit` has no row here and no reviewer. What the code review reads is
-        # the tests *and* the implementation together, and at the `unit` phase
-        # only half of that exists.
-        def e2e_commit_without_verdict() -> None:
-            w = h.fresh()
-            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
-            (w / CASE_REL).write_text(CASE_SRC)
-            r = h.e2e(w, "commit", str(WI), "--dry-run")
-            hit = h.red_on(r, "C7")
-            h.record("e2e commit refuses when no verdict exists at all",
-                     "FAIL on C7", "red on it" if hit else r.stdout.strip()[-200:],
-                     hit and r.returncode != 0)
-
-        def e2e_verdict_goes_stale() -> None:
-            """A verdict is an approval of bytes, not of an intention."""
-            w = h.fresh()
-            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
-            (w / CASE_REL).write_text(CASE_SRC)
-            h.accept(E2E_SCRIPT, w, "e2e")
-            (w / CASE_REL).write_text(
-                CASE_SRC + "\n// edited after the reviewer accepted it\n")
-            r = h.e2e(w, "commit", str(WI), "--dry-run")
-            block = h.row_block(r, "C7")
-            hit = "different bytes" in block
-            h.record("editing the case after review invalidates the verdict",
-                     "FAIL on C7 naming a digest mismatch",
-                     "digest mismatch" if hit else r.stdout.strip()[-200:],
-                     hit and r.returncode != 0)
-
-        def logic_commit_without_verdict() -> None:
-            w = h.staged(through="logic")
-            r = h.logic(w, "commit", str(WI), "--dry-run")
-            hit = h.red_on(r, "C7")
-            h.record("logic commit refuses when no verdict exists at all",
-                     "FAIL on C7", "red on it" if hit else r.stdout.strip()[-200:],
-                     hit and r.returncode != 0)
 
         def phases_cannot_be_folded_together() -> None:
             """One commit carrying two phases is not two phases.
@@ -1129,11 +1048,6 @@ def main() -> int:
             logic_unwires_a_neighbouring_test,
             case_already_green_at_head,
             logic_reformats_the_test,
-
-            # -- the review gate -----------------------------------------------
-            e2e_commit_without_verdict,
-            e2e_verdict_goes_stale,
-            logic_commit_without_verdict,
 
             # -- outcomes ------------------------------------------------------
             commit_lands_the_implementation,

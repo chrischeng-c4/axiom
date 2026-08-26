@@ -33,31 +33,12 @@ Two things went away with the TD phase, and both were load-bearing only for it:
       HEAD worktree instead would not work at all -- they are uncommitted, so
       they are not in it.
 
-  C7  an independent reviewer accepted these exact bytes.
-
-      `E1` proves a case is red. It cannot prove the case is red *for the
-      reason it claims* -- a case with a typo in a path is red too, and stays
-      red through every phase without ever observing the product. That is a
-      reading question, so it goes to a reviewer, and the answer is bound to a
-      digest over the work item and the change so that editing either one
-      after the review invalidates it.
-
-Work-item scoped -- this is the gate:
+The four verbs, in order -- this is the gate:
 
   start <iid>     open the phase; refuses a dirty tree
   verify <iid>    the mechanical list over the whole change; runs no case
   test <iid>      run every case and require each one red
-  review-prompt <iid>   the prompt for the reviewer, scoped to this change
-  verdict <iid>   bind the reviewer's transcript to the bytes it read
   commit <iid>    re-run everything and commit the diff
-
-Whole-surface, advisory:
-
-  review-prompt   the same review over every case in the inventory
-
-  With no work item there is no change to scope to and nothing to bind an
-  answer to, so this form records nothing. It is for reading the contract a
-  project already has, not for passing a gate.
 """
 from __future__ import annotations
 
@@ -387,220 +368,16 @@ def e1_cases_are_red(chk: Check, repo: Path, cases: list[str],
 
 
 # --------------------------------------------------------------------------
-# the semantic review
-# --------------------------------------------------------------------------
-# The skill that runs it. Named here rather than routed through a project's
-# config: with one reviewer per phase the indirection bought nothing, and a
-# constant in the script is something `check_plugin.py` can resolve against the
-# skills that actually exist -- where a config value can only ever be compared
-# against itself.
-REVIEWER = "/aw:codex-e2e-review"
-
-RUBRIC = f"""\
-You are reviewing the end-to-end (E2E) contract for the axiom repository. Below
-you are given the work item this change must satisfy, every path it touches,
-and the full source of every case it adds or edits.
-
-An E2E case is a black-box verifier. Its whole job is to pin externally
-observable product behaviour so that a wrong implementation cannot pass. These
-cases are expected to be RED right now: the behaviour they pin does not exist
-yet. Do not report "the case fails" as a finding -- that is the design.
-
-Q0 is the question this review exists to answer. Q1-Q7 are the ways an answer
-of "yes" to Q0 can still be worthless.
-
-  Q0 DOES THIS CHANGE SATISFY THE WORK ITEM?
-     The work item's `## Goal` names a trigger, an observation point, a current
-     value, and a target value; its `## Acceptance` names the gates. Read them
-     against the cases actually written here.
-     - Is every observable the work item promises pinned by some case?
-     - Does any case pin something the work item did not ask for?
-     - Where the work item names a specific command, value, or file, does the
-       case assert on THAT one, or on something adjacent and easier to hit?
-     Name any requirement in the work item that no case here would refuse.
-
-Answer each of the following explicitly too. Each names a way a case can be
-green while measuring nothing; if you cannot rule one out from the source
-below, say so. Apply them per case, naming the case each finding is about.
-
-  Q1 DISCRIMINATION
-     Describe a concrete WRONG implementation that would still make this case
-     pass. If you can name one, the case has a hole.
-
-  Q2 ORACLE INDEPENDENCE
-     Does the case derive its expected value from the same code path it is
-     checking? An expectation computed by the product is not an oracle.
-
-  Q3 BLACK BOX
-     Does the case reach past the product's external surface -- importing its
-     internals, reading its private state, asserting on a data structure it
-     could have observed from the outside?
-
-  Q4 NAME VS ASSERTION
-     The `[[test]]` target's name is the case's only declaration of what it is
-     about, and it is what anyone selecting cases to run will read. Does the
-     code assert THAT, or something weaker that happens to hold?
-
-  Q5 SETUP
-     Is the red this case produces the red it claims -- a missing behaviour --
-     or the red of a broken fixture, a wrong path, or an import that cannot
-     resolve? The two are the same exit code and only one of them is evidence.
-
-  Q6 VACUITY
-     Could this case pass with the product absent entirely? Deleted, renamed,
-     never built?
-
-  Q7 ATTRIBUTABLE FAILURE
-     A Rust assertion that carries no message fails as `assertion failed:
-     <expr>` and a file and line, and nothing else. Does each assertion state
-     the observable it checked, in words a later reader can attribute to a
-     promise? A red nobody can attribute is a red nobody can act on.
-
-{leg.OUTPUT_CONTRACT}"""
-
-
-def _print_cases(repo: Path, root: Path, inv: dict[str, dict[str, Any]],
-                 cases: list[str], *, run: bool) -> None:
-    """Every case the reviewer has to read, and how it currently fails.
-
-    `run` is off for the whole-surface form. Producing a prompt is not worth
-    executing a project's entire inventory -- the largest one measured here ran
-    to 142 cases -- and the advisory review is a reading of the contract, not a
-    measurement of it. The scoped form runs them, because "is this red for the
-    reason it claims" is exactly Q5 and cannot be answered without the output.
-    """
-    for case_id in cases:
-        entry = inv.get(case_id, {})
-        source = case_path(root, case_id)
-        print("=" * 78)
-        print(f"CASE      : {case_id}")
-        print(f"TARGET    : {entry.get('path') or '(declared by nothing)'}")
-        print()
-        print("-- inventory entry ------------------------------------------------")
-        for field in ("path", "command"):
-            if entry.get(field):
-                print(f"{field}: {entry[field]}")
-        print()
-        if run and entry.get("command"):
-            result = leg.run_command(repo, entry["command"])
-            print("-- currently fails with -------------------------------------------")
-            # `leg.run_command` pulls an exception name out of stderr, which is
-            # a Python shape. A cargo red has none -- libtest prints the failed
-            # assertion on stdout and rustc prints a build error on stderr --
-            # so with no exception the output itself is the attribution, and
-            # printing the empty fields instead would leave Q7 unanswerable.
-            if result["exception"]:
-                print(f"exit={result['exit']} {result['exception']}: "
-                      f"{result['message'][:600]}")
-            else:
-                tail = (result["stdout"] + result["stderr"]).strip()
-                print(f"exit={result['exit']}")
-                print(tail[-2000:] if tail else "(the command printed nothing)")
-            print()
-        print(f"-- case source: {source.relative_to(repo)} ------------------------")
-        print(source.read_text(encoding="utf-8") if source.is_file()
-              else "(the inventory names this case, but no file is there)")
-
-
-def cmd_review_prompt(args: argparse.Namespace) -> int:
-    """The prompt the reviewer is fed: the work item, then the change.
-
-    Both halves are here because the question is a comparison. A prompt
-    carrying only the cases can be answered "these are well-built verifiers" by
-    a reviewer who never learned what was asked for, and that answer is
-    indistinguishable from the one worth having.
-    """
-    if args.wi is None:
-        repo = leg.repo_root()
-        root = e2e_root(repo, args.project)
-        inv = inventory(root)
-        print(RUBRIC)
-        print("=" * 78)
-        print(f"WHOLE SURFACE: every case in {root.relative_to(repo)}")
-        print("There is no work item here, so Q0 has nothing to compare against.")
-        print("Answer Q1-Q7 per case and skip Q0.")
-        print()
-        _print_cases(repo, root, inv, sorted(inv), run=False)
-        print()
-        print("This review is advisory: no verdict can be recorded for it, "
-              "because there is no change for one to bind to.")
-        return 0
-
-    chk, repo, root, dirty, cases = _wi_checks(
-        args, require_clean=False, run_cases=False)
-    if chk.failed:
-        chk.report()
-        raise SystemExit(
-            f"#{args.wi} is not mechanically admissible yet, and a semantic review "
-            f"of an inadmissible change spends a reviewer on a question the checks "
-            f"already answered. Run: "
-            f"{leg.phase_command(PHASE, args.project, 'verify', args.wi)}"
-        )
-
-    print(RUBRIC)
-    print("=" * 78)
-    print(f"WORK ITEM : #{args.wi}")
-    print(f"DIGEST    : {leg.change_digest(repo, args.wi, dirty)}")
-    print()
-    print("-- the work item this change must satisfy -------------------------")
-    print(leg.wi_body_path(repo, args.wi).read_text(encoding="utf-8"))
-    print("-- every path this change touches ---------------------------------")
-    for path in dirty:
-        print(f"  {path}")
-    print()
-    _print_cases(repo, root, inventory(root), cases, run=True)
-
-    rest = [p for p in dirty
-            if p not in {str(case_path(root, c).relative_to(repo)) for c in cases}]
-    if rest:
-        print("=" * 78)
-        print("-- the rest of the change -----------------------------------------")
-        tracked = git(repo, "diff", "HEAD", "--", *rest).stdout
-        if tracked.strip():
-            print(tracked)
-        for path in rest:
-            target = repo / path
-            if target.is_file() and not tracked_by_git(repo, path):
-                print(f"-- new file: {path} --")
-                print(target.read_text(encoding="utf-8", errors="replace"))
-    return 0
-
-
-def tracked_by_git(repo: Path, rel: str) -> bool:
-    return git(repo, "ls-files", "--error-unmatch", "--", rel).returncode == 0
-
-
-def cmd_verdict(args: argparse.Namespace) -> int:
-    if args.wi is None:
-        # Before the checks, because they cannot run without a work item and
-        # the refusal is about the missing one rather than about anything they
-        # would have found.
-        return leg.run_verdict(args, PHASE, REVIEWER, Check(), leg.repo_root(), [], [])
-    chk, repo, _root, dirty, cases = _wi_checks(
-        args, require_clean=False, run_cases=False)
-    return leg.run_verdict(args, PHASE, REVIEWER, chk, repo, dirty, cases)
-
-
-# --------------------------------------------------------------------------
 # the run
 # --------------------------------------------------------------------------
 def _wi_checks(args: argparse.Namespace, *, require_clean: bool,
-               run_cases: bool, include_verdict: bool = False):
+               run_cases: bool):
     chk = Check()
     repo = leg.repo_root()
     root = e2e_root(repo, args.project)
 
-    def pending_verdict(why: str) -> None:
-        # Named even when it cannot run, so the report never omits a row a
-        # later run will have. A silent absence and a green read the same in a
-        # summary, which is how a phase comes to look complete.
-        if include_verdict:
-            chk.add("PENDING", "C7 reviewed", why)
-
     leg.p1_work_item(chk, repo, args.wi)
     if chk.failed:
-        pending_verdict("not run: there is no admissible work item to have "
-                        "been reviewed against")
         return chk, repo, root, [], []
 
     dirty = leg.dirty_set(repo)
@@ -614,8 +391,6 @@ def _wi_checks(args: argparse.Namespace, *, require_clean: bool,
     leg.p4_predecessor_landed(chk, repo, args.wi, PHASE)
     leg.c0_scope(chk, repo, root, dirty, PHASE)
     if chk.failed:
-        pending_verdict("not run: the change is out of scope, so a verdict "
-                        "over it would be about paths this phase may not write")
         return chk, repo, root, dirty, []
 
     inv = E2eInventory(root)
@@ -630,8 +405,6 @@ def _wi_checks(args: argparse.Namespace, *, require_clean: bool,
                     "about the case rather than about the product")
         else:
             e1_cases_are_red(chk, repo, cases, inv.cases)
-    if include_verdict:
-        leg.c7_verdict(chk, repo, PHASE, args.wi, dirty, REVIEWER)
     return chk, repo, root, dirty, cases
 
 
@@ -709,16 +482,13 @@ def cmd_test(args: argparse.Namespace) -> int:
         print("\nnext.command: fix the FAIL rows above, then re-run this verb")
         return 1
     print(f"\nall {len(cases)} case(s) refuse the product: {', '.join(cases)}")
-    print("\nThe cases are red. Whether they are red for the reason they claim")
-    print(f"is a reading question, and {REVIEWER} is what answers it.")
-    print(f"next.command: "
-          f"{leg.phase_command(PHASE, args.project, 'review-prompt', args.wi)}")
+    print(f"next.command: {leg.phase_command(PHASE, args.project, 'commit', args.wi)}")
     return 0
 
 
 def cmd_commit(args: argparse.Namespace) -> int:
     chk, repo, _root, dirty, cases = _wi_checks(
-        args, require_clean=False, run_cases=True, include_verdict=True)
+        args, require_clean=False, run_cases=True)
     print(f"commit gate: #{args.wi}")
     chk.report()
     if chk.failed:
@@ -781,15 +551,6 @@ def main(argv: list[str] | None = None) -> int:
     wi = argparse.ArgumentParser(add_help=False)
     wi.add_argument("wi", type=int, help="work item iid")
 
-    # The two review verbs take the same argument optionally. It is a separate
-    # parent rather than a `nargs="?"` on the one above, so that omitting it
-    # anywhere else stays the argparse error it has always been: a gate verb
-    # that silently defaulted to "the whole project" would run against a
-    # population nobody named.
-    opt_wi = argparse.ArgumentParser(add_help=False)
-    opt_wi.add_argument("wi", type=int, nargs="?",
-                        help="work item iid; omit for the whole-surface review")
-
     p = sub.add_parser("start", parents=[wi],
                        help=f"open a work item's {PHASE.upper()} phase; refuses a dirty tree")
     p.set_defaults(func=cmd_start)
@@ -801,16 +562,6 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("test", parents=[wi],
                        help="run every case and require each one red")
     p.set_defaults(func=cmd_test)
-
-    p = sub.add_parser("review-prompt", parents=[opt_wi],
-                       help="the reviewer's prompt; omit the iid for the whole surface")
-    p.set_defaults(func=cmd_review_prompt)
-
-    p = sub.add_parser("verdict", parents=[opt_wi],
-                       help="bind a reviewer transcript to the bytes it read")
-    p.add_argument("--transcript", required=True,
-                   help="the reviewer's output, verbatim")
-    p.set_defaults(func=cmd_verdict)
 
     p = sub.add_parser("commit", parents=[wi],
                        help="re-run everything and commit the change")

@@ -8,7 +8,7 @@ description: Validate an app or library product-document set after a core docume
 Use this skill for product documents under `apps/<name>` and `libs/<name>`.
 
 The repository-neutral scripts own the deterministic contracts. This skill
-owns the review sequence. The legacy `/aw:meta-check` answers broader
+owns the review sequence. The legacy `/aw-check-meta` answers broader
 repository-rot questions. It does not define these document formats.
 
 ## Choose the validation mode

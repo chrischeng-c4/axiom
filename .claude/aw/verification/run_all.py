@@ -57,10 +57,10 @@ SUITE = [
     #
     # First, and early on purpose. Its control is the only one here that
     # mutates product scripts the rest of the suite depends on -- `workitem.py`,
-    # `leg.py` and `e2e.py` -- and `check_plugin.py`, `check_engine_split.py`,
-    # `check_review_flow.py` and `check_tdd_flow.py` all read at least one of
-    # them. Running it here means a restore that silently failed is caught by
-    # four later checkers rather than by the next session.
+    # `leg.py` and `e2e.py` -- and `check_plugin.py`, `check_engine_split.py`
+    # and `check_tdd_flow.py` all read at least one of them. Running it here
+    # means a restore that silently failed is caught by three later checkers
+    # rather than by the next session.
     ("check_next_command.py", "check_next_command_negative_control.py"),
     ("check_plugin.py", "check_plugin_negative_control.py"),
     ("check_coverage_rule.py", "check_coverage_rule_negative_control.py"),
@@ -107,17 +107,12 @@ SUITE = [
     # until the ladder they measured was deleted. A gate outlives the thing it
     # gates only as a source of false confidence, so they went with it -- but
     # not before what they covered had somewhere else to be measured, which is
-    # what the two rows below are.
+    # what the row below is. (`check_review_flow.py` stood beside it until the
+    # semantic review left the ladder on 2026-08-26, and went the same way.)
     #
-    # The semantic review, which the EC gate used to own. Cargo-free: the
-    # transcript parser and the record are `leg.py`'s, both reviewed phases call
-    # the same code, and driving every shape of it through one phase measures
-    # the shared implementation once instead of once per phase.
-    ("check_review_flow.py", None),
     # The `e2e -> unit -> logic` ladder, and the slowest of the lot: its
     # fixture is a real cargo crate, so every row that runs `test` pays a
-    # compile. Each phase's own review wiring is here rather than above,
-    # because a commit gate is what the verdict has to be able to stop.
+    # compile.
     ("check_tdd_flow.py", None),
 ]
 

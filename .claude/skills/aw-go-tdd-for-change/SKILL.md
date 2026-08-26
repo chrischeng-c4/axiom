@@ -1,11 +1,11 @@
 ---
-name: wi-tdd
-description: Drive one work item through the e2e → unit → logic ladder, where each phase must produce a named red before the next phase is allowed to turn it green. Takes a change work item, or an epic — whose children are ordered by the dependency graph its own verification inventory declares. Each phase prints the next command; this skill exists to start the ladder and to say what it refuses.
+name: aw:go-tdd-for-change
+description: Drive one change work item through the e2e → unit → logic ladder, where each phase must produce a named red before the next phase is allowed to turn it green. Each phase prints the next command; this skill exists to start the ladder and to say what it refuses. Given an epic it stops — go-tdd-for-epic orders the children and runs this skill on each.
 version: 0.1.0
 user-invocable: true
 ---
 
-# /aw:wi-tdd
+# /aw-go-tdd-for-change
 
 Three phases, in this order, on one change work item:
 
@@ -23,44 +23,18 @@ unknown reason.
 
 ## Run it
 
-You were given one `<iid>`. Find out which kind it is by asking for its order:
+You were given one `<iid>`, and it has to be a change. Stage its body first —
+the phases never read the tracker themselves:
 
 ```
-uv run --python 3.13 --no-project ".claude/aw/scripts/epic.py" order <iid> --open-only
+uv run --python 3.13 --no-project ".claude/aw/scripts/change.py" fetch <iid>
 ```
 
-On a change work item `epic.py order` refuses, and the refusal names the type
-it actually found. That message is the answer, not an error to route around —
-read it, and go to **One change** below. Do not branch on the exit code: a
-non-epic and an epic with no computable order both exit 1, and only the text
-tells them apart.
-
-### One epic
-
-`order` prints the children in the sequence they have to run, one rank per
-line, each with the requirements it covers and the children it waits on. It
-composes two sections that were already in the body: `## Verification
-Inventory` partially orders the requirements through its `Depends On` column,
-and `## Child Work Items` maps each child to the requirements it covers. A
-child inherits the position of the *deepest* requirement it covers, and equal
-positions break by `priority:` then by issue number.
-
-Run each child through **One change**, in that order, to completion, before
-starting the next.
-
-Three lines mean there is no order to follow, and each one stops you:
-
-| Line | What it means |
-|---|---|
-| `! no order: the requirement graph closes a cycle` | no sequence satisfies the graph; nothing is printed to run |
-| `! R<n> depends on <cell>, which names no requirement` | a dependency was declared that the order could not read, so the order below it is missing an edge |
-| `? #<n> has no position` | an owned child the child table maps to no requirement |
-
-Report these to the user and stop. Do not pick an order yourself. An epic body
-you edited to make the graph parse is an epic whose dependencies you decided,
-and the sequence would then be yours rather than the author's.
-
-### One change
+The first row of every phase command, `P1 work item`, reads that staged body
+and refuses anything that is not a valid change body. An epic fails there, by
+name, before any tree check runs. That refusal is the answer, not an error to
+route around: an epic is `/aw-go-tdd-for-epic`'s job — it asks the script for
+the children's order and brings each child back here.
 
 Every command goes through the pinned interpreter:
 
@@ -142,7 +116,7 @@ that vanished from a report and a row that passed read identically otherwise.
 |---|---|
 | the ladder closed | name the three commits and the recorded red the middle one carries |
 | a phase went red | quote the FAIL rows verbatim, then fix the cause — not the gate |
-| an epic had no order | quote the `!` or `?` lines and stop |
+| the work item was not a change | quote the `P1 work item` row and stop; the epic skill is the next command, not a retry |
 
 A phase that refuses is doing its job. Say what it refused and why, in its own
 words.
@@ -161,7 +135,7 @@ This addresses the agent running the ladder, not the author of the work item.
   measured, and amending it rewrites the measurement to match the outcome.
 - Never widen a selector, delete a case, or relax an assertion to make a phase
   pass. If a case is wrong, say so to the user with the evidence and stop.
-- Never decide an epic's order yourself when the graph does not yield one, and
-  never edit the epic body to make it parse.
+- Never run an epic's children from here in an order you chose. The order is
+  the epic's own graph, and only `/aw-go-tdd-for-epic` reads it.
 - Never report the ladder as complete on the strength of a green `test`.
   `commit` re-runs everything, and only the commit it writes is the record.

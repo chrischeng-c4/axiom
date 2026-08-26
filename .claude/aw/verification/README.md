@@ -46,23 +46,28 @@ The shape under test:
                   leg.py, and the three phases it is shared by: e2e.py, unit.py, logic.py
   verification/   this directory
 .claude/skills/
-  aw:codex-code-review/  aw:codex-e2e-review/  aw:meta-check/  aw:prepare-goal/
-  aw:wi-change-grill/    aw:wi-epic-grill/     aw:wi-epic-reconcile/  aw:wi-tdd/
+  aw-check-meta/           aw-go-tdd-for-change/   aw-go-tdd-for-epic/
+  aw-grill-change-to-prd/  aw-grill-change-to-td/  aw-grill-epic-to-changes/
+  aw-grill-epic-to-prd/    aw-grill-epic-to-td/    aw-grill-me-to-change/
+  aw-grill-me-to-epic/     aw-prepare-goal/
 ```
 
 This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why
 several sections below are written about one. That tree is deleted — scripts
-and this directory moved under `.claude/aw/`, the eight skills load as project
+and this directory moved under `.claude/aw/`, the skills load as project
 skills out of `.claude/skills/`, and `plugin.json`, `marketplace.json` and the
 `enabledPlugins` entry in `.claude/settings.json` went with it. Two sections
 are kept as measurement rather than as instruction, and each says so where it
 starts: **Registration is the directory name** and **The installed copy is a
 copy**. What they measured is a property of Claude Code, and the conclusion
 that outlived the plugin is the one `check_plugin.py` still asserts — a
-directory name registers as itself, so the `aw:` namespace survives only
-because it is literally in each directory's name.
+directory name registers as itself. Until 2026-08-26 that meant the `aw:`
+namespace survived only because it was literally in each directory's name;
+since the rename it means the directory `aw-<skill>` *is* the command
+`/aw-<skill>`, and the frontmatter `name: aw:<skill>` is only the label the
+skill list shows.
 
-The eight scripts cannot be split across the eight skill directories, and that
+The eight scripts cannot be split across the eleven skill directories, and that
 is not a preference: `e2e.py`, `unit.py` and `logic.py` each load `leg.py` by
 `Path(__file__).parent / "leg.py"`, and `leg.change_module()` loads `change.py`
 the same way. One directory is load-bearing.
@@ -102,7 +107,6 @@ directory for a file none of them owns.
 | `check_meta_flow.py` | a META-doc rule that fires on nothing, or on everything — a marker whose producer is gone, a command for a binary that is gone, a link to a file that is gone, a project README missing the section a reader goes there for |
 | `check_meta_clean.py` | a META-doc in *this* checkout that has rotted — and a certification issued over a population that was never read |
 | `check_meta_clean_negative_control.py` | a ratchet that reports zero because a rule stopped running |
-| `check_review_flow.py` | a verdict that outlives the bytes it was given — or one assembled from a transcript that never carried it |
 | `check_tdd_flow.py` | an `e2e → unit → logic` phase whose green is not attributable to a red the phase before it named |
 
 `check_manifests_cli.py` is the only gate here whose oracle this repository does
@@ -114,14 +118,13 @@ requires kebab-case. The negative control prints that exit code under the
 mutation, so "the exit code cannot see this" is a number in the output rather
 than a claim in a comment.
 
-The last two carry their negative controls inside themselves rather than in a
-sibling file. Each row of those gates *is* a declared mutation: the gate stages
-a throwaway tree, breaks one thing in it, and requires the ladder to refuse for
+The last one carries its negative controls inside itself rather than in a
+sibling file. Each of its rows *is* a declared mutation: the gate stages a
+throwaway tree, breaks one thing in it, and requires the ladder to refuse for
 the named reason — so `None` in `run_all.py`'s control column means "already
 controlled", not "uncontrolled". `check_tdd_flow.py`'s fixture is a real cargo
-crate, which is why it runs last and costs the most; `check_review_flow.py`'s
-is deliberately cargo-free, which is why it is a fifth of the cost for two
-thirds as many rows.
+crate, which is why it runs last and costs the most. `check_review_flow.py`,
+which shared that shape cargo-free, was deleted with the review on 2026-08-26.
 
 Five of these encode defects that actually shipped and were caught late:
 
@@ -156,9 +159,10 @@ Five of these encode defects that actually shipped and were caught late:
   choices from there, so all three phases ended `commit` by printing a line
   `change.py` exits 2 on: the step that records a landed commit on the work item
   was unreachable from every phase that is supposed to reach it. `leg.py` ended
-  an accepted review by printing `<phase>.py commit <wi>` without the
-  `--project` all three require, which broke the review-to-commit handoff the
-  same way. The eighteen gates in this directory were green over both, because
+  an accepted review — that path left with the review on 2026-08-26 — by
+  printing `<phase>.py commit <wi>` without the `--project` all three require,
+  which broke the review-to-commit handoff the same way. The eighteen gates in
+  this directory were green over both, because
   each half reads as consistent on its own and the flow gates construct argv
   themselves rather than reading the line that gets printed. The first half of
   that is now refused earlier than any gate: `leg.py` asserts at import that its
@@ -172,7 +176,7 @@ Five of these encode defects that actually shipped and were caught late:
 `e2e → unit → logic` replaces `ec → td → cb`. The rule the three phases exist to
 enforce is that a green is only evidence when a **named** red was measured
 immediately before it, in the same tree, by the phase that had reason to
-predict it. `check_tdd_flow.py` is 25 declared mutations against that rule.
+predict it. `check_tdd_flow.py` is 22 declared mutations against that rule.
 
 Four things it refuses that a simpler reading lets through:
 
@@ -202,66 +206,6 @@ Evidence lives in commit trailers, not a state file: `E2E-Red`, `Unit-Red`,
 `Logic-Contract`, each beside a `*-Change-Digest`. HEAD comparisons use
 `git worktree add --detach`, never a stash — a stash mutates the tree it is
 supposed to be measuring against.
-
-## The two semantic reviews
-
-Two of the three phases end in a question no exit code answers, and they are
-different questions, so they are two reviews with two rubrics and two skills:
-
-| phase | skill | what it is shown | what it is asked |
-|---|---|---|---|
-| `e2e` | `/aw:codex-e2e-review` | the work item, the cases, the exception each currently dies on | does this case pin what was asked for, and would it refuse a wrong implementation? |
-| `logic` | `/aw:codex-code-review` | the work item, the tests as `unit` committed them, the source each sits beside | does this code satisfy the work item, or only its own tests? |
-
-`unit` has none, and the reason is structural rather than a saving: at `unit`
-only half the pair exists, so the question the code review asks has no
-implementation to ask it about yet.
-
-The review lands as a record under `.aw/review/<phase>-wi-<iid>.json`, and the
-commit gate's `C7` row reads it. Three things are asserted about that record and
-each is the answer to a way the review could be theatre:
-
-- **It binds the bytes.** `change_digest` is sha256 over the work item's body
-  *and* every changed file, so editing either side after the verdict makes the
-  record describe bytes that no longer exist, and `C7` says so by name. The work
-  item is inside the digest because the question was a comparison.
-- **It is derived, not written.** `verdict` parses the raw transcript itself —
-  verdicts must agree, one must be the final non-empty line, and a `rejected`
-  with no `FINDING:` is refused. The stored transcript is a byte copy of the
-  file that was parsed.
-- **Its absence is not silence.** A commit with no verdict at all is a `FAIL` on
-  `C7`, not a missing row.
-
-`codex exec` is the subcommand, not `codex review`: the latter emits a fixed
-`[P1]`/`[P2]` schema against a diff and ignores the prompt's output contract, so
-it produced correct findings and zero `VERDICT:` lines, and the parser refused
-the transcript.
-
-Which skill a phase routes to is a **module constant in the phase script**, and
-that is a deliberate move away from where it used to live. It was a `[review]`
-key in each project's `aw.toml`, read at runtime, which made "the configured
-reviewer is a skill that exists" a claim nothing could check until someone
-invoked a reviewer against a project that had been misconfigured. As a constant
-it is resolvable without running anything, so `check_plugin.py` asserts both
-that it names a bundled skill and that it names *the one declared for that
-phase* — the second because both reviewer names are real, and a `logic.py`
-pointing at the contract reviewer passes an existence check while handing the
-implementation to a rubric that never mentions it. Two negative-control
-mutations, `reviewer-swap` and `reviewer-gone`, are what keep those two rows
-distinguishable.
-
-The gate split is a cost decision. `check_review_flow.py` owns the transcript
-parser, the record, and both whole-surface prompt forms, and needs no cargo at
-all — both reviewed phases call the same `leg.py` code, so driving every shape
-of it through one phase measures the shared implementation once instead of once
-per phase. What stays in `check_tdd_flow.py` is each phase's own `C7` wiring,
-because a commit gate is the thing a verdict has to be able to stop, and that
-costs a compile.
-
-Omitting the iid switches both `review-prompt` verbs to a whole-surface,
-advisory review of the project. `verdict` refuses that form rather than writing
-an unbound record: a file shaped like the one a commit gate reads, holding an
-approval of nothing, is worse than no file.
 
 ## Where an epic's order comes from
 
@@ -447,7 +391,7 @@ number and the right labels; what it does not get is a body any validator has
 seen. Reconcile described that body in prose ("its body is Goal / How /
 Acceptance / Never"), which is a second reading of a schema `change.py` owns
 outright and is the sole enforcement of. Routing
-creation through `/aw:wi-change-grill` means every child passes
+creation through `/aw-grill-me-to-change` means every child passes
 `change.py validate` before it is reported, and the prose summary disappears
 rather than being kept correct.
 
@@ -571,12 +515,19 @@ Two rules follow, and both are load-bearing:
   `/aw:wi:epic:grill` is not a name that can exist; `/aw:wi-epic-grill` is what
   that tree produces. An axis therefore lives in the *leaf*, hyphen-separated —
   `wi-epic-grill`, `wi-change-grill` — and the plugin name is the only segment
-  before the colon.
+  before the colon. Without a plugin there is no separator at all: a project
+  skill's command is its bare directory name, which is what made the
+  2026-08-26 rename a naming decision — directories `aw-<skill>` give the
+  command `/aw-<skill>`, and the `aw:` form survives only as the frontmatter
+  label.
 - **The frontmatter `name:` is inert.** `zeta-mismatch` declared `zeta-other`
-  and registered under its directory anyway. This is why `check_plugin.py`
-  asserts the frontmatter name *equals* the directory: the field cannot change
-  the invocation, so its only remaining job is to not lie about it — which is
-  precisely what it did when this shipped broken.
+  and registered under its directory anyway. The field cannot change the
+  invocation, so its only remaining job is to be the label the skill list
+  shows without lying about the command — which is precisely what it did when
+  this shipped broken. `check_plugin.py` pinned it to the directory name until
+  2026-08-26; since the rename it pins it to `aw:<skill>` beside a directory
+  `aw-<skill>`, so the two deliberately differ and each is checked against
+  the one thing it decides.
 
 The registration probe is deliberately not a gate: it costs an API call per
 run, and what it measures is a property of Claude Code rather than of this
@@ -588,7 +539,7 @@ assertion with a positive control that refuses a colon.
 Historical, as of 2026-08-21: there is no installed copy, because there is no
 plugin. Kept because it records *why* the plugin was worth deleting — an edit
 here reached a session only after an uninstall/install cycle, and nothing
-detected the gap. The eight skills in `.claude/skills/` are read from the
+detected the gap. The skills in `.claude/skills/` are read from the
 checkout directly, so this failure mode is gone rather than mitigated.
 
 `plugin install` copied the plugin into
