@@ -1,11 +1,11 @@
 ---
-name: meta-check
+name: aw:check-meta
 description: Audit tracked CLAUDE.md, README.md, and CONTRIBUTING.md files for stale generators, dead commands, broken links, unresolved gate names, and self-graded fields. Use project-readme-check instead for an app or library product-document set, including adopted protocol, client, indexing, querying, GKE, client-integration, and migration guides. Reads only; it never edits or regenerates a document.
 version: 0.1.0
 user-invocable: true
 ---
 
-# /aw:meta-check
+# /aw-check-meta
 
 This is a repository-rot scan. It is not the project product-document format
 standard. Use `/project-readme-check` after creating or editing an app or

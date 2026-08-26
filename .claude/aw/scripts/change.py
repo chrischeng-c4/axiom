@@ -876,7 +876,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("iid")
     p.add_argument("--leg", required=True, choices=LEGS)
     p.add_argument("--commit", required=True, help="the full sha the leg landed as")
-    p.add_argument("--digest", help="the change digest the leg was reviewed against")
+    p.add_argument("--digest", help="the change digest the leg's commit was measured against")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=workitem.cmd_lifecycle)
 

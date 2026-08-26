@@ -48,20 +48,35 @@ AW_DIR = REPO / ".claude/aw"
 SKILLS_DIR = REPO / ".claude/skills"
 
 # The skill directory names are the invocation names -- Claude Code composes the
-# skill name from the directory and ignores the frontmatter `name:` entirely,
-# measured with a probe whose two names disagreed. That is why each directory is
-# literally `aw:<skill>`: the `aw:` prefix survives only because it is in the
-# path. Naming the eight here rather than globbing keeps a stray directory from
-# silently joining the population under test.
-SKILLS = ("codex-code-review", "codex-e2e-review", "meta-check",
-          "prepare-goal", "wi-change-grill", "wi-epic-grill",
-          "wi-epic-reconcile", "wi-tdd")
-SKILL_PREFIX = "aw:"
+# command from the directory and ignores the frontmatter `name:` for that
+# purpose, measured with a probe whose two names disagreed. So each directory is
+# literally `aw-<skill>` and is invoked as `/aw-<skill>`, while the frontmatter
+# `name:` carries the label `aw:<skill>` that the skill list displays. Two
+# prefixes, one namespace: the dash form is what a human types, the colon form
+# is what they read. Naming the eleven here rather than globbing keeps a stray
+# directory from silently joining the population under test.
+NAMESPACE = "aw"
+SKILL_PREFIX = f"{NAMESPACE}-"      # directory and invocation: aw-<skill>/ -> /aw-<skill>
+DISPLAY_PREFIX = f"{NAMESPACE}:"    # frontmatter name: the listed label aw:<skill>
+SKILLS = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic",
+          "grill-change-to-prd", "grill-change-to-td", "grill-epic-to-changes",
+          "grill-epic-to-prd", "grill-epic-to-td", "grill-me-to-change",
+          "grill-me-to-epic", "prepare-goal")
 
 
 def skill_dir(skill: str) -> pathlib.Path:
     """The on-disk directory for one skill name in `SKILLS`."""
     return SKILLS_DIR / f"{SKILL_PREFIX}{skill}"
+
+
+def skill_invocation(skill: str) -> str:
+    """What a human types to run one skill: the directory name behind a slash."""
+    return f"/{SKILL_PREFIX}{skill}"
+
+
+def skill_label(skill: str) -> str:
+    """What the skill list shows for one skill: its frontmatter `name:`."""
+    return f"{DISPLAY_PREFIX}{skill}"
 
 # The `ec -> td -> cb` ladder is gone from this plugin: three scripts, three
 # gates, and the twelve `wi-{ec,td,cb}-*` wrappers, deleted rather than
@@ -70,12 +85,13 @@ def skill_dir(skill: str) -> pathlib.Path:
 # who cannot tell that from a broken checkout.
 #
 # What replaced them is `e2e -> unit -> logic`, driven by each verb's printed
-# `next.command` rather than by a skill per step. Two skills survive from that
-# ladder, because the semantic review is the one step whose work is a model's
-# rather than a command's, and it is two reviews rather than one: a contract is
-# judged against the work item alone, code is judged against the work item *and*
-# the tests, and a reviewer shown both at the contract phase would judge the
-# case by whether the code passes it.
+# `next.command` rather than by a skill per step. Two skills front that ladder,
+# one per work-item type: `go-tdd-for-change` runs the three phases on one
+# change, and `go-tdd-for-epic` asks `epic.py order` for the children's
+# sequence and runs the change skill on each. The semantic review that sat
+# between the phases -- two skills that routed the contract and then the code
+# to a second model for a verdict -- left the ladder on 2026-08-26, and the
+# `review-prompt` and `verdict` verbs went with it.
 
 # Two kinds of skill, and the difference decides which rules can apply.
 #
@@ -91,12 +107,16 @@ def skill_dir(skill: str) -> pathlib.Path:
 # The two lists are asserted exhaustive and disjoint over SKILLS, so a new skill
 # cannot join without someone deciding which kind it is.
 #
-# `wi-tdd` is procedural despite the phases it drives being model work rather
-# than command work -- so are the two reviewers. The line is not "does a model
-# write something", it is whether the skill has anything left to ask. By the
-# time the ladder starts, the work item has already said what the change is;
-# what remains is a fixed sequence of verbs and the exit codes they return, and
-# the only question a gate could raise is whether it counts.
+# The two `go-tdd-*` skills are procedural despite the phases they drive being
+# model work rather than command work -- so is `check-meta`. The line is not
+# "does a model write something", it is whether the skill has anything left to
+# ask. By the time the ladder starts, the work item has already said what the
+# change is; what remains is a fixed sequence of verbs and the exit codes they
+# return, and the only question a gate could raise is whether it counts.
+# The four `grill-*-to-{prd,td}` skills are interviewing for the same reason
+# the grills that open work items are: the body says what the change is, and
+# the document they write says who it is for and what it stands on -- which the
+# body does not carry, and only the human can supply.
 # `prepare-goal` is interviewing on the strength of its second route rather
 # than its first. Given an iid it reads a body that a validator already refused
 # once, and there is nothing left to ask; given none, everything the condition
@@ -105,18 +125,20 @@ def skill_dir(skill: str) -> pathlib.Path:
 # human's head. Classifying it procedural would forbid the very tool that route
 # is made of, and would leave the no-iid case answered by whatever the agent
 # guessed the human meant.
-INTERVIEWING = ("prepare-goal", "wi-change-grill", "wi-epic-grill",
-                "wi-epic-reconcile")
-PROCEDURAL = ("codex-code-review", "codex-e2e-review", "meta-check", "wi-tdd")
+INTERVIEWING = ("grill-change-to-prd", "grill-change-to-td", "grill-epic-to-changes",
+                "grill-epic-to-prd", "grill-epic-to-td", "grill-me-to-change",
+                "grill-me-to-epic", "prepare-goal")
+PROCEDURAL = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic")
 
 # The eight scripts sit in one directory, not inside a skill. They were under
-# `wi-epic-grill/scripts/` while it was the only skill running them, which made
+# `wi-epic-grill/scripts/` (now `grill-me-to-epic`) while it was the only skill
+# running them, which made
 # the epic grill look like their owner; reconcile already reached across into
 # it, and the change grill would have been a second skill reaching into a third
 # one's directory. A shared dependency belongs beside the skills, not inside
 # whichever one happened to need it first.
 #
-# They also cannot be split across the eight skill directories, which is what
+# They also cannot be split across the eleven skill directories, which is what
 # the plugin deletion had to decide. `e2e.py`, `unit.py` and `logic.py` each
 # load `leg.py` by `Path(__file__).parent / "leg.py"`, and `leg.change_module()`
 # loads `change.py` the same way. One directory is a load-bearing requirement,

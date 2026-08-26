@@ -56,10 +56,10 @@ GIT = ("git", "-c", "core.fsmonitor=false")
 # anywhere in the repository.
 #
 # `AGENTS.md` is deliberately outside the population. It is not documentation --
-# `codex exec` loads it as its instructions, so it is a production input with a
-# reader of its own, and a rule that edits it changes what a reviewer is told.
+# `codex exec` loads it as its instructions, so it is codex's instruction file,
+# with a reader of its own, and a rule that edits it changes what codex is told.
 # It carries 0 markers and 0 `aw <verb>` spans today, so admitting it would
-# change no result while making a review input answerable to a doc rule.
+# change no result while making an instruction file answerable to a doc rule.
 META_DOCS = ("CLAUDE.md", "README.md", "CONTRIBUTING.md")
 
 RULES = {
@@ -130,7 +130,7 @@ AW_BARE = re.compile(r"^\s*aw\s+[a-z]")
 # `aw wi validate`" in the present tense -- that is the rot, not a record of it.
 # `apps/mamba/CONTRIBUTING.md:58` was a live instruction in a checklist table
 # telling a human to run `aw wi create`; exempting it would have left a reader
-# following a command that cannot run. It now names `/aw:wi-change-grill` and
+# following a command that cannot run. It now names `/aw-grill-me-to-change` and
 # `change.py create`, which is the shape a forward-looking instruction has to
 # take -- unlike a past-tense evidence row, which must not be repointed at a
 # live command, because that fabricates a measurement nobody took.

@@ -1,11 +1,11 @@
 ---
-name: wi-epic-grill
+name: aw:grill-me-to-epic
 description: Interview the human through AskUserQuestion until every required Epic section is answered, then author the epic through `epic.py create` or `epic.py update`. Use when a new epic must be opened, or when an existing epic's body is thin, stale, or unvalidatable.
 version: 0.1.0
 user-invocable: true
 ---
 
-# /aw:wi-epic-grill
+# /aw-grill-me-to-epic
 
 Grill the human, then let the script write. This skill owns exactly one
 thing: turning an underspecified intent into an epic body that
@@ -142,7 +142,7 @@ This addresses the agent running the interview, not the human answering it.
   place for a plausible default.
 - Never write the tracker body or any `src/**` path by hand, and never reach
   past the script to the tracker's own CLI; `epic.py` is the only writer here.
-- Never open child work items here. Scope carving is `/aw:wi-epic-reconcile`.
+- Never open child work items here. Scope carving is `/aw-grill-epic-to-changes`.
 - Never report the epic as authored on a create or update exit code alone —
   `epic.py validate` passing is the signal. The two exit codes answer
   different questions: one says the write landed, the other says the body is

@@ -2,7 +2,7 @@
 """Negative control for `check_plugin.py`, one mutation per assertion class.
 
 Re-pointed on 2026-08-21 when `plugins/aw/` was deleted: the skills are read
-from `.claude/skills/aw:*/` and the scripts from `.claude/aw/scripts/`. The
+from `.claude/skills/aw-*/` and the scripts from `.claude/aw/scripts/`. The
 `${CLAUDE_PLUGIN_ROOT}` mutations became in-repo-path mutations, because the
 variable they broke no longer appears in any body -- and a control with no
 live target is a rule nobody is measuring.
@@ -17,8 +17,18 @@ Each mutation below is a break that really ships:
                  mutated one would be green off the other's survival.
   skill-name     a cross-reference to a skill that does not exist. This is the
                  defect that actually shipped: with the directories named
-                 `aw-epic-*`, every `/aw:wi-epic-*` reference in both bodies
-                 pointed at nothing, and no assertion compared the two.
+                 `aw-epic-*`, every plugin-qualified `wi-epic-*` reference in
+                 both bodies pointed at nothing, and no assertion compared the
+                 two.
+  frontmatter-label
+                 the frontmatter `name:` drops to the dash form. Nothing breaks
+                 -- the command comes from the directory -- but the skill list
+                 then shows the invocation twice and the label never, and the
+                 next reader takes the frontmatter for the thing that decides.
+  h1-colon       the body's H1 keeps the colon form the directories carried
+                 until 2026-08-26. Two rules fire: the H1 no longer names the
+                 real invocation, and the body now carries a `/aw:` reference
+                 that nothing can invoke. Both are expected, in that order.
   unused-verb    a skill starts naming a verb that is declared unused. The
                  declaration is an exemption from verb coverage, so it has to
                  expire the moment it stops being true -- otherwise it is a
@@ -39,12 +49,12 @@ Each mutation below is a break that really ships:
   no-ask         an interviewing skill loses every AskUserQuestion. The body
                  still reads like an interview; it just stops holding one, and
                  the answers come from the agent instead of the human.
-  unpinned       the code reviewer invokes `logic.py` with a bare `python3`. It
+  unpinned       the change ladder invokes `logic.py` with a bare `python3`. It
                  reads as the shorter, more normal form of the same line, and it
-                 is a ModuleNotFoundError on any interpreter below 3.11. All
-                 three occurrences are replaced and all three are expected to go
-                 red: the rule fires per invocation, so a control that mutated
-                 one line would be green off the others' survival.
+                 is a ModuleNotFoundError on any interpreter below 3.11. The
+                 body carries one pinned `logic.py` launcher, so one red is
+                 expected; the rule fires per invocation, and the declared
+                 count is what keeps a second launcher from hiding behind it.
 
                  The target is `logic.py` on purpose. It imports no TOML itself
                  -- it reaches `tomllib` only through the `unit.py` it loads --
@@ -52,15 +62,6 @@ Each mutation below is a break that really ships:
                  the set at all, this mutation would produce no reds, and the
                  control would fail. That is the point: it is what holds the
                  transitive half of that derivation in place.
-  reviewer-swap  a phase's `REVIEWER` constant names the *other* phase's
-                 reviewer. Both are real, bundled, correctly-named skills, so an
-                 existence check passes; the implementation is simply handed to
-                 a rubric that judges contracts. This is the routing's real
-                 failure mode, and it is why the pairing is asserted rather than
-                 mere resolvability.
-  reviewer-gone  a phase's `REVIEWER` names a skill that is not in the bundle --
-                 here the deleted `codex-review`, which is exactly the shape a
-                 rename leaves behind.
   unclassified   a skill drops out of the interviewing/procedural partition.
                  Nothing fails to load and no body changes -- the skill simply
                  stops having any per-skill rule applied to it, which is the
@@ -88,24 +89,23 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _paths import HERE, SCRIPTS, skill_dir  # noqa: E402
+from _paths import HERE, skill_dir  # noqa: E402
 
 CHECK = HERE / "check_plugin.py"
-GRILL = skill_dir("wi-epic-grill") / "SKILL.md"
-CHANGE_GRILL = skill_dir("wi-change-grill") / "SKILL.md"
-RECONCILE = skill_dir("wi-epic-reconcile") / "SKILL.md"
-# The `ask-in-gate` and `unpinned` mutations have been re-pointed twice now:
-# first from `wi-ec-commit`/`wi-ec-start` to `codex-review` when the leg
-# wrappers were retired, and now to `codex-code-review` when `codex-review` was
-# split in two and the `ec -> td -> cb` scripts were deleted outright. A control
-# whose target disappears has to be re-pointed rather than dropped -- a rule
-# with no live target is a rule nobody is measuring, and it reads identically to
-# a rule that passes.
-CODE_REVIEW = skill_dir("codex-code-review") / "SKILL.md"
-E2E_SCRIPT = SCRIPTS / "e2e.py"
-LOGIC_SCRIPT = SCRIPTS / "logic.py"
+GRILL = skill_dir("grill-me-to-epic") / "SKILL.md"
+CHANGE_GRILL = skill_dir("grill-me-to-change") / "SKILL.md"
+RECONCILE = skill_dir("grill-epic-to-changes") / "SKILL.md"
+# The `ask-in-gate` and `unpinned` mutations have been re-pointed three times
+# now: from `wi-ec-commit`/`wi-ec-start` to `codex-review` when the leg
+# wrappers were retired, to `codex-code-review` when that was split in two and
+# the `ec -> td -> cb` scripts were deleted outright, and to `go-tdd-for-change`
+# when the semantic review left the ladder on 2026-08-26. A control whose
+# target disappears has to be re-pointed rather than dropped -- a rule with no
+# live target is a rule nobody is measuring, and it reads identically to a rule
+# that passes.
+TDD_CHANGE = skill_dir("go-tdd-for-change") / "SKILL.md"
 PATHS = HERE / "_paths.py"
-COPY_DIR = skill_dir("wi-epic-reconcile") / "scripts"
+COPY_DIR = skill_dir("grill-epic-to-changes") / "scripts"
 
 # (label, target, anchor, mutant, expected reds, occurrences)
 MUTATIONS = [
@@ -114,15 +114,30 @@ MUTATIONS = [
         GRILL,
         ".claude/aw/scripts/epic.py",
         ".claude/aw/script/epic.py",
-        ["FAIL wi-epic-grill: script path .claude/aw/script/epic.py exists"],
+        ["FAIL grill-me-to-epic: script path .claude/aw/script/epic.py exists"],
         2,
     ),
     (
         "skill-name",
         GRILL,
-        "`/aw:wi-epic-reconcile`",
-        "`/aw:wi-epic-recon`",
-        ["FAIL wi-epic-grill: every /plugin:skill reference resolves to a real skill"],
+        "`/aw-grill-epic-to-changes`",
+        "`/aw-grill-epic-to-change`",
+        ["FAIL grill-me-to-epic: every /aw-<skill> reference resolves to a real skill"],
+    ),
+    (
+        "frontmatter-label",
+        GRILL,
+        "name: aw:grill-me-to-epic",
+        "name: aw-grill-me-to-epic",
+        ["FAIL grill-me-to-epic: frontmatter name is the listed label"],
+    ),
+    (
+        "h1-colon",
+        GRILL,
+        "# /aw-grill-me-to-epic",
+        "# /aw:grill-me-to-epic",
+        ["FAIL grill-me-to-epic: the body's H1 is the real invocation",
+         "FAIL grill-me-to-epic: names no colon-form /aw: invocation"],
     ),
     (
         "unused-verb",
@@ -143,17 +158,17 @@ MUTATIONS = [
         "--body-file <bodydir>/<slug>.md \\\n"
         "  --label type:change --label epic:<iid>\n"
         "```",
-        ["FAIL wi-epic-reconcile: names no gh issue/pr write command"],
+        ["FAIL grill-epic-to-changes: names no gh issue/pr write command"],
     ),
     (
         "ask-in-gate",
-        CODE_REVIEW,
-        "Three commands, in this order, none of them optional.",
-        "Three commands, in this order, none of them optional.\n"
+        TDD_CHANGE,
+        "Twelve commands, in this order, and each one prints the next:",
+        "Twelve commands, in this order, and each one prints the next:\n"
         "\n"
-        "If the transcript carries no VERDICT line, use AskUserQuestion to ask "
-        "the human whether to record an acceptance anyway.",
-        ["FAIL codex-code-review: names no AskUserQuestion, because a gate "
+        "If a phase refuses, use AskUserQuestion to ask the human whether to "
+        "record the phase as passed anyway.",
+        ["FAIL go-tdd-for-change: names no AskUserQuestion, because a gate "
          "has nothing to ask"],
     ),
     (
@@ -161,36 +176,20 @@ MUTATIONS = [
         CHANGE_GRILL,
         "AskUserQuestion",
         "consult the human",
-        ["FAIL wi-change-grill: names AskUserQuestion, so it reaches the human"],
+        ["FAIL grill-me-to-change: names AskUserQuestion, so it reaches the human"],
         3,
     ),
     (
         "unpinned",
-        CODE_REVIEW,
+        TDD_CHANGE,
         'uv run --python 3.13 --no-project ".claude/aw/scripts/logic.py"',
         'python3 ".claude/aw/scripts/logic.py"',
-        ["FAIL codex-code-review: `logic.py` is invoked through the pinned interpreter"] * 3,
-        3,
-    ),
-    (
-        "reviewer-swap",
-        LOGIC_SCRIPT,
-        'REVIEWER = "/aw:codex-code-review"',
-        'REVIEWER = "/aw:codex-e2e-review"',
-        ["FAIL logic.py: its reviewer is the one declared for this phase"],
-    ),
-    (
-        "reviewer-gone",
-        E2E_SCRIPT,
-        'REVIEWER = "/aw:codex-e2e-review"',
-        'REVIEWER = "/aw:codex-review"',
-        ["FAIL e2e.py: its reviewer resolves to a bundled skill",
-         "FAIL e2e.py: its reviewer is the one declared for this phase"],
+        ["FAIL go-tdd-for-change: `logic.py` is invoked through the pinned interpreter"],
     ),
     (
         "unclassified",
         PATHS,
-        'PROCEDURAL = ("codex-code-review", "codex-e2e-review", "meta-check", "wi-tdd")',
+        'PROCEDURAL = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic")',
         "PROCEDURAL = ()",
         ["FAIL every skill is classified exactly once"],
     ),
@@ -239,7 +238,7 @@ for label, target, anchor, mutant, expected, *rest in MUTATIONS:
 
 # -- the directory mutation ------------------------------------------------
 label = "scripts-copy"
-expected = ["FAIL wi-epic-reconcile: carries no scripts/ copy of its own"]
+expected = ["FAIL grill-epic-to-changes: carries no scripts/ copy of its own"]
 if COPY_DIR.exists():
     failures.append(f"{label}: {COPY_DIR} already exists, so the mutation proves nothing")
     print(f"\n== {label} == PRECONDITION FAILED: {COPY_DIR} already exists")

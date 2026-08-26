@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Re-runnable checker for the eight `aw:*` skills and the scripts they drive.
+"""Re-runnable checker for the eleven `aw-*` skills and the scripts they drive.
 
 The name is historical: `aw` was a Claude Code plugin at `plugins/aw/` until
 2026-08-21, and this file checked its bundle. The plugin is deleted -- the
-scripts are at `.claude/aw/scripts/`, the eight skills load as project skills
-out of `.claude/skills/aw:*/`, and the manifest assertions here were inverted
+scripts are at `.claude/aw/scripts/`, the eleven skills load as project skills
+out of `.claude/skills/aw-*/`, and the manifest assertions here were inverted
 into absence assertions so a half-restored plugin goes red instead of quietly
-loading a second copy of all eight.
+loading a second copy of all eleven.
 
 Two assertion classes here are not obvious and are the reason this file exists.
 
@@ -24,7 +24,8 @@ did not exist, including reconcile's handoff back to grill. Nothing caught it
 because nothing compared a body's invocation names against the directories that
 produce them.
 
-The invocation axis has since moved twice more, ending at `aw:wi-epic-*`, which
+The invocation axis has since moved three times more, ending at `aw-<verb>`
+directories (the command) beside an `aw:<verb>` frontmatter label, which
 is exactly why these assertions read the directory listing instead of a
 constant: a rename that misses one reference is the failure mode here, and it
 has occurred on every rename so far.
@@ -41,16 +42,12 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
-from _paths import (CHANGE_SCRIPT, INTERVIEWING,  # noqa: E402
+from _paths import (CHANGE_SCRIPT, DISPLAY_PREFIX, INTERVIEWING,  # noqa: E402
                     META_SCRIPT, PINNED_PYTHON,
                     E2E_SCRIPT, LOGIC_SCRIPT, PROCEDURAL, REPO,
                     SCRIPT, SCRIPTS, SKILLS, SKILLS_DIR, SKILL_PREFIX,
-                    UNIT_SCRIPT, pinned_interpreter, skill_dir)
-
-# The namespace the invocation keeps. It was the plugin name until 2026-08-21;
-# it is now the literal `aw:` prefix on each skill directory, which is the only
-# thing holding the namespace up now that no plugin supplies one.
-PLUGIN_NAME = "aw"
+                    UNIT_SCRIPT, pinned_interpreter, skill_dir,
+                    skill_invocation, skill_label)
 
 # Each bundled script, and the verbs the skills must name for it. The two
 # differ on purpose: an epic owns children and can be closed against them, a
@@ -69,46 +66,20 @@ REQUIRED = {
     # whose `start` stopped being named would be a phase an agent could enter
     # without the tree being checked clean first.
     #
-    # The two reviewed phases carry two more. `review-prompt` and `verdict` are
-    # required of exactly the phases a reviewer skill exists for, so a rename
-    # that leaves a reviewer naming a verb its script no longer has goes red --
-    # and so does a phase that grows a reviewer without anything driving it.
-    "e2e.py": {"start", "verify", "test", "commit", "review-prompt", "verdict"},
+    # `e2e.py` and `logic.py` carried `review-prompt` and `verdict` as well
+    # until 2026-08-26, when the semantic review left the ladder. Four verbs
+    # each now. Note what this table does not do: a verb a script still exposes
+    # but no skill names is not refused here -- `MENTIONED` runs the other way,
+    # from the skills to the scripts -- so the two subcommands were deleted from
+    # the scripts in the same round rather than left as verbs `UNUSED` would
+    # have had to exempt.
+    "e2e.py": {"start", "verify", "test", "commit"},
     "unit.py": {"start", "verify", "test", "commit"},
-    "logic.py": {"start", "verify", "test", "commit", "review-prompt", "verdict"},
+    "logic.py": {"start", "verify", "test", "commit"},
     # The META-doc validator. One verb, and the singleton is the point: a
     # second verb here would be a verb that writes, and the thing this replaces
     # was deleted for writing.
     "meta.py": {"check"},
-}
-
-# Which phase each reviewer skill drives, and -- for `unit.py` -- that it drives
-# none. This is the whole of the routing: it used to be a `[review]` key in each
-# project's `aw.toml`, read at runtime, which meant "the configured reviewer is
-# a skill that exists" was a claim nothing checked until a reviewer was invoked
-# against a project someone had misconfigured. Naming it here instead makes it a
-# constant in the script, resolvable without running anything, and the pairing
-# below is what refuses a constant pointing at a skill that is not in the
-# bundle.
-REVIEWED = {"e2e.py": "codex-e2e-review", "logic.py": "codex-code-review"}
-
-# Why each unreviewed script is unreviewed, keyed by script so the reason is
-# the one that applies. It was a single string while `unit.py` was the only
-# entry whose absence was interesting, and it printed that unit-phase
-# reasoning under `epic.py` and `change.py` too. A default of "" is fine for a
-# script whose lack of a reviewer needs no argument; what is not fine is
-# printing an argument about a different script.
-UNREVIEWED_WHY = {
-    "unit.py": ("the unit phase's tests are landed red and never read on "
-                "their own: at `unit` only half the pair exists, and the "
-                "question a reviewer would be asked -- do these tests admit "
-                "an implementation that misses the requirement -- has no "
-                "implementation to ask it about yet. It is asked at `logic`, "
-                "over both halves at once."),
-    "meta.py": ("nothing here is a judgement. Every rule resolves against the "
-                "filesystem -- a marker's producer exists or it does not, a "
-                "link's target exists or it does not -- so there is no "
-                "question to route to a second model."),
 }
 
 # Verbs a script exposes that no skill drives, and why. A silent gap between
@@ -180,7 +151,11 @@ GH_WRITE_CONTROL = ('gh issue create --repo <repo> --title "<title>" '
 # something, so a body that stopped naming any path goes red rather than green.
 IN_REPO_PATH = re.compile(r"`(\.claude/aw/[\w./:-]+)`")
 PLUGIN_ROOT_PATH = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}")
-SKILL_REFERENCE = re.compile(r"/(aw[\w-]*:[\w:-]+)")
+SKILL_REFERENCE = re.compile(rf"(?<![\w/.])/({re.escape(SKILL_PREFIX)}[\w-]+)")
+# The form every reference carried until 2026-08-26. A body that still says
+# `/aw:<skill>` names the display label, which nothing can invoke -- and a
+# rename that misses one reference is the failure mode this file exists for.
+STALE_REFERENCE = re.compile(rf"/{re.escape(DISPLAY_PREFIX)}[\w:-]+")
 
 fails = []
 
@@ -195,7 +170,7 @@ def check(label, ok, detail=""):
 # Deleted on 2026-08-21. These four rows used to assert a `marketplace.json`,
 # a `plugin.json`, a kebab-case plugin name and a relative in-repo source that
 # resolved to the bundle. They are now the inverse assertion: those files must
-# NOT be back, because a half-restored plugin would load a second copy of eight
+# NOT be back, because a half-restored plugin would load a second copy of eleven
 # skills that already load out of `.claude/skills/`, and the two copies would
 # drift with nothing detecting it -- which is the exact condition the deletion
 # was for.
@@ -207,7 +182,7 @@ if settings.is_file():
     check("settings.json enables no plugin",
           "enabledPlugins" not in settings.read_text(encoding="utf-8"))
 
-# -- the eight skills and the eight scripts --------------------------------
+# -- the eleven skills and the eight scripts -------------------------------
 for skill in SKILLS:
     check(f"{skill}: SKILL.md is on disk", (skill_dir(skill) / "SKILL.md").is_file())
 for name, path in sorted(SCRIPT_PATHS.items()):
@@ -231,53 +206,68 @@ bodies = {s: path.read_text(encoding="utf-8")
 joined = "\n".join(bodies.values())
 
 # -- the skill directories are the invocation names ------------------------
-# The directory name IS the skill name, and registration rewrites characters it
-# will not carry: a directory `probe:colon` registers as `probe-colon`. That is
-# strictly worse than a rejection, because the plugin loads and every body
+# The directory name IS the command name, and registration rewrites characters
+# it will not carry: a directory `probe:colon` registers as `probe-colon`. That
+# is strictly worse than a rejection, because the skill loads and every body
 # reference then points at a name nobody wrote. So the assertion is not "legal"
 # but "survives unchanged" -- anything outside this class registers as
-# something else.
+# something else. It is applied to the whole directory name, prefix included,
+# because the prefix is where the colon lived until 2026-08-26.
 SAFE_DIRECTORY = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 # `.claude/skills/` is shared -- `agy-dispatch` lives there too -- so the
-# population is the `aw:`-prefixed directories, not the whole listing. The
+# population is the `aw-`-prefixed directories, not the whole listing. The
 # prefix is stripped before comparing, which is also what proves it is present:
 # a directory that lost it simply is not in `on_disk`, and the equality fails.
+# The comparison is against `SKILLS`, not filtered by it, so an `aw-` directory
+# nobody registered goes red by name instead of loading unnoticed.
 on_disk = sorted(q.name[len(SKILL_PREFIX):] for q in SKILLS_DIR.iterdir()
                  if q.is_dir() and q.name.startswith(SKILL_PREFIX))
-check("the aw: skills on disk are exactly the ones under test",
+check("the aw- skills on disk are exactly the ones under test",
       on_disk == sorted(SKILLS), f"on disk={on_disk}")
 for skill in SKILLS:
     check(f"{skill}: directory name survives registration unchanged",
-          bool(SAFE_DIRECTORY.fullmatch(skill)),
+          bool(SAFE_DIRECTORY.fullmatch(f"{SKILL_PREFIX}{skill}")),
           "registration rewrites anything outside [a-z0-9-]")
 
-# Positive control: the assertion must be able to refuse the shape that was
-# actually shipped and silently renamed.
+# Positive controls: the assertion must be able to refuse both shapes that were
+# actually shipped -- the plugin-era colon inside the name, and the colon
+# prefix the directories carried until 2026-08-26.
 check("positive control: the directory-name rule refuses a colon",
       not SAFE_DIRECTORY.fullmatch("wi:epic:grill"))
+check("positive control: the directory-name rule refuses the colon prefix",
+      not SAFE_DIRECTORY.fullmatch("aw:wi-epic-grill"))
 
-expected = {f"{PLUGIN_NAME}:{s}" for s in SKILLS}
+expected = {f"{SKILL_PREFIX}{s}" for s in SKILLS}
 for skill, text in bodies.items():
-    qualified = f"{PLUGIN_NAME}:{skill}"
-
-    # The frontmatter name does not decide anything, but a frontmatter name
-    # that disagrees with the directory is a lie left where the next reader
-    # will believe it.
+    # The frontmatter name does not decide the command, but it is what the
+    # skill list displays, so it carries the colon-form label. A label that
+    # disagrees with the directory is a lie left where the next reader will
+    # believe it, and a label in dash form is the invocation shown twice.
     front = re.search(r"^name:\s*(\S+)\s*$", text, re.M)
     check(f"{skill}: frontmatter declares a name", bool(front))
     if front:
-        check(f"{skill}: frontmatter name matches the directory",
-              front.group(1) == skill, f"frontmatter={front.group(1)!r} directory={skill!r}")
+        check(f"{skill}: frontmatter name is the listed label",
+              front.group(1) == skill_label(skill),
+              f"frontmatter={front.group(1)!r} label={skill_label(skill)!r}")
 
     check(f"{skill}: the body's H1 is the real invocation",
-          re.search(rf"^#\s*/{re.escape(qualified)}\s*$", text, re.M) is not None)
+          re.search(rf"^#\s*{re.escape(skill_invocation(skill))}\s*$", text, re.M) is not None)
 
     referenced = set(SKILL_REFERENCE.findall(text))
     check(f"{skill}: the skill-reference extractor found references at all", bool(referenced))
     unknown = sorted(referenced - expected)
-    check(f"{skill}: every /plugin:skill reference resolves to a real skill",
+    check(f"{skill}: every /aw-<skill> reference resolves to a real skill",
           not unknown, f"dangling={unknown}; real={sorted(expected)}")
+
+    stale = sorted(set(STALE_REFERENCE.findall(text)))
+    check(f"{skill}: names no colon-form /aw: invocation",
+          not stale, f"stale={stale}; the colon form is the label, not the command")
+
+# Positive control: the stale-form rule must be able to see the string it
+# forbids, in the exact shape every body carried until the rename.
+check("positive control: the stale-reference rule refuses the colon form",
+      bool(STALE_REFERENCE.search("hand it to `/aw:wi-epic-reconcile` next")))
 
 # -- every script path a SKILL.md names must exist -------------------------
 # This was two extractors while the bodies carried both a `${CLAUDE_PLUGIN_ROOT}`
@@ -335,37 +325,6 @@ for skill in PROCEDURAL:
     if skill in bodies:
         check(f"{skill}: names no AskUserQuestion, because a gate has nothing to ask",
               "AskUserQuestion" not in bodies[skill])
-
-# -- the reviewer a phase names is a skill that exists ----------------------
-# The routing, end to end. Each reviewed phase holds its reviewer as a module
-# constant; the assertion is that the constant resolves to a bundled skill, and
-# that the pairing is the one declared above rather than merely *some* skill.
-# The second half matters because both reviewers are real names: a `logic.py`
-# pointing at the contract reviewer would pass a mere existence check while
-# handing the implementation to a rubric that never mentions it.
-REVIEWER_CONST = re.compile(r'^REVIEWER\s*=\s*"([^"]*)"\s*$', re.M)
-for name in sorted(SCRIPT_PATHS):
-    found = REVIEWER_CONST.findall(SOURCES[name])
-    if name not in REVIEWED:
-        check(f"{name}: declares no reviewer, and the declaration holds",
-              not found,
-              UNREVIEWED_WHY.get(name, "") if not found else f"found {found}")
-        continue
-    check(f"{name}: names exactly one reviewer", len(found) == 1, f"found={found}")
-    if len(found) == 1:
-        check(f"{name}: its reviewer resolves to a bundled skill",
-              found[0].lstrip("/") in expected,
-              f"reviewer={found[0]!r}; bundled={sorted(expected)}")
-        check(f"{name}: its reviewer is the one declared for this phase",
-              found[0] == f"/{PLUGIN_NAME}:{REVIEWED[name]}",
-              f"reviewer={found[0]!r} declared={REVIEWED[name]!r}")
-
-# And the other direction: a reviewer skill nobody routes to is a skill an
-# agent can invoke against a phase that will not read its verdict.
-routed = {f"{PLUGIN_NAME}:{s}" for s in REVIEWED.values()}
-for skill in sorted(s for s in SKILLS if s.startswith("codex-")):
-    check(f"{skill}: some phase routes to it",
-          f"{PLUGIN_NAME}:{skill}" in routed, f"routed={sorted(routed)}")
 
 # Positive control: the transitive half of the pin derivation. `logic.py`
 # imports no TOML of its own -- it is in the set only through `unit.py` -- so a
