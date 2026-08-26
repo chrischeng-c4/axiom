@@ -1463,6 +1463,7 @@ fn dx_llm_composes_library_owned_provider_content() {
         "apps/lumen/scripts/verify-release-candidate.sh",
         "apps/lumen/e2e/release_candidate.rs",
         ".github/workflows/lumen-release.yml",
+        ".github/workflows/lumen-release-recovery.yml",
         "apps/lumen/scripts/verify-release-artifacts.sh",
         "apps/lumen/e2e/release_promotion.rs",
         ".agents/skills/lumen-build-release/SKILL.md",
@@ -1512,14 +1513,40 @@ fn dx_llm_composes_library_owned_provider_content() {
         "do not create a stable Git tag",
         "semver/latest image tag",
         "Run kind before public promotion",
-        "Land each release to main exactly once before public promotion",
         "GHCR root and platform digests",
         "downloaded host archive passes its checksum",
         "scripts/raft-implementor-build.sh",
+        "normal candidate-to-tag-to-promotion workflow remains canonical",
+        "main-only, exact-identity recovery workflow",
+        "fails before any public GHCR or GitHub Release write",
+        ".github/workflows/lumen-release-recovery.yml",
+        "fixed-identity",
+        "one-time recovery for lumen@0.4.28",
+        "do not rerun that broken route",
+        "normal release path lands main once",
+        "Recovery tooling may land separately",
+        "cannot change the frozen release commit",
+        "cannot rebuild, move, or recreate the tag",
     ] {
         assert!(
             release_markdown.contains(needle),
             "release topic missing `{needle}`: {release_markdown}"
+        );
+    }
+
+    for forbidden in [
+        "recovery is a generic escape hatch",
+        "recovery may choose another commit",
+        "recovery may choose another candidate run",
+        "recovery may choose another digest",
+        "recovery may rebuild",
+        "recovery may move the tag",
+        "recovery may choose another identity",
+        "recovery bypasses verification",
+    ] {
+        assert!(
+            !release_markdown.contains(forbidden),
+            "release topic weakens recovery guard `{forbidden}`"
         );
     }
 

@@ -26,6 +26,19 @@ const PUBLIC_RELEASE_NOTE_STATEMENTS: &[&str] = &[
     "- Placement path: a non-empty nodeSelector with the default initialMachineType skips the legacy capacity catalog.",
     "- Legacy placement path: an empty selector, tolerations-only placement, or a non-default initialMachineType still requires lumen-system/lumen-capacity-catalog.",
 ];
+const RECOVERY_TAG_OBJECT: &str = "5b7b4d9a8b8b5596cb9fcfa149008a8f1313da82";
+const RECOVERY_ROOT: &str =
+    "sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
+const RECOVERY_AMD64: &str =
+    "sha256:754b3c53b849f1a6de94897fe11d796d1ede0120ac9aa2e3d226f1edf08e7b00";
+const RECOVERY_ARM64: &str =
+    "sha256:0b15b56db206ce2a7d9e832b829fceb88acaa28656d21f0e28f731b41bb5580f";
+const RECOVERY_OLD_LATEST: &str =
+    "sha256:4a5748848d384b2fa56b130b48976c309942dcd9e613e000da7f89a7c858cff4";
+const RECOVERY_COMMIT: &str = "b1cbee3fcee0bfff54c425fe0f605b54125f4740";
+const RECOVERY_RUN: &str = "32974297012";
+const RECOVERY_WORKFLOW_SHA256: &str =
+    "4fadd9fdae2f0db6f408424db19982f837274a549b0af22cce226e2a78839ca2";
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -1060,6 +1073,212 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_recovery_workflow(workflow: &str) -> Result<(), String> {
+    let document: Value = serde_yaml::from_str(workflow)
+        .map_err(|error| format!("recovery workflow is not valid YAML: {error}"))?;
+    let top = yaml_mapping(&document, "recovery workflow")?;
+    exact_keys(
+        top,
+        &["name", "on", "concurrency", "permissions", "jobs"],
+        "recovery workflow",
+    )?;
+    expect_text(top, "name", "lumen-release-recovery", "recovery workflow")?;
+    let trigger = yaml_mapping(
+        yaml_field(top, "on", "recovery workflow")?,
+        "recovery workflow.on",
+    )?;
+    exact_keys(trigger, &["workflow_dispatch"], "recovery workflow.on")?;
+    let dispatch = yaml_field(trigger, "workflow_dispatch", "recovery workflow.on")?;
+    if !dispatch.is_null() {
+        return Err("recovery workflow_dispatch must have no inputs".to_owned());
+    }
+    let concurrency = yaml_mapping(
+        yaml_field(top, "concurrency", "recovery workflow")?,
+        "recovery workflow.concurrency",
+    )?;
+    exact_keys(
+        concurrency,
+        &["group", "cancel-in-progress"],
+        "recovery workflow.concurrency",
+    )?;
+    expect_text(
+        concurrency,
+        "group",
+        "lumen-release-promotion-0.4.28",
+        "recovery workflow.concurrency",
+    )?;
+    expect_bool(
+        concurrency,
+        "cancel-in-progress",
+        false,
+        "recovery workflow.concurrency",
+    )?;
+    validate_permissions(
+        top,
+        &[
+            ("actions", "read"),
+            ("attestations", "read"),
+            ("contents", "write"),
+            ("packages", "write"),
+            ("pull-requests", "read"),
+        ],
+        "recovery workflow",
+    )?;
+    let jobs = yaml_mapping(
+        yaml_field(top, "jobs", "recovery workflow")?,
+        "recovery workflow.jobs",
+    )?;
+    exact_keys(jobs, &["recover"], "recovery workflow.jobs")?;
+    let job = yaml_mapping(
+        yaml_field(jobs, "recover", "recovery workflow.jobs")?,
+        "recovery workflow.jobs.recover",
+    )?;
+    exact_keys(
+        job,
+        &["name", "runs-on", "steps"],
+        "recovery workflow.jobs.recover",
+    )?;
+    expect_text(
+        job,
+        "name",
+        "recover lumen@0.4.28 from frozen candidate",
+        "recovery workflow.jobs.recover",
+    )?;
+    expect_text(
+        job,
+        "runs-on",
+        "ubuntu-latest",
+        "recovery workflow.jobs.recover",
+    )?;
+    let steps = yaml_sequence(
+        yaml_field(job, "steps", "recovery workflow.jobs.recover")?,
+        "recovery workflow.jobs.recover.steps",
+    )?;
+    if steps.len() != 12 {
+        return Err(format!(
+            "recovery workflow step count changed: {}",
+            steps.len()
+        ));
+    }
+    let source = workflow.to_ascii_lowercase();
+    for forbidden in [
+        "id-token:",
+        "cargo build",
+        "docker/build-push-action",
+        "cosign sign",
+        "cosign attest",
+        "actions/attest",
+        "git tag",
+        "git push",
+        "update-ref",
+        "delete-ref",
+        "git/refs",
+        "--method patch",
+        "force",
+        "if: false",
+        "kind",
+        "gke",
+    ] {
+        if source.contains(forbidden) {
+            return Err(format!(
+                "recovery workflow contains forbidden control: {forbidden}"
+            ));
+        }
+    }
+    for exact in [
+        RECOVERY_TAG_OBJECT,
+        RECOVERY_COMMIT,
+        RECOVERY_RUN,
+        RECOVERY_ROOT,
+        RECOVERY_AMD64,
+        RECOVERY_ARM64,
+        RECOVERY_OLD_LATEST,
+        "lumen-release-candidate-32974297012-1",
+        "lumen@0.4.28",
+    ] {
+        if count(workflow, exact) == 0 {
+            return Err(format!("recovery workflow lost frozen binding: {exact}"));
+        }
+    }
+    for required in [
+        "verify-release-artifacts.sh",
+        "--mode candidate",
+        "--mode public",
+        "immediately before stable writes",
+        "docker buildx imagetools create",
+        "gh release create",
+        "32980139617",
+        "Recovery note",
+        "candidate/lumen-aarch64-apple-darwin.tar.gz",
+        "candidate/spdx-amd64.json",
+        "candidate/spdx-arm64.json",
+        "gh api repos/chrischeng-c4/axiom/git/ref/tags/lumen@0.4.28",
+        "tag_object=",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!(
+                "recovery workflow missing required control: {required}"
+            ));
+        }
+    }
+    if !workflow
+        .contains("lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d")
+    {
+        return Err("recovery promotion source is not the frozen digest reference".to_owned());
+    }
+    if count(workflow, "test -f candidate/") != 12
+        || count(workflow, "docker buildx imagetools create") != 2
+        || count(workflow, "gh release create") != 1
+        || count(workflow, "--mode candidate") != 2
+        || count(workflow, "--mode public") != 2
+    {
+        return Err("recovery workflow write or verifier inventory changed".to_owned());
+    }
+    for forbidden in ["steps.state.outputs.semver", "steps.state.outputs.latest"] {
+        if workflow.contains(forbidden) {
+            return Err(format!(
+                "recovery workflow uses stale state output: {forbidden}"
+            ));
+        }
+    }
+    for required in [
+        "GITHUB_WORKFLOW_REF",
+        "chrischeng-c4/axiom/.github/workflows/lumen-release-recovery.yml@refs/heads/main",
+        "[[ \"$GITHUB_REF\" == refs/heads/main ]]",
+        "origin/main",
+        "candidate_attempt == \"1\"",
+        "semver tag did not bind frozen root",
+        "latest tag did not bind frozen root",
+        "published 0.4.27 root changed",
+        "latest changed before write",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!(
+                "recovery workflow missing race control: {required}"
+            ));
+        }
+    }
+    if !workflow.contains("- name: Refuse non-main or workflow-identity dispatch") {
+        return Err("recovery workflow lacks explicit main guard".to_owned());
+    }
+    let recheck = workflow
+        .find("immediately before stable writes")
+        .ok_or_else(|| "recovery recheck is absent".to_owned())?;
+    let image = workflow
+        .find("Promote exact frozen digest")
+        .ok_or_else(|| "recovery digest promotion is absent".to_owned())?;
+    let release = workflow
+        .find("Create exact GitHub Release")
+        .ok_or_else(|| "recovery release creation is absent".to_owned())?;
+    let public = workflow
+        .find("Publicly verify recovered release")
+        .ok_or_else(|| "recovery public verifier is absent".to_owned())?;
+    if !(recheck < image && image < release && release < public) {
+        return Err("recovery controls are out of order".to_owned());
+    }
+    Ok(())
+}
+
 fn replace_last(text: &str, needle: &str, replacement: &str) -> String {
     let index = text.rfind(needle).expect("mutation needle must exist");
     format!(
@@ -1131,6 +1350,46 @@ fn promotion_workflow_rejects_high_risk_source_mutations() {
         assert!(
             validate_promotion_workflow(&mutation).is_err(),
             "validator accepted forbidden mutation: {name}"
+        );
+    }
+}
+
+#[test]
+fn recovery_workflow_is_frozen_and_rejects_high_risk_mutations() {
+    let workflow = include_str!("../../../.github/workflows/lumen-release-recovery.yml");
+    validate_recovery_workflow(workflow)
+        .expect("recovery workflow must satisfy its frozen contract");
+    assert_eq!(sha256(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/lumen-release-recovery.yml").as_path()), RECOVERY_WORKFLOW_SHA256, "recovery workflow bytes changed; review the semantic validator before changing this digest");
+    let mutations = [
+        ("extra trigger", workflow.replace("workflow_dispatch:\n", "push:\n    branches: [main]\n  workflow_dispatch:\n")),
+        ("caller input", workflow.replace("workflow_dispatch:\n", "workflow_dispatch:\n    inputs:\n      version:\n        required: true\n        type: string\n")),
+        ("non-main", workflow.replace("$GITHUB_REF\" == refs/heads/main", "$GITHUB_REF\" == refs/heads/release")),
+        ("tag drift", workflow.replace(RECOVERY_TAG_OBJECT, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("commit drift", workflow.replace(RECOVERY_COMMIT, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("rebuild", workflow.replace("Promote exact frozen digest", "cargo build --release\n      - name: Promote exact frozen digest")),
+        ("re-sign", workflow.replace("Promote exact frozen digest", "cosign sign image\n      - name: Promote exact frozen digest")),
+        ("mutable source", workflow.replace("lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d", "lumen:release-candidate")),
+        ("skipped recheck", workflow.replace("--mode candidate", "--mode public")),
+        ("unsafe latest", workflow.replace(RECOVERY_OLD_LATEST, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("asset drift", workflow.replace("candidate/spdx-arm64.json", "candidate/extra.json")),
+        ("note drift", workflow.replace("Recovery note:", "Changed note:")),
+        ("missing public verifier", workflow.replace("Publicly verify recovered release", "Verify recovered release")),
+        ("run drift", workflow.replace("32974297012", "32974297013")),
+        ("attempt drift", workflow.replace("candidate_attempt == \"1\"", "candidate_attempt == \"2\"")),
+        ("root drift", workflow.replace(RECOVERY_ROOT, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("amd64 drift", workflow.replace(RECOVERY_AMD64, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("arm64 drift", workflow.replace(RECOVERY_ARM64, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("workflow identity drift", workflow.replace("chrischeng-c4/axiom/.github/workflows/lumen-release-recovery.yml@refs/heads/main", "chrischeng-c4/axiom/.github/workflows/other.yml@refs/heads/main")),
+        ("job skip fail-open", workflow.replace("Refuse non-main or workflow-identity dispatch", "if: false\n      - name: Refuse non-main or workflow-identity dispatch")),
+        ("unsafe tag api write", workflow.replace("git/ref/tags/lumen@0.4.28 --jq", "git/refs/tags/lumen@0.4.28 --method PATCH --jq")),
+        ("force tag mutation", workflow.replace("git merge-base --is-ancestor", "git update-ref refs/tags/lumen@0.4.28\n          git merge-base --is-ancestor")),
+        ("omit semver post-write check", workflow.replace("semver tag did not bind frozen root", "semver check omitted")),
+        ("omit latest post-write check", workflow.replace("latest tag did not bind frozen root", "latest check omitted")),
+    ];
+    for (name, mutation) in mutations {
+        assert!(
+            validate_recovery_workflow(&mutation).is_err(),
+            "validator accepted recovery mutation: {name}"
         );
     }
 }

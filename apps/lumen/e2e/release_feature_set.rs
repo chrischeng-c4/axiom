@@ -11,7 +11,7 @@ const EXPECTED_DIRECT_FEATURES: &[&str] = &[
     "self-update",
 ];
 const RELEASE_SKILL_SHA256: &str =
-    "a587fedda5b0872eadd70c12fff961ff17b5e7980f445fa7fa8d9016c29e39ce";
+    "cf6fe67d1dddd6880faba54a7e9888cccc3e9c46a3cc2339b7e2b540b551369f";
 
 fn validate_release_skill_order(content: &str) -> Result<(), String> {
     let markers = [
@@ -20,7 +20,7 @@ fn validate_release_skill_order(content: &str) -> Result<(), String> {
         "Wait for the final v3 receipt.",
         "4. Independently run the candidate verifier in full mode.",
         "5. The controller creates one annotated `lumen@<version>` tag",
-        "6. Dispatch `lumen-release`",
+        "6. If the normal promotion has not run, dispatch `lumen-release`",
         "7. Run the public verifier.",
     ];
     let mut previous = 0;
@@ -599,14 +599,28 @@ fn test_release_preparation_rejects_retired_routes_and_stale_llms_guidance() {
         );
     }
 
+    let canonical_prefix = "- Prepare and verify a release:";
+    assert_eq!(
+        llms.lines()
+            .filter(|line| line.starts_with(canonical_prefix))
+            .count(),
+        1,
+        "live llms guidance must contain exactly one canonical release line"
+    );
+    let canonical_line = llms
+        .lines()
+        .find(|line| line.starts_with(canonical_prefix))
+        .expect("canonical llms release line is present");
+
     for stale in [
         "- Build release: `./build.sh release`.",
         "- Prepare release: `./build.sh release` publishes the release.",
         "- [build.sh](build.sh): release publication entrypoint.",
     ] {
-        let mutated = llms.replace(
-            "- Prepare and verify a release: `./build.sh release`, then use `lumen llm --topic verify-release` for the candidate-to-promotion lifecycle.",
-            stale,
+        let mutated = llms.replacen(canonical_line, stale, 1);
+        assert_ne!(
+            mutated, llms,
+            "stale llms release route mutation must change the fixture"
         );
         assert!(
             validate_llms_release_guidance(&mutated).is_err(),
