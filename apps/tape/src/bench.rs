@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/semantic/source/apps-tape-src-bench-rs.md#logic
 // <HANDWRITE gap="missing-generator:logic:tape-competitor-performance" tracker="#768" reason="Initial local benchmark and external peer calibration ledger before generated efficiency primitives exist.">
 use std::time::Instant;
 

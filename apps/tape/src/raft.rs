@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:a53592d8" tracker="pending-tracker" reason="Tape's deterministic Raft commands/outcomes, whole-journal snapshots, shared RaftStore recovery, proposal dedupe, and single-group wrapper remain service-owned domain integration."
 //! raft-runtime-backed consensus for tape (#1327).
 //!

@@ -1,5 +1,4 @@
 #!/usr/bin/env sh
-# SPEC-MANAGED: apps/tape/tech-design/semantic/tape-install-script.md#logic
 # <HANDWRITE gap="missing-generator:project-bootstrap" tracker="#768" reason="Initial Tape installer wrapper matching the ecosystem release-asset convention.">
 set -eu
 

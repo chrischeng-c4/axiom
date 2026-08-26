@@ -1,11 +1,12 @@
-//! The fifteen projects the TD/EC retirement emptied must stay empty.
+//! The sixteen projects the TD/EC retirement emptied must stay empty.
 //!
 //! S4 of that campaign deleted thirty trees — a `tech-design/` and an
 //! `external-contracts/` under each of the fifteen projects USER DECISION D1
 //! named. Nothing else refuses their return. The producer that wrote them (the
 //! `aw` CLI) is deleted, so a tree that reappears here arrives by hand, and a
 //! `@spec` line that survives points at a design document with no owner and no
-//! generator behind it.
+//! generator behind it. `apps/tape` joined the list on 2026-08-26, when its
+//! own two trees were deleted the same way.
 //!
 //! Two properties, and they fail differently on purpose:
 //!
@@ -28,9 +29,9 @@
 //! exemption must resolve, and the walk must reach a file count that a typo in
 //! the list could not produce.
 //!
-//! Scope is fifteen projects and not the repository. That is a measurement, not
+//! Scope is sixteen projects and not the repository. That is a measurement, not
 //! a preference: at the commit that introduced this file, 560 design-tree files
-//! were still tracked across 26 other owners — `apps/tape`, `apps/pgpool`,
+//! were still tracked across 26 other owners — `apps/tape` (since retired), `apps/pgpool`,
 //! `apps/jet` and the rest — none of which D1 authorised anyone to touch. A
 //! repository-wide assertion here would be red on its first run and would stay
 //! red, which is a gate nobody can act on.
@@ -38,10 +39,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The projects USER DECISION D1 named. Each had both trees; each now has
-/// neither.
-const RETIRED: [&str; 15] = [
+/// The projects USER DECISION D1 named, plus `apps/tape` (retired 2026-08-26).
+/// Each had both trees; each now has neither.
+const RETIRED: [&str; 16] = [
     "apps/lumen",
+    "apps/tape",
     "libs/build-stamp",
     "libs/cli-std",
     "libs/metrics-prometheus",
@@ -72,7 +74,8 @@ const EXEMPT: [&str; 2] = [
     "apps/lumen/e2e/design_trees_stay_retired.rs",
 ];
 
-/// Tracked files under the fifteen at the commit that introduced this file: 593.
+/// Tracked files under the fifteen at the commit that introduced this file: 593;
+/// under the sixteen when `apps/tape` joined: 663.
 /// The floor is set well below that so ordinary growth and deletion do not touch
 /// it, and well above what a mistyped project root could reach.
 const MIN_FILES_SWEPT: usize = 400;

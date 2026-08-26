@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/semantic/source/apps-tape-src-lib-rs.md#logic
 // <HANDWRITE gap="missing-generator:logic:tape-bootstrap" tracker="#768" reason="Initial local replay journal and checkpoint core before Tape has a generated TD source unit.">
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -73,9 +72,11 @@ pub struct ConsumerCheckpoint {
     pub updated_at_ms: u64,
 }
 
-// @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
-/// A named caller-driven pull cursor owned by a topic. Tape has no delivery
-/// mode switch: push, leases, and consumer-group ownership belong elsewhere.
+/// A named pull cursor owned by a topic. Today it is one cumulative offset the
+/// caller advances by acking a pull window. Per-message ack, leases, competing
+/// subscribers and push delivery are `ROADMAP.md` outcomes
+/// (`subscription-ack-and-competing-subscribers`, `push-subscriptions`) that
+/// replace this cursor; they are not exclusions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Subscription {
@@ -274,7 +275,6 @@ impl TapeJournal {
         self.checkpoints.get(&checkpoint_key(topic, consumer))
     }
 
-    // @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
     /// Create a topic-scoped subscription without moving a pull checkpoint.
     pub fn create_subscription(
         &mut self,
@@ -319,7 +319,6 @@ impl TapeJournal {
             })
     }
 
-    // @spec apps/tape/tech-design/logic/normalize-replay-checkpoints-into-pull-subscriptions.md#changes
     /// Read a bounded, caller-driven window from a pull subscription cursor.
     /// Pulling is deliberately side-effect free: a caller must explicitly ack
     /// after processing to advance the durable checkpoint.
@@ -358,7 +357,9 @@ impl TapeJournal {
 
     /// Acknowledge a completed pull window by advancing its existing durable
     /// topic/name checkpoint. The checkpoint's stale and beyond-end guards are
-    /// intentionally reused without introducing leases or in-flight state.
+    /// reused as-is. Per-message ack ids and in-flight leases arrive with the
+    /// `subscription-ack-and-competing-subscribers` outcome in `ROADMAP.md`
+    /// and supersede this cumulative cursor rather than sit beside it.
     pub fn ack_subscription(
         &mut self,
         topic: &str,

@@ -1,5 +1,4 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:f612e56c" tracker="#2159" reason="Execute tape spec gen for TypeScript, Python, and Rust and inspect emitted route scope. generator gap: missing-generator:test:generated-client-journey (#2159)."
-// @spec apps/tape/tech-design/logic/eliminate-production-ec-false-green-paths.md#unit-test
 
 use std::fs;
 use std::path::Path;

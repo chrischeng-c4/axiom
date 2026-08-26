@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/tape/tech-design/semantic/source/apps-tape-tests-cli-contract-rs.md#unit-test
 // <HANDWRITE gap="missing-generator:test:tape-bootstrap" tracker="#768" reason="Initial binary smoke tests for the first Tape service slice.">
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
