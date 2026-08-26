@@ -440,6 +440,7 @@ jobs:
           cargo test -p lumen --test release_candidate
           cargo test -p lumen
           cargo test -p lumen --features "operator delegated-auth"
+          cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture
           cargo test -p lumen --locked --features release --test release_feature_set
           bash apps/lumen/scripts/standalone-container-smoke.sh bind
       - name: Verify full run-scoped candidate supply chain

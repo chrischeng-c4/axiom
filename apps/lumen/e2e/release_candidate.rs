@@ -28,7 +28,9 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "787a4b4af150c3985b98658f0b9ee3fe79d4a3950369953c170b448b519cb13b";
+    "2db0a5a68be4c4514144acf4552feb13750aeff5c90f6a678e9b9436c78ba882";
+const RELEASE_PERF_GATE: &str =
+    "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
     "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7";
 
@@ -512,6 +514,7 @@ fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), 
                 "cargo test -p lumen --test release_candidate",
                 "cargo test -p lumen",
                 "cargo test -p lumen --features \"operator delegated-auth\"",
+                RELEASE_PERF_GATE,
                 "cargo test -p lumen --locked --features release --test release_feature_set",
                 "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
             ],
@@ -531,6 +534,57 @@ fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), 
         require(source.matches(gate).count() == 1, "LIBRARIES")?;
     }
     Ok(())
+}
+
+fn perf_gate_inventory(source: &str) -> Vec<(String, bool)> {
+    let mut attributes = Vec::new();
+    let mut inventory = Vec::new();
+    let mut in_block_comment = false;
+    for raw in source.lines() {
+        if in_block_comment {
+            if raw.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        if let Some(start) = line.find("/*") {
+            if !line[start + 2..].contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if line.starts_with("#[") {
+            attributes.push(line.to_owned());
+        } else if let Some(rest) = line.strip_prefix("fn ") {
+            if attributes.iter().any(|attr| attr == "#[test]") {
+                inventory.push((
+                    rest.split('(').next().unwrap_or_default().to_owned(),
+                    attributes.iter().any(|attr| attr.starts_with("#[ignore")),
+                ));
+            }
+            attributes.clear();
+        } else {
+            attributes.clear();
+        }
+    }
+    inventory
+}
+
+fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
+    require(
+        perf_gate_inventory(source)
+            == vec![
+                ("index_throughput_floor".into(), true),
+                ("match_query_latency_floor".into(), true),
+                ("term_query_latency_floor".into(), true),
+                ("median_statistic_and_ignored_inventory".into(), false),
+            ],
+        "PERF_GATE",
+    )
 }
 
 fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
@@ -585,6 +639,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
     validate_uv_setup(&workflow)?;
     validate_libraries_job(&workflow)?;
     validate_product_gate_partition(&workflow, source)?;
+    validate_perf_gate_source(&perf_gate_source())?;
     validate_fail_closed_gate_conditions(&workflow)?;
     validate_gate_step_inventory(&workflow)?;
     validate_candidate_and_kind_commands(&workflow)?;
@@ -699,6 +754,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         "cargo test -p lumen --features \"operator delegated-auth\"",
         "cargo test -p lumen --locked --features release --test release_feature_set",
         "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
+        RELEASE_PERF_GATE,
         "cargo test -p service-k8s", "cargo test -p raft-runtime",
         "bash scripts/raft-implementor-build.sh", "git -c core.fsmonitor=false diff --check",
         "python3 scripts/meta/test_readme_contract.py", "project_docs_contract.py check apps/lumen libs/service-k8s",
@@ -869,6 +925,9 @@ fn expect_verifier(source: &str, from: &str, to: &str, code: &'static str) {
 fn workflow() -> String {
     fs::read_to_string(root().join(".github/workflows/lumen-release-candidate.yml")).unwrap()
 }
+fn perf_gate_source() -> String {
+    fs::read_to_string(root().join("apps/lumen/e2e/perf_gate.rs")).unwrap()
+}
 fn verifier() -> (String, u32) {
     let path = root().join("apps/lumen/scripts/verify-release-candidate.sh");
     (
@@ -943,6 +1002,102 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     ] {
         expect_workflow(&source, from, to, code);
     }
+    for (name, replacement) in [
+        (
+            "missing release",
+            RELEASE_PERF_GATE.replace("--release ", ""),
+        ),
+        ("missing locked", RELEASE_PERF_GATE.replace("--locked ", "")),
+        (
+            "missing ignored",
+            RELEASE_PERF_GATE.replace("--ignored ", ""),
+        ),
+        (
+            "missing test threads",
+            RELEASE_PERF_GATE.replace("--test-threads=1 ", ""),
+        ),
+        (
+            "missing nocapture",
+            RELEASE_PERF_GATE.replace("--nocapture", ""),
+        ),
+        ("comment", format!("# {RELEASE_PERF_GATE}")),
+        ("quoted prose", format!("echo '{RELEASE_PERF_GATE}'")),
+        (
+            "reordered command",
+            RELEASE_PERF_GATE.replace("--release --locked", "--locked --release"),
+        ),
+        ("semicolon split", format!("{RELEASE_PERF_GATE}; true")),
+        ("and split", format!("true && {RELEASE_PERF_GATE}")),
+        ("if split", format!("if true; then {RELEASE_PERF_GATE}; fi")),
+        ("eval split", format!("eval '{RELEASE_PERF_GATE}'")),
+    ] {
+        let changed = replace_once(&source, RELEASE_PERF_GATE, &replacement);
+        assert_eq!(
+            validate_workflow(&changed, &dockerfile()).unwrap_err(),
+            Finding("GATES"),
+            "{name} mutation passed",
+        );
+    }
+    let perf_source = perf_gate_source();
+    for occurrence in 0..3 {
+        let changed = replace_occurrence(
+            &perf_source,
+            "#[ignore = \"coarse performance gate runs in the release candidate workflow\"]\n",
+            "",
+            occurrence,
+        );
+        assert_eq!(
+            validate_perf_gate_source(&changed).unwrap_err(),
+            Finding("PERF_GATE"),
+            "missing ignore occurrence {occurrence} passed",
+        );
+    }
+    let without_ignores = perf_source.replace(
+        "#[ignore = \"coarse performance gate runs in the release candidate workflow\"]\n",
+        "",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&without_ignores).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let statistic_ignored = replace_once(
+        &perf_source,
+        "#[test]\nfn median_statistic_and_ignored_inventory",
+        "#[test]\n#[ignore]\nfn median_statistic_and_ignored_inventory",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&statistic_ignored).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let fourth_ignored = replace_once(
+        &perf_source,
+        "// CODEGEN-END",
+        "#[test]\n#[ignore]\nfn extra_perf_row() {}\n// CODEGEN-END",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&fourth_ignored).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let comment_decoy = replace_occurrence(
+        &perf_source,
+        "#[ignore = \"coarse performance gate runs in the release candidate workflow\"]\n",
+        "// #[ignore]\n",
+        0,
+    );
+    assert_eq!(
+        validate_perf_gate_source(&comment_decoy).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let block_comment_decoy = replace_occurrence(
+        &perf_source,
+        "#[ignore = \"coarse performance gate runs in the release candidate workflow\"]\n",
+        "/*\n#[ignore]\nfn comment_decoy() {}\n*/\n",
+        0,
+    );
+    assert_eq!(
+        validate_perf_gate_source(&block_comment_decoy).unwrap_err(),
+        Finding("PERF_GATE")
+    );
     let changed = replace_occurrence(
         &source,
         "LUMEN_E2E_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\"",
