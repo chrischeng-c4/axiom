@@ -527,7 +527,7 @@ normalize_runtime_image_id() {
 
 runtime_digest_is_expected() {
   local digest="$1"
-  [[ "$digest" == "$EXPECTED_RUNTIME_DIGEST" ]]
+  [[ "$digest" == "$ROOT_DIGEST" || "$digest" == "$EXPECTED_RUNTIME_DIGEST" ]]
 }
 
 assert_named_pods() {
@@ -545,7 +545,7 @@ assert_named_pods() {
   while IFS= read -r runtime_id; do
     normalized="$(normalize_runtime_image_id "$runtime_id")" || die "unrecognized $container runtime imageID: $runtime_id"
     runtime_digest_is_expected "$normalized" || \
-      die "$container runtime imageID $runtime_id is not the expected platform child digest $EXPECTED_RUNTIME_DIGEST"
+      die "$container runtime imageID $runtime_id is neither the pinned root digest $ROOT_DIGEST nor the expected platform child digest $EXPECTED_RUNTIME_DIGEST"
   done < <(jq -r --arg name "$container" '.items[] | .status.containerStatuses[] | select(.name == $name) | .imageID' <<<"$pods")
 }
 

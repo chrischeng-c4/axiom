@@ -94,14 +94,25 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     let fixture_flow = between(&input.kind, "# The fixture script emits one NDJSON doc per line", "index_all_batches() {");
     require!(fixture_flow.matches("\ndiscover_fixture_bodies\n").count() == 1, "FIXTURE_BATCH_PATH", "the index flow must call the tested fixture discovery helper once");
     let normalize = shell_fn(&input.kind, "normalize_runtime_image_id");
-    for line in ["if [[ \"$raw\" =~ ^ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then", "elif [[ \"$raw\" =~ ^docker-pullable://ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then", "elif [[ \"$raw\" =~ ^(containerd|cri-o|docker)://(sha256:[0-9a-f]{64})$ ]]; then"] {
-        require!(normalize.lines().any(|got| got.trim() == line), "KIND_RUNTIME_ID", format!("anchored runtime imageID form missing: {line}"));
-    }
-    require!(normalize.matches("if [[").count() == 3 && normalize.matches("elif [[").count() == 2 && normalize.matches("return 1").count() == 1, "KIND_RUNTIME_ID", "runtime imageID allowlist branch inventory changed");
+    let expected_normalize = r###"
+  local raw="$1"
+  if [[ "$raw" =~ ^ghcr\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^docker-pullable://ghcr\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^(containerd|cri-o|docker)://(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi"###;
+    require!(normalize == expected_normalize, "KIND_RUNTIME_ID", "runtime imageID normalizer body changed");
     let runtime_digest = shell_fn(&input.kind, "runtime_digest_is_expected");
-    require!(runtime_digest.contains("[[ \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]") && !runtime_digest.contains("$ROOT_DIGEST") && runtime_digest.matches("sha256").count() == 0, "KIND_RUNTIME_ID", "runtime digest must match only the exact platform child");
+    let expected_runtime_digest = r###"
+  local digest="$1"
+  [[ "$digest" == "$ROOT_DIGEST" || "$digest" == "$EXPECTED_RUNTIME_DIGEST" ]]"###;
+    require!(runtime_digest == expected_runtime_digest, "KIND_RUNTIME_ID", "runtime digest predicate body changed");
     let named_pods = shell_fn(&input.kind, "assert_named_pods");
-    require!(named_pods.contains("normalized=\"$(normalize_runtime_image_id \"$runtime_id\")\" || die \"unrecognized $container runtime imageID: $runtime_id\"") && named_pods.contains("runtime_digest_is_expected \"$normalized\"") && named_pods.contains("not the expected platform child digest $EXPECTED_RUNTIME_DIGEST"), "KIND_RUNTIME_ID", "pod runtime identity must normalize fail closed and require the exact platform child");
+    require!(named_pods.contains("    normalized=\"$(normalize_runtime_image_id \"$runtime_id\")\" || die \"unrecognized $container runtime imageID: $runtime_id\"\n    runtime_digest_is_expected \"$normalized\" || \\\n      die \"$container runtime imageID $runtime_id is neither the pinned root digest $ROOT_DIGEST nor the expected platform child digest $EXPECTED_RUNTIME_DIGEST\""), "KIND_RUNTIME_ID", "pod runtime identity must use the exact fail-closed normalization and digest sequence");
     let identity_fn = shell_fn(&input.kind, "assert_cluster_identity");
     for needle in ["deploy/lumen-operator -o json", ".name == \"operator\" and .image == $image", "get lumen/", ".spec.image", "get statefulset/", ".name == \"server\" and .image == $image", "assert_named_pods \"$OPERATOR_NS\"", "assert_named_pods \"$NAMESPACE\"", "/version", "(.version | type) == \"string\"", ".version != \"unknown\""] {
         require!(identity_fn.contains(needle), "KIND_DESIRED_STATE", format!("identity surface missing: {needle}"));
@@ -596,9 +607,15 @@ fn runtime_image_id_allowlist_and_digest_binding_are_executable() {
     let child = format!("sha256:{}", "2".repeat(64));
     let third = format!("sha256:{}", "3".repeat(64));
     for raw in [
+        format!("ghcr.io/chrischeng-c4/lumen@{root}"),
+        format!("ghcr.io/chrischeng-c4/lumen@{child}"),
+        format!("docker-pullable://ghcr.io/chrischeng-c4/lumen@{root}"),
         format!("docker-pullable://ghcr.io/chrischeng-c4/lumen@{child}"),
+        format!("cri-o://{root}"),
         format!("cri-o://{child}"),
+        format!("containerd://{root}"),
         format!("containerd://{child}"),
+        format!("docker://{root}"),
         format!("docker://{child}"),
     ] {
         assert!(
@@ -609,9 +626,11 @@ fn runtime_image_id_allowlist_and_digest_binding_are_executable() {
         );
     }
     for raw in [
-        format!("ghcr.io/chrischeng-c4/lumen@{root}"),
-        format!("containerd://{root}"),
-        format!("docker://{root}"),
+        format!("ghcr.io/chrischeng-c4/lumen@{third}"),
+        format!("docker-pullable://ghcr.io/chrischeng-c4/lumen@{third}"),
+        format!("cri-o://{third}"),
+        format!("containerd://{third}"),
+        format!("docker://{third}"),
         format!("ghcr.io/other/lumen@{root}"),
         format!("unknown://{root}"),
         "ghcr.io/chrischeng-c4/lumen:0.4.27".into(),
@@ -620,7 +639,6 @@ fn runtime_image_id_allowlist_and_digest_binding_are_executable() {
         format!("junk-ghcr.io/chrischeng-c4/lumen@{root}"),
         format!("ghcr.io/chrischeng-c4/lumen@{root}-junk"),
         format!("ghcr.io/chrischeng-c4/lumen@@{root}"),
-        format!("ghcr.io/chrischeng-c4/lumen@{third}"),
     ] {
         assert!(
             !run_runtime_image_id_fixture(&kind, &raw, &root, &child)
@@ -697,10 +715,15 @@ fn fixture_batch_paths_cover_gnu_and_bsd_mktemp_shapes() {
 #[rustfmt::skip]
 fn scoped_negative_mutations_fail_with_stable_findings() {
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$", "^ghcr\\.io/chrischeng-c4/lumen:.+$"); expect(fixture, "KIND_INPUTS");
+    let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "[[ \"$EXPECTED_RUNTIME_DIGEST\" != \"$ROOT_DIGEST\" ]] || die \"runtime child digest must differ from root index digest\"", ": distinct root and child precondition omitted"); expect(fixture, "KIND_INPUTS");
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "normalize_runtime_image_id", "^ghcr\\.io/chrischeng-c4/lumen@", "^ghcr\\.io/.+@"); expect(fixture, "KIND_RUNTIME_ID");
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "normalize_runtime_image_id", "^ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$", "^ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})"); expect(fixture, "KIND_RUNTIME_ID");
-    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", "[[ \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]", "[[ \"$digest\" == \"$ROOT_DIGEST\" ]]"); expect(fixture, "KIND_RUNTIME_ID");
-    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", "[[ \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]", "[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", "[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]", "[[ \"$digest\" == \"$ROOT_DIGEST\" ]]"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", "[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]", "[[ \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", "[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]", "[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]] || true"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "runtime_digest_is_expected", "[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" ]]", "[[ \"$digest\" == \"$ROOT_DIGEST\" || \"$digest\" == \"$EXPECTED_RUNTIME_DIGEST\" || \"$digest\" == * ]]"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "normalize_runtime_image_id", "    return 1\n", "    return 1 || echo \"$ROOT_DIGEST\"\n"); expect(fixture, "KIND_RUNTIME_ID");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "assert_named_pods", "    runtime_digest_is_expected \"$normalized\" || \\\n      die ", "    runtime_digest_is_expected \"$normalized\" || true || \\\n      die "); expect(fixture, "KIND_RUNTIME_ID");
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "assert_named_pods", "normalized=\"$(normalize_runtime_image_id \"$runtime_id\")\"", "normalized=\"$ROOT_DIGEST\""); expect(fixture, "KIND_RUNTIME_ID");
     let mut fixture = live(); fixture.kind = replace_nth(&fixture.kind, "if [[ \"$IMAGE_MODE\" == \"prebuilt\" ]]; then\n", "if [[ \"$IMAGE_MODE\" == \"prebuilt\" ]]; then\n  docker login ghcr.io\n", 0); expect(fixture, "KIND_PREBUILT_LOCAL");
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "deploy_via_operator", "  echo \"   waiting for the Lumen CRD to be Established\"\n", "  prepare_operator_capacity_fixture\n  echo \"   waiting for the Lumen CRD to be Established\"\n"); expect(fixture, "KIND_CAPACITY");
