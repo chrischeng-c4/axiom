@@ -10,25 +10,37 @@ const FOR: &str = " for";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Gate {
-    Workspace,
+    Defer,
     KeepRaft,
+    Loom,
     LumenRaftWal,
+    Relay,
+    Tape,
+    Sift,
     RaftRuntimeTests,
 }
 
 impl Gate {
-    const ALL: [Self; 4] = [
-        Self::Workspace,
+    const ALL: [Self; 8] = [
+        Self::Defer,
         Self::KeepRaft,
+        Self::Loom,
         Self::LumenRaftWal,
+        Self::Relay,
+        Self::Tape,
+        Self::Sift,
         Self::RaftRuntimeTests,
     ];
 
     const fn command(self) -> &'static str {
         match self {
-            Self::Workspace => "cargo build --workspace",
+            Self::Defer => "cargo build -p defer",
             Self::KeepRaft => "cargo build -p keep --features raft",
+            Self::Loom => "cargo build -p loom",
             Self::LumenRaftWal => "cargo build -p lumen --features raft-wal",
+            Self::Relay => "cargo build -p relay",
+            Self::Tape => "cargo build -p tape",
+            Self::Sift => "cargo build -p sift",
             Self::RaftRuntimeTests => "cargo test -p raft-runtime --no-run",
         }
     }
@@ -52,7 +64,7 @@ const SITES: [Site; 12] = [
     Site {
         path: "apps/defer/src/raft.rs",
         implementor: "DeferStateMachine",
-        gate: Gate::Workspace,
+        gate: Gate::Defer,
     },
     Site {
         path: "apps/keep/src/raft.rs",
@@ -62,7 +74,7 @@ const SITES: [Site; 12] = [
     Site {
         path: "apps/loom/src/raft.rs",
         implementor: "LoomSm",
-        gate: Gate::Workspace,
+        gate: Gate::Loom,
     },
     Site {
         path: "apps/lumen/src/raft_sm.rs",
@@ -72,17 +84,17 @@ const SITES: [Site; 12] = [
     Site {
         path: "apps/relay/src/raft.rs",
         implementor: "RelayStateMachine",
-        gate: Gate::Workspace,
+        gate: Gate::Relay,
     },
     Site {
         path: "apps/tape/src/raft.rs",
         implementor: "TapeStateMachine",
-        gate: Gate::Workspace,
+        gate: Gate::Tape,
     },
     Site {
         path: "projects/sift/src/durability.rs",
         implementor: "SiftStateMachine",
-        gate: Gate::Workspace,
+        gate: Gate::Sift,
     },
     Site {
         path: "libs/raft-runtime/src/lib.rs",
@@ -124,15 +136,21 @@ fn registrations() -> Vec<Registration> {
         .collect()
 }
 
-fn required_gate(path: &str) -> Gate {
-    if path.starts_with("apps/keep/") {
-        Gate::KeepRaft
-    } else if path.starts_with("apps/lumen/") {
-        Gate::LumenRaftWal
-    } else if path.starts_with("libs/raft-runtime/") {
-        Gate::RaftRuntimeTests
-    } else {
-        Gate::Workspace
+fn required_gate(path: &str) -> Result<Gate, String> {
+    match path {
+        "apps/defer/src/raft.rs" => Ok(Gate::Defer),
+        "apps/keep/src/raft.rs" => Ok(Gate::KeepRaft),
+        "apps/loom/src/raft.rs" => Ok(Gate::Loom),
+        "apps/lumen/src/raft_sm.rs" => Ok(Gate::LumenRaftWal),
+        "apps/relay/src/raft.rs" => Ok(Gate::Relay),
+        "apps/tape/src/raft.rs" => Ok(Gate::Tape),
+        "projects/sift/src/durability.rs" => Ok(Gate::Sift),
+        "libs/raft-runtime/src/lib.rs"
+        | "libs/raft-runtime/e2e/group_registry.rs"
+        | "libs/raft-runtime/e2e/support/cluster.rs"
+        | "libs/raft-runtime/e2e/group_membership_isolation.rs"
+        | "libs/raft-runtime/e2e/snapshot_peak_memory.rs" => Ok(Gate::RaftRuntimeTests),
+        _ => Err(format!("unknown implementor path: {path}")),
     }
 }
 
@@ -150,7 +168,7 @@ fn validate_registry(entries: &[Registration]) -> Result<(), String> {
         if !paths.insert(entry.path) {
             return Err(format!("duplicate registry path: {}", entry.path));
         }
-        let expected = required_gate(entry.path);
+        let expected = required_gate(entry.path)?;
         if entry.gate != expected {
             return Err(format!(
                 "wrong command for {}: expected '{}', found '{}'",
@@ -449,8 +467,8 @@ fn registry_still_exists(actual: &[Location], expected: &[Location]) -> Result<(
 fn expected_script() -> String {
     let mut script = concat!(
         "#!/usr/bin/env bash\n",
-        "# Slow migration gate: compiles every workspace RaftStateMachine implementor.\n",
-        "# A cold run can compile much of the workspace.\n",
+        "# Slow migration gate: compiles every registered RaftStateMachine implementor.\n",
+        "# Each application uses its bounded package and feature gate.\n",
         "set -euo pipefail\n",
         "ROOT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/..\" && pwd)\"\n",
         "cd \"$ROOT_DIR\"\n"
@@ -500,6 +518,13 @@ fn command_sets_match(entries: &[Registration], commands: &[String]) -> Result<(
     }
     if let Some(command) = executed.difference(&registered).next() {
         return Err(format!("script has unregistered command: {command}"));
+    }
+    let expected_order: Vec<_> = Gate::ALL
+        .into_iter()
+        .map(|gate| gate.command().to_owned())
+        .collect();
+    if commands != expected_order {
+        return Err("script command order or command text differs".into());
     }
     Ok(())
 }
@@ -586,10 +611,16 @@ fn negative_fixtures_reject_bidirectional_drift() {
     );
 
     let mut wrong_gate = registry.clone();
-    wrong_gate[1].gate = Gate::LumenRaftWal;
+    wrong_gate[0].gate = Gate::LumenRaftWal;
     wrong_gate[3].gate = Gate::KeepRaft;
     changed(&registry, &wrong_gate);
     expect_error(validate_registry(&wrong_gate), "wrong command");
+
+    let mut unknown = registry.clone();
+    unknown[0].path = "apps/unknown/src/raft.rs";
+    unknown[0].line = format!("{TRAIT}{FOR} UnknownSm");
+    changed(&registry, &unknown);
+    expect_error(validate_registry(&unknown), "unknown implementor path");
 
     let valid_commands: Vec<_> = Gate::ALL
         .into_iter()
@@ -603,6 +634,33 @@ fn negative_fixtures_reject_bidirectional_drift() {
         "missing registry command",
     );
 
+    for index in 0..Gate::ALL.len() {
+        let mut missing = valid_commands.clone();
+        missing.remove(index);
+        changed(&valid_commands, &missing);
+        expect_error(command_sets_match(&registry, &missing), "command");
+
+        let mut replaced = valid_commands.clone();
+        replaced[index] = "cargo build --workspace".into();
+        changed(&valid_commands, &replaced);
+        expect_error(command_sets_match(&registry, &replaced), "command");
+
+        let mut duplicated = valid_commands.clone();
+        duplicated[index] = valid_commands[(index + 1) % Gate::ALL.len()].clone();
+        changed(&valid_commands, &duplicated);
+        expect_error(command_sets_match(&registry, &duplicated), "command");
+    }
+
+    let mut reordered = valid_commands.clone();
+    reordered.swap(0, 1);
+    changed(&valid_commands, &reordered);
+    expect_error(command_sets_match(&registry, &reordered), "order");
+
+    let mut workspace = valid_commands.clone();
+    workspace[0] = "cargo build --workspace".into();
+    changed(&valid_commands, &workspace);
+    expect_error(command_sets_match(&registry, &workspace), "command");
+
     let mut extra_command = valid_commands.clone();
     extra_command.push("cargo check -p unrelated".into());
     changed(&valid_commands, &extra_command);
@@ -612,9 +670,27 @@ fn negative_fixtures_reject_bidirectional_drift() {
     );
 
     let valid_script = expected_script();
+    let feature_drift =
+        valid_script.replace("cargo build -p keep --features raft", "cargo build -p keep");
+    changed(&valid_script, &feature_drift);
+    expect_error(validate_script(&feature_drift), "script line");
+    let lumen_feature_drift = valid_script.replace(
+        "cargo build -p lumen --features raft-wal",
+        "cargo build -p lumen",
+    );
+    changed(&valid_script, &lumen_feature_drift);
+    expect_error(validate_script(&lumen_feature_drift), "script line");
+
     let early_exit = valid_script.replace("cd \"$ROOT_DIR\"", "cd \"$ROOT_DIR\"\nexit 0");
     changed(&valid_script, &early_exit);
     expect_error(validate_script(&early_exit), "script line");
+
+    let header_drift = valid_script.replace(
+        "# Each application uses its bounded package and feature gate.",
+        "# Each application uses a broad workspace gate.",
+    );
+    changed(&valid_script, &header_drift);
+    expect_error(validate_script(&header_drift), "script line");
 
     let alias = format!("use crate::{TRAIT} as Machine;\n");
     let mut alias_sites = Vec::new();
