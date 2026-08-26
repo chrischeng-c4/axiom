@@ -344,7 +344,7 @@ fn container_resources(cpu: &str, memory: &str) -> Value {
 /// container after the *component*, so on this path it is `server`.
 ///
 /// Thresholds, `for` windows, severities, summaries, and both #2485 runbooks
-/// are reproduced from the static component verbatim; `tests/operator.rs`
+/// are reproduced from the static component verbatim; `e2e/operator.rs`
 /// holds the two documents to that.
 fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
     let s = series_selector(cx);

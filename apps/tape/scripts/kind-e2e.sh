@@ -328,7 +328,7 @@ step "verify ordered replay across replacement" assert_replay '["before-restart"
 # status write included -- every 15s, forever. The first version of this change
 # did name them, and this gate is what caught it: the symptom was an empty
 # status.conditions, nothing mentioning pruning. See #3079 for the libs fix;
-# until it lands, tests/operator.rs's built-in-API-group allow-list is the
+# until it lands, e2e/operator.rs's built-in-API-group allow-list is the
 # guard. Installing prometheus-operator here to manufacture coverage would hide
 # precisely the condition a real vanilla cluster has.
 BACKUP_CRON_JOB="${TAPE_NAME}-backup"
