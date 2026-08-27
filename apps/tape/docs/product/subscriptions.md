@@ -31,7 +31,7 @@ checklist; four of the seven H1 outcomes land here.
   `declarative-subscription-provisioning`, `per-topic-authorization`,
   `delivery-metrics`.
 
-## Subscription ack and competing subscribers
+## Subscription ack and competing subscribers (#3928)
 
 - Problem: a subscriber cannot acknowledge one message, cannot share a
   subscription across workers, never gets a message back after a crash, and
@@ -51,15 +51,12 @@ checklist; four of the seven H1 outcomes land here.
   oldest-unacked-age metric is exposed per subscription.
 - Non-goals: push delivery, streaming pull, exactly-once delivery, and
   per-key ordering are their own sections or non-goals.
-- Open: the default ack deadline and its bounds; whether the cumulative ack
-  route survives as a compatibility alias or the ack body changes shape (the
-  existing cursor cases are rewritten against the lease model either way);
-  whether the dead-letter topic must pre-exist.
+- Open: none; settled by #3928.
 - Neighbours: supersedes the pull-window and ack promise of Named pull
   subscriptions; depends on
   [replication-and-availability.md](replication-and-availability.md)
   § Deterministic failover for the failover proof.
-- Outcome: `subscription-ack-and-competing-subscribers`. Tracking: not assigned.
+- Outcome: `subscription-ack-and-competing-subscribers`. Tracking: [#3928](https://github.com/chrischeng-c4/axiom/issues/3928)
 
 ## Push subscriptions
 
@@ -71,13 +68,19 @@ checklist; four of the seven H1 outcomes land here.
   under the subscription's retry policy and leaves the message in the
   pull-visible in-flight state, so a receiver outage loses nothing. The token
   never appears in logs or metrics.
-- Non-goals: Google-signed OIDC tokens, non-HTTPS targets, hand-off to
-  `defer`, and push batching.
+- Non-goals: Google-signed OIDC tokens, non-HTTPS targets, push batching, and
+  hand-off to `defer` — a failed attempt has to return to this subscription's
+  own in-flight state, which lives in tape's replicated log, and a retry clock
+  outside that state would make two owners of one message's redelivery.
 - Open: the shape of the push request body (Pub/Sub wraps the message and
   the subscription name; tape has its own envelope); whether a push
   subscription can also be pulled.
 - Neighbours: extends Subscription ack and competing subscribers and depends
-  on its lease and retry policy.
+  on its lease and retry policy — this section is not startable before that
+  one lands, because its own promise names the in-flight state that outcome
+  creates. Confirmed on 2026-08-27: push stays a promise rather than becoming
+  a non-goal, because the `streaming-pull` non-goal argues from pull and push
+  being the two delivery paths.
 - Outcome: `push-subscriptions`. Tracking: not assigned.
 
 ## Ordering keys

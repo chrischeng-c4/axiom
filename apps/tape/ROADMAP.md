@@ -36,7 +36,7 @@ follow once subscriptions carry per-message state.
   dead-letter topic, that the lease table survives leader failover, and that
   an oldest-unacked-age metric is exposed. The existing cumulative-cursor
   cases are rewritten against the lease model, not deleted.
-- Tracking: Not assigned.
+- Tracking: [#3928](https://github.com/chrischeng-c4/axiom/issues/3928)
 
 ### Push subscriptions
 
