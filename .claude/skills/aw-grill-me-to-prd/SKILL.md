@@ -19,9 +19,17 @@ this skill never writes one.
 
 ## No STATUS and ROADMAP, no PRD
 
-You need one project — `apps/<name>` or `libs/<name>`; the human names it,
-and this skill does not infer it from the paths a prompt mentions. Before
-asking anything, check that both `<project>/STATUS.md` and
+You need one project — `apps/<name>` or `libs/<name>`. If the invocation
+names one, that is the project. If it does not, read the conversation for
+candidates — the projects whose files were opened, whose names were said,
+whose promise the request is plainly about — and put them to the human as
+the first **AskUserQuestion**, the likeliest first, filled out from the
+`apps/*` and `libs/*` directories that carry both a `STATUS.md` and a
+`ROADMAP.md`; "Other" lets the human type one the conversation never
+mentioned. What the context decides is which options are offered and in what
+order, never which one is true: a project inferred and not confirmed is a
+guess, and this skill writes nothing on a guess.
+Before asking anything else, check that both `<project>/STATUS.md` and
 `<project>/ROADMAP.md` are tracked. A promise is owned by exactly one of
 them: a shipped promise by the STATUS rows that measure it, a future promise
 by the ROADMAP outcome that will. A project with neither has nothing for a
