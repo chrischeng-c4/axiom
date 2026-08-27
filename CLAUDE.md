@@ -116,7 +116,7 @@ convention — nothing in the ladder checks that a TD exists. `prepare-goal`,
   area — never for an issue number, because no issue exists yet. That
   allowlist is measured rather than asked for: `prd.py check` reads the dirty
   set against HEAD and refuses every path outside it, along with a section
-  missing one of its seven bullets, a STATUS or ROADMAP id that resolves
+  missing one of its own kind's bullets, a STATUS or ROADMAP id that resolves
   nowhere, and a heading that gained a `(#<iid>)` the epic grill has not
   bound. `prd.py commit` re-runs all of it, stages the allowlist, and writes
   the `PRD-Project:` / `PRD-Section:` / `PRD-Unbound:` trailers that make the

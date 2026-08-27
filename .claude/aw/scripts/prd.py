@@ -68,13 +68,49 @@ PRODUCT = "docs/product"
 INDEX = "README.md"
 FOOTER = "Non-goals in this area"
 
-# The seven bullets, in order, that `/aw-grill-me-to-prd` writes into every
-# section. The first six are unconditional; the seventh is the owner, and a
-# section carries exactly one of the two forms -- a shipped promise names the
-# STATUS rows that measure it, a future promise names the one ROADMAP outcome
-# that will.
-BULLETS = ("Problem", "Who", "Promise", "Non-goals", "Open", "Neighbours")
-OWNERS = ("Status rows", "Outcome")
+# One section, two shapes, and the owner bullet is what says which. A future
+# promise carries `Open:` -- the decisions its epic will have to settle. A
+# shipped one cannot: shipping settled them. What it carries instead, when it
+# has one, is `Limits today:` -- what the promise does *not* do yet, which is a
+# different claim from an unanswered question and is where the next section's
+# `Problem:` comes from.
+#
+# Both shapes are measured rather than declared. This started as a single
+# seven-bullet rule read off the skill's prose, and the first run against a
+# real PRD refused eleven of tape's twenty-three sections -- every shipped one.
+# The corpus carries exactly four bullet sequences: the twelve `Outcome:`
+# sections are `FUTURE`, and the eleven `Status rows:` sections are `SHIPPED`,
+# six of them with `Limits today:` and five without. A gate whose declaration
+# is narrower than the corpus it must accept is a gate that refuses the prior
+# art it was written from.
+FUTURE = ("Problem", "Who", "Promise", "Non-goals", "Open", "Neighbours")
+SHIPPED = ("Problem", "Who", "Promise", "Limits today", "Non-goals",
+           "Neighbours")
+
+# `Limits today:` is the one bullet a shape may omit. It is not optional in the
+# sense of unimportant -- five shipped sections have no limits left worth
+# naming, and inventing one to satisfy a gate is exactly the false answer this
+# script exists to refuse.
+OPTIONAL = ("Limits today",)
+
+# The owner bullet, and the shape it selects. A section carries exactly one:
+# a shipped promise names the STATUS rows that measure it, a future promise
+# names the one ROADMAP outcome that will.
+OWNERS = {"Status rows": SHIPPED, "Outcome": FUTURE}
+
+# Every bullet either shape knows about. A key in here but not in *this*
+# section's shape is a bullet borrowed from the other kind -- an `Open:` on a
+# shipped promise, a `Limits today:` on one that has not shipped -- which is a
+# section that has not decided which kind it is.
+KNOWN = frozenset(FUTURE) | frozenset(SHIPPED)
+
+# `Promise, for now:` is the shipped-and-leaving form: the section records a
+# surface that is public today and going away, so the promise is scoped to the
+# present tense rather than withdrawn. Enumerated rather than parsed as a
+# grammar -- a general `<Key>, <words>:` rule would start reading ordinary
+# prose bullets as schema, and `- Non-goals: Google-signed OIDC tokens, ...`
+# is one comma away from being misread.
+QUALIFIED = {"Promise, for now": "Promise"}
 
 # The product-document contract, which owns the shape of STATUS, ROADMAP and
 # the READMEs these sections point at. It is not re-implemented here; it is
@@ -86,7 +122,8 @@ PINNED = ("uv", "run", "--python", "3.13", "--no-project")
 
 SECTION = re.compile(r"^##[ \t]+(?P<title>.+?)[ \t]*$", re.M)
 IID = re.compile(r"\s*\(#(\d+)\)$")
-BULLET = re.compile(r"^-[ \t]+(?P<key>[A-Z][A-Za-z -]*?):[ \t]*(?P<rest>.*)$")
+BULLET = re.compile(r"^-[ \t]+(?P<key>Promise, for now|[A-Z][A-Za-z -]*?)"
+                    r":[ \t]*(?P<rest>.*)$")
 BACKTICKED = re.compile(r"`([^`]+)`")
 TRAILER = re.compile(r"^[A-Za-z][A-Za-z-]*: .+$")
 TRACKING_LINK = re.compile(r"Tracking:[ \t]*\[#\d+\]")
@@ -109,7 +146,7 @@ CHECKS = {
     "P2": "every changed path is under <project>/docs/product/",
     "P3": "something under docs/product/ actually changed",
     "P4": "no heading or Tracking: line gained an issue number",
-    "P5": "every touched section carries the seven bullets, in order",
+    "P5": "every touched section carries its own kind's bullets, in order",
     "P6": "an Outcome: bullet keeps its Tracking: on the same line",
     "P7": "every STATUS row id and ROADMAP outcome id resolves",
     "P8": "the section index and the touched area files agree",
@@ -174,7 +211,8 @@ def bullets(body: str) -> list[tuple[str, str]]:
     for line in body.splitlines():
         m = BULLET.match(line)
         if m:
-            out.append((m.group("key"), m.group("rest")))
+            key = m.group("key")
+            out.append((QUALIFIED.get(key, key), m.group("rest")))
         elif out and line.startswith(("  ", "\t")) and line.strip():
             key, rest = out[-1]
             out[-1] = (key, f"{rest} {line.strip()}")
@@ -283,20 +321,32 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
                 continue
             counted += 1
             keys = [k for k, _ in bullets(body)]
-            missing = [b for b in BULLETS if b not in keys]
-            if missing:
-                out.append(Finding("P5", path, f"section `{title}` is missing "
-                                   f"bullet(s) {', '.join(missing)}"))
-            ordered = [k for k in keys if k in BULLETS]
-            if ordered != [b for b in BULLETS if b in ordered]:
-                out.append(Finding("P5", path, f"section `{title}` writes its "
-                                   f"bullets out of order: {', '.join(ordered)}"))
             owners = [k for k in keys if k in OWNERS]
             if len(owners) != 1:
+                # No owner, or two, means there is no shape to measure the rest
+                # against -- so this is the whole finding for the section, and
+                # reporting the missing bullets of a shape it may not have is
+                # noise about a section whose kind is the actual defect.
                 out.append(Finding("P5", path, f"section `{title}` carries "
                                    f"{len(owners)} owner bullet(s) "
                                    f"({', '.join(owners) or 'none'}); it takes "
                                    "exactly one of `Status rows:` or `Outcome:`"))
+                continue
+            shape = OWNERS[owners[0]]
+            missing = [b for b in shape if b not in keys and b not in OPTIONAL]
+            if missing:
+                out.append(Finding("P5", path, f"section `{title}` is missing "
+                                   f"bullet(s) {', '.join(missing)}"))
+            foreign = [k for k in keys if k in KNOWN and k not in shape]
+            if foreign:
+                out.append(Finding("P5", path, f"section `{title}` ends "
+                                   f"`{owners[0]}:` but carries "
+                                   f"{', '.join(foreign)}, which belongs to the "
+                                   "other kind of section"))
+            ordered = [k for k in keys if k in shape]
+            if ordered != [b for b in shape if b in ordered]:
+                out.append(Finding("P5", path, f"section `{title}` writes its "
+                                   f"bullets out of order: {', '.join(ordered)}"))
             for key, rest in bullets(body):
                 if key == "Outcome":
                     # The one-line rule is not cosmetic: /aw-grill-me-to-epic
