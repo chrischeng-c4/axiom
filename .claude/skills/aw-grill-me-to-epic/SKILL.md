@@ -1,6 +1,6 @@
 ---
 name: aw:grill-me-to-epic
-description: Interview the human through AskUserQuestion until every required Epic section is answered, then author the epic through `epic.py create` or `epic.py update`. Use when a new epic must be opened, or when an existing epic's body is thin, stale, or unvalidatable.
+description: Interview the human through AskUserQuestion until every required Epic section is answered, then author the epic through `epic.py create` or `epic.py update`. A new epic is carved from an unbound `## <title>` section of the project's `docs/product/`, and the section is bound to the epic's number once validate passes. Use when a product-requirements section has no epic yet, or when an existing epic's body is thin, stale, or unvalidatable.
 version: 0.1.0
 user-invocable: true
 ---
@@ -53,6 +53,45 @@ If the target's type is not epic, stop: the script refuses it by name, and
 the closed work-item enum converges by spawn-and-link, never by changing a
 type in place.
 
+## The PRD comes first
+
+On the create path the epic is carved from a product-requirements section
+that already exists, never the other way round. The script allows an epic
+with no `--project`; this skill does not, because without a project there is
+no `docs/product/` to read.
+
+1. List `apps/<project>/docs/product/*.md` or `libs/<project>/docs/product/*.md`
+   and collect every `## <title>` heading that does not carry ` (#`. Those
+   are the unbound sections — promises no epic tracks yet. If the directory
+   has no `README.md`, or every section is bound, **stop** and say so: run
+   `/aw-grill-me-to-prd` first. An epic with no section behind it is a
+   promise nobody wrote down, and this skill does not write one on the way
+   past.
+2. Ask with AskUserQuestion which unbound section this epic is, offering the
+   section titles as the options. The epic's `--title` is that heading,
+   verbatim.
+3. Draft, do not decide. The section's parts seed the body, and the draft is
+   confirmed with the human in one round before the interview goes on —
+   drafted from the section is not the same as answered by it:
+   - `Problem:` seeds `## Problem`, expanded to the observable situation
+     today;
+   - the capability id the area file's first paragraph names seeds
+     `Capability:`;
+   - each sentence of `Promise:` seeds one `R<n>`;
+   - `Non-goals:` seeds `### Out of Scope`, and `Neighbours:` seeds
+     `### Related Specs`;
+   - the ROADMAP outcome's `Completion evidence` seeds
+     `## Acceptance Criteria`;
+   - every `Open:` line becomes a question in the next round, never a
+     default.
+
+   `Capability Gap:`, `Progress Evidence:`, every gate and oracle in
+   `## Verification Inventory`, and `Depends On` are not in the section and
+   are grilled as before.
+
+On the update path the section is already bound to this iid. Read it for
+what the body has drifted from, and do not rebind it.
+
 ## Interview scope
 
 Run `epic.py skeleton`. Its output is the authoritative section set — do not
@@ -79,7 +118,8 @@ remain yours.
 
 ## How to grill
 
-1. Read what already exists first — the user's prompt, and for an update the
+1. Read what already exists first — the user's prompt, on create the
+   `docs/product/` section the epic is carved from, and for an update the
    current body from `epic.py show <iid> --json`. Never ask for something
    already answered.
 2. Ask with **AskUserQuestion**, in rounds of at most four questions. Give
@@ -133,6 +173,43 @@ result. If it does not pass, the emitted errors name the missing or malformed
 sections: run one more AskUserQuestion round on exactly those sections and
 update again. Report the epic only once validate passes.
 
+## Bind the section
+
+Once `validate` passes on the live issue, and only then, bind the section the
+epic was carved from. This is the one place this skill writes a file by hand,
+and it writes exactly four things:
+
+1. In the area file, the heading `## <title>` becomes `## <title> (#<iid>)`.
+   Match the title exactly — stripped, case-sensitive, punctuation as
+   written. If the heading already carries this iid there is nothing to do;
+   if it carries a different one, stop and report both numbers rather than
+   choose.
+2. In the same section, `Tracking: not assigned.` becomes
+   `Tracking: [#<iid>](<url>)`, with the url taken from the `url` field of
+   `epic.py show <iid> --json`. Match case-insensitively and tolerate a soft
+   wrap between the two words; write the result on one line.
+3. An `Open:` line the body now answers becomes
+   `Open: none; settled by #<iid>`. One it does not answer stays, verbatim.
+4. In `<project>/ROADMAP.md`, under the `### ` block whose `- ID:` is the
+   section's `Outcome:`, `- Tracking: Not assigned.` becomes
+   `- Tracking: [#<iid>](<url>)`. The link form is what the product-document
+   validator accepts; a bare `#<iid>` is refused. A shipped section — one
+   that ends in `Status rows:` — has no ROADMAP block, and this step is
+   skipped.
+
+Then run the project's product-document gate, read-only:
+
+```
+python3 scripts/meta/project_docs_contract.py check <apps|libs>/<project> --format json
+```
+
+and read `ok` in its report. The validator imports `tomllib`, so `python3`
+has to be 3.11 or newer; on a machine whose `python3` is older, put
+`uv run --python 3.13 --no-project` in front of the same path. A red here is
+a bind that landed somewhere the validator did not expect, and the fix is
+the bind, not the validator. Report the epic
+together with the path of the section it now owns.
+
 ## Never
 
 This addresses the agent running the interview, not the human answering it.
@@ -142,6 +219,13 @@ This addresses the agent running the interview, not the human answering it.
   place for a plausible default.
 - Never write the tracker body or any `src/**` path by hand, and never reach
   past the script to the tracker's own CLI; `epic.py` is the only writer here.
+  The four bind edits — the section heading, its `Tracking:` line, its
+  settled `Open:` lines, and the ROADMAP `Tracking:` line — are the only
+  lines this skill writes by hand, and only after `validate` has passed on
+  the live issue.
+- Never open an epic that no `docs/product/` section promises, and never
+  write that section here. `/aw-grill-me-to-prd` does, before this skill
+  starts.
 - Never open child work items here. Scope carving is `/aw-grill-epic-to-changes`.
 - Never report the epic as authored on a create or update exit code alone —
   `epic.py validate` passing is the signal. The two exit codes answer
