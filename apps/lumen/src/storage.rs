@@ -4562,6 +4562,35 @@ impl Engine {
         Ok(())
     }
 
+    /// Atomically replace all active collection state with a fully prepared
+    /// disposable engine.
+    ///
+    /// Durable restore builds and checkpoint-validates `replacement` before
+    /// the on-disk commit point. This method acquires every fallible live-state
+    /// lock before the swap, then moves the complete map in one step. An empty
+    /// replacement therefore removes every old collection. Old reshard-prune
+    /// accumulators are also cleared because they name the replaced dataset.
+    pub fn activate_replacement(&self, replacement: Engine) -> Result<()> {
+        let Engine {
+            state: replacement_state,
+            ..
+        } = replacement;
+        let replacement_state = replacement_state
+            .into_inner()
+            .map_err(|_| anyhow!("replacement state poisoned"))?;
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut prune_accumulator = self
+            .prune_accumulator
+            .lock()
+            .map_err(|_| anyhow!("prune accumulator poisoned"))?;
+
+        *state = replacement_state;
+        prune_accumulator.clear();
+        self.prune_accum_tick.store(0, Ordering::Release);
+        self.publish_storage_bytes(&state);
+        Ok(())
+    }
+
     // -- Reshard admin verbs (#1380) -----------------------------------------
 
     /// `POST /admin/reshard:apply`: additively merge one `ReshardBatch`'s
@@ -17219,6 +17248,29 @@ mod tests {
             0,
             "soft-deleted collections must stop contributing to live capacity"
         );
+    }
+
+    #[test]
+    fn activate_replacement_swaps_the_complete_collection_set() {
+        let active = Engine::new();
+        active.create_collection("old", kw_only_schema()).unwrap();
+        index_kw(&active, "old", "old-doc");
+
+        let replacement = Engine::new();
+        replacement
+            .create_collection("new", kw_only_schema())
+            .unwrap();
+        index_kw(&replacement, "new", "new-doc");
+        let expected_bytes = collection_live_bytes(&replacement, "new");
+
+        active.activate_replacement(replacement).unwrap();
+
+        assert!(
+            active.stats("old").is_err(),
+            "collections absent from the replacement must be removed"
+        );
+        assert_eq!(active.stats("new").unwrap().documents_indexed, 1);
+        assert_eq!(active.metrics().storage_bytes.get(), expected_bytes);
     }
 
     /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte

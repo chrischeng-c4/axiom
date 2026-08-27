@@ -22,7 +22,7 @@
 //! back as the original `anyhow::Error` — carrying the `StorageError` —
 //! so the handler still maps them to the right HTTP status.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
@@ -94,6 +94,20 @@ impl std::fmt::Display for StorageFullError {
 
 impl std::error::Error for StorageFullError {}
 
+/// This process observed a durability boundary that it cannot safely resolve
+/// while it keeps serving mutations. Only a restart can rebuild one exact state
+/// from `CURRENT` plus the AOF and clear this latch.
+#[derive(Debug, Clone)]
+pub struct RestartRequired(pub String);
+
+impl std::fmt::Display for RestartRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for RestartRequired {}
+
 /// #2516: true when `e`'s error chain contains an `io::Error` whose kind is
 /// `StorageFull` (ENOSPC) — the seam every durable-write call site (AOF
 /// persist, segment/RDB checkpoint save, raft log append) probes to decide
@@ -118,6 +132,67 @@ struct CompletionState {
     mutation_permits: FxHashMap<u64, OwnedRwLockReadGuard<()>>,
 }
 
+/// One process-local mutation boundary for embedded Standalone.
+///
+/// Shared permits cover ordinary writes and checkpoints. Durable replacement
+/// takes the exclusive permit. `restart_required` is a one-way latch for this
+/// process: a successful disk-space probe must never clear a commit-uncertain
+/// or AOF-gap decision.
+#[derive(Clone)]
+pub struct MutationGate {
+    lock: Arc<RwLock<()>>,
+    restart_required: Arc<AtomicBool>,
+}
+
+impl Default for MutationGate {
+    fn default() -> Self {
+        Self {
+            lock: Arc::new(RwLock::new(())),
+            restart_required: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl MutationGate {
+    /// Acquire a shared mutation/checkpoint permit unless the process already
+    /// requires restart. The second check closes the race with a latch set while
+    /// this caller waited behind an exclusive replacement.
+    pub async fn shared(&self) -> Result<OwnedRwLockReadGuard<()>> {
+        self.ensure_serving()?;
+        let permit = self.lock.clone().read_owned().await;
+        self.ensure_serving()?;
+        Ok(permit)
+    }
+
+    /// Acquire the exclusive replacement permit unless a prior durability
+    /// failure already requires restart.
+    pub async fn exclusive(&self) -> Result<OwnedRwLockWriteGuard<()>> {
+        self.ensure_serving()?;
+        let permit = self.lock.clone().write_owned().await;
+        self.ensure_serving()?;
+        Ok(permit)
+    }
+
+    /// Permanently reject new mutations for this process.
+    pub fn require_restart(&self) {
+        self.restart_required.store(true, Ordering::Release);
+    }
+
+    pub fn is_restart_required(&self) -> bool {
+        self.restart_required.load(Ordering::Acquire)
+    }
+
+    fn ensure_serving(&self) -> Result<()> {
+        if self.is_restart_required() {
+            return Err(anyhow::Error::new(RestartRequired(
+                "durability state is uncertain; restart this Lumen process before retrying any mutation"
+                    .to_string(),
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// The optional local AOF the apply loop appends every applied record to (Stage
 /// 2 Phase 2f-3). Wrapped in a `Mutex` because the apply loop appends from the
 /// async task while the periodic checkpoint snapshotter calls `truncate_through`
@@ -140,7 +215,7 @@ pub struct WriteCoordinator {
     /// from publishing until activation finishes. This fence is sufficient for
     /// the embedded single-process Standalone path. External producers that can
     /// publish directly to a shared WAL remain outside its contract.
-    mutation_gate: Arc<RwLock<()>>,
+    mutation_gate: MutationGate,
 }
 
 impl WriteCoordinator {
@@ -189,7 +264,7 @@ impl WriteCoordinator {
                 waiters: FxHashMap::default(),
                 mutation_permits: FxHashMap::default(),
             }),
-            mutation_gate: Arc::new(RwLock::new(())),
+            mutation_gate: MutationGate::default(),
         });
         let loop_coord = coord.clone();
         tokio::spawn(async move {
@@ -294,6 +369,12 @@ impl WriteCoordinator {
                             };
 
                             for (seq, mut outcome, aof_rec) in results {
+                                if outcome.is_ok() && loop_coord.mutation_gate.is_restart_required()
+                                {
+                                    outcome = Err(anyhow::Error::new(RestartRequired(format!(
+                                        "sequence {seq} applied after an earlier local AOF gap; restart this Lumen process"
+                                    ))));
+                                }
                                 if let Err(e) = &outcome {
                                     tracing::warn!(seq, error = %e, "apply error (entry no-ops)");
                                 }
@@ -316,6 +397,11 @@ impl WriteCoordinator {
                                                 .and_then(|()| writer.maybe_sync())
                                         };
                                         if let Err(e) = persisted {
+                                            // The engine mutation already ran,
+                                            // but its recoverable AOF record did
+                                            // not. Disk-space recovery cannot
+                                            // repair that gap in this process.
+                                            loop_coord.mutation_gate.require_restart();
                                             if is_storage_full(&e) {
                                                 // #2516: local disk is out of
                                                 // space. Flip the sticky
@@ -340,13 +426,15 @@ impl WriteCoordinator {
                                                     )),
                                                 ));
                                             } else {
-                                                tracing::warn!(
+                                                tracing::error!(
                                                     seq,
                                                     error = %e,
-                                                    "AOF persist failed"
+                                                    "AOF persist failed; restart required"
                                                 );
-                                                outcome = Err(e.context(
-                                                    "persist applied record to local AOF",
+                                                outcome = Err(anyhow::Error::new(
+                                                    RestartRequired(format!(
+                                                        "persisted state is uncertain after local AOF failure at sequence {seq}: {e}; restart this Lumen process"
+                                                    )),
                                                 ));
                                             }
                                         }
@@ -468,7 +556,7 @@ impl WriteCoordinator {
         // restore fence can therefore observe one exact applied/WAL boundary:
         // no earlier submit remains in flight and no later submit has obtained
         // a sequence yet.
-        let mutation_permit = self.mutation_gate.clone().read_owned().await;
+        let mutation_permit = self.mutation_gate.shared().await?;
         let seq = self.wal.publish(WalRecord::new(entry)).await?;
         let rx = self.register_waiter(seq, mutation_permit)?;
         match tokio::time::timeout(SUBMIT_TIMEOUT, rx).await {
@@ -498,8 +586,27 @@ impl WriteCoordinator {
     /// The returned owned guard keeps the fence closed until it is dropped.
     /// Tokio's fair write-preferring queue also prevents a stream of new
     /// submits from starving a waiting restore.
-    pub async fn fence_mutations(&self) -> OwnedRwLockWriteGuard<()> {
-        self.mutation_gate.clone().write_owned().await
+    pub async fn fence_mutations(&self) -> Result<OwnedRwLockWriteGuard<()>> {
+        self.mutation_gate.exclusive().await
+    }
+
+    /// Keep an ordinary checkpoint from crossing an exclusive restore.
+    pub async fn checkpoint_permit(&self) -> Result<OwnedRwLockReadGuard<()>> {
+        self.mutation_gate.shared().await
+    }
+
+    /// Clone the process-local gate for components that must join the same
+    /// checkpoint/restore boundary.
+    pub fn mutation_gate(&self) -> MutationGate {
+        self.mutation_gate.clone()
+    }
+
+    pub fn require_restart(&self) {
+        self.mutation_gate.require_restart();
+    }
+
+    pub fn is_restart_required(&self) -> bool {
+        self.mutation_gate.is_restart_required()
     }
 }
 
@@ -510,6 +617,12 @@ impl WriteCoordinator {
 pub trait WriteSink: Send + Sync {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome>;
     fn applied_seq(&self) -> u64;
+    fn restart_required(&self) -> bool {
+        false
+    }
+    fn mutation_gate(&self) -> Option<MutationGate> {
+        None
+    }
 }
 
 #[async_trait::async_trait]
@@ -520,6 +633,12 @@ impl WriteSink for WriteCoordinator {
     fn applied_seq(&self) -> u64 {
         WriteCoordinator::applied_seq(self)
     }
+    fn restart_required(&self) -> bool {
+        WriteCoordinator::is_restart_required(self)
+    }
+    fn mutation_gate(&self) -> Option<MutationGate> {
+        Some(WriteCoordinator::mutation_gate(self))
+    }
 }
 
 #[cfg(test)]
@@ -528,7 +647,7 @@ mod tests {
     use crate::types::{
         CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
     };
-    use crate::wal::MemWal;
+    use crate::wal::{MemWal, WalLog};
     use std::collections::BTreeMap as Map;
 
     fn keyword_schema() -> CreateCollectionRequest {
@@ -598,7 +717,7 @@ mod tests {
         let engine = Arc::new(Engine::new());
         let wal = Arc::new(MemWal::new());
         let coord = WriteCoordinator::start(wal, engine);
-        let fence = coord.fence_mutations().await;
+        let fence = coord.fence_mutations().await.unwrap();
 
         let mut pending = {
             let coord = coord.clone();
@@ -639,7 +758,7 @@ mod tests {
         // Model the exact post-publish state directly: the caller owns a
         // waiter, while the completion table owns the mutation permit for the
         // published sequence. Cancelling the caller drops only the receiver.
-        let permit = coord.mutation_gate.clone().read_owned().await;
+        let permit = coord.mutation_gate.shared().await.unwrap();
         let waiter = coord.register_waiter(1, permit).unwrap();
         drop(waiter);
 
@@ -654,8 +773,33 @@ mod tests {
         coord.complete(1, Err(anyhow::anyhow!("synthetic apply failure")));
         let _guard = tokio::time::timeout(std::time::Duration::from_secs(5), fence)
             .await
-            .expect("the fence must open after the sequence completes");
+            .expect("the fence must open after the sequence completes")
+            .expect("the process must not require restart");
         assert_eq!(coord.applied_seq(), 1);
+    }
+
+    #[tokio::test]
+    async fn restart_required_rejects_mutations_and_never_clears_itself() {
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal, engine);
+
+        coord.require_restart();
+        assert!(coord.is_restart_required());
+        assert!(coord.mutation_gate().is_restart_required());
+
+        let error = coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "u".into(),
+                req: keyword_schema(),
+            })
+            .await
+            .expect_err("restart latch must reject new writes");
+        assert!(error.downcast_ref::<RestartRequired>().is_some(), "{error}");
+        assert!(coord.fence_mutations().await.is_err());
+        assert!(coord.checkpoint_permit().await.is_err());
+        assert!(coord.is_restart_required());
+        assert_eq!(coord.applied_seq(), 0, "rejected write must not publish");
     }
 
     /// The embedded segment path may be replaced immediately after its write
@@ -718,7 +862,7 @@ mod tests {
     /// never cross-contaminate) so the apply loop's genuine
     /// AOF-persist-failure branch runs.
     #[tokio::test]
-    async fn aof_enospc_returns_storage_full_error_and_marks_degraded() {
+    async fn aof_enospc_marks_degraded_and_requires_restart() {
         let dir = tempfile::tempdir().unwrap();
         let aof_path = dir.path().join("aof.log");
         let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
@@ -767,11 +911,15 @@ mod tests {
             "ENOSPC on the AOF write path must flip the sticky degraded gauge"
         );
         assert_eq!(engine.metrics().storage_full_errors_total.get(), 1);
+        assert!(
+            coord.is_restart_required(),
+            "an applied mutation with no AOF record cannot be repaired in-process"
+        );
 
-        // Probe/clear (what the periodic re-probe does once space returns):
-        // writes must resume once the flag is cleared.
+        // A successful disk-space probe may clear the ENOSPC gauge. It must not
+        // clear the independent durability-gap latch.
         engine.metrics().clear_storage_degraded();
-        let indexed = coord
+        let error = coord
             .submit(RaftLogEntry::Index {
                 collection_id: "u".into(),
                 req: IndexRequest {
@@ -785,9 +933,48 @@ mod tests {
                 },
             })
             .await
-            .unwrap();
-        assert!(matches!(indexed, ApplyOutcome::Indexed(r) if r.indexed == 1));
+            .expect_err("a process with an AOF gap must reject later mutations");
+        assert!(error.downcast_ref::<RestartRequired>().is_some(), "{error}");
         assert!(!engine.metrics().is_storage_degraded());
+        assert!(coord.is_restart_required());
+    }
+
+    #[tokio::test]
+    async fn aof_gap_rejects_every_later_applied_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let aof_path = dir.path().join("aof.log");
+        let mut writer = crate::aof::AofWriter::open(&aof_path).unwrap();
+        writer.inject_failure_once(std::io::ErrorKind::Other);
+        let aof = Arc::new(Mutex::new(writer));
+
+        let wal = Arc::new(MemWal::new());
+        for collection_id in ["first", "second"] {
+            wal.publish(WalRecord::new(RaftLogEntry::CreateCollection {
+                collection_id: collection_id.into(),
+                req: keyword_schema(),
+            }))
+            .await
+            .unwrap();
+        }
+
+        let engine = Arc::new(Engine::new());
+        let coord = WriteCoordinator::start_from_with_aof(wal, engine.clone(), 0, aof);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while coord.applied_seq() < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the backlogged records must apply");
+
+        assert!(coord.is_restart_required());
+        assert_eq!(engine.list_collections().unwrap(), vec!["first", "second"]);
+        let mut persisted = Vec::new();
+        crate::aof::AofReader::replay(&aof_path, 0, |seq, _| persisted.push(seq)).unwrap();
+        assert!(
+            persisted.is_empty(),
+            "no sequence after the first AOF gap may be persisted or acknowledged"
+        );
     }
 
     #[tokio::test]
@@ -948,7 +1135,7 @@ mod tests {
         // (0 at start) — exactly what the apply loop's dedup guard would
         // see on a stale-redelivery, and route it through the same
         // `complete_stale` the guard calls.
-        let permit = coord.mutation_gate.clone().read_owned().await;
+        let permit = coord.mutation_gate.shared().await.unwrap();
         let rx = coord
             .register_waiter(0, permit)
             .expect("register waiter for seq 0");

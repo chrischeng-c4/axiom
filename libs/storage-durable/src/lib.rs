@@ -11,7 +11,7 @@ mod fsync;
 mod generation;
 mod snapshot_store;
 
-pub use atomic::{atomic_write, sync_parent_dir};
+pub use atomic::{atomic_write, strict_sync_parent_dir, sync_parent_dir};
 pub use framed_log::{FramedLogReader, FramedLogWriter, LogFrame};
 pub use fsync::FsyncPolicy;
 pub use generation::{

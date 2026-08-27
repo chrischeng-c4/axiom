@@ -41,7 +41,9 @@ use axum::middleware::{from_fn, Next};
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::{StorageFullError, SubmitStalled, WriteCoordinator, WriteSink};
+use crate::coordinator::{
+    RestartRequired, StorageFullError, SubmitStalled, WriteCoordinator, WriteSink,
+};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::reshard::ReshardBatch;
@@ -78,6 +80,20 @@ impl MetricsProvider for ServingMetrics {
         let mut rendered = self.engine.render_metrics();
         rendered.push_str(&self.verifier.render_metrics());
         rendered
+    }
+}
+
+/// Readiness is false after either graceful drain or an unresolved durable
+/// boundary. Liveness remains true so Kubernetes can restart the process
+/// without hiding its diagnostic endpoints.
+struct ServingReadiness {
+    engine: Arc<Engine>,
+    writer: Arc<dyn WriteSink>,
+}
+
+impl ReadinessHook for ServingReadiness {
+    fn is_draining(&self) -> bool {
+        self.engine.is_draining() || self.writer.restart_required()
     }
 }
 
@@ -883,8 +899,12 @@ pub fn router_with_admission(
         engine: state.engine.clone(),
         verifier: state.verifier.clone(),
     });
+    let readiness = Arc::new(ServingReadiness {
+        engine: state.engine.clone(),
+        writer: state.writer.clone(),
+    });
     let probes = service_http::standard_probe_routes_canonical_json(
-        state.engine.clone(),
+        readiness,
         Some(metrics),
         crate::spec::openapi_json,
     );
@@ -1080,6 +1100,14 @@ fn enforce_write_fence(
 /// are exempt — they keep serving while degraded (see the `readyz`
 /// discussion in this issue's report: a degraded node still answers reads).
 fn enforce_storage_writable(state: &AppState) -> Result<(), ApiErr> {
+    if state.writer.restart_required() {
+        return Err(ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "restart_required",
+            "node observed an unresolved durability boundary; restart this Lumen process before retrying any mutation"
+                .to_string(),
+        ));
+    }
     if state.engine.metrics().is_storage_degraded() {
         return Err(ApiErr::new(
             StatusCode::INSUFFICIENT_STORAGE,
@@ -1091,6 +1119,26 @@ fn enforce_storage_writable(state: &AppState) -> Result<(), ApiErr> {
         ));
     }
     Ok(())
+}
+
+async fn acquire_direct_mutation_permit(
+    state: &AppState,
+) -> Result<Option<tokio::sync::OwnedRwLockReadGuard<()>>, ApiErr> {
+    enforce_storage_writable(state)?;
+    let Some(gate) = state.writer.mutation_gate() else {
+        return Ok(None);
+    };
+    gate.shared().await.map(Some).map_err(ApiErr::from)
+}
+
+async fn acquire_replacement_permit(
+    state: &AppState,
+) -> Result<Option<tokio::sync::OwnedRwLockWriteGuard<()>>, ApiErr> {
+    enforce_storage_writable(state)?;
+    let Some(gate) = state.writer.mutation_gate() else {
+        return Ok(None);
+    };
+    gate.exclusive().await.map(Some).map_err(ApiErr::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -1140,7 +1188,9 @@ async fn version() -> Json<serde_json::Value> {
 /// OpenAPI metadata for the shared `/readyz` implementation in service-http.
 #[allow(dead_code)]
 async fn readyz(State(state): State<AppState>) -> (StatusCode, &'static str) {
-    if state.engine.is_draining() {
+    if state.writer.restart_required() {
+        (StatusCode::SERVICE_UNAVAILABLE, "restart required")
+    } else if state.engine.is_draining() {
         (StatusCode::SERVICE_UNAVAILABLE, "draining")
     } else {
         (StatusCode::OK, "ok")
@@ -2266,7 +2316,7 @@ async fn restore(
     Json(snap): Json<SnapshotV1>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
-    enforce_storage_writable(&state)?;
+    let _mutation_permit = acquire_replacement_permit(&state).await?;
     state.engine.restore(snap).map_err(ApiErr::from)?;
     tracing::info!(
         target: "lumen.audit",
@@ -2312,6 +2362,7 @@ async fn reshard_apply(
     Json(batch): Json<ReshardBatch>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
     let outcome = state
         .engine
         .apply_reshard_batch(batch.snapshot, None)
@@ -2362,6 +2413,7 @@ async fn reshard_prune(
     Json(chunk): Json<crate::reshard::ReshardPruneChunk>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
     let to_map_version = chunk.to_map_version;
     let bucket = chunk.bucket;
     let collection_id = chunk.collection_id.clone();
@@ -2470,6 +2522,7 @@ async fn reshard_evict(
     Json(req): Json<ReshardEvictRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
     let map =
         VirtualBucketShardMap::new(req.map_version, req.assignments, req.physical_shard_count)
             .map_err(ApiErr::from)?;
@@ -2517,6 +2570,7 @@ async fn admin_checkpoint(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
     let persisted = state
         .checkpoint
         .checkpoint_now()
@@ -2838,6 +2892,13 @@ impl From<anyhow::Error> for ApiErr {
             return Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "write_stalled",
+                e.to_string(),
+            );
+        }
+        if e.downcast_ref::<RestartRequired>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "restart_required",
                 e.to_string(),
             );
         }

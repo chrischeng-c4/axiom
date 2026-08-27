@@ -89,6 +89,11 @@ pub struct AofWriter {
     /// each test opens its own `AofWriter` over its own tempdir.
     #[cfg(test)]
     inject_storage_full: std::sync::atomic::AtomicBool,
+    /// Test-only one-shot non-ENOSPC failure. This models a single AOF gap
+    /// followed by a healthy filesystem, so coordinator tests can prove that
+    /// later records are still rejected after the first uncertain write.
+    #[cfg(test)]
+    inject_failure_once: Option<std::io::ErrorKind>,
 }
 
 impl AofWriter {
@@ -109,6 +114,8 @@ impl AofWriter {
             policy,
             #[cfg(test)]
             inject_storage_full: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            inject_failure_once: None,
         })
     }
 
@@ -125,9 +132,18 @@ impl AofWriter {
             .store(on, std::sync::atomic::Ordering::SeqCst);
     }
 
+    #[cfg(test)]
+    pub fn inject_failure_once(&mut self, kind: std::io::ErrorKind) {
+        self.inject_failure_once = Some(kind);
+    }
+
     /// Append one applied `(seq, record)` frame. Buffered; durability follows the
     /// fsync policy (`Always` fsyncs now, `EverySec` defers to `maybe_sync`).
     pub fn append(&mut self, seq: u64, record: &WalRecord) -> Result<()> {
+        #[cfg(test)]
+        if let Some(kind) = self.inject_failure_once.take() {
+            return Err(anyhow::Error::new(std::io::Error::from(kind)));
+        }
         #[cfg(test)]
         if self
             .inject_storage_full
@@ -150,6 +166,12 @@ impl AofWriter {
     /// Flush + fsync NOW, unconditionally. Resets the everysec timer.
     pub fn sync(&mut self) -> Result<()> {
         self.inner.sync()
+    }
+
+    /// Flush and fsync the AOF, then require a successful data-root directory
+    /// fsync. Durable restore uses this before it can move `CURRENT`.
+    pub fn sync_strict(&mut self) -> Result<()> {
+        self.inner.sync_strict()
     }
 
     /// Call-driven everysec fsync: fsync only if dirty AND ≥ the cadence has
@@ -233,6 +255,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = AofWriter::open(dir.path().join("aof")).unwrap();
         assert_eq!(writer.policy, FsyncPolicy::Always);
+    }
+
+    #[test]
+    fn strict_sync_makes_the_current_tail_replayable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aof");
+        let mut writer = AofWriter::open(&path).unwrap();
+        writer
+            .append(
+                1,
+                &WalRecord::new(RaftLogEntry::DropCollection {
+                    collection_id: "missing".into(),
+                    force: true,
+                }),
+            )
+            .unwrap();
+        writer.sync_strict().unwrap();
+        assert_eq!(AofReader::replay(&path, 0, |_, _| {}).unwrap(), 1);
     }
     use crate::log_entry::RaftLogEntry;
     use crate::types::{

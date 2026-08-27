@@ -81,6 +81,28 @@ pub fn sync_parent_dir(path: impl AsRef<Path>) -> Result<()> {
     }
 }
 
+/// Strictly fsync the parent directory of `path`.
+///
+/// Unlike [`sync_parent_dir`], this function never treats an unsupported or
+/// denied directory open as success. Use it for a commit protocol that must not
+/// report success without a proven directory fsync.
+pub fn strict_sync_parent_dir(path: impl AsRef<Path>) -> Result<()> {
+    let parent = strict_parent(path.as_ref());
+    let dir = OpenOptions::new()
+        .read(true)
+        .open(parent)
+        .with_context(|| format!("open dir {} for strict fsync", parent.display()))?;
+    dir.sync_all()
+        .with_context(|| format!("strict fsync dir {}", parent.display()))
+}
+
+fn strict_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
 fn temp_path(path: &Path) -> std::path::PathBuf {
     let mut tmp = path.as_os_str().to_os_string();
     tmp.push(".tmp");
@@ -105,6 +127,19 @@ mod tests {
         atomic_write(&path, b"one", FsyncPolicy::Always).unwrap();
         atomic_write(&path, b"two", FsyncPolicy::Always).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"two");
+    }
+
+    #[test]
+    fn strict_parent_sync_accepts_a_real_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.bin");
+        std::fs::write(&path, b"state").unwrap();
+        strict_sync_parent_dir(&path).unwrap();
+    }
+
+    #[test]
+    fn strict_parent_sync_resolves_a_bare_filename_to_the_working_directory() {
+        assert_eq!(strict_parent(Path::new("state.bin")), Path::new("."));
     }
 }
 // CODEGEN-END
