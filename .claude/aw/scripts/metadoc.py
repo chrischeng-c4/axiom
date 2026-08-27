@@ -1,36 +1,59 @@
 #!/usr/bin/env python3
-"""Refuse a PRD run that reached outside `docs/product/`, then commit it.
+"""Refuse a META-doc run that reached outside the project's own documents.
 
-`/aw-grill-me-to-prd` interviews a human and writes prose. Prose is exactly
+`/aw-grill-me-to-meta` interviews a human and writes prose. Prose is exactly
 what no exit code can judge, so this script judges the two things around it
 that an exit code *can*: where the run wrote, and what the commit says about
 it.
 
 **Where it wrote.** The skill's `## Never` list already says "never write
-outside `docs/product/` of the named project". A `Never` list is a sentence an
-agent reads once. `check` is the same claim as a working-tree measurement: the
-dirty set against HEAD, every path of it, against one allowlist. A PRD run that
-edited `STATUS.md`, `ROADMAP.md`, the project README, or a `src/**` file is
-refused here whether or not anyone read the list.
+outside the named project's documents". A `Never` list is a sentence an agent
+reads once. `check` is the same claim as a working-tree measurement: the dirty
+set against HEAD, every path of it, against one allowlist of four entries --
+`README.md`, `STATUS.md`, `ROADMAP.md`, and everything under `docs/`. A run
+that edited a `src/**` file, another project, or the repository root is refused
+here whether or not anyone read the list.
+
+Three of those four were deliberately *excluded* until 2026-08-27, and the
+reversal is worth stating rather than quietly inheriting. The reasoning behind
+the exclusion was real: the `docs/` sections stand on ids that live in
+`STATUS.md` and `ROADMAP.md` and on capability names in the project `README.md`,
+so a run that edits both is a run that moved the ground it is standing on in
+the same breath. What made the exclusion affordable was a second skill,
+`/aw-check-meta`, that a human remembered to run afterwards.
+
+The exclusion is gone because the split was the wrong shape: a promise and the
+STATUS row that measures it are one edit, and forcing them into two runs by two
+skills meant the second one was the one that got skipped. What replaces it is
+not trust. `P7` still resolves every id the sections claim, and `P10` still runs
+the product-document contract -- both against the *edited* working tree, so
+moving the ground is measured rather than assumed. The check that used to be a
+separate skill is now a step in this one's landing sequence, where it cannot be
+forgotten:
+
+    metadoc.py check <project>     # this script: allowlist, shape, ids
+    meta.py check <project>        # M1-M7 over the edited tree
+    metadoc.py commit <project> --why <path>
 
 **What the commit says.** The next skill in the ladder --
-`/aw-grill-prd-to-wi`, which turns a written promise into an epic or a change
--- has to find the PRD commits and know what each one touched. It cannot get
-that from a hand-written subject line. So `commit` is the only writer here: it
-re-runs every check, stages exactly the allowlist, and appends a trailer block
-naming the project, every section this commit added, modified, or removed, and
-how many of those are still unbound. That makes the history searchable:
+`/aw-grill-meta-to-wis`, which measures the promises against the tracker and
+the codebase -- has to find these commits and know what each one touched. It
+cannot get that from a hand-written subject line. So `commit` is the only
+writer here: it re-runs every check, stages exactly the allowlist, and appends
+a trailer block naming the project, every section this commit added, modified,
+or removed, and how many of those are still unbound. That makes the history
+searchable:
 
-    git log --grep='^PRD-Project: apps/tape'
+    git log --grep='^Meta-Project: apps/tape'
 
 ## What it cannot do
 
 It cannot tell a good promise from a bad one. Every check here is structural:
-a path is inside a directory or it is not, a bullet is present or it is not, an
-id occurs in `STATUS.md` or it does not. Whether the Promise is worth making,
-whether the `Open:` questions are the right ones, whether the Problem is real
--- none of that is measurable from the file, and this script does not pretend
-otherwise. That judgement stays with the human the skill interviews.
+a path is inside the allowlist or it is not, a bullet is present or it is not,
+an id occurs in `STATUS.md` or it does not. Whether the Promise is worth
+making, whether the `Open:` questions are the right ones, whether the Problem
+is real -- none of that is measurable from the file, and this script does not
+pretend otherwise. That judgement stays with the human the skill interviews.
 
 It also cannot prove the run was *authored* by the skill rather than typed by
 hand. The allowlist refuses the writes the skill forbids; it says nothing about
@@ -58,13 +81,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import leg  # noqa: E402
 
-# The one directory a PRD run may write. Not a prefix list: the point of the
-# check is that there is exactly one, and every near miss -- `STATUS.md`,
-# `ROADMAP.md`, the project `README.md`, `src/**` -- sits
-# outside it. The project README was considered and left out: the areas stand
-# on its capability ids, so a run that edits both is a run that moved the
-# ground it is standing on in the same breath.
-PRODUCT = "docs/product"
+# The four things a META-doc run may write, relative to the project root.
+# Three files and one tree, and the near misses that stay outside are the ones
+# that were never this skill's: `src/**`, `e2e/**`, `Cargo.toml`, another
+# project's documents, and anything at the repository root.
+#
+# `docs/` rather than `docs/product/`: the sections are the project's product
+# detail wherever they sit, and pinning one subdirectory would make the
+# allowlist a statement about a filing convention rather than about ownership.
+# `docs/product/` remains a perfectly ordinary `docs/**` path -- the seven area
+# files already under it were not moved, because moving them would be a rename
+# with no reader asking for it.
+AREAS = "docs"
+TOP = ("README.md", "STATUS.md", "ROADMAP.md")
+
+# The index is a `README.md` beside the area files it indexes, so `P8` reads
+# the one in each touched directory rather than a single hardcoded path. That
+# is what lets `docs/` hold more than one family of areas without either
+# family's index claiming the other's sections.
 INDEX = "README.md"
 FOOTER = "Non-goals in this area"
 
@@ -142,14 +176,14 @@ class Finding:
 
 
 CHECKS = {
-    "P1": "the project carries STATUS.md, ROADMAP.md and docs/product/",
-    "P2": "every changed path is under <project>/docs/product/",
-    "P3": "something under docs/product/ actually changed",
+    "P1": "the project carries README.md, STATUS.md, ROADMAP.md and docs/",
+    "P2": "every changed path is one of the project's four document paths",
+    "P3": "one of those four actually changed",
     "P4": "no heading or Tracking: line gained an issue number",
     "P5": "every touched section carries its own kind's bullets, in order",
     "P6": "an Outcome: bullet keeps its Tracking: on the same line",
     "P7": "every STATUS row id and ROADMAP outcome id resolves",
-    "P8": "the section index and the touched area files agree",
+    "P8": "each directory's index and its touched area files agree",
     "P9": "every touched area file ends with its non-goals",
     "P10": "the product-document contract still passes",
 }
@@ -254,39 +288,66 @@ def pinned_launcher() -> list[str]:
     return list(PINNED)
 
 
+def in_scope(project: str, path: str) -> bool:
+    """Whether one repo-relative path is inside this project's allowlist."""
+    return (path in {f"{project}/{name}" for name in TOP}
+            or path.startswith(f"{project}/{AREAS}/"))
+
+
+def is_area(project: str, path: str) -> bool:
+    """Whether a path is an area file -- a `docs/**` section document.
+
+    A directory's own `README.md` is its index, not an area, and the three
+    top-level documents are not under `docs/` at all. Both exclusions matter:
+    an index measured as an area has no owner bullet and would trip `P5` on
+    every run, and a project README measured as one would trip it on every
+    heading it owns.
+    """
+    return (path.startswith(f"{project}/{AREAS}/")
+            and path.endswith(".md")
+            and not path.endswith(f"/{INDEX}"))
+
+
 def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
     """Every finding, and the population each check was measured over."""
     out: list[Finding] = []
     root = repo / project
-    product = f"{project}/{PRODUCT}"
+    areas = f"{project}/{AREAS}"
 
     # -- P1: the ground the sections stand on ------------------------------
-    for name in ("STATUS.md", "ROADMAP.md"):
+    for name in TOP:
         if not (root / name).is_file():
             out.append(Finding("P1", f"{project}/{name}", "missing; a promise is "
-                               "owned by a STATUS row or a ROADMAP outcome, and "
-                               "this file is where the id has to resolve"))
-    if not (repo / product).is_dir():
-        out.append(Finding("P1", product, "missing; run /aw-grill-me-to-prd in "
+                               "owned by a STATUS row or a ROADMAP outcome and "
+                               "names a README capability, and these files are "
+                               "where those ids have to resolve"))
+    if not (repo / areas).is_dir():
+        out.append(Finding("P1", areas, "missing; run /aw-grill-me-to-meta in "
                            "create mode before this check can mean anything"))
         return out, {"project": project, "changed": [], "sections": 0}
 
     # -- P2/P3: the write allowlist ----------------------------------------
     dirty = leg.dirty_set(repo)
-    changed = [p for p in dirty if p.startswith(f"{product}/")]
+    changed = [p for p in dirty if in_scope(project, p)]
     for path in dirty:
         if path not in changed:
-            out.append(Finding("P2", path, "outside "
-                               f"`{product}/`; a PRD run writes nowhere else"))
+            out.append(Finding("P2", path, "outside this project's documents; a "
+                               f"META-doc run writes `{project}/README.md`, "
+                               f"`{project}/STATUS.md`, `{project}/ROADMAP.md` "
+                               f"and `{areas}/` and nowhere else"))
     if not changed:
-        out.append(Finding("P3", product, "nothing changed here; there is no "
-                           "PRD run to check or commit"))
+        out.append(Finding("P3", project, "none of the four document paths "
+                           "changed; there is no META-doc run to check or commit"))
 
+    # Only area files are read for shape. The three top-level documents are in
+    # the allowlist but have a contract of their own -- `P10` runs it, and
+    # `meta.py check` runs the rest of it in the landing sequence -- so reading
+    # them for `## <title>` bullets here would refuse every heading they own.
+    #
     # Only files that still exist are read. A deleted area file is a change
     # this script has to account for -- P8 does, through the index rows that
     # still point at it -- but it has no body left to measure.
-    touched = [p for p in changed
-               if (repo / p).is_file() and p != f"{product}/{INDEX}"]
+    touched = [p for p in changed if is_area(project, p) and (repo / p).is_file()]
     texts = {p: (repo / p).read_text(encoding="utf-8") for p in touched}
     status = (root / "STATUS.md").read_text(encoding="utf-8") if (root / "STATUS.md").is_file() else ""
     roadmap = (root / "ROADMAP.md").read_text(encoding="utf-8") if (root / "ROADMAP.md").is_file() else ""
@@ -298,15 +359,15 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
         # -- P4: binding is the epic grill's, not this one's ---------------
         # Measured as a delta against HEAD rather than as an absolute. A file
         # that already carries a bound section is the normal case -- the whole
-        # point of a brownfield PRD run -- and refusing it outright would make
-        # this check unusable on every project past its first epic.
+        # point of a brownfield META-doc run -- and refusing it outright would
+        # make this check unusable on every project past its first epic.
         before = git_show(repo, path)
         gained_bound = ({bare(t) for t, _ in parsed if IID.search(t)}
                         - {bare(t) for t, _ in sections(before) if IID.search(t)})
         for title in sorted(gained_bound):
             out.append(Finding("P4", path, f"section `{title}` gained a `(#<iid>)` "
-                               "binding; that is /aw-grill-me-to-epic's write, "
-                               "made in the same run that opens the epic"))
+                               "binding; that is /aw-grill-meta-to-wis's write, "
+                               "made in the same run that opens the work item"))
         gained_links = (len(TRACKING_LINK.findall(text))
                         - len(TRACKING_LINK.findall(before)))
         if gained_links > 0:
@@ -349,7 +410,7 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
                                    f"bullets out of order: {', '.join(ordered)}"))
             for key, rest in bullets(body):
                 if key == "Outcome":
-                    # The one-line rule is not cosmetic: /aw-grill-me-to-epic
+                    # The one-line rule is not cosmetic: /aw-grill-meta-to-wis
                     # finds the line with `grep` when it binds the section, and
                     # a soft wrap hides it from the bind.
                     raw_line = next((line for line in body.splitlines()
@@ -380,16 +441,25 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
                                "non-goals are not sections, they are the file's "
                                "last heading"))
 
-    # -- P8: the index and the area files agree ----------------------------
-    index_path = f"{product}/{INDEX}"
-    if not (repo / index_path).is_file():
-        if changed:
+    # -- P8: each directory's index and its area files agree ---------------
+    # Per directory rather than per project. A single index would have to name
+    # sections from families it does not own, which makes "this section has no
+    # row" unfalsifiable -- there would always be some other index it could
+    # have belonged to.
+    #
+    # The directories are taken from the *changed* paths, not from a walk of
+    # `docs/`: an index whose own area files were untouched is not part of this
+    # run, and reading it would report a defect nobody in this run introduced.
+    for folder in sorted({p.rsplit("/", 1)[0] for p in changed
+                          if p.startswith(f"{areas}/")}):
+        index_path = f"{folder}/{INDEX}"
+        if not (repo / index_path).is_file():
             out.append(Finding("P8", index_path, "missing; every area file is "
-                               "reached through the section index"))
-    else:
+                               "reached through the section index beside it"))
+            continue
         rows = index_rows((repo / index_path).read_text(encoding="utf-8"))
         for title, filename in rows:
-            target = f"{product}/{filename}"
+            target = f"{folder}/{filename}"
             if not (repo / target).is_file():
                 out.append(Finding("P8", index_path, f"row `{title}` points at "
                                    f"`{filename}`, which is not on disk; a "
@@ -401,13 +471,15 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
                     out.append(Finding("P8", index_path, f"row `{title}` names no "
                                        f"section in `{filename}`"))
         for path, text in sorted(texts.items()):
+            if path.rsplit("/", 1)[0] != folder:
+                continue
             filename = path.rsplit("/", 1)[1]
             indexed = {t for t, f in rows if f == filename}
             for raw, _ in sections(text):
                 title = bare(raw)
                 if title != FOOTER and title not in indexed:
                     out.append(Finding("P8", path, f"section `{title}` has no row "
-                                       "in the section index"))
+                                       f"in `{folder}/{INDEX}`"))
 
     # -- P10: the contract that owns the documents around these ------------
     validator = repo / VALIDATOR
@@ -434,16 +506,21 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
     return out, {"project": project, "changed": changed, "sections": counted}
 
 
-def section_modes(repo: Path, changed: list[str], product: str) -> list[str]:
+def section_modes(repo: Path, project: str, changed: list[str]) -> list[str]:
     """`<mode> <path>#<title>` for every section this run added or moved.
 
     Modes are derived by diffing HEAD against the working tree per file, not
     declared by the caller: a trailer the agent writes by hand is a trailer
     that can disagree with the diff it claims to describe.
+
+    Scoped to the area files. The three top-level documents changed in the same
+    run are reported by `Meta-Top:` instead: their headings are not sections in
+    this schema's sense, and listing them here would put `## Capabilities` in a
+    trailer that the next skill reads as a promise.
     """
     lines = []
     for path in sorted(changed):
-        if path.endswith(f"/{INDEX}"):
+        if not is_area(project, path):
             continue
         before = {bare(t): b for t, b in sections(git_show(repo, path))}
         after = ({bare(t): b for t, b in
@@ -459,15 +536,16 @@ def section_modes(repo: Path, changed: list[str], product: str) -> list[str]:
     return lines
 
 
-def unbound_count(repo: Path, changed: list[str]) -> int:
+def unbound_count(repo: Path, project: str, changed: list[str]) -> int:
     """Touched sections still carrying no `(#<iid>)`.
 
-    What `/aw-grill-prd-to-wi` reads to know how much of this commit is still
-    waiting for a work item.
+    What `/aw-grill-meta-to-wis` reads to know how much of this commit is still
+    waiting for a work item -- and what its `unbound promise` gap row starts
+    from.
     """
     total = 0
     for path in changed:
-        if path.endswith(f"/{INDEX}") or not (repo / path).is_file():
+        if not is_area(project, path) or not (repo / path).is_file():
             continue
         for raw, _ in sections((repo / path).read_text(encoding="utf-8")):
             if bare(raw) != FOOTER and not IID.search(raw):
@@ -483,7 +561,7 @@ def report(findings: list[Finding], population: dict, fmt: str,
                           "findings": [f.as_dict() for f in findings]}, indent=2))
         return 1 if findings else 0
 
-    print(f"PRD check: {population['project']}, "
+    print(f"META-doc check: {population['project']}, "
           f"{len(population['changed'])} changed path(s), "
           f"{population['sections']} section(s) read")
     counts = {rule: sum(1 for f in findings if f.rule == rule) for rule in CHECKS}
@@ -512,16 +590,20 @@ def cmd_check(args: argparse.Namespace) -> int:
     project = resolve_project(repo, args.project)
     findings, population = collect(repo, project)
     launcher = " ".join(PINNED)
+    # The next command is `meta.py check`, not this script's own `commit`. The
+    # landing sequence has three steps and this is the first: naming `commit`
+    # here would print a command that skips the one the merged `/aw-check-meta`
+    # skill used to be.
     return report(findings, population, args.format,
-                  f'{launcher} ".claude/aw/scripts/prd.py" commit {project} '
-                  '--why <path>')
+                  f'{launcher} ".claude/aw/scripts/meta.py" check {project}'
+                  f' && {launcher} ".claude/aw/scripts/metadoc.py" commit '
+                  f'{project} --why <path>')
 
 
 def cmd_commit(args: argparse.Namespace) -> int:
     """Re-run every check, then write the one commit the run is allowed."""
     repo = leg.repo_root()
     project = resolve_project(repo, args.project)
-    product = f"{project}/{PRODUCT}"
     name = project.rsplit("/", 1)[1]
 
     why = Path(args.why)
@@ -556,12 +638,22 @@ def cmd_commit(args: argparse.Namespace) -> int:
     while body and not body[-1].strip():
         body.pop()
 
-    trailers = [f"PRD-Project: {project}"]
-    if f"{product}/{INDEX}" in changed:
-        trailers.append("PRD-Index: modified")
-    trailers += [f"PRD-Section: {line}"
-                 for line in section_modes(repo, changed, product)]
-    trailers.append(f"PRD-Unbound: {unbound_count(repo, changed)}")
+    # `Meta-` and not `PRD-`. The prefix is renamed rather than kept because
+    # the subject changed: these commits now carry README, STATUS and ROADMAP
+    # edits too, and a `PRD-Section:` trailer on a commit that moved a STATUS
+    # row would be describing something the name denies. Nothing in the history
+    # is orphaned by the rename -- at the changeover
+    # `git log --grep='^PRD-Project:'` matched zero commits.
+    trailers = [f"Meta-Project: {project}"]
+    for top in TOP:
+        if f"{project}/{top}" in changed:
+            trailers.append(f"Meta-Top: {top}")
+    for path in sorted(changed):
+        if path.endswith(f"/{INDEX}") and path.startswith(f"{project}/{AREAS}/"):
+            trailers.append(f"Meta-Index: {path}")
+    trailers += [f"Meta-Section: {line}"
+                 for line in section_modes(repo, project, changed)]
+    trailers.append(f"Meta-Unbound: {unbound_count(repo, project, changed)}")
     trailers += carried
 
     message = "\n".join([subject, "", *body, "", *trailers]).replace("\n\n\n", "\n\n")
@@ -585,26 +677,28 @@ def cmd_commit(args: argparse.Namespace) -> int:
     sha = subprocess.run([*leg.GIT, "rev-parse", "--short", "HEAD"],
                          cwd=repo, capture_output=True, text=True).stdout.strip()
     print(f"=> committed {sha}")
-    print(f"next.command: git log --grep='^PRD-Project: {project}'")
+    print(f"next.command: git log --grep='^Meta-Project: {project}'")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="prd.py",
+    parser = argparse.ArgumentParser(prog="metadoc.py",
                                      description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="verb", required=True)
 
     # Two verbs, and the split is the point. `check` reads and never writes, so
-    # it can be run at any moment of a PRD run without changing what the run
-    # is. `commit` writes exactly one thing -- a commit -- and re-runs `check`
-    # first, so the two cannot disagree about what landed.
-    p = sub.add_parser("check", help="refuse a PRD run that wrote outside "
-                                     "docs/product/ or left a section unshaped")
+    # it can be run at any moment of a META-doc run without changing what the
+    # run is. `commit` writes exactly one thing -- a commit -- and re-runs
+    # `check` first, so the two cannot disagree about what landed.
+    p = sub.add_parser("check", help="refuse a META-doc run that wrote outside "
+                                     "the project's four document paths, or "
+                                     "left a section unshaped")
     p.add_argument("project", help="`apps/<name>`, `libs/<name>`, or a bare name")
     p.add_argument("--format", choices=("text", "json"), default="text")
     p.set_defaults(func=cmd_check)
 
-    p = sub.add_parser("commit", help="check, then write the searchable PRD commit")
+    p = sub.add_parser("commit",
+                       help="check, then write the searchable META-doc commit")
     p.add_argument("project", help="`apps/<name>`, `libs/<name>`, or a bare name")
     p.add_argument("--why", required=True, metavar="PATH",
                    help="file whose first line is the subject `docs(<name>): ...` "

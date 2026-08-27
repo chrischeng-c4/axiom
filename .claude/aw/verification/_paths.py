@@ -182,13 +182,19 @@ IMPL_SCRIPT = SCRIPTS / "impl.py"
 # takes it as evidence that something regenerates what sits inside it.
 META_SCRIPT = SCRIPTS / "meta.py"
 
-# The PRD run's own refusal. It is not on the ladder either, and it is the
-# only script here whose subject is a directory of prose rather than a work
-# item: `/aw-grill-me-to-prd` writes `<project>/docs/product/`, and this
-# refuses a run that reached outside it, then writes the one commit that run
-# is allowed. Two verbs, `check` and `commit`, and the split is what keeps the
-# read from being able to repair what it measures.
-PRD_SCRIPT = SCRIPTS / "prd.py"
+# The META-doc run's own refusal. It is not on the ladder either, and it is the
+# only script here whose subject is prose rather than a work item:
+# `/aw-grill-me-to-meta` writes `<project>/README.md`, `STATUS.md`,
+# `ROADMAP.md` and `docs/**`, and this refuses a run that reached outside those
+# four, then writes the one commit that run is allowed. Two verbs, `check` and
+# `commit`, and the split is what keeps the read from being able to repair what
+# it measures.
+#
+# It was `prd.py` until 2026-08-27, when the allowlist widened from
+# `docs/product/` alone to all four. The file was renamed rather than joined by
+# a second one: a `PRD_SCRIPT` still pointing at a narrower scope would be a
+# constant that goes on describing the old boundary while nothing enforces it.
+METADOC_SCRIPT = SCRIPTS / "metadoc.py"
 
 # The phase scripts read TOML, `tomllib` landed in 3.11, and `python3` is 3.9 on at least
 # one machine this runs on. Both the skills and the gates below have to invoke it
