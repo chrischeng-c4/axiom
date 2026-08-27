@@ -126,8 +126,9 @@ that satisfies no consumer is not an answer yet.
 | Problem | what a user of this project cannot do, or gets wrong, today | it restates the title, or is under twenty words — `/aw-grill-me-to-epic` drafts its `## Problem` from this |
 | Who | which publisher, subscriber, operator, caller, or client sees the difference | "users" |
 | Promise | the observable behaviour, one sentence per thing a gate could refuse | it names behaviour no STATUS row or ROADMAP outcome owns |
+| Limits today | *(shipped only)* what the promise does not do yet, in the terms the next section will call its `Problem:` | it repeats a non-goal — a limit is something the project intends to close, a non-goal is not |
 | Non-goals | what a reader would assume is included and is not | empty |
-| Open | the decisions the epic will have to settle, each as a question | a default dressed as a question, or an answer the human already gave |
+| Open | *(future only)* the decisions the epic will have to settle, each as a question | a default dressed as a question, or an answer the human already gave |
 | Neighbours | which sections this one extends, narrows, repairs, or supersedes, in this file or another | the area has sections and the answer is "none" |
 | Owner | the STATUS row ids (shipped) or the one ROADMAP outcome id (future) | `grep` does not find the id in the file it is claimed from |
 
@@ -137,10 +138,14 @@ writing the answer here is answering for them.
 
 ## Write
 
-Every section has the same seven bullets, in this order, and nothing else:
+A section is one of two kinds, and its last bullet says which. A **future**
+promise names the one ROADMAP outcome that will measure it, and carries the
+decisions its epic still has to settle. A **shipped** promise names the
+STATUS rows that already measure it, and cannot carry those: shipping settled
+them. What it carries instead is what it does not do yet.
 
 ```
-## <title>
+## <title>                                   (future)
 
 - Problem: ...
 - Who: ...
@@ -148,14 +153,34 @@ Every section has the same seven bullets, in this order, and nothing else:
 - Non-goals: ...
 - Open: ...                                  (or: Open: none; <why>)
 - Neighbours: ...
-- Status rows: `<id>`, `<id>`                (shipped)
-- Outcome: `<id>`. Tracking: not assigned.   (future — one line, never wrapped)
+- Outcome: `<id>`. Tracking: not assigned.   (one line, never wrapped)
 ```
 
-A section carries exactly one of the last two. `Tracking: not assigned.`
-stays on one line because `/aw-grill-me-to-epic` finds it with `grep` when
-it binds the section, and a soft wrap hides it. A new section is appended at
-the end of its area, before `## Non-goals in this area`. Then:
+```
+## <title>                                   (shipped)
+
+- Problem: ...
+- Who: ...
+- Promise: ...                               (or: Promise, for now: — leaving)
+- Limits today: ...                          (omit only when there are none)
+- Non-goals: ...
+- Neighbours: ...
+- Status rows: `<id>`, `<id>`
+```
+
+Never borrow across the two. An `Open:` on a shipped section is a question
+nobody will answer, because no epic is coming for it; a `Limits today:` on a
+future one is a limit of something that does not exist. `prd.py check`
+refuses both by name.
+
+`Promise, for now:` is for a surface that is public today and leaving — the
+promise is scoped to the present tense rather than withdrawn, so no new
+caller builds on it while the callers it already has keep their contract.
+
+`Tracking: not assigned.` stays on one line because `/aw-grill-me-to-epic`
+finds it with `grep` when it binds the section, and a soft wrap hides it. A
+new section is appended at the end of its area, before
+`## Non-goals in this area`. Then:
 
 - the index gains or loses the section's row in `## Section index`, and a
   future section's row in `## Horizons`;
@@ -188,7 +213,7 @@ uv run --python 3.13 --no-project ".claude/aw/scripts/prd.py" check <project>
 
 `prd.py check` reads and changes nothing. It measures the working tree against
 HEAD: every changed path against the single allowlist `<project>/docs/product/`,
-every touched section against the seven bullets and their order, every STATUS
+every touched section against its own kind's bullets and their order, every STATUS
 row id and ROADMAP outcome id against the file it is claimed from, the section
 index against the area files in both directions, and the whole project against
 the product-document contract. It also refuses a heading or a `Tracking:` line
