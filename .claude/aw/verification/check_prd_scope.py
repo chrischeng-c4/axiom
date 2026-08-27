@@ -60,8 +60,9 @@ Covers the README capability `demo-thing`.
 - Problem: a caller cannot reach the thing today and gets a 404 instead of it.
 - Who: callers of the demo API.
 - Promise: the thing happens once and reports where it landed.
+- Limits today: it happens once and is never retried, so a caller that misses
+  the report has to ask for it again.
 - Non-goals: nothing beyond the single call is promised here.
-- Open: none; shipped.
 - Neighbours: none; first section of the area.
 - Status rows: `demo-shipped`
 
@@ -190,12 +191,41 @@ def _p4(repo):
                                              "## Future thing (#7)"))
 
 
-@case("P5: a section missing one of its seven bullets is refused", ["P5"])
+@case("P5: a section missing one of its kind's bullets is refused", ["P5"])
 def _p5(repo):
     edit_promise(repo)
     write_area(repo, area_text(repo).replace(
         "- Who: callers of the demo API.\n- Promise: the future thing happens,",
         "- Promise: the future thing happens,"))
+
+
+# The three cases below are the two-shape schema itself. A single rule read
+# off the skill's prose passed the first two and refused every shipped section
+# in the only real PRD in the checkout, so each shape now has a case that goes
+# red when the other one's bullets appear in it.
+@case("P5: a shipped section carrying Open: is refused", ["P5"])
+def _p5_open_on_shipped(repo):
+    edit_promise(repo)
+    write_area(repo, area_text(repo).replace(
+        "- Limits today: it happens once and is never retried, so a caller "
+        "that misses\n  the report has to ask for it again.",
+        "- Open: whether the report should be retried."))
+
+
+@case("P5: a future section carrying Limits today: is refused", ["P5"])
+def _p5_limits_on_future(repo):
+    edit_promise(repo)
+    write_area(repo, area_text(repo).replace(
+        "- Open: what shape the notification body takes.",
+        "- Limits today: there is no notification at all.\n"
+        "- Open: what shape the notification body takes."))
+
+
+@case("P5: a section with no owner bullet is refused", ["P5"])
+def _p5_no_owner(repo):
+    edit_promise(repo)
+    write_area(repo, area_text(repo).replace(
+        "- Status rows: `demo-shipped`\n", ""))
 
 
 @case("P6: an Outcome bullet wrapped before Tracking: is refused", ["P6"])
@@ -292,6 +322,19 @@ with tempfile.TemporaryDirectory() as raw:
     write_area(repo, area_text(repo).replace("## Future thing", "## Future thing (#7)"))
     check("unbound_count stops counting a section once it is bound",
           prd.unbound_count(repo, changed) == 1, str(prd.unbound_count(repo, changed)))
+
+    # -- the qualified promise --------------------------------------------
+    # `Promise, for now:` marks a surface that is public today and leaving.
+    # It is admitted by name, not by letting a key carry a comma, so both
+    # halves are asserted: the enumerated form normalises to `Promise`, and an
+    # unenumerated `<Key>, <words>:` is still not a bullet -- otherwise a
+    # `- Non-goals: Google-signed OIDC tokens, ...` line would become schema.
+    parsed = prd.bullets("- Promise, for now: it reads the journal directly.\n")
+    check("a qualified promise parses as Promise",
+          parsed == [("Promise", "it reads the journal directly.")], str(parsed))
+    parsed = prd.bullets("- Promise, later on: it will not.\n")
+    check("an unenumerated qualifier is not a bullet at all",
+          parsed == [], str(parsed))
 
     # -- the project resolver ---------------------------------------------
     repo = build(tmp / "resolve")
