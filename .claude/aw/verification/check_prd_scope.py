@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Prove `prd.py check` refuses each thing it claims to refuse.
+"""Prove `prd.py` refuses each thing it claims to refuse, then writes.
+
+Two halves. `check` reads and never writes, and most of this file plants one
+violation per case against a fixture that is otherwise clean. `commit` is the
+half that stages and writes, and it is exercised for real at the end -- a
+commit is made in the fixture and read back, because a trailer block nobody
+parsed is a claim about a format rather than a measurement of one.
 
 `prd.py` measures a *working tree*, which is exactly what a gate cannot
 assume: this checkout's tree is whatever the session left in it, and a gate
@@ -125,6 +131,8 @@ def build(tmp: pathlib.Path) -> pathlib.Path:
     (repo / "scripts/meta/project_docs_contract.py").write_text(VALIDATOR_STUB,
                                                                 encoding="utf-8")
     subprocess.run([*GIT, "init", "-q", "-b", "main"], cwd=repo, check=True)
+    for key, value in (("user.name", "gate"), ("user.email", "gate@local")):
+        subprocess.run([*GIT, "config", key, value], cwd=repo, check=True)
     subprocess.run([*GIT, "add", "-A"], cwd=repo, check=True,
                    capture_output=True)
     subprocess.run([*GIT, "-c", "user.name=gate", "-c", "user.email=gate@local",
@@ -322,6 +330,97 @@ with tempfile.TemporaryDirectory() as raw:
     write_area(repo, area_text(repo).replace("## Future thing", "## Future thing (#7)"))
     check("unbound_count stops counting a section once it is bound",
           prd.unbound_count(repo, changed) == 1, str(prd.unbound_count(repo, changed)))
+
+    # -- the commit ---------------------------------------------------------
+    # The verb that writes. Everything above measures `check`, which is the
+    # half that cannot damage anything; this is the half that stages and
+    # commits, and until it was exercised here the only proof it worked was
+    # having watched it once.
+    def run(repo, *argv):
+        return subprocess.run([sys.executable, str(PRD_SCRIPT), *argv],
+                              cwd=repo, capture_output=True, text=True)
+
+    def git_out(repo, *argv):
+        return subprocess.run([*GIT, *argv], cwd=repo,
+                              capture_output=True, text=True).stdout
+
+    repo = build(tmp / "commit")
+    edit_promise(repo)
+    (repo / PROJECT / "docs/product/README.md").write_text(
+        INDEX + "\n<!-- reordered -->\n", encoding="utf-8")
+    why = tmp / "why.txt"
+    why.write_text("docs(demo): the future thing carries an identifier\n\n"
+                   "A subscriber that gets two notifications cannot tell them\n"
+                   "apart, so the promise now names the identifier.\n\n"
+                   "Co-Authored-By: Someone <someone@local>\n", encoding="utf-8")
+    done = run(repo, "commit", PROJECT, "--why", str(why))
+    check("commit exits 0 on a clean run", done.returncode == 0,
+          done.stdout + done.stderr)
+
+    message = git_out(repo, "log", "-1", "--pretty=%B")
+    check("the subject is the human's line, not a generated one",
+          message.startswith("docs(demo): the future thing carries an identifier"),
+          message)
+    check("the project trailer names the resolved root",
+          "\nPRD-Project: apps/demo\n" in message, message)
+    check("a touched index is reported as its own trailer",
+          "\nPRD-Index: modified\n" in message, message)
+    check("the section trailer names the section and how it changed",
+          "\nPRD-Section: modified apps/demo/docs/product/area.md#Future thing\n"
+          in message, message)
+    check("the unbound count is the sections still carrying no issue number",
+          "\nPRD-Unbound: 2\n" in message, message)
+    # git reads trailers only as one contiguous run at the end of the message,
+    # so a `Co-Authored-By:` the human wrote mid-file has to be re-emitted
+    # after the generated block or it stops being a trailer at all.
+    trailers = git_out(repo, "log", "-1", "--pretty=%(trailers:only=true)")
+    check("a carried trailer survives as a trailer",
+          "Co-Authored-By: Someone <someone@local>" in trailers, trailers)
+    check("the carried trailer is last, after the generated block",
+          trailers.strip().splitlines()[-1].startswith("Co-Authored-By:"), trailers)
+
+    named = sorted(git_out(repo, "show", "--pretty=", "--name-only").split())
+    check("the commit stages exactly the allowlist",
+          named == [f"{PROJECT}/docs/product/README.md",
+                    f"{PROJECT}/docs/product/area.md"], str(named))
+    check("the tree is clean afterwards",
+          git_out(repo, "status", "--porcelain", "-uall").strip() == "",
+          git_out(repo, "status", "--porcelain", "-uall"))
+    # The whole point of the trailers: the next skill finds the run by them.
+    found = git_out(repo, "log", "--grep=^PRD-Project: apps/demo", "--pretty=%h")
+    check("the commit is findable by its project trailer",
+          len(found.split()) == 1, found)
+
+    # A run that `check` refuses must not reach `git commit`, or the refusal is
+    # a warning rather than a gate.
+    repo = build(tmp / "commit_refused")
+    edit_promise(repo)
+    (repo / PROJECT / "STATUS.md").write_text(STATUS + "\n<!-- touched -->\n",
+                                              encoding="utf-8")
+    before = git_out(repo, "rev-parse", "HEAD")
+    done = run(repo, "commit", PROJECT, "--why", str(why))
+    check("commit refuses a run that check refuses", done.returncode == 1,
+          done.stdout + done.stderr)
+    check("the refused run wrote no commit",
+          git_out(repo, "rev-parse", "HEAD") == before, "HEAD moved")
+    check("the refused run staged nothing",
+          git_out(repo, "diff", "--cached", "--name-only").strip() == "",
+          git_out(repo, "diff", "--cached", "--name-only"))
+
+    # The subject is the one part of the message the script judges, and both
+    # rules are about `git log --oneline` staying readable and addressed.
+    repo = build(tmp / "commit_subject")
+    edit_promise(repo)
+    bad = tmp / "bad.txt"
+    bad.write_text("the future thing carries an identifier\n", encoding="utf-8")
+    check("a subject not addressed to the project is refused",
+          run(repo, "commit", PROJECT, "--why", str(bad)).returncode != 0)
+    bad.write_text("docs(demo): " + "x" * 80 + "\n", encoding="utf-8")
+    check("a subject over 72 characters is refused",
+          run(repo, "commit", PROJECT, "--why", str(bad)).returncode != 0)
+    check("the tree is untouched by a refused subject",
+          git_out(repo, "diff", "--cached", "--name-only").strip() == "",
+          git_out(repo, "diff", "--cached", "--name-only"))
 
     # -- the qualified promise --------------------------------------------
     # `Promise, for now:` marks a surface that is public today and leaving.
