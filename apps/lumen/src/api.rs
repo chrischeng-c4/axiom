@@ -48,7 +48,7 @@ use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::reshard::ReshardBatch;
 use crate::routing::VirtualBucketShardMap;
-use crate::segment_restore::RestoreNotCommitted;
+use crate::segment_restore::{RestoreNotCommitted, RestoreUnavailable};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
     Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
@@ -2958,6 +2958,13 @@ impl From<anyhow::Error> for ApiErr {
                 e.to_string(),
             );
         }
+        if e.downcast_ref::<RestoreUnavailable>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "restore_unavailable",
+                e.to_string(),
+            );
+        }
         // #2516: a durable write path genuinely hit ENOSPC — the write
         // coordinator already flipped the sticky degraded gauge before
         // producing this error. Report 507 Insufficient Storage with the
@@ -3141,5 +3148,19 @@ mod restore_sink_tests {
             .unwrap();
         let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(envelope["error"], "restore_not_committed");
+    }
+
+    #[tokio::test]
+    async fn restore_unavailable_maps_to_stable_503_envelope() {
+        let response = ApiErr::from(anyhow::Error::new(RestoreUnavailable(
+            "NATS/Raft topology is unsupported".to_string(),
+        )))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(envelope["error"], "restore_unavailable");
     }
 }

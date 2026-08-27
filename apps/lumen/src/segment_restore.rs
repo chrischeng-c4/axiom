@@ -22,6 +22,41 @@ impl std::fmt::Display for RestoreNotCommitted {
 }
 impl std::error::Error for RestoreNotCommitted {}
 
+/// Durable restore is unavailable because this deployment cannot provide the
+/// embedded single-process mutation contract.
+#[derive(Debug)]
+pub(crate) struct RestoreUnavailable(pub(crate) String);
+
+impl std::fmt::Display for RestoreUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RestoreUnavailable {}
+
+/// Fail-closed restore sink for deployments that cannot perform embedded
+/// single-process segment restore.
+pub struct UnavailableRestoreSink {
+    reason: String,
+}
+
+impl UnavailableRestoreSink {
+    /// Create a sink that rejects every restore with the supplied reason.
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl RestoreSink for UnavailableRestoreSink {
+    async fn restore(&self, _snapshot: SnapshotV1) -> Result<()> {
+        Err(anyhow::Error::new(RestoreUnavailable(self.reason.clone())))
+    }
+}
+
 /// Restore sink for embedded segment persistence.
 pub struct SegmentRestoreSink {
     live_engine: Arc<Engine>,
@@ -583,5 +618,18 @@ mod tests {
         let fresh = SegmentRdbStore::new(fixture.dir.path()).unwrap();
         let loaded = fresh.load_current_generation().unwrap().unwrap();
         assert_collections(loaded.engine.as_ref(), &["restored"]);
+    }
+
+    #[tokio::test]
+    async fn unavailable_sink_returns_typed_error_without_mutating_live_state() {
+        let live = engine_with("old");
+        let sink = UnavailableRestoreSink::new("NATS/Raft topology is unsupported");
+
+        let error = sink
+            .restore(replacement_snapshot())
+            .await
+            .expect_err("unavailable restore must fail closed");
+        assert!(error.downcast_ref::<RestoreUnavailable>().is_some());
+        assert_collections(live.as_ref(), &["old"]);
     }
 }
