@@ -1,6 +1,6 @@
 ---
 name: aw:grill-me-to-prd
-description: Interview the human through AskUserQuestion until a product promise is stated as observable behaviour that a STATUS row or a ROADMAP outcome owns, then create, modify, or delete one `## <title>` section — or a whole capability area — of the owning project's `docs/product/`. Use before any epic exists for the promise; `/aw-grill-me-to-epic` carves the epic from the section afterwards. Writes only under `docs/product/`; never source, tests, STATUS, ROADMAP, or the tracker.
+description: Interview the human through AskUserQuestion until a product promise is stated as observable behaviour that a STATUS row or a ROADMAP outcome owns, then create, modify, or delete one `## <title>` section — or a whole capability area — of the owning project's `docs/product/`. Use before any epic exists for the promise; `/aw-grill-me-to-epic` carves the epic from the section afterwards. Writes only under `docs/product/`; never source, tests, STATUS, ROADMAP, or the tracker. Requires a clean `docs/` tree and hands back the change as a git diff.
 version: 0.1.0
 user-invocable: true
 ---
@@ -43,6 +43,32 @@ Then read what is there: the README `## Capabilities` index (its capability
 ids are what an area file's first paragraph names), every STATUS row id,
 every ROADMAP outcome id, and everything already under `docs/product/`.
 Never ask for what those already answer.
+
+## A clean tree, or there is no diff
+
+This skill is usually run against a project that already promises things, and
+what the human has to read afterwards is not the file — it is what changed in
+it. Git is what separates the two, and it can only do that while the change
+stands alone. Before the first question, run
+
+```
+git -c core.fsmonitor=false status --short -- <project>/docs
+```
+
+and require it to print nothing. The `-c core.fsmonitor=false` is not
+decoration: this checkout enables the file-system monitor, and a stalled
+daemon hangs every command that reads the index, indefinitely and without an
+error. If the listing is not empty, stop and print it. Somebody's uncommitted
+PRD or TD edit is already there, and an interview that writes on top of it
+produces one diff nobody can split back into two changes. Committing,
+stashing, or declaring this run a continuation of that work is the human's
+call, and this skill makes none of the three.
+
+The same cleanliness is what the work item needs later: the ladder's first
+phase refuses a dirty tree outright, and `docs/` is outside every phase's
+write root, so a PRD written and left uncommitted blocks the very item it
+exists for. Landing this run before the work starts is the point, not a
+courtesy.
 
 ## Three modes
 
@@ -137,8 +163,20 @@ the end of its area, before `## Non-goals in this area`. Then:
   capability id, and ends with `## Non-goals in this area`;
 - the `.gitkeep` under `docs/product/` goes when the first real file lands.
 
-Print the path and the section title to the human, and for a future section
-say that `/aw-grill-me-to-epic` opens its epic next.
+Then show the change instead of describing it:
+
+```
+git -c core.fsmonitor=false diff --stat -- <project>/docs/product
+git -c core.fsmonitor=false diff -- <project>/docs/product
+```
+
+Hand the human the diff itself. The section is new prose, but the file around
+it is a promise somebody already made, and only the diff says which is which.
+A deletion has no other evidence at all — the section is gone, and the diff is
+the sole record of what it said. Name the path and the section title beside
+it, and for a future section say that `/aw-grill-me-to-epic` opens its epic
+next. Leave the change uncommitted: what the human reads is the working tree
+against HEAD.
 
 ## Never
 
@@ -157,4 +195,8 @@ This addresses the agent running the interview, not the human answering it.
   a ROADMAP completion evidence so the prose reads better.
 - Never answer an `Open:` line yourself, and never drop one: an open question
   the section stops carrying is a decision somebody made without saying so.
+- Never commit, stash, or branch to reach the clean tree the run needs, and
+  never leave the run itself committed. The diff against HEAD is the whole
+  report, and both a tree this skill tidied and a change it landed are
+  changes the human never got to read.
 - Never delete a bound section, and never rename one.
