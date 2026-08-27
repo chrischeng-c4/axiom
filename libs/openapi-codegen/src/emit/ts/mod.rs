@@ -19,12 +19,20 @@ pub mod types_emit;
 
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput, TypeScriptTarget};
+use crate::{FileBearerAuth, GenOptions, GeneratedFile, GeneratedOutput, TypeScriptTarget};
 use anyhow::{Context, Result};
 
 /// Pure TS generation: spec JSON text → in-memory files. No filesystem access.
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
-    generate_impl(spec_json, opts, None)
+    generate_impl(spec_json, opts, None, None)
+}
+
+pub fn generate_with_file_bearer_auth(
+    spec_json: &str,
+    opts: &GenOptions,
+    auth: &FileBearerAuth,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, None, Some(auth))
 }
 
 /// Profile-aware TypeScript generation used by the public target-profile API.
@@ -33,13 +41,23 @@ pub fn generate_for_target(
     opts: &GenOptions,
     target: TypeScriptTarget,
 ) -> Result<GeneratedOutput> {
-    generate_impl(spec_json, opts, Some(target))
+    generate_impl(spec_json, opts, Some(target), None)
+}
+
+pub fn generate_for_target_with_file_bearer_auth(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: TypeScriptTarget,
+    auth: &FileBearerAuth,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, Some(target), Some(auth))
 }
 
 fn generate_impl(
     spec_json: &str,
     opts: &GenOptions,
     target: Option<TypeScriptTarget>,
+    auth: Option<&FileBearerAuth>,
 ) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
@@ -55,7 +73,7 @@ fn generate_impl(
     if opts.emit_client {
         files.push(GeneratedFile {
             rel_path: "runtime.ts".to_string(),
-            contents: client_emit::emit_runtime(opts.http_client),
+            contents: client_emit::emit_runtime(opts.http_client, auth),
         });
         files.push(GeneratedFile {
             rel_path: "client.ts".to_string(),

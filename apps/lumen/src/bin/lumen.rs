@@ -1264,7 +1264,8 @@ async fn issue(args: IssueArgs) -> Result<()> {
 /// (offline; no engine or server) and write it into `--out`.
 fn spec_gen(args: GenArgs) -> Result<()> {
     use openapi_codegen::{
-        generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
+        generate_for_target_with_file_bearer_auth, FileBearerAuth, FileBearerScheme, GenOptions,
+        HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
     };
 
     const TARGET_POLICY: &str = include_str!("../../clients/codegen.toml");
@@ -1290,7 +1291,17 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         // TanStack Query hooks are a TypeScript-only concern.
         emit_hooks: matches!(lang, Lang::Ts),
     };
-    let output = generate_for_target(&lumen::spec::openapi_json(), &opts, target)?;
+    let auth = FileBearerAuth::new(
+        "/var/run/secrets/kubernetes.io/serviceaccount/token",
+        ".svc.cluster.local",
+        [FileBearerScheme::Http, FileBearerScheme::Https],
+    )?;
+    let output = generate_for_target_with_file_bearer_auth(
+        &lumen::spec::openapi_json(),
+        &opts,
+        target,
+        &auth,
+    )?;
     output.write_to_dir(&args.out)?;
     for file in &output.files {
         let path = args.out.join(&file.rel_path);

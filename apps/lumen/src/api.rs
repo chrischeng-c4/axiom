@@ -710,18 +710,17 @@ impl Modify for SecurityAddon {
                         .scheme(HttpAuthScheme::Bearer)
                         .bearer_format("opaque")
                         .description(Some(
-                            "A short-lived, audience-bound Kubernetes ServiceAccount token, \
-                             obtained from the TokenRequest API. There is no configurable \
-                             credential source and no static token to issue: under \
-                             `auth: required` this header is resolved by the cluster itself, \
-                             through TokenReview for the caller's identity and \
-                             SubjectAccessReview for what that identity may do; under \
-                             `auth: disabled` it is ignored entirely. A Google access token, \
-                             ID token, ADC credential, or metadata-server token is never \
-                             accepted here. The token is a bearer credential, so it is only \
-                             ever sent over the instance's own TLS: production is a private \
-                             ClusterIP the serving pod terminates itself, with no Ingress, \
-                             Gateway, LoadBalancer, NodePort, or mesh in front of it.",
+                            "A short-lived Kubernetes ServiceAccount bearer token, verified by \
+                             TokenReview for caller identity and SubjectAccessReview for each \
+                             operation. Managed `LUMEN_AUTH=required` keeps the \
+                             `lumen.axiom.dev` audience and private TLS contract. Standalone \
+                             `LUMEN_AUTH=in-cluster` accepts the Kubernetes default \
+                             ServiceAccount token only on its private ClusterIP Service; the \
+                             generated clients attach that token only to an exact \
+                             `*.svc.cluster.local` URL. `LUMEN_AUTH=off` ignores the header. A \
+                             Google access token, ID token, ADC credential, or metadata-server \
+                             token is never accepted. Neither profile exposes Ingress, Gateway, \
+                             LoadBalancer, or NodePort.",
                         ))
                         .build(),
                 ),

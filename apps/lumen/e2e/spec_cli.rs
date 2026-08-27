@@ -409,9 +409,9 @@ fn llm_outline_maps_agent_topics() {
 
 /// The auth topic is what an agent reads before wiring a client, so it is the
 /// one place a stale credential story does the most damage (#3113 AC6). It must
-/// state both halves of the production contract — private ClusterIP TLS the
-/// listener terminates itself, and KSA identity the cluster answers — and stop
-/// handing out a registry file shape to fill in.
+/// distinguish the simple Standalone in-cluster contract from Managed private
+/// TLS and private-audience identity, and stop handing out a registry file
+/// shape to fill in.
 #[test]
 fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
     let auth = llm_auth_md();
@@ -419,7 +419,8 @@ fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
     for needle in [
         // Request identity: the cluster answers it, and only for a KSA.
         "LUMEN_AUTH=required",
-        "LUMEN_AUTH=disabled",
+        "LUMEN_AUTH=in-cluster",
+        "LUMEN_AUTH=off",
         "TokenReview",
         "SubjectAccessReview",
         "system:auth-delegator",
@@ -427,6 +428,11 @@ fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
         "lumencollections",
         "lumenadmin",
         "tokensSecret",
+        // Standalone: private cleartext Service and the default KSA token.
+        "LUMEN_URL=http://lumen.lumen.svc.cluster.local:7373",
+        "/var/run/secrets/kubernetes.io/serviceaccount/token",
+        "*.svc.cluster.local",
+        "explicit Authorization header wins",
         // Transport: private ClusterIP TLS, terminated by lumen itself.
         "LUMEN_URL=https://<instance>.<namespace>.svc:7373",
         "spec.servingTlsSecret",
@@ -449,9 +455,7 @@ fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
         .next()
         .expect("auth topic has a lumen-authored half");
 
-    // AC6: production is a private ClusterIP the listener terminates. An agent
-    // that reads "Ingress" here builds the one topology where the last hop is
-    // unauthenticated while every client-side check still passes.
+    // AC6: Managed is a private ClusterIP whose listener terminates TLS.
     assert!(
         lumen_half.contains(
             "There is no Ingress, no Gateway, no\nLoadBalancer, no NodePort, and no service mesh terminating TLS"
@@ -460,8 +464,8 @@ fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
          staying silent about them, or listing them separately, reads as a menu"
     );
     assert!(
-        lumen_half.contains("Production traffic is **not** published"),
-        "the topic must say what production is before it says what it is not"
+        lumen_half.contains("Managed traffic is **not** published"),
+        "the topic must state the Managed publication boundary"
     );
 
     // The registry file shape is gone, not merely deprecated in place: an

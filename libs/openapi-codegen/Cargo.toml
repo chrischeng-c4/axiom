@@ -26,3 +26,7 @@ toml = "0.8"
 [[test]]
 name = "target_profile_matrix"
 path = "e2e/target_profile_matrix.rs"
+
+[[test]]
+name = "file_bearer_auth"
+path = "e2e/file_bearer_auth.rs"
