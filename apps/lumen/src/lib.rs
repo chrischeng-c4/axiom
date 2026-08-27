@@ -95,6 +95,7 @@ mod segment;
 /// Compiled by default; selected at runtime via `--persistence=segment` (the
 /// default binary keeps the CBOR RDB).
 pub mod segment_rdb;
+pub mod segment_restore;
 /// Offline machine-readable self-description (`lumen spec`): OpenAPI / JSON
 /// schema, the query-shape cookbook, and the field/analyzer catalog — the
 /// agent-integration surface, emitted without a running server.

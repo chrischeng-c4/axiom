@@ -48,6 +48,7 @@ use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::reshard::ReshardBatch;
 use crate::routing::VirtualBucketShardMap;
+use crate::segment_restore::RestoreNotCommitted;
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
     Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
@@ -2950,6 +2951,13 @@ impl From<anyhow::Error> for ApiErr {
                 e.to_string(),
             );
         }
+        if e.downcast_ref::<RestoreNotCommitted>().is_some() {
+            return Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "restore_not_committed",
+                e.to_string(),
+            );
+        }
         // #2516: a durable write path genuinely hit ENOSPC — the write
         // coordinator already flipped the sticky degraded gauge before
         // producing this error. Report 507 Insufficient Storage with the
@@ -3119,5 +3127,19 @@ mod restore_sink_tests {
         let restored = live.snapshot().expect("restored snapshot");
         assert!(!restored.collections.contains_key("old"));
         assert!(restored.collections.contains_key("new"));
+    }
+
+    #[tokio::test]
+    async fn restore_not_committed_maps_to_stable_500_envelope() {
+        let response = ApiErr::from(anyhow::Error::new(RestoreNotCommitted(
+            "CURRENT was not moved".to_string(),
+        )))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(envelope["error"], "restore_not_committed");
     }
 }
