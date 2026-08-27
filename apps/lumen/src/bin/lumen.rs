@@ -3098,6 +3098,36 @@ struct SegmentCheckpointSink {
     aof: Option<lumen::coordinator::SharedAof>,
 }
 
+fn segment_restore_sink(
+    segment_mode: bool,
+    backend: WalBackend,
+    engine: Arc<Engine>,
+    store: Option<Arc<lumen::segment_rdb::SegmentRdbStore>>,
+    writer: Arc<dyn lumen::coordinator::WriteSink>,
+    aof: Option<lumen::coordinator::SharedAof>,
+) -> Result<Option<Arc<dyn lumen::api::RestoreSink>>> {
+    if !segment_mode {
+        return Ok(None);
+    }
+
+    const UNAVAILABLE_REASON: &str =
+        "durable segment restore requires wal=embedded, a configured data directory, and the local AOF";
+    if backend != WalBackend::Embedded {
+        return Ok(Some(Arc::new(
+            lumen::segment_restore::UnavailableRestoreSink::new(UNAVAILABLE_REASON),
+        )));
+    }
+
+    match (store, aof) {
+        (Some(store), Some(aof)) => Ok(Some(Arc::new(
+            lumen::segment_restore::SegmentRestoreSink::new(engine, store, writer, aof)?,
+        ))),
+        _ => Ok(Some(Arc::new(
+            lumen::segment_restore::UnavailableRestoreSink::new(UNAVAILABLE_REASON),
+        ))),
+    }
+}
+
 #[async_trait::async_trait]
 impl lumen::api::CheckpointSink for SegmentCheckpointSink {
     async fn checkpoint_now(&self) -> Result<bool> {
@@ -3504,6 +3534,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
     if let Some(verifier) = verifier {
         state = state.with_verifier(verifier);
+    }
+    if let Some(restore_sink) = segment_restore_sink(
+        segment_mode,
+        backend,
+        engine.clone(),
+        segment_store.clone(),
+        writer.clone(),
+        aof_writer.clone(),
+    )? {
+        state = state.with_restore_sink(restore_sink);
     }
     // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
     // when segment persistence is actually configured — the raft path has
@@ -4237,6 +4277,171 @@ mod tests {
         QueryNode, SearchRequest, TermQuery,
     };
     use std::collections::BTreeMap;
+
+    fn test_schema() -> CreateCollectionRequest {
+        serde_json::from_value(serde_json::json!({
+            "fields": { "value": { "type": "keyword" } }
+        }))
+        .expect("valid test schema")
+    }
+
+    fn test_writer(
+        engine: Arc<Engine>,
+    ) -> (
+        Arc<dyn lumen::coordinator::WriteSink>,
+        lumen::coordinator::SharedAof,
+        tempfile::TempDir,
+    ) {
+        let dir = tempfile::tempdir().expect("AOF tempdir");
+        let aof = Arc::new(std::sync::Mutex::new(
+            lumen::aof::AofWriter::open(dir.path().join("aof.log")).expect("open AOF"),
+        ));
+        let writer = lumen::coordinator::WriteCoordinator::start_from_with_aof(
+            Arc::new(MemWal::new()),
+            engine,
+            0,
+            aof.clone(),
+        );
+        (writer, aof, dir)
+    }
+
+    #[tokio::test]
+    async fn segment_restore_sink_is_not_selected_for_non_segment_mode() {
+        let engine = Arc::new(Engine::new());
+        let (writer, aof, _dir) = test_writer(engine.clone());
+        assert!(
+            segment_restore_sink(false, WalBackend::Embedded, engine, None, writer, Some(aof))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn segment_restore_sink_replaces_current_and_live_state() {
+        let live = Arc::new(Engine::new());
+        live.create_collection("old", test_schema()).unwrap();
+        let source = Engine::new();
+        source.create_collection("new", test_schema()).unwrap();
+        let snapshot = source.snapshot().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(lumen::segment_rdb::SegmentRdbStore::new(dir.path()).unwrap());
+        let aof = Arc::new(std::sync::Mutex::new(
+            lumen::aof::AofWriter::open(dir.path().join("aof.log")).unwrap(),
+        ));
+        let writer = lumen::coordinator::WriteCoordinator::start_from_with_aof(
+            Arc::new(MemWal::new()),
+            live.clone(),
+            0,
+            aof.clone(),
+        );
+        let sink = segment_restore_sink(
+            true,
+            WalBackend::Embedded,
+            live.clone(),
+            Some(store.clone()),
+            writer,
+            Some(aof),
+        )
+        .unwrap()
+        .expect("embedded segment sink");
+
+        sink.restore(snapshot).await.unwrap();
+        assert_eq!(live.list_collections().unwrap(), vec!["new".to_string()]);
+        let loaded = store.load_current_generation().unwrap().unwrap();
+        assert_eq!(
+            loaded.engine.list_collections().unwrap(),
+            vec!["new".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn segment_nats_restore_is_unavailable_over_real_router() {
+        use axum::body::Body;
+        use axum::http::{Method, Request, StatusCode};
+        use tower::ServiceExt;
+
+        let engine = Arc::new(Engine::new());
+        let (writer, aof, _dir) = test_writer(engine.clone());
+        let restore_sink = segment_restore_sink(
+            true,
+            WalBackend::Nats,
+            engine.clone(),
+            None,
+            writer.clone(),
+            Some(aof),
+        )
+        .unwrap()
+        .expect("fail-closed segment sink");
+        let state = lumen::api::AppState::with_components(
+            engine,
+            Arc::new(lumen::auth::AuthConfig::open()),
+            writer,
+        )
+        .with_restore_sink(restore_sink);
+        let response = lumen::api::router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/admin/restore")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"version": 1, "collections": {}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(envelope["error"], "restore_unavailable");
+    }
+
+    #[tokio::test]
+    async fn segment_restore_sink_is_unavailable_without_store_or_aof() {
+        use axum::body::Body;
+        use axum::http::{Method, Request, StatusCode};
+        use tower::ServiceExt;
+
+        let engine = Arc::new(Engine::new());
+        let writer = lumen::coordinator::WriteCoordinator::start_from(
+            Arc::new(MemWal::new()),
+            engine.clone(),
+            0,
+        );
+        let restore_sink = segment_restore_sink(
+            true,
+            WalBackend::Embedded,
+            engine.clone(),
+            None,
+            writer.clone(),
+            None,
+        )
+        .unwrap()
+        .expect("missing durable resources must install a fail-closed sink");
+        let state = lumen::api::AppState::with_components(
+            engine,
+            Arc::new(lumen::auth::AuthConfig::open()),
+            writer,
+        )
+        .with_restore_sink(restore_sink);
+        let response = lumen::api::router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/admin/restore")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"version": 1, "collections": {}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
 
     #[tokio::test]
     async fn checkpoint_shared_permit_blocks_exclusive_restore_until_checkpoint_finishes() {
