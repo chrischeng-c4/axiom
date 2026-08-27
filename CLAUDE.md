@@ -62,13 +62,20 @@ into the script that replaced it.
 
 ## Skills
 
-Twelve entry points. Each is invoked by a human. Lifecycle skills hand off to
+Ten entry points. Each is invoked by a human. Lifecycle skills hand off to
 a phase script that can refuse them; the PRD grill writes prose under the
 owning project's `docs/product/` before any work item exists, and hands it to
 `prd.py`, which refuses a run that wrote anywhere else and is the only writer
-of its commit; the two TD grills write under `docs/technical/` and hand off to
-nothing at all; `ask-user` writes nothing; the project-document checker uses
+of its commit; `ask-user` writes nothing; the project-document checker uses
 its own read-only validators and a clean-context reader.
+
+There is no technical-design step. Two `grill-*-to-td` skills wrote
+`docs/technical/<subsystem>.md` sections and ADRs beside them from 2026-08-26
+until 2026-08-27; both skills and the whole `docs/technical/` tree are deleted.
+Over that lifetime they produced no section at all and five ADRs, and the rule
+that already governed this — `.claude/rules/authoring/source-carries-its-own-design.md`
+— says the `.rs` file is the authoring surface. A design decision goes in the
+`//!` or `///` block of the module or type that owns it.
 
 They load as project skills out of `.claude/skills/`, not as the `aw` plugin,
 and that copy is what a session actually reads. Each directory is named
@@ -89,8 +96,6 @@ collapsed on 2026-08-21 by deleting the plugin.
 | `/aw-grill-me-to-epic` | a `docs/product/` section has no epic yet, or an epic's body is thin, stale, or unvalidatable | reads the unbound section, interviews you for the rest, then `epic.py create\|update` writes the body and the section heading gains ` (#<iid>)` |
 | `/aw-grill-epic-to-changes` | before driving an epic, or whenever its child set is suspect | opens what the epic promises but never opened, and resolves duplicates and misfiled children |
 | `/aw-grill-me-to-change` | a change must be opened, or its body is thin, stale, or unvalidatable | interviews you, then `change.py create\|update` writes the body |
-| `/aw-grill-epic-to-td` | an epic has its PRD and its design — premises, change points, interfaces, the e2e case that will judge it — is not yet written down | interviews you, then writes one `## <title> (#<iid>)` section into `docs/technical/<subsystem>.md`, plus an ADR under `docs/technical/adr/` for each decision that outlives the item |
-| `/aw-grill-change-to-td` | the same, for a change | the same |
 | `/aw-go-tdd-for-epic` | an epic's children are ready to implement | asks `epic.py order` for the dependency order and runs `/aw-go-tdd-for-change` on each child; stops when the script prints no order |
 | `/aw-go-tdd-for-change` | one change is ready to implement | drives it through the ladder below |
 | `/aw-prepare-goal` | a work item, or a bare intent, has to become a `/goal` the session's evaluator can actually decide | interviews you or reads the tracker through `epic.py`/`change.py`, then prints conditions for you to paste |
@@ -100,11 +105,11 @@ collapsed on 2026-08-21 by deleting the plugin.
 
 The usual sequence is `grill-me-to-prd` → `grill-me-to-epic` (which binds
 the section to the epic it opens) → `grill-epic-to-changes` →
-`grill-epic-to-td` → `grill-change-to-td` → `go-tdd-for-*`. The first step
-is a hard stop rather than a convention: `grill-me-to-epic` refuses to open
-an epic that no `docs/product/` section promises. The rest of the order is
-convention — nothing in the ladder checks that a TD exists. `prepare-goal`,
-`check-meta` and `ask-user` stand outside the lifecycle entirely.
+`go-tdd-for-*`. The first step is a hard stop rather than a convention:
+`grill-me-to-epic` refuses to open an epic that no `docs/product/` section
+promises. The rest of the order is convention — nothing downstream reads
+what came before it. `prepare-goal`, `check-meta` and `ask-user` stand
+outside the lifecycle entirely.
 
 - A grill never writes product source and never invents an answer you did not
   give. It offers only gates the repository already runs, and it stops asking
@@ -124,9 +129,6 @@ convention — nothing in the ladder checks that a TD exists. `prepare-goal`,
   section is bound to its epic — the heading gains ` (#<iid>)`, `Tracking:` gains the
   link — by `grill-me-to-epic`, in the same run that opens the epic, and by
   nothing else.
-- A `grill-*-to-td` writes only under the owning project's `docs/technical/`,
-  one `## <title> (#<iid>)` section per work item, into a file named for its
-  subsystem. Without a work item there is no section to write.
 - `go-tdd-for-epic` reads the order out of the epic's own `Depends On`
   column. A line beginning `!` means there is no order to follow: report it and
   stop. An epic body you edited to make the graph parse is an epic whose
@@ -252,17 +254,17 @@ red first. A phase does not start until its predecessor has landed its commit.
   surfaces, and a `// SPEC-MANAGED: <path>#<anchor>` header names a producer that
   no longer exists. The `.rs` file is the authoring surface; editing the markdown
   a header names propagates nowhere.
-- `docs/product/`, `docs/technical/` and `docs/technical/adr/` exist under every
-  `apps/*` and `libs/*` since 2026-08-26. `docs/product/` is where
-  `grill-me-to-prd` writes, before any work item exists, one `## <title>`
-  section per promise; the heading gains its ` (#<iid>)` when
-  `grill-me-to-epic` opens the epic. `docs/technical/` and `adr/` are where the
-  two `grill-*-to-td` skills write, one `(#<iid>)` section at a time. None of
-  them is `tech-design/` under a new name: nothing generates from them, no
-  source header points at them, and they are prose a human was interviewed
-  into. Nor are they ladder write roots — `C0` refuses a dirty `docs/` path
-  like any other path outside a phase's write root, so land a PRD or TD before
-  `e2e.py start`, not during.
+- `docs/product/` exists under every `apps/*` and `libs/*` since 2026-08-26.
+  It is where `grill-me-to-prd` writes, before any work item exists, one
+  `## <title>` section per promise; the heading gains its ` (#<iid>)` when
+  `grill-me-to-epic` opens the epic. The `docs/technical/` tree that landed
+  beside it on the same day is deleted as of 2026-08-27, ADRs included — a
+  design decision lives in the `.rs` file that owns it. `docs/product/` is
+  not `tech-design/` under a new name: nothing generates from it, no source
+  header points at it, and it is prose a human was interviewed into. Nor is
+  it a ladder write root — `C0` refuses a dirty `docs/` path like any other
+  path outside a phase's write root, so land a PRD before `e2e.py start`,
+  not during.
 
 ## Test Layout
 
