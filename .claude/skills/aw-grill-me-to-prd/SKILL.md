@@ -253,7 +253,7 @@ This addresses the agent running the interview, not the human answering it.
   `Tracking:` line. Binding is `/aw-grill-me-to-epic`'s, done in the same run
   that opens the epic, so a section and its number cannot drift apart.
 - Never write outside `docs/product/` of the named project. Not `src/**`,
-  not `e2e/**`, not `docs/technical/**`, not `STATUS.md`, not `ROADMAP.md`,
+  not `e2e/**`, not `STATUS.md`, not `ROADMAP.md`,
   not the README whose capability ids the areas stand on.
 - Never read or write the tracker here. A section describes a promise, not an
   issue; the work item that will carry the promise does not exist yet, and

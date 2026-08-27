@@ -60,7 +60,7 @@ import leg  # noqa: E402
 
 # The one directory a PRD run may write. Not a prefix list: the point of the
 # check is that there is exactly one, and every near miss -- `STATUS.md`,
-# `ROADMAP.md`, the project `README.md`, `docs/technical/`, `src/**` -- sits
+# `ROADMAP.md`, the project `README.md`, `src/**` -- sits
 # outside it. The project README was considered and left out: the areas stand
 # on its capability ids, so a run that edits both is a run that moved the
 # ground it is standing on in the same breath.
