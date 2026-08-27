@@ -189,9 +189,9 @@ class E2eInventory:
 def inventory(root: Path) -> dict[str, dict[str, Any]]:
     """Every case the project declares, keyed by id. Empty if none are.
 
-    The dict form is what `unit.py` and `logic.py` ask for -- they need the
-    command and nothing else -- and it is kept one-argument so that where the
-    inventory lives stays this module's business.
+    The dict form is what `impl.py` asks for -- it needs the command and
+    nothing else -- and it is kept one-argument so that where the inventory
+    lives stays this module's business.
     """
     return E2eInventory(root).cases
 

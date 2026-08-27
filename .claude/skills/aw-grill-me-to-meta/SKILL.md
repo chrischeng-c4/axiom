@@ -263,8 +263,9 @@ uv run --python 3.13 --no-project ".claude/aw/scripts/meta.py" check <project>
 ```
 
 `meta.py check` is the second half, and it exists in this sequence because
-the scope widened. It was `/aw-check-meta`, a skill of its own, until
-2026-08-27; folding it in was not tidying. `M1`–`M7` are the rules that
+the scope widened. It was reached through a skill of its own, `aw-check-meta`,
+until 2026-08-27; that skill is deleted and folding its verb in here was not
+tidying. `M1`–`M7` are the rules that
 refuse a META-doc fact whose owner is gone — a path that does not resolve, a
 gate command naming a cargo target that is not in the checkout, a
 self-graded status field — and until this run the three documents they cover

@@ -28,6 +28,39 @@ parser but never the printed line. This gate is the only place the two meet.
 It resolves each printed line using the emitting module's *own* constants --
 `PHASE` is read from the module, not restated here -- so a phase renamed in one
 place and not the other goes red rather than passing against a copy.
+
+A known gap, measured rather than guessed at, and left open rather than
+half-closed: `head = line.split()[0]` and `SCRIPT_TOKEN` only match a bare
+`<name>.py` token, so a command printed with the pinned-launcher prefix
+(`uv run --python 3.13 --no-project "<path>"`) never reaches the `is_file`
+check at all -- it falls into the `prose` bucket, uncompared. `metadoc.py`
+and `wis.py` print exactly that form on purpose: both reach `tomllib`
+through `leg.py`, and the interpreter a bare script name resolves to is 3.9
+on at least one machine here, where the failure is a `ModuleNotFoundError`
+that reads like a broken script rather than a wrong interpreter.
+
+Measured over this checkout: exactly two `next.command:` print sites are
+affected -- `metadoc.py`'s `cmd_check` and `wis.py`'s `cmd_gap`, both on
+their clean-run path (`=> CLEAN` / `=> ALIGNED`). Stripping a recognised
+launcher prefix at the print site would not repair either one, and that is
+why this gate does not attempt it: both scripts build the pinned-launcher
+string in the verb function (`cmd_check`, `cmd_gap`) and pass it as a plain
+`str` parameter into a shared `report(..., next_command)` helper, which is
+where the marker actually lives. This renderer resolves one print site at a
+time from the emitting module's globals plus an `Args()` stand-in for
+`args.*` -- it does not trace a value back through a function call -- so the
+free name `next_command` renders to the generic placeholder, not to text a
+prefix could be stripped from. A prefix-matching pass bolted onto this
+renderer would silently assert nothing for these two lines while still
+reading as "checked" in the command count.
+
+Closing this gap for real needs the renderer to follow a single-call
+parameter back to its one call site in the same module, evaluate the
+argument expression there, *then* strip a prefix matched against
+`metadoc.PINNED` before the `SCRIPT_TOKEN` check -- a second kind of lookup
+this file does not yet do. That is out of scope for this pass; the two
+lines are named here so the gap is a fact in the docstring rather than a
+number someone has to re-derive.
 """
 from __future__ import annotations
 

@@ -21,14 +21,15 @@ Give every instruction addressed to an agent — a `type=change` work item, a `S
 - Measure the gate's baseline before authoring it, and when that baseline is not green, name every tolerated pre-existing failure verbatim instead of stating a failure count.
 - Write `## Never` with a first line fixing the addressee, then both a must-not-touch list naming the near misses and a must-not-do list covering the false-green moves.
 - Do not add a section that no consumer refuses; an unrefusable section degenerates into a title echo.
-- Keep lifecycle progress out of authored prose: EC/TD/CB submission and verification belong to the `ChangeLifecycle` carrier, whose evidence binds to an artifact digest tuple rather than a boolean.
-- Treat the gate command named in `## Acceptance` as the verifier that produces the lifecycle evidence binding; the two layers meet nowhere else.
+- Keep phase progress out of authored prose. The `e2e` and `impl` commits carry it in their `E2E-Red:`, `Impl-Red:`, and `Impl-Contract:` trailers, and each trailer names the tests that were measured red rather than asserting a boolean.
+- Name in `## Acceptance` the same command the project's own suite runs. Nothing cross-checks the two, so a gate command that is a strict subset of the declared suite is a gate that was never run over the rest of it.
 
 ## Verification
 
 - Read back the authored artifact and confirm each section states its refusal condition rather than restating the title.
 - Run the `## Acceptance` negative control and confirm the gate goes red before accepting it as green.
-- Run `aw wi validate` for a work item, and `aw meta check` after editing this rule.
+- Run `.claude/aw/scripts/change.py validate <iid>` for a work item, or `--body-file <path>` for a body that is not on the tracker yet.
+- Nothing regenerates this file. It and `.claude/rules/authoring/agent-instruction-ghan.md` are two hand-maintained copies of one rule, so editing one of them is half an edit.
 
 ## References
 

@@ -53,15 +53,13 @@ SKILLS_DIR = REPO / ".claude/skills"
 # literally `aw-<skill>` and is invoked as `/aw-<skill>`, while the frontmatter
 # `name:` carries the label `aw:<skill>` that the skill list displays. Two
 # prefixes, one namespace: the dash form is what a human types, the colon form
-# is what they read. Naming the eleven here rather than globbing keeps a stray
+# is what they read. Naming the six here rather than globbing keeps a stray
 # directory from silently joining the population under test.
 NAMESPACE = "aw"
 SKILL_PREFIX = f"{NAMESPACE}-"      # directory and invocation: aw-<skill>/ -> /aw-<skill>
 DISPLAY_PREFIX = f"{NAMESPACE}:"    # frontmatter name: the listed label aw:<skill>
-SKILLS = ("ask-user", "check-meta", "go-tdd-for-change", "go-tdd-for-epic",
-          "grill-change-to-td", "grill-epic-to-changes", "grill-epic-to-td",
-          "grill-me-to-change", "grill-me-to-epic", "grill-me-to-prd",
-          "prepare-goal")
+SKILLS = ("ask-user", "e2e-for-wi", "grill-me-to-meta", "grill-meta-to-wis",
+          "impl-for-wi", "prepare-goal")
 
 
 def skill_dir(skill: str) -> pathlib.Path:
@@ -85,13 +83,39 @@ def skill_label(skill: str) -> str:
 # who cannot tell that from a broken checkout.
 #
 # What replaced them is `e2e -> impl`, driven by each verb's printed
-# `next.command` rather than by a skill per step. Two skills front that ladder,
-# one per work-item type: `go-tdd-for-change` runs the three phases on one
-# change, and `go-tdd-for-epic` asks `epic.py order` for the children's
-# sequence and runs the change skill on each. The semantic review that sat
-# between the phases -- two skills that routed the contract and then the code
-# to a second model for a verdict -- left the ladder on 2026-08-26, and the
-# `review-prompt` and `verdict` verbs went with it.
+# `next.command` rather than by a skill per step. Two skills front that
+# ladder now, one per PHASE rather than one per work-item type: `e2e-for-wi`
+# runs the e2e phase's four verbs, and `impl-for-wi` runs impl's five. Each
+# handles both work-item types itself -- a change runs the verbs on that one
+# iid, an epic asks `epic.py order --open-only` for the children's sequence
+# and runs the same verbs on each child in turn. The semantic review that
+# used to sit between the phases -- two skills that routed the contract and
+# then the code to a second model for a verdict -- left the ladder on
+# 2026-08-26, and the `review-prompt` and `verdict` verbs went with it.
+#
+# The technical-design step is gone the same way. `grill-change-to-td` and
+# `grill-epic-to-td` wrote `docs/technical/<subsystem>.md` sections and ADRs
+# beside them; both skills and the whole `docs/technical/` tree are deleted,
+# and a design decision now lives in the `//!` or `///` block of the module
+# or type that owns it (`.claude/rules/authoring/source-carries-its-own-design.md`).
+# `check-meta` is gone too, but not by deletion -- it folded into
+# `grill-me-to-meta`, whose three-step landing sequence runs `meta.py check`
+# as its second step. The check that used to be a skill a human had to
+# remember to run separately is now a step the landing sequence cannot skip.
+#
+# `grill-me-to-prd` is `grill-me-to-meta` under its current name. Its write
+# allowlist widened in the same rename from one path (`docs/product/`) to
+# four (`README.md`, `STATUS.md`, `ROADMAP.md`, `docs/**`); see the comment
+# above `METADOC_SCRIPT` below for what enforces that.
+#
+# `grill-me-to-epic`, `grill-me-to-change` and `grill-epic-to-changes` are one
+# skill now: `grill-meta-to-wis` runs `wis.py gap <project>` for the seven
+# G1..G7 rows of what a project's `docs/product/` promises and its work-item
+# set disagree about, then reorganises the work-item set through
+# `epic.py create|update` and `change.py create|update` to close the gap. It
+# also keeps the epic-binding step the deleted `grill-me-to-epic` used to
+# own: the `## <title>` heading gains ` (#<iid>)` and the `Tracking:` line
+# gains the link, in the same run that opens the epic.
 
 # Two kinds of skill, and the difference decides which rules can apply.
 #
@@ -102,24 +126,30 @@ def skill_label(skill: str) -> str:
 # A PROCEDURAL skill runs a fixed sequence and reads an exit code. For those the
 # same rule is *inverted* -- naming `AskUserQuestion` is the defect, because the
 # only thing left to ask about at a gate is whether the gate counts. Exempting
-# them instead would leave three skills that no per-skill rule can refuse.
+# them instead would leave the two ladder skills that no per-skill rule can
+# refuse.
 #
 # The two lists are asserted exhaustive and disjoint over SKILLS, so a new skill
 # cannot join without someone deciding which kind it is.
 #
-# The two `go-tdd-*` skills are procedural despite the phases they drive being
-# model work rather than command work -- so is `check-meta`. The line is not
-# "does a model write something", it is whether the skill has anything left to
-# ask. By the time the ladder starts, the work item has already said what the
-# change is; what remains is a fixed sequence of verbs and the exit codes they
+# `e2e-for-wi` and `impl-for-wi` are procedural despite the phases they drive
+# being model work rather than command work. The line is not "does a model
+# write something", it is whether the skill has anything left to ask. By the
+# time either phase starts, the work item has already said what the change
+# is; what remains is a fixed sequence of verbs and the exit codes they
 # return, and the only question a gate could raise is whether it counts.
-# The two `grill-*-to-td` skills are interviewing for the same reason the
-# grills that open work items are: the body says what the change is, and the
-# document they write says how it is built -- which the body does not carry,
-# and only the human can supply. `grill-me-to-prd` runs before any work item
-# exists, so everything it writes is in the human's head. `ask-user` is
-# interviewing by definition: asking is the whole of what it does, and a body
-# without AskUserQuestion would be a skill that does nothing.
+#
+# `grill-me-to-meta` is interviewing for the reason `grill-me-to-prd` was: it
+# runs before any work item exists, so everything it writes -- across all
+# four paths in its allowlist now, not the single `docs/product/` path it
+# used to be -- is in the human's head, including how to resolve whatever
+# `meta.py check` surfaces in the landing sequence's second step.
+# `grill-meta-to-wis` is interviewing for a parallel reason: `wis.py gap`
+# prints what is missing, not what to do about it -- only the human can say
+# whether a gap closes by opening a change, merging two issues, or closing
+# one as no longer wanted. `ask-user` is interviewing by definition: asking
+# is the whole of what it does, and a body without AskUserQuestion would be a
+# skill that does nothing.
 # `prepare-goal` is interviewing on the strength of its second route rather
 # than its first. Given an iid it reads a body that a validator already refused
 # once, and there is nothing left to ask; given none, everything the condition
@@ -128,20 +158,19 @@ def skill_label(skill: str) -> str:
 # human's head. Classifying it procedural would forbid the very tool that route
 # is made of, and would leave the no-iid case answered by whatever the agent
 # guessed the human meant.
-INTERVIEWING = ("ask-user", "grill-change-to-td", "grill-epic-to-changes",
-                "grill-epic-to-td", "grill-me-to-change", "grill-me-to-epic",
-                "grill-me-to-prd", "prepare-goal")
-PROCEDURAL = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic")
+INTERVIEWING = ("ask-user", "grill-me-to-meta", "grill-meta-to-wis",
+                "prepare-goal")
+PROCEDURAL = ("e2e-for-wi", "impl-for-wi")
 
 # The nine scripts sit in one directory, not inside a skill. They were under
-# `wi-epic-grill/scripts/` (now `grill-me-to-epic`) while it was the only skill
-# running them, which made
+# `wi-epic-grill/scripts/` (then `grill-me-to-epic`, now folded into
+# `grill-meta-to-wis`) while it was the only skill running them, which made
 # the epic grill look like their owner; reconcile already reached across into
 # it, and the change grill would have been a second skill reaching into a third
 # one's directory. A shared dependency belongs beside the skills, not inside
 # whichever one happened to need it first.
 #
-# They also cannot be split across the eleven skill directories, which is what
+# They also cannot be split across the six skill directories, which is what
 # the plugin deletion had to decide. `e2e.py` and `impl.py` each load `leg.py`
 # by `Path(__file__).parent / "leg.py"`, `impl.py` loads `e2e.py` the same way,
 # and `leg.change_module()` loads `change.py` the same way. One directory is a
@@ -158,14 +187,16 @@ ENGINE = SCRIPTS / "workitem.py"
 # had to be able to go red for the right reason: "the script is missing" rather
 # than "this module has no such attribute", which is a red about the gate.
 #
-# There were three until 2026-08-27. `unit.py` and `logic.py` are one script
-# now: in Rust a colocated test and the code under it are the same tree and are
-# edited together, so the filename boundary between them cost an honest TDD
-# loop more than it bought. What it did buy -- a named red measured before
-# anything could satisfy it -- moved onto `impl.py`'s `red` verb, which records
-# the failing names mid-phase instead of on a commit. One constant rather than
-# two aliases: two names for one script would let a gate go on claiming to
-# cover a phase that no longer exists.
+# There were three scripts behind this pair until 2026-08-27, when the two
+# that used to split "test skeleton" from "implementation" were merged into
+# the one `impl.py` now named below: in Rust a colocated test and the code
+# under it are the same tree and are edited together, so the filename
+# boundary between them cost an honest TDD loop more than it bought. What it
+# did buy -- a named red measured before anything could satisfy it -- moved
+# onto `impl.py`'s `red` verb, which records the failing names mid-phase
+# instead of on a commit. One constant rather than two aliases: two names for
+# one script would let a gate go on claiming to cover a phase that no longer
+# exists.
 E2E_SCRIPT = SCRIPTS / "e2e.py"
 IMPL_SCRIPT = SCRIPTS / "impl.py"
 
@@ -195,6 +226,13 @@ META_SCRIPT = SCRIPTS / "meta.py"
 # a second one: a `PRD_SCRIPT` still pointing at a narrower scope would be a
 # constant that goes on describing the old boundary while nothing enforces it.
 METADOC_SCRIPT = SCRIPTS / "metadoc.py"
+
+# The read-only work-item/promise gap reader, and also not on the ladder: it
+# owns no work item and writes nothing. `grill-meta-to-wis` runs its one verb,
+# `gap <project>`, for the seven G1..G7 rows before reorganising the work-item
+# set through `epic.py` / `change.py` -- every write the skill makes goes
+# through those two, never through this one.
+WIS_SCRIPT = SCRIPTS / "wis.py"
 
 # The phase scripts read TOML, `tomllib` landed in 3.11, and `python3` is 3.9 on at least
 # one machine this runs on. Both the skills and the gates below have to invoke it

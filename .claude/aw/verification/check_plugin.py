@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Re-runnable checker for the eleven `aw-*` skills and the scripts they drive.
+"""Re-runnable checker for the six `aw-*` skills and the scripts they drive.
 
 The name is historical: `aw` was a Claude Code plugin at `plugins/aw/` until
 2026-08-21, and this file checked its bundle. The plugin is deleted -- the
-scripts are at `.claude/aw/scripts/`, the eleven skills load as project skills
+scripts are at `.claude/aw/scripts/`, the six skills load as project skills
 out of `.claude/skills/aw-*/`, and the manifest assertions here were inverted
 into absence assertions so a half-restored plugin goes red instead of quietly
-loading a second copy of all eleven.
+loading a second copy of all six. There were eleven skills and a three-phase
+`wi -> e2e -> unit -> logic` ladder until 2026-08-27, when `unit.py` and
+`logic.py` merged into `impl.py` and four skills -- the epic and change
+grills, the two `go-tdd-for-*` runners -- folded into `grill-meta-to-wis` and
+the two per-phase skills below; that population, not this one, is the history
+worth keeping legible.
 
 Two assertion classes here are not obvious and are the reason this file exists.
 
@@ -46,7 +51,7 @@ from _paths import (CHANGE_SCRIPT, DISPLAY_PREFIX, INTERVIEWING,  # noqa: E402
                     METADOC_SCRIPT, META_SCRIPT, PINNED_PYTHON,
                     E2E_SCRIPT, IMPL_SCRIPT, PROCEDURAL, REPO,
                     SCRIPT, SCRIPTS, SKILLS, SKILLS_DIR, SKILL_PREFIX,
-                    pinned_interpreter, skill_dir,
+                    WIS_SCRIPT, pinned_interpreter, skill_dir,
                     skill_invocation, skill_label)
 
 # Each bundled script, and the verbs the skills must name for it. The two
@@ -92,6 +97,11 @@ REQUIRED = {
     # `/aw-grill-meta-to-wis` to read; `commit` with no `check` named is a
     # skill that never says the run is measurable before it lands.
     "metadoc.py": {"check", "commit"},
+    # The read-only promise/work-item gap reader. One verb, and it is required
+    # for the same reason `meta.py check` is: `grill-meta-to-wis` opens with
+    # this table, and a skill that reorganised the work-item set without
+    # printing it first would be judgement with no measurement under it.
+    "wis.py": {"gap"},
 }
 
 # Verbs a script exposes that no skill drives, and why. A silent gap between
@@ -111,30 +121,39 @@ UNUSED = {
     "impl.py": {},
     "meta.py": {},
     "metadoc.py": {},
+    "wis.py": {},
 }
 SCRIPT_PATHS = {"epic.py": SCRIPT, "change.py": CHANGE_SCRIPT,
                 "e2e.py": E2E_SCRIPT, "impl.py": IMPL_SCRIPT,
-                "meta.py": META_SCRIPT, "metadoc.py": METADOC_SCRIPT}
+                "meta.py": META_SCRIPT, "metadoc.py": METADOC_SCRIPT,
+                "wis.py": WIS_SCRIPT}
 
 # Scripts that cannot run under a bare `python3`, and the pin the skills must
 # carry. Derived from the source rather than listed by hand: a script that grows
 # a `tomllib` import joins this set on its own, and one that loses it leaves.
 #
 # Transitively, and that is not tidiness. `logic.py` imported no TOML itself and
-# was therefore exempt from the assertion below, while dying under 3.9 anyway --
-# it loaded `unit.py` through `leg.sibling`, and the import happened there. A
-# direct-import-only derivation exempts exactly the scripts whose dependence is
-# hardest to see by reading them, which is the opposite of what a derivation is
-# for. The edge is the `sibling("<name>", ...)` call, closed to a fixed point.
+# was therefore exempt from a direct-import-only derivation, while dying under
+# 3.9 anyway -- it loaded `unit.py` through `leg.sibling`, and the import
+# happened there. A direct-import-only derivation exempts exactly the scripts
+# whose dependence is hardest to see by reading them, which is the opposite of
+# what a derivation is for.
 #
-# No script has that shape today. `logic.py` and `unit.py` merged into
-# `impl.py` on 2026-08-27, and the merged script imports `tomllib` directly, so
-# the transitive closure below currently adds nobody. That is the reason the
-# positive control further down stopped naming a script: a control that
-# depended on some script happening to be transitive is a control that dies
-# silently the moment that script is refactored, which is exactly what
-# happened. It runs the closure over a synthetic graph instead.
+# There are two edge shapes now, not one. `impl.py` still reaches `e2e.py`
+# through `leg.sibling("e2e", ...)` -- a dynamic, path-based load a static
+# reader could miss, which is what `SIBLING_EDGE` exists to catch. `wis.py`,
+# new on 2026-08-27, reaches `change.py`, `e2e.py`, `epic.py`, `meta.py` and
+# `metadoc.py` through plain top-level `import e2e` statements instead -- the
+# scripts directory sits on `sys.path` for exactly this reason, so a sibling
+# script is importable like any module. That edge is not hard to see -- a
+# reader can follow it with two file reads -- but it is still an edge the
+# fixed point below has to close over, or `wis.py` would sit outside
+# `NEEDS_PIN` while actually needing 3.11+ for `tomllib` two imports away.
+# `IMPORT_EDGE` catches it; the intersection with `set(SCRIPT_PATHS)` in
+# `DEPENDS` below is what keeps `import argparse` and the rest of the standard
+# library from ever being read as an edge.
 SIBLING_EDGE = re.compile(r'sibling\(\s*"([a-z0-9_]+)"')
+IMPORT_EDGE = re.compile(r'^import ([a-z][a-z0-9_]*)\b', re.M)
 # Tolerant of a missing file on purpose. A script is named in `SCRIPT_PATHS`
 # before it is written, so that the gate driving it can be watched going red
 # for the right reason first. Reading eagerly here would make that red a
@@ -143,7 +162,8 @@ SIBLING_EDGE = re.compile(r'sibling\(\s*"([a-z0-9_]+)"')
 # as an absent script. The absence is asserted explicitly below instead.
 SOURCES = {name: (path.read_text(encoding="utf-8") if path.is_file() else "")
            for name, path in SCRIPT_PATHS.items()}
-DEPENDS = {name: {f"{s}.py" for s in SIBLING_EDGE.findall(text)} & set(SCRIPT_PATHS)
+DEPENDS = {name: ({f"{s}.py" for s in SIBLING_EDGE.findall(text)} |
+                  {f"{s}.py" for s in IMPORT_EDGE.findall(text)}) & set(SCRIPT_PATHS)
            for name, text in SOURCES.items()}
 NEEDS_PIN = {name: path for name, path in SCRIPT_PATHS.items()
              if re.search(r"^import tomllib\b", SOURCES[name], re.M)}
@@ -190,7 +210,7 @@ def check(label, ok, detail=""):
 # Deleted on 2026-08-21. These four rows used to assert a `marketplace.json`,
 # a `plugin.json`, a kebab-case plugin name and a relative in-repo source that
 # resolved to the bundle. They are now the inverse assertion: those files must
-# NOT be back, because a half-restored plugin would load a second copy of eleven
+# NOT be back, because a half-restored plugin would load a second copy of six
 # skills that already load out of `.claude/skills/`, and the two copies would
 # drift with nothing detecting it -- which is the exact condition the deletion
 # was for.
@@ -202,7 +222,7 @@ if settings.is_file():
     check("settings.json enables no plugin",
           "enabledPlugins" not in settings.read_text(encoding="utf-8"))
 
-# -- the eleven skills and the nine scripts --------------------------------
+# -- the six skills and the seven scripts -----------------------------------
 for skill in SKILLS:
     check(f"{skill}: SKILL.md is on disk", (skill_dir(skill) / "SKILL.md").is_file())
 for name, path in sorted(SCRIPT_PATHS.items()):
@@ -346,11 +366,29 @@ for skill in PROCEDURAL:
         check(f"{skill}: names no AskUserQuestion, because a gate has nothing to ask",
               "AskUserQuestion" not in bodies[skill])
 
-# Positive control: the transitive half of the pin derivation. Run over a
-# synthetic graph rather than over the live scripts, because as of 2026-08-27
-# the live graph has no transitive member -- `impl.py` imports `tomllib`
-# directly, and it is the only script carrying a `sibling` edge into one that
-# does.
+# Positive control: the transitive half of the pin derivation. Still run over
+# a synthetic graph rather than the live scripts, because a control that reads
+# its assertion off whatever happens to be live today measures the graph's
+# current shape, not the closure logic that is supposed to survive the next
+# script joining it.
+#
+# The live graph does carry a transitive member now, which is exactly the
+# case that stayed unmeasured before this rewrite. `impl.py` imports
+# `tomllib` directly -- it carries the same 3.11 version guard `e2e.py` and
+# `meta.py` do -- so it lands in `NEEDS_PIN` on that import alone; its
+# `sibling("e2e", ...)` call is a second, redundant edge into a member that
+# is already direct, which is what `SIBLING_EDGE` exists to catch regardless
+# of whether it is load-bearing this week. `wis.py`, new on 2026-08-27, is
+# the case that *is* load-bearing: it imports no TOML itself and reaches
+# `tomllib` only through a plain top-level `import e2e` -- the edge
+# `IMPORT_EDGE` exists to catch -- so it lands in `NEEDS_PIN` purely because
+# `e2e.py` imports `tomllib` directly and the fixed point below grows through
+# that edge to find it. The live closure measured against the current
+# scripts is `{e2e.py, impl.py, meta.py, wis.py}`. The synthetic graph
+# exercises that same growth without depending on which script happens to
+# carry which edge this week; "the live derivation is that same closure"
+# below is the separate assertion that ties this proof back to what is
+# actually live.
 #
 # The previous version asserted `"logic.py" in NEEDS_PIN`, and that is the
 # failure mode being fixed rather than a style change: it measured the

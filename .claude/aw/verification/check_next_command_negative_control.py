@@ -48,7 +48,7 @@ CHECK = HERE / "check_next_command.py"
 LAUNCH = pinned_interpreter()
 
 WORKITEM = SCRIPTS / "workitem.py"
-UNIT = SCRIPTS / "unit.py"
+IMPL = SCRIPTS / "impl.py"
 E2E = SCRIPTS / "e2e.py"
 
 # (label, [(target, anchor, mutant), ...], the (emitter, refuser) pairs it must
@@ -86,15 +86,17 @@ MUTATIONS = [
      None),
     # The second one, from the other direction: a command spelled by hand rather
     # than built by `phase_command`, omitting a flag the receiver requires.
-    # Re-pointed from `leg.py` to `unit.py` on 2026-08-26: the one line `leg.py`
-    # printed sat inside the semantic review, which left the ladder that day.
-    # Every phase's `test` still prints its own `commit` line by hand, so the
-    # shape is alive; `unit.py` is the target because it is the phase this round
-    # did not otherwise touch.
+    # Re-pointed from `leg.py` to `unit.py` on 2026-08-26, and from `unit.py` to
+    # `impl.py` on 2026-08-27 when `unit.py` and `logic.py` were deleted and
+    # merged into it. Every phase's `test` still prints its own `commit` line
+    # by calling `leg.phase_command`, so the shape under test is what happens
+    # when a future edit spells that call out by hand instead and drops
+    # `--project` in the process; `impl.py` is the target because it is the
+    # phase this round's refactor touched most.
     ("printed-command-drops-required-flag",
-     [(UNIT, "{leg.phase_command(PHASE, args.project, 'commit', args.wi)}",
+     [(IMPL, "{leg.phase_command(PHASE, args.project, 'commit', args.wi)}",
        "{PHASE}.py commit {args.wi}")],
-     {("unit.py", "unit.py")},
+     {("impl.py", "impl.py")},
      None),
     # The branch neither real defect reached: a command naming a script that is
     # not there at all. Without this the `is_file` arm is never measured, and a
@@ -113,7 +115,7 @@ MUTATIONS = [
     # not notice the assertion being deleted -- the first row would keep passing,
     # since it repairs the table it would otherwise trip.
     ("phase-table-drift-refused-at-import",
-     [(WORKITEM, 'LEGS = ("e2e", "unit", "logic")', 'LEGS = ("ec", "td", "cb")')],
+     [(WORKITEM, 'LEGS = ("e2e", "impl")', 'LEGS = ("ec", "td", "cb")')],
      set(),
      "a phase table names something the ladder does not"),
 ]
