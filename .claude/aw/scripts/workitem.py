@@ -459,7 +459,7 @@ def cmd_adopt(args) -> int:
 
     `create` does this for itself. This verb exists for work items opened
     through `gh issue create` directly rather than through this script -- the
-    child work items `/aw-grill-epic-to-changes` opens -- where nothing else is
+    child work items `/aw-grill-meta-to-wis` opens -- where nothing else is
     positioned to complete the rename.
     """
     path = Path(args.path)
