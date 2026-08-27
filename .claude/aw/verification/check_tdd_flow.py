@@ -511,6 +511,25 @@ def git(work: Path, *args: str) -> subprocess.CompletedProcess:
                           cwd=work, capture_output=True, text=True)
 
 
+def git_checked(work: Path, *args: str) -> subprocess.CompletedProcess:
+    """`git`, refusing a silent no-op.
+
+    Every fixture-setup commit this file drives directly (as opposed to one
+    landed by `e2e.py`/`impl.py` themselves) has to actually move `HEAD`: a
+    `git add` that matches nothing or a `git commit` with nothing staged
+    exits non-zero, but the plain `git()` wrapper discards that. Ignored, the
+    control that follows measures a tree at the HEAD it already had while
+    still reporting a clean PASS/FAIL -- the fixture equivalent of the
+    unchecked-copy trap, here an unchecked commit.
+    """
+    proc = git(work, *args)
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"fixture setup `git {' '.join(args)}` did not land: "
+            f"{proc.stdout}{proc.stderr}")
+    return proc
+
+
 def bake(work: Path, *paths: str) -> None:
     """Commit a fixture mutation so it is not part of the change under test.
 
@@ -525,8 +544,9 @@ def bake(work: Path, *paths: str) -> None:
     bakes after `red` has run is a control about `C2`'s staleness row, whether
     it meant to be or not.
     """
-    git(work, "add", "-A", "--", *paths)
-    git(work, "commit", "-qm", "chore: adjust the fixture around the change")
+    git_checked(work, "add", "-A", "--", *paths)
+    git_checked(work, "commit", "-qm",
+                "chore: adjust the fixture around the change")
 
 
 def build(root: Path) -> Path:
@@ -586,8 +606,8 @@ def land_e2e(work: Path, *, case: str = CASE_SRC) -> None:
     """
     (work / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
     (work / CASE_REL).write_text(case)
-    git(work, "add", "-A")
-    git(work, "commit", "-qm",
+    git_checked(work, "add", "-A")
+    git_checked(work, "commit", "-qm",
         f"e2e(demo): pin the marker behaviour\n\nRefs #{WI}\nE2E-Red: {CASE}")
 
 
@@ -898,8 +918,8 @@ def main() -> int:
             (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
             (w / CASE_REL).write_text(CASE_SRC)
             write_tests(w)
-            git(w, "add", "-A")
-            git(w, "commit", "-qm",
+            git_checked(w, "add", "-A")
+            git_checked(w, "commit", "-qm",
                 f"e2e(demo): pin the behaviour and the invariant\n\nRefs #{WI}")
             write_impl(w)
             r = h.impl(w, "verify", str(WI))
@@ -1089,8 +1109,8 @@ def main() -> int:
             """
             w = h.staged(through="impl")
             (w / "NOTES.md").write_text("something unrelated landed.\n")
-            git(w, "add", "--", "NOTES.md")
-            git(w, "commit", "-qm", "chore: an unrelated commit")
+            git_checked(w, "add", "--", "NOTES.md")
+            git_checked(w, "commit", "-qm", "chore: an unrelated commit")
             r = h.impl(w, "verify", str(WI))
             hit = h.red_on(r, "C2")
             named = "HEAD" in h.row_block(r, "C2")

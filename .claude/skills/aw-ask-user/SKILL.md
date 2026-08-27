@@ -13,11 +13,11 @@ context and putting each one to the human through **AskUserQuestion**. It
 writes no file, edits no tracker, and applies no answer — the session that
 invoked it does that, with the answers in hand.
 
-The grills — `/aw-grill-me-to-prd`, `/aw-grill-me-to-epic`,
-`/aw-grill-me-to-change` and the rest — interview against a fixed schema: a
-section set a script prints, or a document's fixed parts. This skill is for
-the questions that have no schema: the ones a session raised, or should have
-raised, while doing something else, and then settled by itself.
+The two grills — `/aw-grill-me-to-meta` and `/aw-grill-meta-to-wis` —
+interview against a fixed schema: a section set a script prints, or a
+document's fixed parts. This skill is for the questions that have no schema:
+the ones a session raised, or should have raised, while doing something else,
+and then settled by itself.
 
 ## What counts as a pending question
 

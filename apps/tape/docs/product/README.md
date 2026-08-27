@@ -13,13 +13,13 @@ it. Epics are carved from these sections, not the other way round.
   A future promise names the [ROADMAP](../../ROADMAP.md) outcome that owns it
   and ends with `Tracking: not assigned` until its epic exists.
 - A future section is written before its epic. When the epic is opened with
-  `/aw-grill-me-to-epic`, the epic title is the section title and the section
+  `/aw-grill-meta-to-wis`, the epic title is the section title and the section
   heading gains ` (#<iid>)`. The epic's `## Requirements` are carved from the
   section's Promise, so nothing is promised here that an epic cannot measure.
-- Every section carries the five parts `/aw-grill-me-to-prd` interviews
+- Every section carries the five parts `/aw-grill-me-to-meta` interviews
   for — Problem, Who, Promise, Non-goals, Neighbours — plus `Open:` lines for
-  decisions the epic grill still has to settle. An `Open:` line is a question,
-  not a default; the epic body answers it or the human does.
+  decisions `/aw-grill-meta-to-wis` still has to settle. An `Open:` line is a
+  question, not a default; the epic body answers it or the human does.
 - A new capability area is a change to this index first and to the README
   `### Capability index` when the area ships.
 

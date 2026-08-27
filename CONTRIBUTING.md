@@ -287,19 +287,23 @@ A section with no refusal condition is decoration and MUST NOT be added.
 
 ### The layering GHAN sits in
 
-GHAN is the **authored** layer only. Phase progress — which of `e2e`, `unit`,
-and `logic` has landed, and what each was measured against — is the **machine**
+GHAN is the **authored** layer only. Phase progress — which of `e2e` and
+`impl` has landed, and what each was measured against — is the **machine**
 layer and lives in the trailers those phase commits carry, never in authored
 prose:
 
 - *landed?* → the phase's `Refs #<iid>` commit exists in the tree, which is what
   the next phase's predecessor check looks for.
-- *against which red?* → `E2E-Red:`, `Unit-Red:`, and `Logic-Contract:` name the
-  cases and tests observed failing immediately before, so the following phase's
-  green is attributable to something rather than merely asserted.
-  `.claude/aw/scripts/logic.py:142-153` parses `Unit-Red:` back out and refuses
-  a phase whose predecessor carries no trailer, and separately refuses one whose
-  trailer is empty.
+- *against which red?* → `E2E-Red:` and `Impl-Red:` name the cases and tests
+  observed failing immediately before, so the following phase's green is
+  attributable to something rather than merely asserted. Impl has no predecessor
+  commit to parse a trailer back out of — it is the ladder's last phase, and
+  there is no earlier `impl` commit — so the evidence moves to a mid-phase
+  record instead: `red` writes it to `.aw/impl-red/<iid>.json`, and
+  `.claude/aw/scripts/impl.py:581-645` (`C2`) reads that record back and
+  refuses a run with no record on file, a record naming no failing test, a HEAD
+  that has moved since the record was measured, or a test file whose bytes have
+  changed since then.
 - *reviewed against which bytes?* → `E2E-Change-Digest:`, which carries
   `leg.change_digest` — one sha256 over the work-item body **and** every path
   under review (`.claude/aw/scripts/leg.py:331`).
@@ -336,7 +340,7 @@ name on either side, the work is not yet bounded.
 **Refused when** the section still carries the skeleton placeholder, is written
 as a list, or runs to more than one paragraph. That is the whole of what a
 script can see. The rest of the shape — an observation point, a current value,
-a target value, and exactly one of each — is what `/aw-grill-me-to-change`
+a target value, and exactly one of each — is what `/aw-grill-meta-to-wis`
 interviews for; nothing measures it, so a one-paragraph sentence naming nothing
 passes `validate` and is still an unbounded goal.
 
@@ -588,7 +592,7 @@ A service is not "done" until it satisfies every row:
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
 | **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; exactly one primary workload profile. StatefulSet identity/peers come from the downward API; Deployment Pods use ordinary identity plus drain-aware rollout. | Use **`libs/service-k8s`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
 | **Operations** | Alert rules with runbooks, control-plane self-observability, `status.conditions[]`, network isolation, and verifiable release artifacts. A service that emits signal but cannot notice its own breach is not production-ready. | see *Operations baseline* below. Instrumentation (the Observability row) is the raw signal; this is what makes the signal act. |
-| **Authoring ladder** | `aw.toml` names the project; changes are authored one phase at a time through `e2e` → `unit` → `logic`, red first. | see the write-order table in `CLAUDE.md`. Any `tech-design/` tree and any `SPEC-MANAGED` / `HANDWRITE` marker still in source is residue — the producer that owned them is deleted, and the `.rs` is the authoring surface. |
+| **Authoring ladder** | `aw.toml` names the project; changes are authored one phase at a time through `e2e` → `impl`, red first. | see the write-order table in `CLAUDE.md`. Any `tech-design/` tree and any `SPEC-MANAGED` / `HANDWRITE` marker still in source is residue — the producer that owned them is deleted, and the `.rs` is the authoring surface. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* under *Conformance* below. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
 
@@ -1460,10 +1464,10 @@ be present. A `next` that doesn't resolve against the binary's own `--help`
 is worse than no `next` at all.
 
 The working example in this repo is the `aw` plugin's phase scripts. Every one
-of `e2e.py`, `unit.py`, and `logic.py` ends by printing the command that follows
-it, and the last phase prints that the change is closed instead — so an agent
-driving the ladder never has to infer the next verb. That is the convention in
-its simplest conforming form: a fixed trailing stdout line, no envelope.
+of `e2e.py` and `impl.py` ends by printing the command that follows it, and the
+last phase prints that the change is closed instead — so an agent driving the
+ladder never has to infer the next verb. That is the convention in its
+simplest conforming form: a fixed trailing stdout line, no envelope.
 
 The repo used to carry a stronger version of this, and it is worth naming what
 was lost. The `aw` CLI emitted an `aw.cli.v1` envelope, and a `chain.rs`

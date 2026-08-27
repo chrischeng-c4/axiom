@@ -128,9 +128,9 @@ AW_BARE = re.compile(r"^\s*aw\s+[a-z]")
 # Two near misses are deliberately *not* here.
 # `.claude/aw/verification/README.md:315` says the change schema is "enforced by
 # `aw wi validate`" in the present tense -- that is the rot, not a record of it.
-# `apps/mamba/CONTRIBUTING.md:58` was a live instruction in a checklist table
+# `apps/mamba/CONTRIBUTING.md:90` was a live instruction in a checklist table
 # telling a human to run `aw wi create`; exempting it would have left a reader
-# following a command that cannot run. It now names `/aw-grill-me-to-change` and
+# following a command that cannot run. It now names `/aw-grill-meta-to-wis` and
 # `change.py create`, which is the shape a forward-looking instruction has to
 # take -- unlike a past-tense evidence row, which must not be repointed at a
 # live command, because that fabricates a measurement nobody took.

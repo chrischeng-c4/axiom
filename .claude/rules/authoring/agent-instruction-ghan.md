@@ -12,7 +12,7 @@ Give every instruction addressed to an agent — a `type=change` work item, a `S
 - Measure the gate's baseline before authoring it, and when that baseline is not green, name every tolerated pre-existing failure verbatim instead of stating a failure count.
 - Write `## Never` with a first line fixing the addressee, then both a must-not-touch list naming the near misses and a must-not-do list covering the false-green moves.
 - Do not add a section that no consumer refuses; an unrefusable section degenerates into a title echo.
-- Keep phase progress out of authored prose. The `e2e`, `unit`, and `logic` commits carry it in their `E2E-Red:`, `Unit-Red:`, and `Logic-Contract:` trailers, and each trailer names the tests that were measured red rather than asserting a boolean.
+- Keep phase progress out of authored prose. The `e2e` and `impl` commits carry it in their `E2E-Red:`, `Impl-Red:`, and `Impl-Contract:` trailers, and each trailer names the tests that were measured red rather than asserting a boolean.
 - Name in `## Acceptance` the same command the project's own suite runs. Nothing cross-checks the two, so a gate command that is a strict subset of the declared suite is a gate that was never run over the rest of it.
 
 ## Verification

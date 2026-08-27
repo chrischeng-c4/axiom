@@ -17,9 +17,9 @@ only gate that measures the first half.
 The staging directory sits under the home Claude dir on purpose: outside every
 checkout, and somewhere a real tool would plausibly put it.
 
-The *whole script directory* is staged, not one file. The eight scripts import
-each other by `Path(__file__).parent` -- `e2e.py`, `unit.py` and `logic.py` all
-load `leg.py` that way, and `leg.change_module()` loads `change.py` -- so
+The *whole script directory* is staged, not one file. The nine scripts import
+each other by `Path(__file__).parent` -- `e2e.py` and `impl.py` both load
+`leg.py` that way, and `leg.change_module()` loads `change.py` -- so
 staging a lone file turns "the script imports a sibling" into a probe failure
 that reads like a repository defect.
 """
