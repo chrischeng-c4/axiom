@@ -24,7 +24,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use storage_durable::{
-    CurrentReadErrorKind, CurrentTarget, GenerationName, GenerationStore, StagedGeneration,
+    CurrentReadErrorKind, CurrentTarget, FailureInjector, GenerationName, GenerationStore,
+    NoFailures, StagedGeneration,
 };
 
 use crate::storage::Engine;
@@ -50,6 +51,14 @@ struct GenerationRecord {
     revision: u64,
     legacy: bool,
     previous: Option<GenerationName>,
+}
+
+/// The exact generation selected by `CURRENT`, reopened into a fresh engine.
+#[derive(Clone)]
+pub struct LoadedSegmentGeneration {
+    pub name: GenerationName,
+    pub sequence: u64,
+    pub engine: Arc<Engine>,
 }
 
 impl GenerationRecord {
@@ -93,10 +102,17 @@ impl SegmentRdbStore {
     /// exact 0.4.28 legacy generations remains uninitialized until
     /// [`Self::reopen_into`] validates and adopts the highest one.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
+        Self::open_with_injector(root, Arc::new(NoFailures))
+    }
+
+    fn open_with_injector(
+        root: impl Into<PathBuf>,
+        injector: Arc<dyn FailureInjector>,
+    ) -> Result<Self> {
         let root = root.into();
         std::fs::create_dir_all(&root)
             .with_context(|| format!("create segment-checkpoint dir {}", root.display()))?;
-        let generations = GenerationStore::open(&root)
+        let generations = GenerationStore::open_with_injector(&root, injector)
             .with_context(|| format!("open generation store {}", root.display()))?;
         let root = std::fs::canonicalize(&root)
             .with_context(|| format!("canonicalize checkpoint root {}", root.display()))?;
@@ -129,12 +145,38 @@ impl SegmentRdbStore {
         Ok(store)
     }
 
+    /// Open a store with deterministic filesystem failures for restore tests.
+    #[cfg(test)]
+    pub(crate) fn new_with_failure_injector(
+        root: impl Into<PathBuf>,
+        injector: Arc<dyn FailureInjector>,
+    ) -> Result<Self> {
+        Self::open_with_injector(root, injector)
+    }
+
     /// Checkpoint `engine` through a new immutable generation.
     ///
     /// Same-sequence saves remain meaningful because reshard operations can
     /// change state without advancing `applied_seq`. A lower sequence can only
     /// be a stale background caller, so it returns without moving `CURRENT`.
     pub fn save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> {
+        self.save_inner(engine, up_to_seq, false).map(|_| ())
+    }
+
+    /// Save a generation for a restore operation.
+    ///
+    /// Unlike [`Self::save`], this never silently ignores a stale sequence and
+    /// always creates a new revision, including when the sequence is unchanged.
+    pub fn save_required(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<GenerationName> {
+        self.save_inner(engine, up_to_seq, true)
+    }
+
+    fn save_inner(
+        &self,
+        engine: &Arc<Engine>,
+        up_to_seq: u64,
+        required: bool,
+    ) -> Result<GenerationName> {
         let _guard = self
             .save_lock
             .lock()
@@ -144,7 +186,13 @@ impl SegmentRdbStore {
         let current = self.current_record()?;
         if let Some(current) = &current {
             if up_to_seq < current.sequence {
-                return Ok(());
+                if required {
+                    bail!(
+                        "required segment generation sequence {up_to_seq} is below CURRENT sequence {}",
+                        current.sequence
+                    );
+                }
+                return Ok(current.name.clone());
             }
         }
 
@@ -186,7 +234,7 @@ impl SegmentRdbStore {
             .with_context(|| {
                 format!("activate segment generation seq {up_to_seq} revision {revision}")
             })?;
-        Ok(())
+        Ok(staged_record.name)
     }
 
     /// Reopen the exact active checkpoint into a fresh engine.
@@ -196,6 +244,32 @@ impl SegmentRdbStore {
             Some(seq) => Ok(Some((engine, seq))),
             None => Ok(None),
         }
+    }
+
+    /// Load exactly the generation named by `CURRENT`.
+    ///
+    /// This method never performs legacy adoption and never searches for a
+    /// higher, unpointed generation.
+    pub fn load_current_generation(&self) -> Result<Option<LoadedSegmentGeneration>> {
+        let _guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let CurrentTarget::Generation(name) = self
+            .generations
+            .read_current()
+            .map_err(|error| anyhow::Error::new(error).context("read CURRENT"))?
+        else {
+            return Ok(None);
+        };
+        let record = self.record_for_name(name.clone())?;
+        let engine = Arc::new(Engine::new());
+        self.reopen_record(&engine, &record)?;
+        Ok(Some(LoadedSegmentGeneration {
+            name,
+            sequence: record.sequence,
+            engine,
+        }))
     }
 
     /// Reopen only the generation selected by `CURRENT`.
@@ -1100,6 +1174,105 @@ mod tests {
         let (loaded, sequence) = store.load_latest().unwrap().unwrap();
         assert_eq!(sequence, 9);
         assert_eq!(loaded.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    #[test]
+    fn required_lower_sequence_rejects_without_changing_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        store.save(&engine, 9).unwrap();
+        let before = std::fs::read(dir.path().join("CURRENT")).unwrap();
+
+        let error = store.save_required(&engine, 8).unwrap_err();
+        assert!(error.to_string().contains("below CURRENT sequence 9"));
+        assert_eq!(std::fs::read(dir.path().join("CURRENT")).unwrap(), before);
+    }
+
+    #[test]
+    fn required_same_sequence_creates_distinct_revision_and_exact_loader_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        let first = store.save_required(&engine, 9).unwrap();
+        index_kw(&engine, "u2", "b@x.com");
+        let second = store.save_required(&engine, 9).unwrap();
+        assert_ne!(first, second);
+
+        let loaded = store.load_current_generation().unwrap().unwrap();
+        assert_eq!(loaded.name, second);
+        assert_eq!(loaded.sequence, 9);
+        assert_eq!(loaded.engine.stats("u").unwrap().documents_indexed, 2);
+    }
+
+    #[test]
+    fn exact_loader_never_selects_unpointed_higher_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        let current = store.save_required(&engine, 9).unwrap();
+        let unpointed = install_unpointed_generation(&store, &engine, 99, Some(&current));
+
+        let loaded = store.load_current_generation().unwrap().unwrap();
+        assert_eq!(loaded.name, current);
+        assert_eq!(loaded.sequence, 9);
+        assert_ne!(loaded.name, unpointed);
+    }
+
+    #[test]
+    fn exact_loader_never_adopts_a_legacy_generation_when_current_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("gen-42");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&legacy, 42).unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(!dir.path().join("CURRENT").exists());
+        assert!(store.load_current_generation().is_err());
+        assert!(
+            !dir.path().join("CURRENT").exists(),
+            "exact restore reload must not perform the 0.4.28 startup adoption"
+        );
+    }
+
+    #[test]
+    fn injected_store_commit_is_deterministic() {
+        #[derive(Default)]
+        struct FailRenameCurrent(Mutex<Vec<storage_durable::FailurePoint>>);
+
+        impl FailureInjector for FailRenameCurrent {
+            fn check(&self, point: &storage_durable::FailurePoint) -> std::io::Result<()> {
+                self.0.lock().unwrap().push(point.clone());
+                if point.step == storage_durable::CommitStep::RenameCurrent {
+                    return Err(std::io::Error::other("injected rename failure"));
+                }
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        SegmentRdbStore::new(dir.path()).unwrap();
+        let injector = Arc::new(FailRenameCurrent::default());
+        let store =
+            SegmentRdbStore::new_with_failure_injector(dir.path(), injector.clone()).unwrap();
+        let error = store
+            .save_required(&Arc::new(Engine::new()), 1)
+            .unwrap_err();
+        assert!(error.to_string().contains("activate segment generation"));
+        assert!(matches!(store.load_current_generation().unwrap(), None));
+        assert!(injector
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|point| point.step == storage_durable::CommitStep::RenameCurrent));
     }
 
     #[test]
