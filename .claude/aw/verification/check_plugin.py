@@ -43,7 +43,7 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 from _paths import (CHANGE_SCRIPT, DISPLAY_PREFIX, INTERVIEWING,  # noqa: E402
-                    META_SCRIPT, PINNED_PYTHON,
+                    META_SCRIPT, PINNED_PYTHON, PRD_SCRIPT,
                     E2E_SCRIPT, LOGIC_SCRIPT, PROCEDURAL, REPO,
                     SCRIPT, SCRIPTS, SKILLS, SKILLS_DIR, SKILL_PREFIX,
                     UNIT_SCRIPT, pinned_interpreter, skill_dir,
@@ -80,6 +80,13 @@ REQUIRED = {
     # second verb here would be a verb that writes, and the thing this replaces
     # was deleted for writing.
     "meta.py": {"check"},
+    # The PRD run's refusal, and the one writer allowed to land it. Both verbs
+    # are required of the skill because either alone is a hole: `check` with no
+    # `commit` leaves the run to be committed by hand, which is how a PRD
+    # commit reaches history with no trailers for `/aw-grill-prd-to-wi` to
+    # read; `commit` with no `check` named is a skill that never says the run
+    # is measurable before it lands.
+    "prd.py": {"check", "commit"},
 }
 
 # Verbs a script exposes that no skill drives, and why. A silent gap between
@@ -99,10 +106,12 @@ UNUSED = {
     "unit.py": {},
     "logic.py": {},
     "meta.py": {},
+    "prd.py": {},
 }
 SCRIPT_PATHS = {"epic.py": SCRIPT, "change.py": CHANGE_SCRIPT,
                 "e2e.py": E2E_SCRIPT, "unit.py": UNIT_SCRIPT,
-                "logic.py": LOGIC_SCRIPT, "meta.py": META_SCRIPT}
+                "logic.py": LOGIC_SCRIPT, "meta.py": META_SCRIPT,
+                "prd.py": PRD_SCRIPT}
 
 # Scripts that cannot run under a bare `python3`, and the pin the skills must
 # carry. Derived from the source rather than listed by hand: a script that grows
@@ -182,7 +191,7 @@ if settings.is_file():
     check("settings.json enables no plugin",
           "enabledPlugins" not in settings.read_text(encoding="utf-8"))
 
-# -- the eleven skills and the eight scripts -------------------------------
+# -- the eleven skills and the nine scripts --------------------------------
 for skill in SKILLS:
     check(f"{skill}: SKILL.md is on disk", (skill_dir(skill) / "SKILL.md").is_file())
 for name, path in sorted(SCRIPT_PATHS.items()):
