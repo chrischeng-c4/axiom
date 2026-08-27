@@ -97,7 +97,7 @@ k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 schemars = { version = "0.8", optional = true }
 # Shared operator scaffolding (reconcile loop + leader-election lease); lumen
 # supplies the `Lumen` CRD + render and composes the rest (epic #580).
-service-k8s = { path = "../../libs/service-k8s", optional = true }
+service-k8s = { path = "../../libs/service-k8s", default-features = false, features = ["render-only"] }
 serde_yaml.workspace = true
 lz4_flex = "0.11"
 memmap2 = "0.9"
@@ -160,7 +160,7 @@ issue = ["cli-std/online"]
 # that have not yet renamed their feature set. The CLI command itself is
 # `lumen issue`, not `lumen report-issue`.
 report-issue = ["issue"]
-operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s", "backup"]
+operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "service-k8s/full", "backup"]
 # delegated-auth — the live TokenReview/SubjectAccessReview transport for
 # `LUMEN_AUTH=required` (#2869). Separate from `operator` on purpose: serving
 # auth is not a control-plane concern, and a serving binary should not have to
