@@ -12,8 +12,22 @@ const IMAGE: &str = "ghcr.io/chrischeng-c4/lumen:0.4.29";
 const MANAGED_LABEL: &str = "com.axiom.lumen.managed";
 const MANAGED_LABEL_VALUE: &str = "com.axiom.lumen.managed=true";
 
+#[path = "standalone/gke.rs"]
+mod gke;
+
+pub(crate) fn run(args: StandaloneArgs) -> Result<()> {
+    match args.cmd {
+        StandaloneCmd::Compose(compose) => compose_patch(StandaloneArgs {
+            cmd: StandaloneCmd::Compose(compose),
+        }),
+        StandaloneCmd::Gke(args) => gke::run(args),
+    }
+}
+
 pub(crate) fn compose_patch(args: StandaloneArgs) -> Result<()> {
-    let StandaloneCmd::Compose(compose) = args.cmd;
+    let StandaloneCmd::Compose(compose) = args.cmd else {
+        bail!("invalid standalone command")
+    };
     let StandaloneComposeCmd::Patch(patch) = compose.cmd;
     patch_compose(patch)
 }

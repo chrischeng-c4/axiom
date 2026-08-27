@@ -24,6 +24,10 @@ path = "src/bin/lumen.rs"
 name = "lumen-bench"
 path = "src/bin/lumen-bench.rs"
 
+[[test]]
+name = "standalone_gke_render"
+path = "e2e/standalone_gke_render.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-nats = { workspace = true }

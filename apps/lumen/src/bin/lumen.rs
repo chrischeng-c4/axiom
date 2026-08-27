@@ -140,6 +140,33 @@ pub(crate) struct StandaloneArgs {
 #[derive(Subcommand)]
 pub(crate) enum StandaloneCmd {
     Compose(StandaloneComposeArgs),
+    Gke(StandaloneGkeArgs),
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneGkeArgs {
+    #[command(subcommand)]
+    pub(crate) cmd: StandaloneGkeCmd,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum StandaloneGkeCmd {
+    Init(StandaloneGkeInitArgs),
+    Render(StandaloneGkeRenderArgs),
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneGkeInitArgs {
+    #[arg(long)]
+    pub(crate) out: PathBuf,
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneGkeRenderArgs {
+    #[arg(long)]
+    pub(crate) file: PathBuf,
+    #[arg(long)]
+    pub(crate) out: PathBuf,
 }
 
 #[derive(clap::Args)]
@@ -1098,7 +1125,7 @@ async fn main() -> Result<()> {
     lumen::tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
-        Command::Standalone(args) => standalone::compose_patch(args),
+        Command::Standalone(args) => standalone::run(args),
         Command::Serve(args) => serve(args).await,
         Command::Spec(args) => {
             // `spec gen` writes a typed client; everything else prints to stdout.
