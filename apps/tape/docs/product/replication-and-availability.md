@@ -24,7 +24,7 @@ change.
 - Neighbours: none; first section of the area.
 - Status rows: `raft-replication`, `raft-peer-mtls`, `leader-failover`.
 
-## Deterministic failover
+## Deterministic failover (#3926)
 
 - Problem: the red forwarding case and the shared deadline above mean the
   group's promise is measured by a clock, not by the group's own state, and
@@ -43,7 +43,7 @@ change.
 - Neighbours: repairs Replicated group with peer mTLS; prerequisite for
   [subscriptions.md](subscriptions.md) § Subscription ack and competing
   subscribers.
-- Outcome: `deterministic-failover`. Tracking: not assigned.
+- Outcome: `deterministic-failover`. Tracking: [#3926](https://github.com/chrischeng-c4/axiom/issues/3926)
 
 ## Live replica membership
 
