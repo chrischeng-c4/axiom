@@ -40,13 +40,12 @@
 //!
 //! Mirrors Redis `appendfsync`:
 //!
-//! - [`FsyncPolicy::EverySec`] (default) — append writes to the OS buffer; a
+//! - [`FsyncPolicy::EverySec`] — append writes to the OS buffer; a
 //!   periodic [`AofWriter::maybe_sync`] (call-driven, off the apply hot path)
 //!   fsyncs at most once per second. A crash loses at most ~1s of un-fsynced
 //!   tail, which replay recovers as a torn tail (the frames are still in the OS
 //!   page cache up to the crash point, and any partial frame is discarded).
-//! - [`FsyncPolicy::Always`] — fsync after every append (tests / strict
-//!   durability).
+//! - [`FsyncPolicy::Always`] (default) — fsync after every append.
 
 use std::path::{Path, PathBuf};
 
@@ -81,6 +80,8 @@ fn decode_payload(bytes: &[u8]) -> Result<WalRecord> {
 /// always starts in a clean, fully-decodable state.
 pub struct AofWriter {
     inner: FramedLogWriter,
+    #[cfg(test)]
+    policy: FsyncPolicy,
     /// #2516: test-only ENOSPC fault injection, armed via
     /// [`AofWriter::set_inject_storage_full`]. Scoped to THIS writer instance
     /// (not a process-global flag) so parallel `cargo test` threads sharing
@@ -91,10 +92,10 @@ pub struct AofWriter {
 }
 
 impl AofWriter {
-    /// Open `path` for appending with the default [`FsyncPolicy::EverySec`],
+    /// Open `path` for appending with the default [`FsyncPolicy::Always`],
     /// first truncating any torn tail.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
-        Self::open_with_policy(path, FsyncPolicy::EverySec)
+        Self::open_with_policy(path, FsyncPolicy::Always)
     }
 
     /// Open `path` for appending, first truncating any torn tail (a partial
@@ -104,6 +105,8 @@ impl AofWriter {
         let path = path.into();
         Ok(Self {
             inner: FramedLogWriter::open(&path, policy)?,
+            #[cfg(test)]
+            policy,
             #[cfg(test)]
             inject_storage_full: std::sync::atomic::AtomicBool::new(false),
         })
@@ -224,6 +227,13 @@ pub fn replay_aof_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_uses_always_fsync_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = AofWriter::open(dir.path().join("aof")).unwrap();
+        assert_eq!(writer.policy, FsyncPolicy::Always);
+    }
     use crate::log_entry::RaftLogEntry;
     use crate::types::{
         CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,

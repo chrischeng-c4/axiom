@@ -37,6 +37,10 @@ COPY --from=builder --chown=65532:65532 /out/lumen-data/ /var/lib/lumen/data/
 # 7373 = client API. WAL storage is embedded locally or Lumen-owned raft state.
 EXPOSE 7373
 ENV LUMEN_HOST=0.0.0.0
+ENV LUMEN_DATA_DIR=/var/lib/lumen/data
+ENV LUMEN_PERSISTENCE=segment
+ENV LUMEN_WAL=embedded
+VOLUME ["/var/lib/lumen/data"]
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]
 # CODEGEN-END

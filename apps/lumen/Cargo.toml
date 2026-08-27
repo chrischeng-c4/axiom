@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.28"
+version = "0.4.29"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -567,6 +567,10 @@ path = "e2e/stability_lumen_long_running_stability_resource_leak.rs"
 [[test]]
 name = "standalone_container_contract"
 path = "e2e/standalone_container_contract.rs"
+
+[[test]]
+name = "standalone_compose_patch"
+path = "e2e/standalone_compose_patch.rs"
 
 [[test]]
 name = "stats_metadata_e2e"

@@ -45,6 +45,9 @@ use lumen::storage::Engine;
 use lumen::wal::{MemWal, SharedWal};
 use lumen::wal_nats::NatsWal;
 
+#[path = "lumen/standalone.rs"]
+mod standalone;
+
 #[derive(Parser)]
 #[command(
     name = "lumen",
@@ -58,6 +61,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage the local single-node Compose deployment.
+    Standalone(StandaloneArgs),
     /// Run a serving node (HTTP API + background apply loop).
     Serve(ServeArgs),
     /// Print lumen's machine-readable integration spec — offline, no server.
@@ -124,6 +129,36 @@ enum Command {
     /// body `lumen spec --shapes` publishes — no interactive REPL. Requires
     /// the `backup` feature (pulled in transitively by `operator`).
     Query(QueryArgs),
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneArgs {
+    #[command(subcommand)]
+    pub(crate) cmd: StandaloneCmd,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum StandaloneCmd {
+    Compose(StandaloneComposeArgs),
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneComposeArgs {
+    #[command(subcommand)]
+    pub(crate) cmd: StandaloneComposeCmd,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum StandaloneComposeCmd {
+    Patch(StandaloneComposePatchArgs),
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneComposePatchArgs {
+    #[arg(long)]
+    pub(crate) file: PathBuf,
+    #[arg(long, default_value = "lumen")]
+    pub(crate) name: String,
 }
 
 #[derive(clap::Args)]
@@ -1063,6 +1098,7 @@ async fn main() -> Result<()> {
     lumen::tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
+        Command::Standalone(args) => standalone::compose_patch(args),
         Command::Serve(args) => serve(args).await,
         Command::Spec(args) => {
             // `spec gen` writes a typed client; everything else prints to stdout.

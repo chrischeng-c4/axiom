@@ -45,18 +45,34 @@ fn replace_exact(source: &str, target: &str, replacement: &str) -> String {
     source.replacen(target, replacement, 1)
 }
 
+fn insert_after_first_from(source: &str, instruction: &str) -> String {
+    let mut output = String::with_capacity(source.len() + instruction.len() + 1);
+    let mut inserted = false;
+    for line in source.split_inclusive('\n') {
+        output.push_str(line);
+        if !inserted && line.trim_start().to_ascii_uppercase().starts_with("FROM ") {
+            output.push_str(instruction);
+            output.push('\n');
+            inserted = true;
+        }
+    }
+    assert!(inserted, "fixture has no FROM instruction");
+    output
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DockerfileValidationError {
     InventoryMismatch(Vec<String>, Vec<String>),
     NoStagesFound(String),
-    MissingFinalStageEnv(String),
-    BuilderStageOnly(String),
-    DuplicateEnv(String, usize),
+    MissingFinalStageInstruction(String, String),
+    BuilderStageOnly(String, String),
+    DuplicateInstruction(String, String, usize),
     MissingEntrypoint(String),
-    PlacedAfterEntrypoint(String),
+    PlacedAfterEntrypoint(String, String),
     ForbiddenHostFlagInEntrypoint(String),
     ForbiddenHostFlagInCmd(String),
-    InvalidEnvValue(String, String),
+    InvalidInstruction(String, String, String),
+    ForbiddenFsyncKnob(String),
 }
 
 pub fn validate_inventory(discovered: &[String]) -> Result<(), DockerfileValidationError> {
@@ -100,37 +116,7 @@ pub fn validate_dockerfile_content(
         return Err(DockerfileValidationError::NoStagesFound(error_path));
     }
 
-    let mut envs = Vec::new();
-    for (s_idx, s_lines) in stages.iter().enumerate() {
-        for (num, l) in s_lines {
-            if l.trim().starts_with("ENV LUMEN_HOST") {
-                envs.push((s_idx, *num, l.trim()));
-            }
-        }
-    }
-
     let last_s = stages.len() - 1;
-    if envs.is_empty() {
-        return Err(DockerfileValidationError::MissingFinalStageEnv(error_path));
-    }
-    if envs.len() > 1 {
-        return Err(DockerfileValidationError::DuplicateEnv(
-            error_path,
-            envs.len(),
-        ));
-    }
-
-    let (s_idx, env_num, env_str) = envs[0];
-    if s_idx != last_s {
-        return Err(DockerfileValidationError::BuilderStageOnly(error_path));
-    }
-    if env_str != "ENV LUMEN_HOST=0.0.0.0" {
-        return Err(DockerfileValidationError::InvalidEnvValue(
-            error_path,
-            env_str.to_string(),
-        ));
-    }
-
     let entrypoints: Vec<(usize, &str)> = stages[last_s]
         .iter()
         .filter(|(_, l)| l.trim().starts_with("ENTRYPOINT"))
@@ -144,14 +130,79 @@ pub fn validate_dockerfile_content(
     for (_, ep_line) in &entrypoints {
         if ep_line.contains("--host") {
             return Err(DockerfileValidationError::ForbiddenHostFlagInEntrypoint(
-                error_path,
+                error_path.clone(),
             ));
         }
     }
 
     let (last_ep_num, _) = entrypoints.last().unwrap();
-    if *last_ep_num <= env_num {
-        return Err(DockerfileValidationError::PlacedAfterEntrypoint(error_path));
+    if stages.iter().flatten().any(|(_, line)| {
+        line.trim()
+            .strip_prefix("ENV ")
+            .is_some_and(|value| value.starts_with("LUMEN_FSYNC"))
+    }) {
+        return Err(DockerfileValidationError::ForbiddenFsyncKnob(
+            error_path.clone(),
+        ));
+    }
+
+    const REQUIRED: [(&str, &str); 5] = [
+        ("ENV LUMEN_HOST", "ENV LUMEN_HOST=0.0.0.0"),
+        (
+            "ENV LUMEN_DATA_DIR",
+            "ENV LUMEN_DATA_DIR=/var/lib/lumen/data",
+        ),
+        ("ENV LUMEN_PERSISTENCE", "ENV LUMEN_PERSISTENCE=segment"),
+        ("ENV LUMEN_WAL", "ENV LUMEN_WAL=embedded"),
+        ("VOLUME", "VOLUME [\"/var/lib/lumen/data\"]"),
+    ];
+    for (prefix, expected) in REQUIRED {
+        let matches: Vec<_> = stages
+            .iter()
+            .enumerate()
+            .flat_map(|(stage, lines)| {
+                lines.iter().filter_map(move |(line_number, line)| {
+                    let line = line.trim();
+                    (line == prefix
+                        || line.starts_with(&format!("{prefix} "))
+                        || line.starts_with(&format!("{prefix}=")))
+                    .then_some((stage, *line_number, line))
+                })
+            })
+            .collect();
+        if matches.is_empty() {
+            return Err(DockerfileValidationError::MissingFinalStageInstruction(
+                error_path.clone(),
+                expected.into(),
+            ));
+        }
+        if matches.len() > 1 {
+            return Err(DockerfileValidationError::DuplicateInstruction(
+                error_path.clone(),
+                expected.into(),
+                matches.len(),
+            ));
+        }
+        let (stage, line_number, actual) = matches[0];
+        if stage != last_s {
+            return Err(DockerfileValidationError::BuilderStageOnly(
+                error_path.clone(),
+                expected.into(),
+            ));
+        }
+        if actual != expected {
+            return Err(DockerfileValidationError::InvalidInstruction(
+                error_path.clone(),
+                prefix.into(),
+                actual.into(),
+            ));
+        }
+        if line_number >= *last_ep_num {
+            return Err(DockerfileValidationError::PlacedAfterEntrypoint(
+                error_path.clone(),
+                expected.into(),
+            ));
+        }
     }
 
     if stages[last_s]
@@ -225,28 +276,8 @@ fn test_negative_fixtures_per_file() {
         };
 
         check(
-            replace_exact(content, "ENV LUMEN_HOST=0.0.0.0\n", ""),
-            DockerfileValidationError::MissingFinalStageEnv(p.clone()),
-        );
-        check(
-            replace_exact(
-                content,
-                "ENV LUMEN_HOST=0.0.0.0\n",
-                "ENV LUMEN_HOST=0.0.0.0\nENV LUMEN_HOST=0.0.0.0\n",
-            ),
-            DockerfileValidationError::DuplicateEnv(p.clone(), 2),
-        );
-        check(
             replace_exact(content, "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n", ""),
             DockerfileValidationError::MissingEntrypoint(p.clone()),
-        );
-        check(
-            replace_exact(
-                content,
-                "ENV LUMEN_HOST=0.0.0.0\nENTRYPOINT [\"/usr/local/bin/lumen\"]",
-                "ENTRYPOINT [\"/usr/local/bin/lumen\"]\nENV LUMEN_HOST=0.0.0.0",
-            ),
-            DockerfileValidationError::PlacedAfterEntrypoint(p.clone()),
         );
         check(
             replace_exact(
@@ -267,35 +298,71 @@ fn test_negative_fixtures_per_file() {
         check(
             replace_exact(
                 content,
+                "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+                "ENV LUMEN_FSYNC=always\nENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+            ),
+            DockerfileValidationError::ForbiddenFsyncKnob(p.clone()),
+        );
+
+        let required = [
+            (
+                "ENV LUMEN_HOST",
                 "ENV LUMEN_HOST=0.0.0.0",
                 "ENV LUMEN_HOST=127.0.0.1",
             ),
-            DockerfileValidationError::InvalidEnvValue(
-                p.clone(),
-                "ENV LUMEN_HOST=127.0.0.1".to_string(),
+            (
+                "ENV LUMEN_DATA_DIR",
+                "ENV LUMEN_DATA_DIR=/var/lib/lumen/data",
+                "ENV LUMEN_DATA_DIR=/data",
             ),
-        );
-
-        let without_final = replace_exact(content, "ENV LUMEN_HOST=0.0.0.0\n", "");
-        let builder_only = if without_final.contains("AS builder") {
-            replace_exact(
-                &without_final,
-                "AS builder\n",
-                "AS builder\nENV LUMEN_HOST=0.0.0.0\n",
-            )
-        } else if without_final.contains("AS fetch") {
-            replace_exact(
-                &without_final,
-                "AS fetch\n",
-                "AS fetch\nENV LUMEN_HOST=0.0.0.0\n",
-            )
-        } else {
-            format!("FROM rust:1.92-slim AS builder\nENV LUMEN_HOST=0.0.0.0\n\n{without_final}")
-        };
-        assert_eq!(
-            validate_dockerfile_content(path, &builder_only),
-            Err(DockerfileValidationError::BuilderStageOnly(p))
-        );
+            (
+                "ENV LUMEN_PERSISTENCE",
+                "ENV LUMEN_PERSISTENCE=segment",
+                "ENV LUMEN_PERSISTENCE=cbor",
+            ),
+            (
+                "ENV LUMEN_WAL",
+                "ENV LUMEN_WAL=embedded",
+                "ENV LUMEN_WAL=auto",
+            ),
+            (
+                "VOLUME",
+                "VOLUME [\"/var/lib/lumen/data\"]",
+                "VOLUME [\"/data\"]",
+            ),
+        ];
+        for (prefix, exact, wrong) in required {
+            let exact_line = format!("{exact}\n");
+            let missing = replace_exact(content, &exact_line, "");
+            check(
+                missing.clone(),
+                DockerfileValidationError::MissingFinalStageInstruction(p.clone(), exact.into()),
+            );
+            check(
+                replace_exact(content, &exact_line, &format!("{exact}\n{exact}\n")),
+                DockerfileValidationError::DuplicateInstruction(p.clone(), exact.into(), 2),
+            );
+            check(
+                replace_exact(content, exact, wrong),
+                DockerfileValidationError::InvalidInstruction(
+                    p.clone(),
+                    prefix.into(),
+                    wrong.into(),
+                ),
+            );
+            check(
+                replace_exact(
+                    &missing,
+                    "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+                    &format!("ENTRYPOINT [\"/usr/local/bin/lumen\"]\n{exact}\n"),
+                ),
+                DockerfileValidationError::PlacedAfterEntrypoint(p.clone(), exact.into()),
+            );
+            check(
+                insert_after_first_from(&missing, exact),
+                DockerfileValidationError::BuilderStageOnly(p.clone(), exact.into()),
+            );
+        }
     });
 }
 

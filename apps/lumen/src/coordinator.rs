@@ -116,9 +116,9 @@ struct CompletionState {
 /// The optional local AOF the apply loop appends every applied record to (Stage
 /// 2 Phase 2f-3). Wrapped in a `Mutex` because the apply loop appends from the
 /// async task while the periodic checkpoint snapshotter calls `truncate_through`
-/// from another task. The apply loop flushes each successfully applied record
-/// before acknowledging its request, making the AOF readable by an immediate
-/// replacement process; the everysec fsync remains off the normal write path.
+/// from another task. The default writer fsyncs each successfully applied
+/// record before the apply loop acknowledges its request, so an immediate
+/// replacement process can recover every acknowledged write.
 /// `None` on the default / non-AOF path, so `start_from` is byte-identical to
 /// today.
 pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
@@ -287,8 +287,8 @@ impl WriteCoordinator {
                                 // can be deleted after a 2xx response while the record still only
                                 // lives in this process's BufWriter. Persist it through the OS
                                 // before publishing `applied` or acknowledging the caller. The
-                                // everysec fsync policy remains unchanged (normal crash RPO <=1s),
-                                // while a graceful SIGTERM performs a full sync in `serve()`.
+                                // production writer uses `Always`, so `append` crosses the fsync
+                                // boundary here. A graceful SIGTERM also performs a final sync.
                                 if outcome.is_ok() {
                                     if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec) {
                                         let persisted = {
@@ -538,7 +538,7 @@ mod tests {
 
     /// The embedded segment path may be replaced immediately after its write
     /// endpoint returns. Its AOF must therefore be readable *at acknowledgement
-    /// time*, rather than waiting for the every-second fsync tick or writer drop.
+    /// time*, rather than waiting for writer drop.
     /// This is the exact local half of the single-replica pod-restart contract:
     /// fresh engine -> replay local AOF -> collection and indexed document.
     #[tokio::test]
