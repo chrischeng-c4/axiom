@@ -132,7 +132,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: The route-parity, generated-client, backup-destination,
   and operator render gates pass against the regenerated snapshot and the new
   runbook path, and the deployment handoff page is no longer tracked.
-- Tracking: Not assigned.
+- Tracking: [#3927](https://github.com/chrischeng-c4/axiom/issues/3927)
 
 ## Later outcomes
 
