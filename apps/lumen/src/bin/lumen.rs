@@ -38,7 +38,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
-use lumen::auth::AuthConfig;
+use lumen::auth::{AuthConfig, AuthProfile};
 use lumen::coordinator::WriteCoordinator;
 use lumen::rdb::{LocalFsRdbStore, RdbSnapshot, RdbStore};
 use lumen::storage::Engine;
@@ -3418,14 +3418,14 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     };
 
-    // `LUMEN_AUTH=required` delegates both halves of the decision to the
+    // `LUMEN_AUTH=required|in-cluster` delegates both halves of the decision to the
     // apiserver: TokenReview says who is calling, SubjectAccessReview says
     // whether they may (#2869). Building the verifier proves both grants before
     // the listener opens, so a missing `system:auth-delegator` binding is a
     // startup failure rather than a fleet that serves 503s while looking ready.
     //
     // The transport lives behind the `delegated-auth` feature. A build without
-    // it can still *parse* `LUMEN_AUTH=required` — and must refuse to start
+    // it can still parse either required mode — and must refuse to start
     // rather than quietly serve unauthenticated traffic under that setting.
     #[cfg(feature = "delegated-auth")]
     async fn serving_verifier(
@@ -3435,30 +3435,41 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
     #[cfg(not(feature = "delegated-auth"))]
     async fn serving_verifier(
-        _auth: &AuthConfig,
+        auth: &AuthConfig,
     ) -> anyhow::Result<Arc<lumen::auth::LumenVerifier>> {
         anyhow::bail!(
-            "LUMEN_AUTH=required needs the Kubernetes TokenReview/SubjectAccessReview transport, \
+            "LUMEN_AUTH={} needs the Kubernetes TokenReview/SubjectAccessReview transport, \
              which this binary was built without. Rebuild with `--features delegated-auth`, or \
-             unset LUMEN_AUTH to serve without authentication. Refusing to start."
+             unset LUMEN_AUTH to serve without authentication. Refusing to start.",
+            auth.profile().env_value()
         )
     }
 
     let auth = Arc::new(AuthConfig::from_env()?);
     let verifier = if auth.required {
         let verifier = serving_verifier(&auth).await?;
-        tracing::info!(
-            namespace = %auth.namespace,
-            audience = lumen::auth::AUDIENCE,
-            "auth=required — every request is authenticated by Kubernetes TokenReview and \
-             authorized by SubjectAccessReview; only audience-bound ServiceAccount tokens are \
-             accepted"
-        );
+        match auth.profile() {
+            AuthProfile::ManagedAudience => tracing::info!(
+                namespace = %auth.namespace,
+                audience = lumen::auth::AUDIENCE,
+                "auth=required — every request is authenticated by Kubernetes TokenReview and \
+                 authorized by SubjectAccessReview; only audience-bound ServiceAccount tokens are \
+                 accepted"
+            ),
+            AuthProfile::KubernetesDefault => tracing::info!(
+                namespace = %auth.namespace,
+                "auth=in-cluster — every request is authenticated by Kubernetes TokenReview \
+                 against the apiserver's configured audiences and authorized by \
+                 SubjectAccessReview; only Kubernetes ServiceAccount identities are accepted"
+            ),
+            AuthProfile::Off => unreachable!("required auth cannot use the off profile"),
+        }
         Some(verifier)
     } else {
         tracing::warn!(
-            "auth=off — requests are not authenticated. Set LUMEN_AUTH=required (plus \
-             LUMEN_AUTH_NAMESPACE when not running in-cluster) to delegate to Kubernetes"
+            "auth=off — requests are not authenticated. Set LUMEN_AUTH=required for Managed or \
+             LUMEN_AUTH=in-cluster for Standalone (plus LUMEN_AUTH_NAMESPACE when needed) to \
+             delegate to Kubernetes"
         );
         None
     };

@@ -171,9 +171,11 @@ impl std::error::Error for ReviewError {}
 #[async_trait]
 pub trait ReviewBackend: Send + Sync + 'static {
     /// `POST /apis/authentication.k8s.io/v1/tokenreviews` with the given
-    /// audiences. An empty `audiences` slice is not permitted: a review with
-    /// no requested audience accepts the apiserver's own audience, which is
-    /// exactly the token a caller must not be able to replay here.
+    /// audiences. An empty slice means omit `spec.audiences` and use the
+    /// apiserver's configured audiences. Callers may reach that form only
+    /// through an explicit product profile such as
+    /// [`super::DelegatedAuthConfig::kubernetes_default`]; ordinary
+    /// [`super::DelegatedAuthConfig::new`] still rejects an empty audience.
     async fn review_token(
         &self,
         token: &str,

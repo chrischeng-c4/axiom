@@ -1,9 +1,9 @@
 // CODEGEN-BEGIN
 //! The three request-authentication states of a serving process (#2869).
 //!
-//! Lumen holds no credentials; `LUMEN_AUTH=required` delegates authentication
-//! to Kubernetes `TokenReview` and authorization to `SubjectAccessReview`. That
-//! leaves three states, and the value of pinning all three is that the gaps
+//! Lumen holds no credentials; `LUMEN_AUTH=required|in-cluster` delegates
+//! authentication to Kubernetes `TokenReview` and authorization to
+//! `SubjectAccessReview`. That leaves three states, and the value of pinning all three is that the gaps
 //! between them are where a silent fallback would live:
 //!
 //! - `auth: disabled` serves every route to an unauthenticated caller — and
@@ -116,26 +116,35 @@ async fn a_presented_bearer_is_rejected_even_when_auth_is_disabled() {
 /// a credential. There is no degradation to the open mode.
 #[tokio::test]
 async fn required_auth_without_a_review_backend_rejects_every_request() {
-    let s = server(AuthConfig::required_in("serving"));
-    let schema = json!({ "fields": { "e": { "type": "keyword" } } });
+    for config in [
+        AuthConfig::required_in("serving"),
+        AuthConfig::in_cluster("serving"),
+    ] {
+        let s = server(config);
+        let schema = json!({ "fields": { "e": { "type": "keyword" } } });
 
-    s.get("/collections").await.assert_status_unauthorized();
-    s.put("/collections/u")
-        .json(&schema)
-        .await
-        .assert_status_unauthorized();
-    s.put("/collections/u")
-        .add_header("authorization", "Bearer tok-admin")
-        .json(&schema)
-        .await
-        .assert_status_unauthorized();
+        s.get("/collections").await.assert_status_unauthorized();
+        s.put("/collections/u")
+            .json(&schema)
+            .await
+            .assert_status_unauthorized();
+        s.put("/collections/u")
+            .add_header("authorization", "Bearer tok-admin")
+            .json(&schema)
+            .await
+            .assert_status_unauthorized();
+    }
 }
 
 /// Probe/scrape routes stay exempt in both states — an operator has to be able
 /// to see that a pod is unhealthy without holding a credential.
 #[tokio::test]
 async fn probe_and_scrape_routes_stay_exempt_in_both_states() {
-    for cfg in [AuthConfig::open(), AuthConfig::required_in("serving")] {
+    for cfg in [
+        AuthConfig::open(),
+        AuthConfig::required_in("serving"),
+        AuthConfig::in_cluster("serving"),
+    ] {
         let s = server(cfg);
         s.get("/metrics").await.assert_status_ok();
         s.get("/healthz").await.assert_status_ok();
@@ -207,7 +216,7 @@ fn serve_startup(env: &[(&str, &str)]) -> (bool, bool, String) {
         Some(s) => s,
         None => {
             let _ = child.kill();
-            panic!("`LUMEN_AUTH=required` kept running instead of refusing to start:\n{stderr}");
+            panic!("required auth kept running instead of refusing to start:\n{stderr}");
         }
     };
     (status.success(), ever_bound, stderr)
@@ -218,26 +227,28 @@ fn serve_startup(env: &[(&str, &str)]) -> (bool, bool, String) {
 /// the request did, so the process must refuse rather than pick a namespace.
 #[test]
 fn required_auth_without_a_namespace_refuses_to_start() {
-    let (success, ever_bound, stderr) = serve_startup(&[("LUMEN_AUTH", "required")]);
+    for mode in ["required", "in-cluster"] {
+        let (success, ever_bound, stderr) = serve_startup(&[("LUMEN_AUTH", mode)]);
 
-    assert!(
-        !success,
-        "`LUMEN_AUTH=required` with no namespace exited successfully; stderr:\n{stderr}"
-    );
-    assert!(
-        !ever_bound,
-        "`LUMEN_AUTH=required` bound a serving port before giving up — for that window an \
-         unauthenticated request would have been served"
-    );
-    for needle in [
-        "LUMEN_AUTH=required",
-        "LUMEN_AUTH_NAMESPACE",
-        "SubjectAccessReview",
-    ] {
         assert!(
-            stderr.contains(needle),
-            "startup refusal does not name `{needle}`; stderr:\n{stderr}"
+            !success,
+            "`LUMEN_AUTH={mode}` with no namespace exited successfully; stderr:\n{stderr}"
         );
+        assert!(
+            !ever_bound,
+            "`LUMEN_AUTH={mode}` bound a serving port before giving up — for that window an \
+             unauthenticated request would have been served"
+        );
+        for needle in [
+            format!("LUMEN_AUTH={mode}"),
+            "LUMEN_AUTH_NAMESPACE".into(),
+            "SubjectAccessReview".into(),
+        ] {
+            assert!(
+                stderr.contains(&needle),
+                "startup refusal does not name `{needle}`; stderr:\n{stderr}"
+            );
+        }
     }
 }
 
@@ -251,41 +262,43 @@ fn required_auth_without_a_namespace_refuses_to_start() {
 /// tell which they have.
 #[test]
 fn required_auth_refuses_to_start_when_it_cannot_delegate() {
-    let (success, ever_bound, stderr) = serve_startup(&[
-        ("LUMEN_AUTH", "required"),
-        ("LUMEN_AUTH_NAMESPACE", "serving"),
-        // Keep the in-cluster client from finding a real cluster if the test
-        // host happens to carry a kubeconfig.
-        ("KUBERNETES_SERVICE_HOST", ""),
-        ("KUBECONFIG", "/nonexistent/kubeconfig"),
-    ]);
+    for mode in ["required", "in-cluster"] {
+        let (success, ever_bound, stderr) = serve_startup(&[
+            ("LUMEN_AUTH", mode),
+            ("LUMEN_AUTH_NAMESPACE", "serving"),
+            // Keep the in-cluster client from finding a real cluster if the test
+            // host happens to carry a kubeconfig.
+            ("KUBERNETES_SERVICE_HOST", ""),
+            ("KUBECONFIG", "/nonexistent/kubeconfig"),
+        ]);
 
-    assert!(
-        !success,
-        "`LUMEN_AUTH=required` exited successfully without a working delegation path; \
-         stderr:\n{stderr}"
-    );
-    assert!(
-        !ever_bound,
-        "`LUMEN_AUTH=required` bound a serving port before giving up — for that window an \
-         unauthenticated request would have been served"
-    );
-    assert!(
-        stderr.contains("LUMEN_AUTH=required"),
-        "startup refusal does not name the mode that caused it; stderr:\n{stderr}"
-    );
-
-    #[cfg(not(feature = "delegated-auth"))]
-    for needle in ["delegated-auth", "Refusing to start"] {
         assert!(
-            stderr.contains(needle),
-            "a build without the transport must say so; `{needle}` missing from:\n{stderr}"
+            !success,
+            "`LUMEN_AUTH={mode}` exited successfully without a working delegation path; \
+             stderr:\n{stderr}"
+        );
+        assert!(
+            !ever_bound,
+            "`LUMEN_AUTH={mode}` bound a serving port before giving up — for that window an \
+             unauthenticated request would have been served"
+        );
+        assert!(
+            stderr.contains(&format!("LUMEN_AUTH={mode}")),
+            "startup refusal does not name the mode that caused it; stderr:\n{stderr}"
+        );
+
+        #[cfg(not(feature = "delegated-auth"))]
+        for needle in ["delegated-auth", "Refusing to start"] {
+            assert!(
+                stderr.contains(needle),
+                "a build without the transport must say so; `{needle}` missing from:\n{stderr}"
+            );
+        }
+        #[cfg(feature = "delegated-auth")]
+        assert!(
+            stderr.contains("kube-apiserver") || stderr.contains("system:auth-delegator"),
+            "a build with the transport must name the delegation failure; stderr:\n{stderr}"
         );
     }
-    #[cfg(feature = "delegated-auth")]
-    assert!(
-        stderr.contains("kube-apiserver") || stderr.contains("system:auth-delegator"),
-        "a build with the transport must name the delegation failure; stderr:\n{stderr}"
-    );
 }
 // CODEGEN-END
