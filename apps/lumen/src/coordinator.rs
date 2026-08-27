@@ -29,7 +29,7 @@ use anyhow::{bail, Result};
 use futures::{FutureExt, StreamExt};
 use raft_runtime::OutcomeWindow;
 use rustc_hash::FxHashMap;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 
 use crate::log_entry::RaftLogEntry;
 use crate::storage::{ApplyOutcome, Engine};
@@ -111,6 +111,11 @@ pub fn is_storage_full(e: &anyhow::Error) -> bool {
 struct CompletionState {
     outcomes: OutcomeWindow<Result<ApplyOutcome>>,
     waiters: FxHashMap<u64, oneshot::Sender<Result<ApplyOutcome>>>,
+    /// A permit moves here immediately after publish and stays bound to the
+    /// sequence until the apply loop completes it. Caller cancellation or a
+    /// submit timeout only drops the waiter; it must never open the restore
+    /// fence while the published record can still apply later.
+    mutation_permits: FxHashMap<u64, OwnedRwLockReadGuard<()>>,
 }
 
 /// The optional local AOF the apply loop appends every applied record to (Stage
@@ -127,6 +132,15 @@ pub struct WriteCoordinator {
     wal: SharedWal,
     applied: AtomicU64,
     completions: Mutex<CompletionState>,
+    /// Serializes one Standalone-wide replacement against ordinary writes.
+    ///
+    /// `submit` holds a shared permit from publish through local apply. A
+    /// durable restore takes the exclusive permit, which therefore starts only
+    /// after every earlier submit has completed and prevents every later submit
+    /// from publishing until activation finishes. This fence is sufficient for
+    /// the embedded single-process Standalone path. External producers that can
+    /// publish directly to a shared WAL remain outside its contract.
+    mutation_gate: Arc<RwLock<()>>,
 }
 
 impl WriteCoordinator {
@@ -173,7 +187,9 @@ impl WriteCoordinator {
             completions: Mutex::new(CompletionState {
                 outcomes: OutcomeWindow::new(OUTCOME_WINDOW),
                 waiters: FxHashMap::default(),
+                mutation_permits: FxHashMap::default(),
             }),
+            mutation_gate: Arc::new(RwLock::new(())),
         });
         let loop_coord = coord.clone();
         tokio::spawn(async move {
@@ -368,22 +384,25 @@ impl WriteCoordinator {
     /// `applied` or the outcomes window: `seq` is already accounted for by
     /// the watermark, so there is nothing further to record.
     fn complete_stale(&self, seq: u64) {
-        let waiter = {
+        let (waiter, mutation_permit) = {
             let mut m = self.completions.lock().expect("completions poisoned");
-            m.waiters.remove(&seq)
+            (m.waiters.remove(&seq), m.mutation_permits.remove(&seq))
         };
         if let Some(tx) = waiter {
             let _ = tx.send(Err(anyhow::Error::new(SubmitStalled(format!(
                 "sequence {seq} arrived at or below the applied watermark (stale redelivery \
-                 or a sequence-domain mismatch); the write was not applied on this pass — retry"
+                or a sequence-domain mismatch); the write was not applied on this pass — retry"
             )))));
         }
+        drop(mutation_permit);
     }
 
     fn complete(&self, seq: u64, outcome: Result<ApplyOutcome>) {
         let mut direct = None;
+        let mutation_permit;
         {
             let mut m = self.completions.lock().expect("completions poisoned");
+            mutation_permit = m.mutation_permits.remove(&seq);
             if let Some(tx) = m.waiters.remove(&seq) {
                 direct = Some((tx, outcome));
             } else {
@@ -391,26 +410,50 @@ impl WriteCoordinator {
             }
             // Prune everything older than the retention window.
             m.outcomes.advance(seq);
+            // Publish the new applied head while the completion lock still
+            // hides the outcome from register_waiter. Otherwise an apply that
+            // wins the publish/register race can expose its outcome, let the
+            // caller-owned permit drop, and open the restore fence before this
+            // watermark advances.
+            self.applied.store(seq, Ordering::Release);
         }
-        // Publish the new applied head AFTER the outcome is stored, so checkpoint
-        // readers never see a seq before its engine mutation has been applied.
-        self.applied.store(seq, Ordering::Release);
+        // The restore fence may open only after the applied watermark above
+        // describes this completed record. The caller future may already have
+        // been cancelled or timed out; the permit is sequence-owned here.
+        drop(mutation_permit);
         if let Some((tx, outcome)) = direct {
             let _ = tx.send(outcome);
         }
     }
 
-    fn register_waiter(&self, seq: u64) -> Result<oneshot::Receiver<Result<ApplyOutcome>>> {
+    fn register_waiter(
+        &self,
+        seq: u64,
+        mutation_permit: OwnedRwLockReadGuard<()>,
+    ) -> Result<oneshot::Receiver<Result<ApplyOutcome>>> {
         let mut m = self.completions.lock().expect("completions poisoned");
         if let Some(result) = m.outcomes.claim(seq) {
             let (tx, rx) = oneshot::channel();
             let _ = tx.send(result);
             return Ok(rx);
         }
+        if seq <= self.applied.load(Ordering::Acquire) {
+            let (tx, rx) = oneshot::channel();
+            let _ = tx.send(Err(anyhow::Error::new(SubmitStalled(format!(
+                "sequence {seq} completed as a stale redelivery before its waiter registered; \
+                 the write was not applied on this pass — retry"
+            )))));
+            return Ok(rx);
+        }
         let (tx, rx) = oneshot::channel();
-        if m.waiters.insert(seq, tx).is_some() {
+        if m.waiters.contains_key(&seq) {
             bail!("duplicate waiter for sequence {seq}");
         }
+        if m.mutation_permits.contains_key(&seq) {
+            bail!("duplicate mutation permit for sequence {seq}");
+        }
+        m.waiters.insert(seq, tx);
+        m.mutation_permits.insert(seq, mutation_permit);
         Ok(rx)
     }
 
@@ -421,8 +464,13 @@ impl WriteCoordinator {
     /// stall must surface as a retryable 5xx to the caller, never an
     /// unbounded hang that leaks a server task per request.
     pub async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
+        // Keep the shared permit through publish AND local apply. An exclusive
+        // restore fence can therefore observe one exact applied/WAL boundary:
+        // no earlier submit remains in flight and no later submit has obtained
+        // a sequence yet.
+        let mutation_permit = self.mutation_gate.clone().read_owned().await;
         let seq = self.wal.publish(WalRecord::new(entry)).await?;
-        let rx = self.register_waiter(seq)?;
+        let rx = self.register_waiter(seq, mutation_permit)?;
         match tokio::time::timeout(SUBMIT_TIMEOUT, rx).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(_)) => Err(anyhow::anyhow!(
@@ -443,6 +491,15 @@ impl WriteCoordinator {
     /// Highest sequence this node has applied.
     pub fn applied_seq(&self) -> u64 {
         self.applied.load(Ordering::Acquire)
+    }
+
+    /// Fence every [`Self::submit`] call in this process.
+    ///
+    /// The returned owned guard keeps the fence closed until it is dropped.
+    /// Tokio's fair write-preferring queue also prevents a stream of new
+    /// submits from starving a waiting restore.
+    pub async fn fence_mutations(&self) -> OwnedRwLockWriteGuard<()> {
+        self.mutation_gate.clone().write_owned().await
     }
 }
 
@@ -534,6 +591,71 @@ mod tests {
 
         // The write is visible via a direct engine read (read-your-write).
         assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    #[tokio::test]
+    async fn exclusive_mutation_fence_blocks_publish_until_released() {
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal, engine);
+        let fence = coord.fence_mutations().await;
+
+        let mut pending = {
+            let coord = coord.clone();
+            tokio::spawn(async move {
+                coord
+                    .submit(RaftLogEntry::CreateCollection {
+                        collection_id: "u".into(),
+                        req: keyword_schema(),
+                    })
+                    .await
+            })
+        };
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut pending)
+                .await
+                .is_err(),
+            "a submit must remain blocked while the exclusive fence is held"
+        );
+        assert_eq!(coord.applied_seq(), 0, "blocked submit must not publish");
+
+        drop(fence);
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+            .await
+            .expect("submit must resume after the fence is released")
+            .expect("submit task must not panic")
+            .expect("submit must succeed");
+        assert!(matches!(outcome, ApplyOutcome::Created(_)));
+        assert_eq!(coord.applied_seq(), 1);
+    }
+
+    #[tokio::test]
+    async fn cancelled_submit_keeps_fence_closed_until_sequence_completes() {
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal, engine);
+
+        // Model the exact post-publish state directly: the caller owns a
+        // waiter, while the completion table owns the mutation permit for the
+        // published sequence. Cancelling the caller drops only the receiver.
+        let permit = coord.mutation_gate.clone().read_owned().await;
+        let waiter = coord.register_waiter(1, permit).unwrap();
+        drop(waiter);
+
+        let mut fence = Box::pin(coord.fence_mutations());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut fence)
+                .await
+                .is_err(),
+            "caller cancellation must not open the fence before apply completion"
+        );
+
+        coord.complete(1, Err(anyhow::anyhow!("synthetic apply failure")));
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(5), fence)
+            .await
+            .expect("the fence must open after the sequence completes");
+        assert_eq!(coord.applied_seq(), 1);
     }
 
     /// The embedded segment path may be replaced immediately after its write
@@ -771,14 +893,11 @@ mod tests {
 
     /// #1486 documents the defect class R1 fixes: pairing a non-zero
     /// `start_from` watermark with an UNSEEDED `MemWal::new()` (base 0) — the
-    /// pre-fix `serve()` wiring — reproduces the original hang: the first
-    /// write is stranded (never applied, never completed) well past a
-    /// generous bound, proving `MemWal::starting_at` (not just R2's
-    /// `submit()` timeout) is the real fix a correct restore needs. Uses a
-    /// short local bound rather than waiting out the full production
-    /// `SUBMIT_TIMEOUT` (30s), which R2 covers independently below.
+    /// pre-fix `serve()` wiring. The stale sequence must fail promptly without
+    /// applying. `MemWal::starting_at` remains required for the first write to
+    /// succeed after a restore.
     #[tokio::test]
-    async fn unseeded_wal_after_restore_strands_first_write() {
+    async fn unseeded_wal_after_restore_fails_without_applying() {
         let engine = Arc::new(Engine::new());
         engine.create_collection("u", keyword_schema()).unwrap();
 
@@ -787,7 +906,7 @@ mod tests {
         let wal = Arc::new(MemWal::new());
         let coord = WriteCoordinator::start_from(wal, engine.clone(), RESTORED_WATERMARK);
 
-        let result = tokio::time::timeout(
+        let error = tokio::time::timeout(
             std::time::Duration::from_millis(500),
             coord.submit(RaftLogEntry::Index {
                 collection_id: "u".into(),
@@ -802,14 +921,14 @@ mod tests {
                 },
             }),
         )
-        .await;
+        .await
+        .expect("stale sequence must fail promptly")
+        .expect_err("an unseeded WAL must not report a successful write");
         assert!(
-            result.is_err(),
-            "an unseeded WAL after a watermark restore strands the write (still hangs past a \
-             generous bound) — this is the exact defect class #1486 R1 fixes; \
-             MemWal::starting_at(watermark) is required, not just start_from(watermark)"
+            error.downcast_ref::<SubmitStalled>().is_some(),
+            "an unseeded WAL must report the stale sequence as SubmitStalled: {error}"
         );
-        // Never actually applied — the read side agrees with the hang.
+        // Never actually applied — the read side agrees with the error.
         assert_eq!(engine.stats("u").unwrap().documents_indexed, 0);
     }
 
@@ -829,7 +948,10 @@ mod tests {
         // (0 at start) — exactly what the apply loop's dedup guard would
         // see on a stale-redelivery, and route it through the same
         // `complete_stale` the guard calls.
-        let rx = coord.register_waiter(0).expect("register waiter for seq 0");
+        let permit = coord.mutation_gate.clone().read_owned().await;
+        let rx = coord
+            .register_waiter(0, permit)
+            .expect("register waiter for seq 0");
         coord.complete_stale(0);
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), rx)
             .await
