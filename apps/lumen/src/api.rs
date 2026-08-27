@@ -42,7 +42,7 @@ use axum::middleware::{from_fn, Next};
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
 use crate::coordinator::{
-    RestartRequired, StorageFullError, SubmitStalled, WriteCoordinator, WriteSink,
+    MutationGate, RestartRequired, StorageFullError, SubmitStalled, WriteCoordinator, WriteSink,
 };
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
@@ -128,6 +128,9 @@ pub struct AppState {
     /// segment-checkpoint implementation when segment persistence is
     /// configured. See [`CheckpointSink`].
     pub checkpoint: Arc<dyn CheckpointSink>,
+    /// Restore backend for `POST /admin/restore`. Defaults to an in-memory
+    /// candidate-and-swap sink; the server binary may wire a durable variant.
+    restore_sink: Arc<dyn RestoreSink>,
     /// Bounded write pause on still-moving virtual buckets during a
     /// reshard's final `CatchingUp` pass (#1396 R2). Defaults to unarmed
     /// (every write passes through unchanged); the reshard driver arms it
@@ -175,6 +178,44 @@ pub trait CheckpointSink: Send + Sync {
     /// on disk to fall behind). `Err` on a real write failure, which callers
     /// (the reshard driver) must treat as "not yet durable" and retry.
     async fn checkpoint_now(&self) -> Result<bool>;
+}
+
+/// Restore backend for the administrative restore operation.
+#[async_trait]
+pub trait RestoreSink: Send + Sync {
+    async fn restore(&self, snapshot: SnapshotV1) -> Result<()>;
+}
+
+/// Default restore implementation for the in-memory engine.
+///
+/// The snapshot is restored into a disposable candidate before the exclusive
+/// mutation gate is acquired. This keeps malformed snapshots from waiting
+/// behind in-flight writes and makes the live replacement a single swap.
+struct InMemoryRestoreSink {
+    engine: Arc<Engine>,
+    mutation_gate: Option<MutationGate>,
+}
+
+impl InMemoryRestoreSink {
+    fn new(engine: Arc<Engine>, mutation_gate: Option<MutationGate>) -> Self {
+        Self {
+            engine,
+            mutation_gate,
+        }
+    }
+}
+
+#[async_trait]
+impl RestoreSink for InMemoryRestoreSink {
+    async fn restore(&self, snapshot: SnapshotV1) -> Result<()> {
+        let candidate = Engine::new();
+        candidate.restore(snapshot)?;
+        let _permit = match &self.mutation_gate {
+            Some(gate) => Some(gate.exclusive().await?),
+            None => None,
+        };
+        self.engine.activate_replacement(candidate)
+    }
 }
 
 /// Default [`CheckpointSink`] for deployments/tests with no configured
@@ -510,12 +551,16 @@ impl AppState {
             write_backend: Arc::new(LocalWriteBackend {
                 writer: writer.clone(),
             }),
-            engine,
+            engine: engine.clone(),
             verifier: Arc::new(LumenVerifier::new(auth.clone())),
             auth,
             cluster: None,
-            writer,
+            writer: writer.clone(),
             checkpoint: Arc::new(NoopCheckpoint),
+            restore_sink: Arc::new(InMemoryRestoreSink::new(
+                engine.clone(),
+                writer.mutation_gate(),
+            )),
             write_fence: WriteFence::default(),
             routed: None,
         }
@@ -547,6 +592,11 @@ impl AppState {
     /// control/observe `POST /admin/checkpoint` behavior.
     pub fn with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self {
         self.checkpoint = checkpoint;
+        self
+    }
+
+    pub fn with_restore_sink(mut self, restore_sink: Arc<dyn RestoreSink>) -> Self {
+        self.restore_sink = restore_sink;
         self
     }
 
@@ -1129,16 +1179,6 @@ async fn acquire_direct_mutation_permit(
         return Ok(None);
     };
     gate.shared().await.map(Some).map_err(ApiErr::from)
-}
-
-async fn acquire_replacement_permit(
-    state: &AppState,
-) -> Result<Option<tokio::sync::OwnedRwLockWriteGuard<()>>, ApiErr> {
-    enforce_storage_writable(state)?;
-    let Some(gate) = state.writer.mutation_gate() else {
-        return Ok(None);
-    };
-    gate.exclusive().await.map(Some).map_err(ApiErr::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -2306,6 +2346,8 @@ async fn backup_to_local(
     responses(
         (status = 204, description = "Engine state replaced from the snapshot"),
         (status = 403, description = "Missing admin role", body = ApiError),
+        (status = 500, description = "Restore failed", body = ApiError),
+        (status = 503, description = "Restore temporarily unavailable", body = ApiError),
         (status = 422, description = "Malformed or incompatible snapshot", body = ApiError),
         (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
@@ -2316,8 +2358,12 @@ async fn restore(
     Json(snap): Json<SnapshotV1>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
-    let _mutation_permit = acquire_replacement_permit(&state).await?;
-    state.engine.restore(snap).map_err(ApiErr::from)?;
+    enforce_storage_writable(&state)?;
+    state
+        .restore_sink
+        .restore(snap)
+        .await
+        .map_err(ApiErr::from)?;
     tracing::info!(
         target: "lumen.audit",
         event = "restore_applied",
@@ -3020,3 +3066,58 @@ impl From<crate::auth::AuthErr> for ApiErr {
     }
 }
 // CODEGEN-END
+
+#[cfg(test)]
+mod restore_sink_tests {
+    use super::*;
+    use crate::types::CreateCollectionRequest;
+    use std::collections::BTreeMap;
+
+    fn collection_request() -> CreateCollectionRequest {
+        serde_json::from_value(serde_json::json!({
+            "fields": { "value": { "type": "keyword" } }
+        }))
+        .expect("valid collection request")
+    }
+
+    #[tokio::test]
+    async fn invalid_snapshot_is_rejected_before_exclusive_gate() {
+        let engine = Arc::new(Engine::new());
+        let gate = MutationGate::default();
+        let shared = gate.shared().await.expect("shared permit");
+        let sink = InMemoryRestoreSink::new(engine, Some(gate));
+        let invalid = SnapshotV1 {
+            version: 999,
+            collections: BTreeMap::new(),
+        };
+
+        let result = tokio::time::timeout(Duration::from_millis(100), sink.restore(invalid))
+            .await
+            .expect("invalid snapshot must not wait for the exclusive gate");
+        assert!(result.is_err());
+        drop(shared);
+    }
+
+    #[tokio::test]
+    async fn default_sink_atomically_replaces_live_state() {
+        let live = Arc::new(Engine::new());
+        live.create_collection("old", collection_request())
+            .expect("old collection");
+        let state = AppState::open(live.clone());
+
+        let source = Engine::new();
+        source
+            .create_collection("new", collection_request())
+            .expect("new collection");
+        let snapshot = source.snapshot().expect("snapshot");
+
+        state
+            .restore_sink
+            .restore(snapshot)
+            .await
+            .expect("restore succeeds");
+        let restored = live.snapshot().expect("restored snapshot");
+        assert!(!restored.collections.contains_key("old"));
+        assert!(restored.collections.contains_key("new"));
+    }
+}
