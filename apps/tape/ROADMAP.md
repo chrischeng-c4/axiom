@@ -116,7 +116,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: Every `raft_cluster` and `raft_failover` case is green
   twenty consecutive times with a single test thread on a loaded host, and no
   case carries a shared deadline constant.
-- Tracking: Not assigned.
+- Tracking: [#3926](https://github.com/chrischeng-c4/axiom/issues/3926)
 
 ### Pub/Sub rebaseline
 
