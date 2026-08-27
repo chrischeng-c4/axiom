@@ -55,21 +55,43 @@ epic = load_epic_module()
 
 REPO = "owner/repo"
 
-# The corpus baseline, declared rather than computed at run time. A control
-# that recomputed its own expectation would agree with any answer.
+# Two of the four corpus rows are declared constants and two are not, and the
+# split is not a matter of taste. `CORPUS_CYCLES` and `CORPUS_DANGLING` are
+# properties of a well-formed epic, so a non-zero reading is a defect whichever
+# epics the snapshot happens to hold. `graphed` and `unreadable` are properties
+# of *which* epics it holds, and the snapshot is refreshed from a live tracker.
 #
-# `GRAPHED_EPICS` was first measured at 38 by an ad-hoc script and is 32. The
-# 38 is not reproducible by any reading of the column -- 45 epics carry it, 32
-# have at least one cell holding a requirement reference, 226 cells say `-` or
-# `none` -- so it was discarded rather than reconciled. Two independent
-# implementations agree on 32.
-GRAPHED_EPICS = 32
+# They were declared anyway -- 32 graphed and 10 unreadable, measured on
+# 2026-08-14 in `26415efd08` over a 255-epic snapshot. On 2026-08-27 the same
+# parser read 41 and 11 over 313 epics and the row went red without a line of
+# `epic.py` having changed. Four independent readings of the `Depends On`
+# column -- a regex one, a line-wise one, a structural one, and `epic.py`
+# itself -- returned the same 41 numbers and the same 11 numbers, every
+# pairwise symmetric difference empty. Of the nine extra graphed epics only
+# four are issues opened since the baseline; the other five are pre-existing
+# epics whose bodies gained a `Depends On` cell afterwards. A count never
+# recorded *which* 32 it meant, so that remainder is unnameable, and bumping
+# 32 to 41 would buy exactly until the next body edit.
+#
+# So those two rows are relational instead. `measure_population.py` writes
+# `_snapshots/order_rows.json` beside the bodies, saying what each epic read
+# when the snapshot was taken, and the assertion here is that no epic that was
+# graphed has become ungraphed and no cell that was readable has become
+# unreadable. Growth adds rows and cannot turn that red; a parser regression
+# drops one and does.
+#
+# The ledger is evidence only while it is older than the change under test:
+# refreshing it re-records whatever the parser says today. That is the same
+# trade `check_coverage_rule.py` makes, and the reason both files put the
+# refresh in a separate script a human runs.
 CORPUS_CYCLES = 0
 CORPUS_DANGLING = 0
-# Non-zero on purpose, and the reason this row is worth more than the three
-# above it: 10 epics fill a `Depends On` with an issue number or prose. This
-# count firing is itself the proof that the detector fires.
-CORPUS_UNREADABLE = 10
+
+# Every seeded control below edits a real corpus body by string replacement, so
+# each seed is chosen from the epics that actually carry this header -- a
+# replacement that matched nothing would leave the body untouched and the
+# control would pass by measuring the unmutated epic.
+INVENTORY_HEADER = "| Requirement | Gate | Oracle | Depends On |"
 
 
 def body(*, requirements: list[str], inventory: list[str],
@@ -398,39 +420,79 @@ def main() -> int:
         return r.verdict()
     corpus = json.loads(snapshot.read_text(encoding="utf-8"))
 
-    graphed = cycles = dangles = unread = 0
+    reading = {}
+    cycles = dangles = 0
     for item in corpus:
         out = order({"number": item["number"], "body": item.get("body") or ""}, [])
-        unread += bool(out["unreadable"])
+        reading[item["number"]] = {"graphed": bool(out["graph"]),
+                                   "unreadable": bool(out["unreadable"])}
         if not out["graph"]:
             continue
-        graphed += 1
         cycles += bool(out["cycle"])
         dangles += bool(out["dangling"])
+    graphed = sum(1 for v in reading.values() if v["graphed"])
+    unread = sum(1 for v in reading.values() if v["unreadable"])
+
     r.record(f"the real corpus ({len(corpus)} epics) reads clean",
-             f"{GRAPHED_EPICS} graphed, {CORPUS_CYCLES} cyclic, "
-             f"{CORPUS_DANGLING} dangling",
-             f"{graphed} graphed, {cycles} cyclic, {dangles} dangling",
-             graphed == GRAPHED_EPICS and cycles == CORPUS_CYCLES
-             and dangles == CORPUS_DANGLING)
+             f"{CORPUS_CYCLES} cyclic, {CORPUS_DANGLING} dangling "
+             f"over the graphed epics",
+             f"{cycles} cyclic, {dangles} dangling over {graphed} graphed "
+             f"({unread} carrying an unreadable cell)",
+             cycles == CORPUS_CYCLES and dangles == CORPUS_DANGLING)
 
-    r.record("the corpus's real unreadable cells are all found",
-             f"{CORPUS_UNREADABLE} epics", f"{unread} epics",
-             unread == CORPUS_UNREADABLE)
+    # -- the two relational rows -------------------------------------------
+    ledger_path = SNAPSHOTS / "order_rows.json"
+    if not ledger_path.is_file():
+        r.record("the per-epic order ledger", "order_rows.json present",
+                 f"missing at {ledger_path}; run measure_population.py", False)
+        return r.verdict()
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
 
-    # The row above is a baseline of zero, and a detector that never fires
-    # reports zero too. One seeded defect of each kind, into the first epic
-    # that actually has a graph, has to move both counts to one.
+    # `measure_population.py` writes the bodies and the ledger in one run, so
+    # they name the same epics or one of them is stale. Comparing only the
+    # intersection without saying so would let a ledger from an older refresh
+    # score two rows green over whatever handful of epics it still overlapped.
+    paired = [row for row in ledger if row["number"] in reading]
+    r.record("the ledger and the bodies come from one refresh",
+             f"{len(corpus)} epics in both",
+             f"{len(ledger)} in the ledger, {len(paired)} of them paired",
+             len(ledger) == len(corpus) == len(paired))
+
+    lost = [row["number"] for row in paired
+            if row["graphed"] and not reading[row["number"]]["graphed"]]
+    was_graphed = sum(1 for row in paired if row["graphed"])
+    r.record(f"every epic the ledger read as graphed still is "
+             f"({was_graphed} measured)",
+             "none lost",
+             ", ".join(f"#{n}" for n in lost[:5]) or "none lost",
+             not lost)
+
+    turned = [row["number"] for row in paired
+              if not row["unreadable"] and reading[row["number"]]["unreadable"]]
+    was_readable = sum(1 for row in paired if not row["unreadable"])
+    r.record(f"no epic the ledger read as readable has turned unreadable "
+             f"({was_readable} measured)",
+             "none turned",
+             ", ".join(f"#{n}" for n in turned[:5]) or "none turned",
+             not turned)
+
+    # -- the four seeded controls ------------------------------------------
+    #
+    # The three rows above are all "nothing got worse" assertions, and an
+    # instrument that read every epic as ungraphed and readable and found no
+    # cycle anywhere would satisfy all three. Each is therefore paired with a
+    # mutation of a real corpus body that has to move the reading.
     seed = next(item for item in corpus
-                if order({"number": item["number"],
-                          "body": item.get("body") or ""}, [])["graph"])
+                if INVENTORY_HEADER in (item.get("body") or "")
+                and order({"number": item["number"],
+                           "body": item["body"]}, [])["graph"])
     seeded_cycle = seed["body"].replace(
-        "| Requirement | Gate | Oracle | Depends On |",
-        "| Requirement | Gate | Oracle | Depends On |\n|---|---|---|---|\n"
+        INVENTORY_HEADER,
+        INVENTORY_HEADER + "\n|---|---|---|---|\n"
         "| R901 | `g` | o | R902 |\n| R902 | `g` | o | R901 |", 1)
     seeded_dangle = seed["body"].replace(
-        "| Requirement | Gate | Oracle | Depends On |",
-        "| Requirement | Gate | Oracle | Depends On |\n|---|---|---|---|\n"
+        INVENTORY_HEADER,
+        INVENTORY_HEADER + "\n|---|---|---|---|\n"
         "| R903 | `g` | o | R904 |", 1)
     moved_c = order({"number": seed["number"], "body": seeded_cycle}, [])
     moved_d = order({"number": seed["number"], "body": seeded_dangle}, [])
@@ -438,6 +500,28 @@ def main() -> int:
              f"a cycle and a dangling ref in #{seed['number']}",
              f"cycle {moved_c['cycle']}; dangling {moved_d['dangling']}",
              bool(moved_c["cycle"]) and moved_d["dangling"] == [904])
+
+    hidden = seed["body"].replace("## Verification Inventory", "## Notes", 1)
+    moved_g = order({"number": seed["number"], "body": hidden}, [])
+    r.record("an epic whose inventory is taken away reads ungraphed",
+             f"#{seed['number']} graphed, then not",
+             f"graph {bool(moved_g['graph'])} after the section is renamed",
+             not moved_g["graph"])
+
+    readable = next(
+        item for item in corpus
+        if INVENTORY_HEADER in (item.get("body") or "")
+        and reading[item["number"]]["graphed"]
+        and not reading[item["number"]]["unreadable"])
+    planted = readable["body"].replace(
+        INVENTORY_HEADER,
+        INVENTORY_HEADER + "\n|---|---|---|---|\n"
+        "| R905 | `g` | o | #1234 |", 1)
+    moved_u = order({"number": readable["number"], "body": planted}, [])
+    r.record("an issue number planted in a `Depends On` cell reads unreadable",
+             f"#{readable['number']} readable, then not",
+             f"unreadable {moved_u['unreadable']}",
+             bool(moved_u["unreadable"]))
 
     return r.verdict()
 

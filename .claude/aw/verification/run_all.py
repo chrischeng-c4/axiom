@@ -69,7 +69,14 @@ SUITE = [
     # Reads the epic snapshot and calls `order_children` as a pure function;
     # nothing is spawned and nothing is written, so it costs about as much as
     # the probes and sits with them rather than with the flow gates below.
-    ("check_epic_order.py", None),
+    #
+    # It carried no control until 2026-08-27, when its two headline corpus rows
+    # stopped being declared counts and became relational -- and a relational
+    # row states an absence, which an instrument that reads nothing satisfies
+    # too. Its control mutates `epic.py`, the same product script
+    # `check_coverage_rule_negative_control.py` mutates, and restores by
+    # captured bytes with an sha256 check.
+    ("check_epic_order.py", "check_epic_order_negative_control.py"),
     ("probe_offtree_root.py", None),
     ("probe_local_verbs.py", None),
     # The META-doc validator. Exempt from the ordering rule above for the same
