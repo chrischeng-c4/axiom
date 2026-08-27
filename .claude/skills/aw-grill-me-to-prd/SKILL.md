@@ -1,6 +1,6 @@
 ---
 name: aw:grill-me-to-prd
-description: Interview the human through AskUserQuestion until a product promise is stated as observable behaviour that a STATUS row or a ROADMAP outcome owns, then create, modify, or delete one `## <title>` section — or a whole capability area — of the owning project's `docs/product/`. Use before any epic exists for the promise; `/aw-grill-me-to-epic` carves the epic from the section afterwards. Writes only under `docs/product/`; never source, tests, STATUS, ROADMAP, or the tracker. Requires a clean `docs/` tree and hands back the change as a git diff.
+description: Interview the human through AskUserQuestion until a product promise is stated as observable behaviour that a STATUS row or a ROADMAP outcome owns, then create, modify, or delete one `## <title>` section — or a whole capability area — of the owning project's `docs/product/`. Use before any epic exists for the promise; `/aw-grill-me-to-epic` carves the epic from the section afterwards. Writes only under `docs/product/`; never source, tests, STATUS, ROADMAP, or the tracker. Requires a clean `docs/` tree, and lands the run through `prd.py check` and `prd.py commit` so the commit is searchable afterwards.
 version: 0.1.0
 user-invocable: true
 ---
@@ -175,8 +175,50 @@ it is a promise somebody already made, and only the diff says which is which.
 A deletion has no other evidence at all — the section is gone, and the diff is
 the sole record of what it said. Name the path and the section title beside
 it, and for a future section say that `/aw-grill-me-to-epic` opens its epic
-next. Leave the change uncommitted: what the human reads is the working tree
-against HEAD.
+next.
+
+## Land it
+
+Two verbs, and neither is yours to skip. The first measures what the run did;
+the second is the only thing here allowed to write a commit.
+
+```
+uv run --python 3.13 --no-project ".claude/aw/scripts/prd.py" check <project>
+```
+
+`prd.py check` reads and changes nothing. It measures the working tree against
+HEAD: every changed path against the single allowlist `<project>/docs/product/`,
+every touched section against the seven bullets and their order, every STATUS
+row id and ROADMAP outcome id against the file it is claimed from, the section
+index against the area files in both directions, and the whole project against
+the product-document contract. It also refuses a heading or a `Tracking:` line
+that gained an issue number, which is where the `## Never` list below stops
+being advice you could read past. Each finding names its rule and its path.
+
+A refusal leaves everything where it is. The file you were not supposed to
+write is still written, still uncommitted, and still the human's to decide
+about — undoing it is not this skill's call any more than making it was.
+
+Once it prints `=> CLEAN`, write the commit message to a file: first line the
+subject, which has to read `docs(<name>): <what changed>`, then a blank line,
+then why the promise changed, in the terms the human used. Then hand it to the
+only writer here:
+
+```
+uv run --python 3.13 --no-project ".claude/aw/scripts/prd.py" commit <project> --why <path>
+```
+
+`prd.py commit` re-runs every check, stages exactly the allowlist, and appends
+the trailer block that makes the commit findable — `PRD-Project:`, one
+`PRD-Section: added|modified|removed <path>#<title>` line per section this run
+touched, and `PRD-Unbound:`, how many of those still carry no work item. The
+trailers are derived from the diff, not from anything you assert, so they
+cannot describe some other commit. `--dry-run` prints the message and stages
+nothing.
+
+That block is what the skill after this one — `aw-grill-prd-to-wi`, which
+turns written promises into an epic or a change — searches for. A PRD commit
+made by hand carries no trailers, so it is a promise the ladder cannot find.
 
 ## Never
 
@@ -195,8 +237,10 @@ This addresses the agent running the interview, not the human answering it.
   a ROADMAP completion evidence so the prose reads better.
 - Never answer an `Open:` line yourself, and never drop one: an open question
   the section stops carrying is a decision somebody made without saying so.
-- Never commit, stash, or branch to reach the clean tree the run needs, and
-  never leave the run itself committed. The diff against HEAD is the whole
-  report, and both a tree this skill tidied and a change it landed are
-  changes the human never got to read.
+- Never commit, stash, or branch to reach the clean tree the run needs. A
+  tree this skill tidied is a change the human never got to read.
+- Never run `git add` or `git commit` on the run itself, and never work around
+  a refusal by committing the allowed paths by hand. `prd.py commit` is the
+  writer; a commit made beside it carries none of the trailers the next skill
+  reads, and reports a run that was never measured.
 - Never delete a bound section, and never rename one.
