@@ -3101,6 +3101,14 @@ struct SegmentCheckpointSink {
 #[async_trait::async_trait]
 impl lumen::api::CheckpointSink for SegmentCheckpointSink {
     async fn checkpoint_now(&self) -> Result<bool> {
+        // The sink owns the checkpoint permit. Do not acquire this in the API
+        // handler: an exclusive restore may already be queued ahead of this
+        // request, and a nested read would then deadlock.
+        let _checkpoint_permit = if let Some(gate) = self.writer.mutation_gate() {
+            Some(gate.shared().await?)
+        } else {
+            None
+        };
         let seq = self.writer.applied_seq();
         let store = self.store.clone();
         let engine = self.engine.clone();
@@ -3655,6 +3663,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
             ticker.tick().await; // skip immediate fire
             loop {
                 ticker.tick().await;
+                let _checkpoint_permit = match snap_writer.mutation_gate() {
+                    Some(gate) => match gate.shared().await {
+                        Ok(permit) => Some(permit),
+                        Err(e) => {
+                            tracing::error!(error = %e, "RDB checkpoint blocked by durability state");
+                            continue;
+                        }
+                    },
+                    None => None,
+                };
                 let seq = snap_writer.applied_seq();
                 match RdbSnapshot::capture(&snap_engine, seq) {
                     Ok(rdb) => {
@@ -3695,6 +3713,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
             ticker.tick().await; // skip immediate fire
             loop {
                 ticker.tick().await;
+                let _checkpoint_permit = match snap_writer.mutation_gate() {
+                    Some(gate) => match gate.shared().await {
+                        Ok(permit) => Some(permit),
+                        Err(e) => {
+                            tracing::error!(error = %e, "segment checkpoint blocked by durability state");
+                            continue;
+                        }
+                    },
+                    None => None,
+                };
                 let seq = snap_writer.applied_seq();
                 let store2 = store.clone();
                 let eng2 = snap_engine.clone();
@@ -4203,11 +4231,60 @@ fn init_otel_meter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lumen::coordinator::MutationGate;
     use lumen::types::{
         CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
         QueryNode, SearchRequest, TermQuery,
     };
     use std::collections::BTreeMap;
+
+    #[tokio::test]
+    async fn checkpoint_shared_permit_blocks_exclusive_restore_until_checkpoint_finishes() {
+        let gate = MutationGate::default();
+        let checkpoint = gate.shared().await.unwrap();
+        let mut restore = Box::pin(gate.exclusive());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut restore)
+                .await
+                .is_err()
+        );
+        drop(checkpoint);
+        tokio::time::timeout(Duration::from_secs(1), restore)
+            .await
+            .expect("exclusive restore must proceed after checkpoint permit is released")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn manual_checkpoint_can_join_before_queued_exclusive_restore_without_deadlock() {
+        let gate = MutationGate::default();
+        let checkpoint = gate.shared().await.unwrap();
+        let mut restore = Box::pin(gate.exclusive());
+        tokio::task::yield_now().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut restore)
+                .await
+                .is_err()
+        );
+        let mut next_checkpoint = Box::pin(gate.shared());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut next_checkpoint)
+                .await
+                .is_err()
+        );
+        drop(checkpoint);
+        // Once the active checkpoint releases, the fair gate lets the queued
+        // exclusive restore run. A handler must not hold a second read guard.
+        let _restore = tokio::time::timeout(Duration::from_secs(1), restore)
+            .await
+            .expect("queued restore must not deadlock")
+            .unwrap();
+        drop(_restore);
+        tokio::time::timeout(Duration::from_secs(1), next_checkpoint)
+            .await
+            .expect("checkpoint must finish after restore")
+            .unwrap();
+    }
 
     /// Every handed-out `LumenFleet` must actually materialize. A rendered
     /// template is the first thing a deployer applies, so a duplicated

@@ -2570,7 +2570,9 @@ async fn admin_checkpoint(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
-    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
+    // The concrete checkpoint sink acquires the shared checkpoint permit. An
+    // API-level permit here can deadlock behind a queued exclusive restore.
+    enforce_storage_writable(&state)?;
     let persisted = state
         .checkpoint
         .checkpoint_now()
