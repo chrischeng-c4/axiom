@@ -59,8 +59,7 @@ checklist; four of the seven H1 outcomes land here.
   subscriptions; depends on
   [replication-and-availability.md](replication-and-availability.md)
   § Deterministic failover for the failover proof.
-- Outcome: `subscription-ack-and-competing-subscribers`. Tracking: not
-  assigned.
+- Outcome: `subscription-ack-and-competing-subscribers`. Tracking: not assigned.
 
 ## Push subscriptions
 
