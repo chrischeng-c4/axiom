@@ -46,10 +46,10 @@ The shape under test:
                   leg.py, and the three phases it is shared by: e2e.py, unit.py, logic.py
   verification/   this directory
 .claude/skills/
-  aw-check-meta/           aw-go-tdd-for-change/   aw-go-tdd-for-epic/
-  aw-grill-change-to-prd/  aw-grill-change-to-td/  aw-grill-epic-to-changes/
-  aw-grill-epic-to-prd/    aw-grill-epic-to-td/    aw-grill-me-to-change/
-  aw-grill-me-to-epic/     aw-prepare-goal/
+  aw-ask-user/             aw-check-meta/          aw-go-tdd-for-change/
+  aw-go-tdd-for-epic/      aw-grill-change-to-td/  aw-grill-epic-to-changes/
+  aw-grill-epic-to-td/     aw-grill-me-to-change/  aw-grill-me-to-epic/
+  aw-grill-me-to-prd/      aw-prepare-goal/
 ```
 
 This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why

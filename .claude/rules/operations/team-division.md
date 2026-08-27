@@ -9,9 +9,10 @@ cheap, and every step that needs a human runs where a human can answer.
 ## Rules
 
 - The main session (controller) exclusively runs the grill series —
-  `/aw-grill-me-to-change`, `/aw-grill-me-to-epic`, `/aw-grill-epic-to-changes`
-  and the four `/aw-grill-{change,epic}-to-{prd,td}` — plus `/aw-prepare-goal`
-  Route B. All eight interview through AskUserQuestion;
+  `/aw-grill-me-to-prd`, `/aw-grill-me-to-epic`, `/aw-grill-me-to-change`,
+  `/aw-grill-epic-to-changes` and the two `/aw-grill-{change,epic}-to-td` —
+  plus `/aw-prepare-goal` Route B and `/aw-ask-user`. All eight interview
+  through AskUserQuestion;
   subagents do not have that tool, and a subagent running them anyway is
   answering for the human.
 - The controller also keeps dispatch scheduling, final acceptance, git land,

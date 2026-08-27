@@ -58,10 +58,10 @@ SKILLS_DIR = REPO / ".claude/skills"
 NAMESPACE = "aw"
 SKILL_PREFIX = f"{NAMESPACE}-"      # directory and invocation: aw-<skill>/ -> /aw-<skill>
 DISPLAY_PREFIX = f"{NAMESPACE}:"    # frontmatter name: the listed label aw:<skill>
-SKILLS = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic",
-          "grill-change-to-prd", "grill-change-to-td", "grill-epic-to-changes",
-          "grill-epic-to-prd", "grill-epic-to-td", "grill-me-to-change",
-          "grill-me-to-epic", "prepare-goal")
+SKILLS = ("ask-user", "check-meta", "go-tdd-for-change", "go-tdd-for-epic",
+          "grill-change-to-td", "grill-epic-to-changes", "grill-epic-to-td",
+          "grill-me-to-change", "grill-me-to-epic", "grill-me-to-prd",
+          "prepare-goal")
 
 
 def skill_dir(skill: str) -> pathlib.Path:
@@ -113,10 +113,13 @@ def skill_label(skill: str) -> str:
 # ask. By the time the ladder starts, the work item has already said what the
 # change is; what remains is a fixed sequence of verbs and the exit codes they
 # return, and the only question a gate could raise is whether it counts.
-# The four `grill-*-to-{prd,td}` skills are interviewing for the same reason
-# the grills that open work items are: the body says what the change is, and
-# the document they write says who it is for and what it stands on -- which the
-# body does not carry, and only the human can supply.
+# The two `grill-*-to-td` skills are interviewing for the same reason the
+# grills that open work items are: the body says what the change is, and the
+# document they write says how it is built -- which the body does not carry,
+# and only the human can supply. `grill-me-to-prd` runs before any work item
+# exists, so everything it writes is in the human's head. `ask-user` is
+# interviewing by definition: asking is the whole of what it does, and a body
+# without AskUserQuestion would be a skill that does nothing.
 # `prepare-goal` is interviewing on the strength of its second route rather
 # than its first. Given an iid it reads a body that a validator already refused
 # once, and there is nothing left to ask; given none, everything the condition
@@ -125,9 +128,9 @@ def skill_label(skill: str) -> str:
 # human's head. Classifying it procedural would forbid the very tool that route
 # is made of, and would leave the no-iid case answered by whatever the agent
 # guessed the human meant.
-INTERVIEWING = ("grill-change-to-prd", "grill-change-to-td", "grill-epic-to-changes",
-                "grill-epic-to-prd", "grill-epic-to-td", "grill-me-to-change",
-                "grill-me-to-epic", "prepare-goal")
+INTERVIEWING = ("ask-user", "grill-change-to-td", "grill-epic-to-changes",
+                "grill-epic-to-td", "grill-me-to-change", "grill-me-to-epic",
+                "grill-me-to-prd", "prepare-goal")
 PROCEDURAL = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic")
 
 # The eight scripts sit in one directory, not inside a skill. They were under

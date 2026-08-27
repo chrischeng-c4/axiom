@@ -64,6 +64,18 @@ If the target's type is not change, stop: the script refuses it by name, and
 the closed work-item enum converges by spawn-and-link, never by changing a type
 in place.
 
+## The PRD comes first
+
+A change writes no product-requirements section of its own. Its promise is
+the `docs/product/` section its epic is bound to — the heading that carries
+`(#<epic iid>)` — or, for a change with no epic, the shipped section whose
+promise it narrows or repairs. On the create path, find that section before
+the first question and cite it as the first premise of `## How`, as
+`docs/product/<file>.md § <title>`. If no section covers the change, stop:
+`/aw-grill-me-to-prd` writes the promise first, and `/aw-grill-me-to-epic`
+opens the epic that carries it. A change whose promise is written nowhere is
+one a worker can satisfy without anyone being able to say what it was for.
+
 ## Interview scope
 
 Run `change.py skeleton`. Its output is the authoritative section set — do not
