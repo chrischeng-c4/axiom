@@ -97,6 +97,18 @@ SUITE = [
     # its control does mutate real tracked files, but they are two `apps/cube`
     # documents that nothing else in this suite reads or writes.
     ("check_meta_clean.py", "check_meta_clean_negative_control.py"),
+    # The PRD run's allowlist. Exempt from the ordering rule for the same
+    # reason the flow gates below are: every case builds its own `tempfile` git
+    # repository with its own `aw.toml`, plants one violation in it, and spawns
+    # `prd.py` against that -- nothing in this checkout is read or written, so
+    # it can neither be disturbed by a control above nor leave residue below.
+    #
+    # It carries no separate negative control, and that is not an exemption:
+    # the gate *is* the control. Each of its ten cases starts from a fixture
+    # that produces zero findings and plants exactly one defect, so a rule that
+    # stopped firing shows up as that case reporting `[]`, and a rule that fires
+    # on everything shows up as the baseline case reporting it.
+    ("check_prd_scope.py", None),
     # Exempt from the ordering rule above, and last because they are the
     # slowest. They mutate nothing in this checkout: each fixture is a
     # `tempfile` tree with its own `aw.toml` and its own git repository, so it

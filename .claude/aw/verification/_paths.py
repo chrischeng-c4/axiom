@@ -133,7 +133,7 @@ INTERVIEWING = ("ask-user", "grill-change-to-td", "grill-epic-to-changes",
                 "grill-me-to-prd", "prepare-goal")
 PROCEDURAL = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic")
 
-# The eight scripts sit in one directory, not inside a skill. They were under
+# The nine scripts sit in one directory, not inside a skill. They were under
 # `wi-epic-grill/scripts/` (now `grill-me-to-epic`) while it was the only skill
 # running them, which made
 # the epic grill look like their owner; reconcile already reached across into
@@ -172,6 +172,14 @@ LOGIC_SCRIPT = SCRIPTS / "logic.py"
 # marker whose producer is gone is worse than plain prose, because a reader
 # takes it as evidence that something regenerates what sits inside it.
 META_SCRIPT = SCRIPTS / "meta.py"
+
+# The PRD run's own refusal. It is not on the ladder either, and it is the
+# only script here whose subject is a directory of prose rather than a work
+# item: `/aw-grill-me-to-prd` writes `<project>/docs/product/`, and this
+# refuses a run that reached outside it, then writes the one commit that run
+# is allowed. Two verbs, `check` and `commit`, and the split is what keeps the
+# read from being able to repair what it measures.
+PRD_SCRIPT = SCRIPTS / "prd.py"
 
 # The phase scripts read TOML, `tomllib` landed in 3.11, and `python3` is 3.9 on at least
 # one machine this runs on. Both the skills and the gates below have to invoke it

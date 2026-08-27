@@ -64,10 +64,11 @@ into the script that replaced it.
 
 Twelve entry points. Each is invoked by a human. Lifecycle skills hand off to
 a phase script that can refuse them; the PRD grill writes prose under the
-owning project's `docs/product/` before any work item exists and hands off to
-the epic grill; the two TD grills write under `docs/technical/` and hand off
-to nothing; `ask-user` writes nothing at all; the project-document checker
-uses its own read-only validators and a clean-context reader.
+owning project's `docs/product/` before any work item exists, and hands it to
+`prd.py`, which refuses a run that wrote anywhere else and is the only writer
+of its commit; the two TD grills write under `docs/technical/` and hand off to
+nothing at all; `ask-user` writes nothing; the project-document checker uses
+its own read-only validators and a clean-context reader.
 
 They load as project skills out of `.claude/skills/`, not as the `aw` plugin,
 and that copy is what a session actually reads. Each directory is named
@@ -112,8 +113,15 @@ convention — nothing in the ladder checks that a TD exists. `prepare-goal`,
   unlabelled issue is not one, whatever its body claims.
 - `grill-me-to-prd` writes only under the owning project's `docs/product/`,
   one `## <title>` section per promise, into a file named for its capability
-  area — never for an issue number, because no issue exists yet. A section is
-  bound to its epic — the heading gains ` (#<iid>)`, `Tracking:` gains the
+  area — never for an issue number, because no issue exists yet. That
+  allowlist is measured rather than asked for: `prd.py check` reads the dirty
+  set against HEAD and refuses every path outside it, along with a section
+  missing one of its seven bullets, a STATUS or ROADMAP id that resolves
+  nowhere, and a heading that gained a `(#<iid>)` the epic grill has not
+  bound. `prd.py commit` re-runs all of it, stages the allowlist, and writes
+  the `PRD-Project:` / `PRD-Section:` / `PRD-Unbound:` trailers that make the
+  commit findable; a PRD commit written by hand carries none of them. A
+  section is bound to its epic — the heading gains ` (#<iid>)`, `Tracking:` gains the
   link — by `grill-me-to-epic`, in the same run that opens the epic, and by
   nothing else.
 - A `grill-*-to-td` writes only under the owning project's `docs/technical/`,
