@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """What every leg of a change work item has in common.
 
-A change lands in three legs, and `CLAUDE.md` fixes their order: the artifact
-that can refuse the work is authored first, and the implementation last. Which
-three is currently changing -- `ec -> td -> cb` is being replaced by
-`e2e -> unit -> logic` -- and both ladders are live here at once.
+A change lands in two legs, and `CLAUDE.md` fixes their order: the artifact
+that can refuse the work is authored first, and the implementation second. The
+ladder is `e2e -> impl`.
 
 The legs differ in what they may write and in what makes them pass. They do not
 differ in how a leg is *bounded*, and this module is that part, held once so
-that six legs across two lifecycles cannot drift into six slightly different
-definitions of the same word.
+that the legs cannot drift into slightly different definitions of the same
+word.
 
 What "this change" means
 ------------------------
@@ -26,8 +25,8 @@ is a request rather than a gate.
 
 This module is imported, never invoked. It carries no `main`, and every
 function here is one a leg script calls -- so a check that lives here is a
-check all three legs run, and adding one to a single leg means putting it in
-that leg's own script instead.
+check both legs run, and adding one to a single leg means putting it in that
+leg's own script instead.
 """
 from __future__ import annotations
 
@@ -60,11 +59,11 @@ GIT = ("git", "-c", "core.fsmonitor=false")
 #
 # They did disagree, for exactly that reason. This module used to bind two
 # names: `LEGS = workitem.LEGS` for the retiring `ec -> td -> cb`, and a
-# separately written `PHASES = ("e2e", "unit", "logic")` for the ladder
-# replacing it. That was correct while both were live. When the changeover
-# finished and the three retired scripts were deleted, only the tuple written
-# here was updated -- the one imported from the engine still named the dead
-# ladder, and it is the one `change.py --leg` validates against.
+# separately written `PHASES` tuple for the ladder replacing it. That was
+# correct while both were live. When the changeover finished and the three
+# retired scripts were deleted, only the tuple written here was updated -- the
+# one imported from the engine still named the dead ladder, and it is the one
+# `change.py --leg` validates against.
 #
 # So there is one name now, and it is an alias rather than a tuple: a phase
 # renamed in the engine cannot leave this module still spelling it the old way,
@@ -80,34 +79,38 @@ PHASES = workitem.LEGS
 # only a paragraph.
 LEG_ROOTS = {
     "e2e": "e2e",
-    "unit": "src",
-    "logic": "src",
+    "impl": "src",
 }
 
-# `unit` and `logic` share a write root, so the prefix half of `C0` cannot tell
-# them apart. The filename half can, and this is the table it reads.
-#
 # The colocated tests go in their own file, wired in with `#[cfg(test)] mod
 # tests;`. That keeps the private access that sends them into `src/**` in the
-# first place, and it makes the boundary between the two phases a filename
-# rather than a judgement about where a `#[cfg(test)]` span begins. That
-# judgement has been wrong in this checkout before -- item-level `#[cfg(test)]
-# fn` reads as production, and a brace scanner that does not strip `r#"..."#`
-# reads fixture text as production -- and a scope gate built on it can be walked
-# around by writing the test in a shape the reader does not recognise.
+# first place, and it is what the filename half of `C0` reads.
 #
 # Rust-only, because Rust is the only language whose tests live in the
 # implementation tree. A Python project's tests are already a separate root and
 # already separated by the prefix half.
 TEST_FILES = ("tests.rs", "tests/mod.rs")
 
-# Which phase must write a test file, and which may not touch one.
+# Which phase must write a test file. One entry, and it is an *existence* rule
+# rather than a boundary one.
 #
-# The `unit` entry is not symmetry for its own sake: a `unit` phase that wrote
-# no test file wrote no test, and the `logic` phase after it would be measured
-# against nothing. Refusing it at `C0` names that defect, where letting it
-# through would surface as an empty red set two rows later.
-LEG_TEST_FILES = {"unit": "requires", "logic": "refuses"}
+# There used to be two. `unit` required a test file and `logic` was refused
+# one, which made the split between writing the invariant and satisfying it a
+# filename question -- cheap to enforce, and immune to the judgement calls a
+# `#[cfg(test)]` span reader gets wrong (an item-level `#[cfg(test)] fn` reads
+# as production; a brace scanner that does not strip `r#"..."#` reads fixture
+# text as production). That split is gone: in Rust a colocated test and the
+# code it tests are the same tree and are edited together, and holding them in
+# two phases meant every green iteration after the first had to pretend to be
+# the first.
+#
+# What survives is the half with no substitute. A phase that wrote no test file
+# wrote no test, and every red row below it would then be measured against
+# nothing. `impl.py`'s `red` verb carries the other half now, and it carries it
+# by measurement rather than by filename: a red can only be recorded at a
+# moment when a named test fails, which is a moment the implementation is not
+# finished.
+LEG_TEST_FILES = {"impl": "requires"}
 
 # The one path a phase may write outside its root, relative to the project
 # directory. `e2e`'s case inventory is the crate manifest, which sits one level
@@ -118,14 +121,14 @@ LEG_TEST_FILES = {"unit": "requires", "logic": "refuses"}
 #
 # Exact filenames, never a prefix. `apps/<p>/Cargo.toml` is the register; every
 # other path outside the root is still the out-of-scope write `C0` exists to
-# name, and `unit` and `logic` have no entry here at all.
+# name, and `impl` has no entry here at all.
 LEG_EXTRA_PATHS = {"e2e": ("Cargo.toml",)}
 
 # Both tables are keyed by phase, and neither is a second enum -- so a phase
 # renamed in `workitem.LEGS` has to reach them, and nothing about a dict makes
 # it. `leg_root` refuses a phase the table has no entry for, which is one
 # direction; this is the other, and it is the direction the entries above rotted
-# in. `LEG_ROOTS` carried `ec`, `td` and `cb` alongside the live three for as
+# in. `LEG_ROOTS` carried `ec`, `td` and `cb` alongside the live phases for as
 # long as the ladder they belonged to had been deleted -- unreachable, because
 # `ladder_for` refuses those names, and therefore invisible.
 #
@@ -133,7 +136,7 @@ LEG_EXTRA_PATHS = {"e2e": ("Cargo.toml",)}
 # script asked, not something a suite has to be run to learn. `LEG_TEST_FILES`
 # is a subset by design: `e2e` writes no Rust test file and has no entry. What
 # it may not contain is a key no phase answers to, which is how a renamed
-# `unit` would silently stop being required to write a test at all.
+# `impl` would silently stop being required to write a test at all.
 if (set(LEG_ROOTS) != set(PHASES)
         or not set(LEG_TEST_FILES) <= set(PHASES)
         or not set(LEG_EXTRA_PATHS) <= set(PHASES)):
@@ -225,8 +228,8 @@ def sibling(name: str, key: str) -> Any:
     By path because these are scripts rather than an installed package, and a
     gate loads them with `exec_module` from a directory that is not
     `sys.path[0]`. At most once because more than one caller wants the same
-    module -- `logic.py` and `unit.py` both read the case inventory `e2e.py`
-    owns -- and executing a module twice produces two objects whose module-level
+    module -- `impl.py` reads the case inventory `e2e.py` owns, and so does a
+    gate -- and executing a module twice produces two objects whose module-level
     constants are separate values that merely compare equal.
 
     `key` is passed rather than derived because it is not free: the
@@ -236,9 +239,9 @@ def sibling(name: str, key: str) -> Any:
 
     The literal `name` here is also read statically. `check_plugin.py` closes
     over these calls to work out which scripts need the pinned interpreter, so
-    that `logic.py` -- which imports no TOML of its own and reaches `tomllib`
-    only through what it loads here -- is not exempted from the pin assertion
-    for being hard to see. Keep the argument a literal.
+    that a script which imports no TOML of its own and reaches `tomllib` only
+    through what it loads here is not exempted from the pin assertion for being
+    hard to see. Keep the argument a literal.
     """
     if key in sys.modules:
         return sys.modules[key]
@@ -338,11 +341,12 @@ def contract_set(repo: Path, ec: Path, iid: int, leg: str) -> list[str]:
     when the EC leg finished -- would be a second answer to the same question,
     free to name a case the commit does not contain.
 
-    Both later phases ask this, and they must get the same answer: `unit`
-    measures the set to establish what its skeleton has to fail against, and
-    `logic` measures it again at HEAD and in the working tree. Two copies of the
-    derivation could disagree about what the contract *is*, and the disagreement
-    would read as a coverage difference between the phases rather than as a bug.
+    `impl` asks this at three different moments and must get the same answer
+    each time: `red` measures the set to establish what the tests have to fail
+    alongside, and `test` measures it again at HEAD and in the working tree. Two
+    copies of the derivation could disagree about what the contract *is*, and
+    the disagreement would read as a coverage difference between the verbs
+    rather than as a bug.
 
     `leg` is the commit-subject prefix to read the set out of, and it is passed
     rather than defaulted. It used to default to `ec`, from when two ladders
@@ -634,19 +638,11 @@ def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> 
         chk.add("FAIL", "C0 scope", detail)
         return
 
-    # The filename half, for the two phases sharing one root. See
-    # `LEG_TEST_FILES`.
+    # The filename half. One rule, `requires`, and it is about existence: see
+    # `LEG_TEST_FILES` for why the `refuses` half it used to have is gone and
+    # what carries that guarantee instead.
     rule = LEG_TEST_FILES.get(leg)
     tests = [p for p in dirty if is_test_file(p)]
-    if rule == "refuses" and tests:
-        chk.add("FAIL", "C0 scope",
-                f"the {leg} phase may not write a colocated test file:\n"
-                + "\n".join(f"  {p}" for p in tests)
-                + "\nthese are the artifact this phase is being measured "
-                "against, and editing one here -- including reformatting it, "
-                "and including whitespace only -- is the retrofit the phase "
-                "split exists to refuse")
-        return
     if rule == "requires" and not tests:
         named = " or ".join(f"`{name}`" for name in TEST_FILES)
         chk.add("FAIL", "C0 scope",
@@ -654,8 +650,11 @@ def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> 
                 + "\n".join(f"  {p}" for p in dirty[:20])
                 + f"\ncolocated tests go in {named}, wired in with "
                 "`#[cfg(test)] mod tests;` -- an inline `#[cfg(test)] mod "
-                "tests {{ ... }}` is invisible to the scope check that has to "
-                "keep the next phase off them")
+                "tests { ... }` is invisible to this check, which is the only "
+                "thing that can tell a phase that wrote a test from one that "
+                "wrote none. A phase that wrote no test has nothing for `red` "
+                "to measure, and every row below it would then be measured "
+                "against nothing.")
         return
 
     register = sorted(p for p in dirty if p in allowed)
@@ -665,6 +664,4 @@ def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> 
                   f"the register at {', '.join(register)}")
     if rule == "requires":
         detail += f", including {len(tests)} test file(s)"
-    elif rule == "refuses":
-        detail += ", and none is a colocated test file"
     chk.add("PASS", "C0 scope", detail)

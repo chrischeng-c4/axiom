@@ -615,11 +615,11 @@ LIFECYCLE_NOTE = ("*Written by `aw` as each leg lands. Not authored content, and
 # The ladder whose legs may appear as rows, in the order they are rendered.
 #
 # This read `("ec", "td", "cb")` for one commit past the changeover that deleted
-# those three scripts, which made every phase's closing step unreachable:
-# `e2e.py`, `unit.py` and `logic.py` all end by printing `change.py lifecycle
-# ... --leg <PHASE>`, and `change.py` takes its `--leg` choices from here, so all
-# three printed a command this parser exits 2 on. Eighteen gates were green over
-# it, because no gate compared a printed command with the parser receiving it.
+# those three scripts, which made every phase's closing step unreachable: every
+# phase script ends by printing `change.py lifecycle ... --leg <PHASE>`, and
+# `change.py` takes its `--leg` choices from here, so each printed a command
+# this parser exits 2 on. Eighteen gates were green over it, because no gate
+# compared a printed command with the parser receiving it.
 # `check_next_command.py` is now that comparison.
 #
 # The retired names are dropped rather than kept alongside. Keeping them would
@@ -627,7 +627,14 @@ LIFECYCLE_NOTE = ("*Written by `aw` as each leg lands. Not authored content, and
 # those was measured before deciding: zero issues on the tracker carry the
 # lifecycle marker at all, because the verb that writes it has never once
 # succeeded. There is no history here to lose.
-LEGS = ("e2e", "unit", "logic")
+#
+# `unit` and `logic` were folded into one `impl` leg on 2026-08-27, for the same
+# reason and with the same measurement: nothing on the tracker carried either
+# row. The two were one phase in Rust -- a colocated test and the code under it
+# are the same tree, edited together -- and what the split bought (a named red
+# measured before the green) is bought instead by `impl.py`'s `red` verb, which
+# records the failing names mid-phase.
+LEGS = ("e2e", "impl")
 
 
 def lifecycle_rows(body: str) -> dict:
