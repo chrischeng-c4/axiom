@@ -84,7 +84,7 @@ def skill_label(skill: str) -> str:
 # history, it is a set of commands that fail with "no such file" for a reader
 # who cannot tell that from a broken checkout.
 #
-# What replaced them is `e2e -> unit -> logic`, driven by each verb's printed
+# What replaced them is `e2e -> impl`, driven by each verb's printed
 # `next.command` rather than by a skill per step. Two skills front that ladder,
 # one per work-item type: `go-tdd-for-change` runs the three phases on one
 # change, and `go-tdd-for-epic` asks `epic.py order` for the children's
@@ -142,9 +142,10 @@ PROCEDURAL = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic")
 # whichever one happened to need it first.
 #
 # They also cannot be split across the eleven skill directories, which is what
-# the plugin deletion had to decide. `e2e.py`, `unit.py` and `logic.py` each
-# load `leg.py` by `Path(__file__).parent / "leg.py"`, and `leg.change_module()`
-# loads `change.py` the same way. One directory is a load-bearing requirement,
+# the plugin deletion had to decide. `e2e.py` and `impl.py` each load `leg.py`
+# by `Path(__file__).parent / "leg.py"`, `impl.py` loads `e2e.py` the same way,
+# and `leg.change_module()` loads `change.py` the same way. One directory is a
+# load-bearing requirement,
 # not a tidiness preference.
 SCRIPTS = AW_DIR / "scripts"
 SCRIPT = SCRIPTS / "epic.py"
@@ -152,13 +153,21 @@ CHANGE_SCRIPT = SCRIPTS / "change.py"
 LEG_SCRIPT = SCRIPTS / "leg.py"
 ENGINE = SCRIPTS / "workitem.py"
 
-# The three phases that replaced `ec -> td -> cb`. They were named here before
+# The two phases that replaced `ec -> td -> cb`. They were named here before
 # they existed on disk, because the gate that drives them was written first and
 # had to be able to go red for the right reason: "the script is missing" rather
 # than "this module has no such attribute", which is a red about the gate.
+#
+# There were three until 2026-08-27. `unit.py` and `logic.py` are one script
+# now: in Rust a colocated test and the code under it are the same tree and are
+# edited together, so the filename boundary between them cost an honest TDD
+# loop more than it bought. What it did buy -- a named red measured before
+# anything could satisfy it -- moved onto `impl.py`'s `red` verb, which records
+# the failing names mid-phase instead of on a commit. One constant rather than
+# two aliases: two names for one script would let a gate go on claiming to
+# cover a phase that no longer exists.
 E2E_SCRIPT = SCRIPTS / "e2e.py"
-UNIT_SCRIPT = SCRIPTS / "unit.py"
-LOGIC_SCRIPT = SCRIPTS / "logic.py"
+IMPL_SCRIPT = SCRIPTS / "impl.py"
 
 # The META-doc validator, which is not on the ladder and owns no work item. It
 # is named here for the same reason the three phases were: the gate goes red
