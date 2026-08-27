@@ -408,6 +408,10 @@ name = "http_body_limit_e2e"
 path = "e2e/http_body_limit_e2e.rs"
 
 [[test]]
+name = "indexing_durable_oracle"
+path = "e2e/indexing_durable_oracle.rs"
+
+[[test]]
 name = "hybrid_rrf"
 path = "e2e/hybrid_rrf.rs"
 
