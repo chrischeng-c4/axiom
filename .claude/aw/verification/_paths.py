@@ -27,9 +27,32 @@ import sys
 
 
 def repo_root() -> pathlib.Path:
-    """The checkout that owns the outermost `aw.toml` above this file."""
+    """The checkout that owns this file, identified by its `aw.toml`.
+
+    Outermost marker, but never across a checkout boundary. This is a
+    hand-maintained twin of `workitem.outermost_aw_toml()`, which carries the
+    full reasoning; it is copied rather than imported because importing that
+    module means first knowing where the scripts are, which is what this
+    function answers. Nothing detects drift between the two.
+
+    The boundary is the half that was missing. A git worktree may sit inside
+    another checkout -- Claude Code puts its own under
+    `.claude/worktrees/<name>/` -- and both trees carry a root `aw.toml`, so
+    an unbounded walk from `__file__` resolved every gate in an agent worktree
+    against the *enclosing* checkout: the gates read another tree's files and
+    another session's dirty set.
+    """
     start = pathlib.Path(__file__).resolve().parent
-    found = [c for c in (start, *start.parents) if (c / "aw.toml").is_file()]
+    chain = [start, *start.parents]
+    proc = subprocess.run(
+        ("git", "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"),
+        capture_output=True, text=True, cwd=start,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        boundary = pathlib.Path(proc.stdout.strip()).resolve()
+        if boundary in chain:
+            chain = chain[: chain.index(boundary) + 1]
+    found = [c for c in chain if (c / "aw.toml").is_file()]
     if not found:
         raise SystemExit(f"error: no `aw.toml` above {start}")
     return found[-1]

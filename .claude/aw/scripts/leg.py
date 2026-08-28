@@ -199,16 +199,16 @@ def phase_command(phase: str, project: str, verb: str, wi: int | str) -> str:
 # locating things
 # --------------------------------------------------------------------------
 def repo_root(start: Path | None = None) -> Path:
-    """The outermost directory carrying an `aw.toml`.
+    """The checkout `start` stands in, identified by its `aw.toml`.
 
-    Outermost, not nearest: `apps/<project>/aw.toml` exists too, and stopping
-    at the first one found would silently scope every path to one project.
+    One line, delegating to `workitem.outermost_aw_toml()`, because this used
+    to be a second copy of that walk and the two drifted: `workitem.py` grew a
+    cwd-then-`__file__` fallback and this one never did. The rules the walk
+    obeys -- outermost marker, but never across a checkout boundary -- are
+    documented there.
     """
     here = (start or Path.cwd()).resolve()
-    found: Path | None = None
-    for candidate in [here, *here.parents]:
-        if (candidate / "aw.toml").is_file():
-            found = candidate
+    found = workitem.outermost_aw_toml(here)
     if found is None:
         raise SystemExit(
             f"not inside a checkout: no aw.toml above {here}\n"
