@@ -306,11 +306,20 @@ fn assert_index_invariants(engine: &Arc<Engine>) {
     let docs = collection(&snap);
     assert_eq!(docs.eid_fields.len(), DOCUMENTS);
     let (terms, forward) = keyword_indexes(&snap, "kw");
-    if !terms.is_empty() {
-        assert_eq!(terms.get(COMMON).map(BTreeSet::len), Some(101));
-        assert_eq!(terms.get(RARE).map(BTreeSet::len), Some(1));
-        assert_eq!(terms.get(OTHER).map(BTreeSet::len), Some(6));
-    }
+    // #3957: the inverted index and the forward column are two views of ONE
+    // field, and a snapshot that carries both must carry them in agreement.
+    // It did not. `COMMON` is the only one of the three that straddles the
+    // seal boundary — 365 of its docs are sealed, 101 are in the live tail —
+    // and before the fix `terms` held exactly those 101 while `forward` held
+    // all 466. `RARE` and `OTHER` never disagreed, which is why the
+    // discrepancy read as a fixture detail rather than as data loss.
+    //
+    // The `if !terms.is_empty()` guard this replaces was the other half of the
+    // same defect: it skipped the reopened, fully-sealed engines, whose
+    // snapshot came back with no inverted index at all.
+    assert_eq!(terms.get(COMMON).map(BTreeSet::len), Some(466));
+    assert_eq!(terms.get(RARE).map(BTreeSet::len), Some(1));
+    assert_eq!(terms.get(OTHER).map(BTreeSet::len), Some(6));
     assert_eq!(
         forward.values().filter(|value| *value == COMMON).count(),
         466
@@ -544,9 +553,21 @@ async fn run_history(field_major: bool) -> Value {
     );
     let first_snapshot = snapshot(&first.engine);
     let (first_terms, _) = keyword_indexes(&first_snapshot, "kw");
-    assert!(
-        first_terms.is_empty(),
-        "sealed postings move out of the RAM snapshot"
+    // This asserted `first_terms.is_empty()` until #3957, under the reading
+    // that a sealed field's postings "move out of the RAM snapshot". They do
+    // move out of RAM — that is what the seal is for, and the reopened engine
+    // below still answers because it holds the `.lseg`. But `to_snapshot` is
+    // not a view of RAM: it is the self-contained document `GET /admin/backup`
+    // returns, that `raft_sm` ships to a follower on another host, and that
+    // `reshard` moves between shards. None of those readers has this node's
+    // segment files, and `from_snapshot` sets `segment: None` — so a snapshot
+    // truncated to the post-seal tail silently loses every sealed doc's
+    // postings on the far side. This line is where that was pinned as intended.
+    assert_eq!(
+        first_terms.get(COMMON).map(BTreeSet::len),
+        Some(PREFIX_DOCUMENTS),
+        "#3957: the snapshot is self-contained, so a SEALED field's postings \
+         must be in it and not only in the `.lseg` its reader may not have"
     );
     assert_keyword_total(&first.engine, COMMON, PREFIX_DOCUMENTS as u64);
 

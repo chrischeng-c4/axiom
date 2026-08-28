@@ -332,6 +332,107 @@ async fn sealed_set_inverted_index_survives_a_snapshot_round_trip() {
     );
 }
 
+/// The other side of the same coin: making `to_snapshot` gather through the
+/// segment must not carry a doc the segment still holds but a reader must not
+/// see.
+///
+/// Deleting a SEALED-base doc cannot mutate the on-disk column, so the delete
+/// is recorded only in `tombstones`. Every live read path subtracts them —
+/// `keyword_at` folds the check inline, `live_terms` / `live_elements` /
+/// `live_number_at` all carry it. A gather that reaches the segment WITHOUT
+/// subtracting them resurrects the deleted doc into the snapshot's forward
+/// column, and `from_snapshot` rebuilds the whole inverted index from exactly
+/// that column — so one missed check un-deletes the doc on the far side of the
+/// round trip, in every field at once.
+///
+/// This case is the reason the fix cannot simply be "read through the segment":
+/// it has to read through the segment the way a QUERY does.
+#[tokio::test]
+async fn a_doc_deleted_after_the_seal_stays_deleted_across_the_round_trip() {
+    let fixture = fixture();
+    fixture
+        .server
+        .put("/collections/docs")
+        .json(&json!({
+            "fields": {
+                "kw":   { "type": "keyword" },
+                "grp":  { "type": "keyword" },
+                "tags": { "type": "set" },
+                "num":  { "type": "number" },
+                "body": { "type": "text" }
+            }
+        }))
+        .await
+        .assert_status_ok();
+
+    for n in 1..=SEALED_DOCS {
+        index_doc(&fixture.server, n).await;
+    }
+    checkpoint(&fixture.server).await;
+    for n in SEALED_DOCS + 1..=TOTAL_DOCS {
+        index_doc(&fixture.server, n).await;
+    }
+
+    // `d2` is a sealed-base doc: its postings are in the .lseg and only a
+    // tombstone records that it is gone.
+    fixture
+        .server
+        .delete("/collections/docs/index/d2")
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    const LIVE: u64 = TOTAL_DOCS as u64 - 1;
+    let expectations = [
+        (json!({ "term": { "field": "kw", "value": "v2" } }), 0, "kw v2"),
+        (json!({ "term": { "field": "tags", "value": "t2" } }), 0, "tags t2"),
+        (
+            json!({ "term": { "field": "tags", "value": "shared" } }),
+            LIVE,
+            "tags shared",
+        ),
+        (
+            json!({ "term": { "field": "grp", "value": "sealed" } }),
+            SEALED_DOCS as u64 - 1,
+            "grp sealed",
+        ),
+        (json!({ "exists": { "field": "kw" } }), LIVE, "exists kw"),
+        (json!({ "exists": { "field": "tags" } }), LIVE, "exists tags"),
+    ];
+
+    // Every expectation is first asserted on the LIVE sealed engine, so a
+    // failure after the round trip is the round trip's and not the delete's.
+    for (query, expected, what) in &expectations {
+        assert_eq!(
+            total_for(&fixture.server, query.clone()).await,
+            *expected,
+            "precondition: the LIVE engine must already answer `{what}` without \
+             the deleted sealed doc"
+        );
+    }
+
+    // Exactly ONE round trip. A second would run against an engine whose
+    // collection is already `segment: None`, which is no longer the state
+    // under test.
+    let backup = fixture.server.get("/admin/backup").await;
+    backup.assert_status_ok();
+    let restore = fixture
+        .server
+        .post("/admin/restore")
+        .json(&backup.json::<serde_json::Value>())
+        .await;
+    restore.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    for (query, expected, what) in &expectations {
+        assert_eq!(
+            total_for(&fixture.server, query.clone()).await,
+            *expected,
+            "`{what}` must answer identically after the round trip; a gather \
+             that reaches the segment without subtracting `tombstones` \
+             un-deletes the doc here"
+        );
+    }
+}
+
 #[tokio::test]
 async fn number_and_text_fields_are_the_control_for_the_round_trip() {
     let fixture = sealed_then_round_tripped().await;
