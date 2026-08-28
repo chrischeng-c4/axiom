@@ -57,4 +57,6 @@ if check_contract "$mutation_dir"; then
   exit 1
 fi
 
+"$module_dir/tests/live-lifecycle-contract.sh"
+
 echo "terraform standalone GKE checks passed (cloud-free)"
