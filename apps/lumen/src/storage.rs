@@ -3169,8 +3169,24 @@ impl Engine {
             .collect();
         validate_schema(&schema)?;
 
-        if let Some(coll) = state.collections.get_mut(collection_id) {
-            coll.check_live(collection_id)?;
+        // #3953: a soft-deleted entry (`deleted_at.is_some()`) is a
+        // tombstone, not a live collection to merge schema into. A `PUT`
+        // against a tombstoned id is explicit caller intent to reclaim the
+        // name — it supersedes the tombstone immediately with a fresh,
+        // empty collection rather than waiting for `sweep_deleted`'s grace
+        // window (which stays owned by the "deleted and never recreated"
+        // case; see that fn's doc comment). Only a genuinely live entry
+        // takes the additive-merge path below.
+        let is_live = state
+            .collections
+            .get(collection_id)
+            .is_some_and(|coll| coll.deleted_at.is_none());
+
+        if is_live {
+            let coll = state
+                .collections
+                .get_mut(collection_id)
+                .expect("checked live above under the same state lock");
             let mut added = 0u32;
             for (name, spec) in schema {
                 match coll.schema.get(&name) {
@@ -3203,6 +3219,11 @@ impl Engine {
             return Ok(resp);
         }
 
+        // Either the id has never been used, or it names a tombstone being
+        // superseded: both start from a brand-new `Collection` built from
+        // the request's own schema alone (never merged with whatever a
+        // deleted predecessor declared), version 1, and no inherited docs.
+        // `insert` overwrites any tombstoned entry in place.
         let coll = Collection::new(schema)?;
         let version = coll.version;
         let fields_count = coll.fields_count();
@@ -17852,6 +17873,147 @@ mod tests {
         );
         assert_eq!(active.stats("new").unwrap().documents_indexed, 1);
         assert_eq!(active.metrics().storage_bytes.get(), expected_bytes);
+    }
+
+    // ---- #3953: create-over-tombstone supersede ------------------------
+
+    /// #3953(a) at the `Engine` layer: `create_collection` for a
+    /// soft-deleted id must not stay wedged behind `check_live` — it must
+    /// supersede the tombstone with a fresh, empty collection whose schema
+    /// comes from the new request alone (not merged with the deleted
+    /// predecessor's), and the pre-delete doc must not survive.
+    #[test]
+    fn create_collection_supersedes_tombstone_with_fresh_empty_collection() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        index_kw(&e, "a", "old1");
+        assert_eq!(
+            e.drop_collection("a", false).unwrap(),
+            DropOutcome::Marked
+        );
+
+        // Live routes must still see the tombstone as 410 Gone before the
+        // recreate — this fix must not touch that behavior.
+        let stats_err = e.stats("a").unwrap_err();
+        assert!(
+            matches!(
+                stats_err.downcast_ref::<StorageError>(),
+                Some(StorageError::Gone(id)) if id == "a"
+            ),
+            "a soft-deleted collection must still answer 410 Gone on reads \
+             right up until it is recreated: {stats_err:?}"
+        );
+
+        let resp = e.create_collection("a", kw_only_schema()).unwrap();
+        assert_eq!(
+            resp.version, 1,
+            "a superseding create starts a fresh collection at version 1, \
+             not a schema-merge bump onto the deleted predecessor"
+        );
+
+        // The recreated collection is genuinely empty: the pre-delete doc
+        // must not be visible, and stats must report zero docs.
+        assert_eq!(e.stats("a").unwrap().documents_indexed, 0);
+        let hits = e
+            .search(
+                "a",
+                SearchRequest {
+                    query: QueryNode::Term(TermQuery {
+                        field: "email".into(),
+                        value: FieldValue::String("old1@x.com".into()),
+                    }),
+                    limit: 10,
+                    offset: 0,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            hits.total, 0,
+            "the recreated collection must not surface the deleted \
+             predecessor's documents"
+        );
+    }
+
+    /// #3953(a): a superseding create must not additive-merge the new
+    /// request's schema onto the deleted predecessor's — a field the
+    /// deleted collection had but the new request omits must be gone, not
+    /// carried forward.
+    #[test]
+    fn create_collection_supersede_does_not_inherit_deleted_schema() {
+        let e = Engine::new();
+        let mut wide_fields = BTreeMap::new();
+        wide_fields.insert(
+            "email".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        wide_fields.insert(
+            "extra".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        e.create_collection(
+            "a",
+            CreateCollectionRequest {
+                fields: wide_fields,
+            },
+        )
+        .unwrap();
+        e.drop_collection("a", false).unwrap();
+
+        let resp = e.create_collection("a", kw_only_schema()).unwrap();
+        assert_eq!(
+            resp.fields_count, 1,
+            "a superseding create must start from the new request's schema \
+             alone, not merge in the deleted predecessor's extra field"
+        );
+    }
+
+    /// #3953: `sweep_deleted`'s grace-window path must keep working for a
+    /// collection that is deleted and never recreated — this fix only
+    /// changes what an explicit `create_collection` (PUT) call does to a
+    /// tombstone; it must not remove or shortcut the background sweep.
+    #[test]
+    fn sweep_deleted_still_reclaims_a_tombstone_nobody_recreates() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        assert_eq!(
+            e.drop_collection("a", false).unwrap(),
+            DropOutcome::Marked
+        );
+
+        // Immediately: the grace window has not elapsed, sweep does nothing.
+        assert_eq!(e.sweep_deleted(Duration::from_secs(3600)).unwrap(), 0);
+        assert!(e.stats("a").is_err(), "still tombstoned, still 410");
+
+        // A zero grace window sweeps it away right away — proving the sweep
+        // path itself, independent of any PUT, still physically reclaims a
+        // tombstone that nobody recreated.
+        assert_eq!(e.sweep_deleted(Duration::from_secs(0)).unwrap(), 1);
+        assert!(
+            e.stats("a").is_err(),
+            "physically removed collection must still report not-found, \
+             not silently reappear as live"
+        );
     }
 
     /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte
