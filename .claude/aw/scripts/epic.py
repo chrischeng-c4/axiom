@@ -224,7 +224,7 @@ def _inventory_requirement_cells(text: str) -> list[str]:
         line = line.strip()
         if not line.startswith("|"):
             continue
-        first = line.strip("|").split("|")[0].strip()
+        first = workitem.row_cells(line)[0]
         if not first or set(first) <= set("-: ") or first.lower() == "requirement":
             continue
         cells.append(first)
@@ -243,7 +243,7 @@ def _table_rows(text: str) -> list[list[str]]:
         line = line.strip()
         if not line.startswith("|"):
             continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        cells = workitem.row_cells(line)
         if all(not cell or set(cell) <= set("-: ") for cell in cells):
             continue
         rows.append(cells)

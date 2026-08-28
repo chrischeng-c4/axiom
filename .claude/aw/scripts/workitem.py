@@ -212,6 +212,18 @@ class WorkItemType:
 # --------------------------------------------------------------------------
 
 
+def row_cells(line: str) -> list[str]:
+    """One pipe row's cells, honouring markdown's `\\|` escape.
+
+    A gate command inside a table cell spells its shell pipe `\\|`; a naive
+    `split("|")` breaks that cell in two and every column after it reads its
+    neighbour's value. Split on unescaped pipes only, then unescape, so the
+    cell comes back carrying the `|` the author wrote.
+    """
+    stripped = line.strip().strip("|")
+    return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", stripped)]
+
+
 def split_sections(body: str) -> dict[str, str]:
     """Map each H2 heading to its own text, excluding following H2s."""
     sections: dict[str, str] = {}
@@ -693,7 +705,7 @@ def lifecycle_rows(body: str) -> dict:
         return {}
     rows = {}
     for line in body[start:end].splitlines():
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = row_cells(line)
         if len(cells) == 3 and cells[0] in LEGS:
             rows[cells[0]] = cells
     return rows
