@@ -143,6 +143,8 @@ fi
 [[ "$LUMEN_STANDALONE_GKE_IMAGE" =~ ^ghcr\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$ ]] ||
   die "LUMEN_STANDALONE_GKE_IMAGE must be the exact immutable Lumen digest form"
 APPROVED_CLIENT_IMAGE="docker.io/curlimages/curl@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13"
+APPROVED_CLIENT_UID=100
+APPROVED_CLIENT_GID=101
 [[ "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" == "$APPROVED_CLIENT_IMAGE" ]] ||
   die "LUMEN_STANDALONE_GKE_CLIENT_IMAGE must be the approved immutable client image"
 [[ "$LUMEN_STANDALONE_GKE_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
@@ -731,9 +733,9 @@ v2_run_client_tooling_job() {
   local job file log
   job="$(v2_job_name client-tools)"
   file="$TMP_ROOT/${job}.json"
-  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" '
+  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --argjson uid "$APPROVED_CLIENT_UID" --argjson gid "$APPROVED_CLIENT_GID" '
     {apiVersion:"batch/v1",kind:"Job",metadata:{name:$job,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{spec:{
-      automountServiceAccountToken:false,restartPolicy:"Never",securityContext:{runAsNonRoot:true,seccompProfile:{type:"RuntimeDefault"}},
+      automountServiceAccountToken:false,restartPolicy:"Never",securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:"RuntimeDefault"}},
       volumes:[{name:"memory",emptyDir:{medium:"Memory"}}],containers:[{name:"tools",image:$image,command:["/bin/sh","-ec","set -eu; test -x /bin/sh; command -v curl >/dev/null; command -v base64 >/dev/null; command -v grep >/dev/null; printf '\''row=client-tools status=passed\\n'\''"],securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]}},volumeMounts:[{name:"memory",mountPath:"/run/lumen"}]}]
     }}}}
   ' >"$file"
@@ -781,10 +783,10 @@ SH
   program="${program//REJECT_ID/$reject_id}"
   program="${program//LABEL/$label}"
   file="$TMP_ROOT/${job}.json"
-  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg account "$account" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --arg program "$program" --arg mode "$token_mode" '
+  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg account "$account" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --arg program "$program" --arg mode "$token_mode" --argjson uid "$APPROVED_CLIENT_UID" --argjson gid "$APPROVED_CLIENT_GID" '
     {apiVersion:"batch/v1",kind:"Job",metadata:{name:$job,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{"lumen.axiom.dev/gke-acceptance-job":$job}},spec:{
       serviceAccountName:$account,automountServiceAccountToken:($mode == "default"),restartPolicy:"Never",
-      securityContext:{runAsNonRoot:true,seccompProfile:{type:"RuntimeDefault"}},
+      securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:"RuntimeDefault"}},
       volumes:([{name:"memory",emptyDir:{medium:"Memory"}}] + (if $mode == "projected" then [{name:"projected",projected:{sources:[{serviceAccountToken:{path:"token",audience:"lumen.axiom.dev",expirationSeconds:600}}]}}] else [] end)),
       containers:[{name:"client",image:$image,command:["/bin/sh","-ec",$program],securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]}},volumeMounts:([{name:"memory",mountPath:"/run/lumen"}] + (if $mode == "projected" then [{name:"projected",mountPath:"/run/lumen/projected",readOnly:true}] else [] end))}]
     }}}}
@@ -811,9 +813,9 @@ SH
   program="${program//RUNTIME/$V2_RUNTIME_NAMESPACE}"
   program="${program//LABEL/$label}"
   file="$TMP_ROOT/${job}.json"
-  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --arg program "$program" '
+  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --arg program "$program" --argjson uid "$APPROVED_CLIENT_UID" --argjson gid "$APPROVED_CLIENT_GID" '
     {apiVersion:"batch/v1",kind:"Job",metadata:{name:$job,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{spec:{
-      automountServiceAccountToken:false,restartPolicy:"Never",securityContext:{runAsNonRoot:true,seccompProfile:{type:"RuntimeDefault"}},
+      automountServiceAccountToken:false,restartPolicy:"Never",securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:"RuntimeDefault"}},
       volumes:[{name:"memory",emptyDir:{medium:"Memory"}}],containers:[{name:"metrics",image:$image,command:["/bin/sh","-ec",$program],securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]}},volumeMounts:[{name:"memory",mountPath:"/run/lumen"}]}]
     }}}}
   ' >"$file"
