@@ -11,6 +11,11 @@ REPO_ROOT="$(cd "$MODULE_DIR/../.." && pwd -P)"
 CLIENT_IMAGE='docker.io/curlimages/curl@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13'
 EXPECTED_ADDRESSES=$'google_container_cluster.standalone\ngoogle_container_node_pool.standalone\ngoogle_project_iam_member.node_baseline\ngoogle_service_account.nodes'
 
+# Do not use TMPDIR.  macOS exposes /tmp through /private/tmp, while Linux
+# uses /tmp directly.  Resolve the physical directory once and keep every
+# private path below it.
+PRIVATE_TMP_ROOT="$(cd -P /tmp && pwd -P)"
+
 RUN_ROOT=''
 PUBLIC_STAGING=''
 PUBLIC_RECEIPT_DIGEST=''
@@ -42,6 +47,8 @@ die() {
   exit 1
 }
 
+case "$PRIVATE_TMP_ROOT" in /tmp|/private/tmp) ;; *) die 'unsupported private temp root' ;; esac
+
 usage() {
   printf '%s\n' 'usage: live-acceptance.sh --project-id ID --region REGION --gke-zone ZONE --run-id DNS_ID --candidate-receipt-dir DIR --lumen-cli FILE --cli-target TARGET --image GHCR_DIGEST --expected-commit SHA --expected-run-id ID --expected-run-attempt ATTEMPT --expected-manifest-sha256 SHA --receipt-out-dir DIR --confirm-create CLUSTER --confirm-destroy CLUSTER' >&2
   exit 2
@@ -62,29 +69,43 @@ node_service_account() { printf 'lumen-nodes-%s\n' "$(run_hash "$1")"; }
 
 safe_private_dir() {
   local path=$1
-  [[ "$path" == /private/tmp/* && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && -d "$path" && ! -L "$path" ]] || return 1
+  [[ "$path" == "$PRIVATE_TMP_ROOT"/* && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && "$path" != */ && -d "$path" && ! -L "$path" ]] || return 1
   [[ "$(cd "$path" && pwd -P)" == "$path" ]]
 }
 
 safe_private_file() {
   local path=$1 parent
-  [[ "$path" == /private/tmp/* && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && -f "$path" && ! -L "$path" ]] || return 1
+  [[ "$path" == "$PRIVATE_TMP_ROOT"/* && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && -f "$path" && ! -L "$path" ]] || return 1
   parent=${path%/*}
   safe_private_dir "$parent"
 }
 
 safe_new_private_path() {
   local path=$1 parent base
-  [[ "$path" == /private/tmp/* && "$path" != */ && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && ! -e "$path" && ! -L "$path" ]] || return 1
+  [[ "$path" == "$PRIVATE_TMP_ROOT"/* && "$path" != */ && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && ! -e "$path" && ! -L "$path" ]] || return 1
   parent=${path%/*}
   base=${path##*/}
   [[ -n "$base" && "$base" != . && "$base" != .. ]] || return 1
   safe_private_dir "$parent"
 }
 
+private_mode() {
+  local path=$1 mode status
+  mode=$(stat -c %a "$path" 2>/dev/null); status=$?
+  if [[ "$status" -eq 0 ]]; then
+    [[ "$mode" == 700 ]] || return 1
+    printf '%s\n' "$mode"
+    return 0
+  fi
+  [[ -z "$mode" ]] || return 1
+  mode=$(stat -f %Lp "$path" 2>/dev/null) || return 1
+  [[ "$mode" == 700 ]] || return 1
+  printf '%s\n' "$mode"
+}
+
 require_tools() {
   local tool
-  for tool in bash env jq terraform gcloud kubectl awk cut mktemp chmod mkdir cp mv cmp find sort wc rm rmdir; do
+  for tool in bash env jq terraform gcloud kubectl awk cut mktemp chmod mkdir cp mv cmp find sort wc rm rmdir stat; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool is missing: $tool"
   done
   if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then die 'sha256 tool is missing'; fi
@@ -151,13 +172,16 @@ validate_repo_inputs() {
 }
 
 write_run_contract() {
-  jq -n --arg schema 'lumen.standalone-gke-live/v1' --arg state_dir "$RUN_ROOT" --arg project_id "$PROJECT_ID" --arg region "$REGION" --arg gke_zone "$GKE_ZONE" --arg run_id "$RUN_ID" --arg cluster_name "$CLUSTER" --arg node_pool_name "$NODE_POOL" --arg node_service_account_id "$NODE_SERVICE_ACCOUNT" --arg storage_class_name 'premium-rwo' --arg image "$IMAGE" --arg expected_commit "$EXPECTED_COMMIT" --arg expected_run_id "$EXPECTED_RUN_ID" --arg expected_run_attempt "$EXPECTED_RUN_ATTEMPT" --arg expected_manifest_sha256 "$EXPECTED_MANIFEST_SHA256" --arg candidate_receipt_dir "$CANDIDATE_RECEIPT_DIR" --arg lumen_cli "$LUMEN_CLI" --arg cli_target "$CLI_TARGET" --arg receipt_out_dir "$RECEIPT_OUT_DIR" --arg confirm_create "$CONFIRM_CREATE" --arg confirm_destroy "$CONFIRM_DESTROY" \
-    '{schema:$schema,state_dir:$state_dir,project_id:$project_id,region:$region,gke_zone:$gke_zone,run_id:$run_id,cluster_name:$cluster_name,node_pool_name:$node_pool_name,node_service_account_id:$node_service_account_id,storage_class_name:$storage_class_name,image:$image,expected_commit:$expected_commit,expected_run_id:$expected_run_id,expected_run_attempt:$expected_run_attempt,expected_manifest_sha256:$expected_manifest_sha256,candidate_receipt_dir:$candidate_receipt_dir,lumen_cli:$lumen_cli,cli_target:$cli_target,receipt_out_dir:$receipt_out_dir,confirm_create:$confirm_create,confirm_destroy:$confirm_destroy}' >"$RUN_ROOT/run-contract.json"
+  jq -n --arg schema 'lumen.standalone-gke-live/v2' --arg private_temp_root "$PRIVATE_TMP_ROOT" --arg state_dir "$RUN_ROOT" --arg project_id "$PROJECT_ID" --arg region "$REGION" --arg gke_zone "$GKE_ZONE" --arg run_id "$RUN_ID" --arg cluster_name "$CLUSTER" --arg node_pool_name "$NODE_POOL" --arg node_service_account_id "$NODE_SERVICE_ACCOUNT" --arg storage_class_name 'premium-rwo' --arg image "$IMAGE" --arg expected_commit "$EXPECTED_COMMIT" --arg expected_run_id "$EXPECTED_RUN_ID" --arg expected_run_attempt "$EXPECTED_RUN_ATTEMPT" --arg expected_manifest_sha256 "$EXPECTED_MANIFEST_SHA256" --arg candidate_receipt_dir "$CANDIDATE_RECEIPT_DIR" --arg lumen_cli "$LUMEN_CLI" --arg cli_target "$CLI_TARGET" --arg receipt_out_dir "$RECEIPT_OUT_DIR" --arg confirm_create "$CONFIRM_CREATE" --arg confirm_destroy "$CONFIRM_DESTROY" \
+    '{schema:$schema,private_temp_root:$private_temp_root,state_dir:$state_dir,project_id:$project_id,region:$region,gke_zone:$gke_zone,run_id:$run_id,cluster_name:$cluster_name,node_pool_name:$node_pool_name,node_service_account_id:$node_service_account_id,storage_class_name:$storage_class_name,image:$image,expected_commit:$expected_commit,expected_run_id:$expected_run_id,expected_run_attempt:$expected_run_attempt,expected_manifest_sha256:$expected_manifest_sha256,candidate_receipt_dir:$candidate_receipt_dir,lumen_cli:$lumen_cli,cli_target:$cli_target,receipt_out_dir:$receipt_out_dir,confirm_create:$confirm_create,confirm_destroy:$confirm_destroy}' >"$RUN_ROOT/run-contract.json"
 }
 
 prepare_run_root() {
-  RUN_ROOT=$(mktemp -d /private/tmp/lumen-standalone-gke-live.XXXXXX)
+  RUN_ROOT=$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live.XXXXXX")
+  [[ -d "$RUN_ROOT" && ! -L "$RUN_ROOT" && "$(cd "$RUN_ROOT" && pwd -P)" == "$RUN_ROOT" ]] || die 'run root is not canonical'
+  [[ "$(cd "${RUN_ROOT%/*}" && pwd -P)" == "$PRIVATE_TMP_ROOT" ]] || die 'run root parent is not canonical'
   chmod 700 "$RUN_ROOT"
+  [[ "$(private_mode "$RUN_ROOT")" == 700 ]] || die 'run root mode is not 0700'
   mkdir -m 700 "$RUN_ROOT/terraform-data" "$RUN_ROOT/private-receipt" "$RUN_ROOT/control"
   : >"$RUN_ROOT/terraform.tfstate"
   : >"$RUN_ROOT/kubeconfig"
@@ -183,18 +207,61 @@ cleanup_public_staging() {
 }
 
 safe_remove_run_root() {
-  local inventory file dir
-  [[ -n "$RUN_ROOT" && "$RUN_ROOT" == /private/tmp/lumen-standalone-gke-live.* && -d "$RUN_ROOT" && ! -L "$RUN_ROOT" ]] || return 1
+  local inventory file dir base
+  [[ -n "$RUN_ROOT" && "$RUN_ROOT" == "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live."* && -d "$RUN_ROOT" && ! -L "$RUN_ROOT" ]] || return 1
+  [[ "${RUN_ROOT%/*}" == "$PRIVATE_TMP_ROOT" ]] || return 1
+  [[ "${RUN_ROOT##*/}" =~ ^lumen-standalone-gke-live\.[A-Za-z0-9]{6}$ ]] || return 1
   [[ "$(cd "$RUN_ROOT" && pwd -P)" == "$RUN_ROOT" ]] || return 1
-  for dir in "$RUN_ROOT/terraform-data" "$RUN_ROOT/control"; do
-    if [[ -e "$dir" || -L "$dir" ]]; then [[ -d "$dir" && ! -L "$dir" ]] || return 1; rm -rf -- "$dir" || return 1; fi
-  done
-  if [[ -d "$RUN_ROOT/private-receipt" && ! -L "$RUN_ROOT/private-receipt" ]]; then
-    inventory=$(find "$RUN_ROOT/private-receipt" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort) || return 1
-    case "$inventory" in
-      ''|"$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json"|"$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256"|"$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json"$'\n'"$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256") ;;
+  inventory=$(find "$RUN_ROOT" -mindepth 1 -maxdepth 1 -print) || return 1
+  while IFS= read -r file; do
+    base=${file##*/}
+    case "$base" in
+      terraform-data|control|private-receipt) [[ -d "$file" ]] || return 1 ;;
+      terraform.tfstate|kubeconfig|create.tfplan|destroy.tfplan|recovery-destroy.tfplan|run-contract.json) [[ -f "$file" ]] || return 1 ;;
       *) return 1 ;;
     esac
+    [[ -L "$file" ]] && return 1
+  done <<<"$inventory"
+  for dir in "$RUN_ROOT/terraform-data" "$RUN_ROOT/control" "$RUN_ROOT/private-receipt"; do
+    [[ -d "$dir" && ! -L "$dir" && "$(cd "$dir" && pwd -P)" == "$dir" ]] || return 1
+    inventory=$(find "$dir" -depth -print) || return 1
+    while IFS= read -r file; do
+      [[ -L "$file" ]] && return 1
+      [[ -f "$file" || -d "$file" ]] || return 1
+    done <<<"$inventory"
+  done
+  inventory=$(find "$RUN_ROOT/private-receipt" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort) || return 1
+  case "$inventory" in
+    '') ;;
+    "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json"|"$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256"|"$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json"$'\n'"$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256")
+      if [[ -e "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json" || -L "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json" ]]; then
+        [[ -f "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json" && ! -L "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json" ]] || return 1
+      fi
+      if [[ -e "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256" || -L "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256" ]]; then
+        [[ -f "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256" && ! -L "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256" ]] || return 1
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  for dir in "$RUN_ROOT/terraform-data" "$RUN_ROOT/control"; do
+    if [[ -e "$dir" || -L "$dir" ]]; then
+      [[ -d "$dir" && ! -L "$dir" && "$(cd "$dir" && pwd -P)" == "$dir" ]] || return 1
+      inventory=$(find "$dir" -depth -print) || return 1
+      while IFS= read -r file; do
+        [[ -L "$file" ]] && return 1
+        [[ -f "$file" || -d "$file" ]] || return 1
+      done <<<"$inventory"
+      while IFS= read -r file; do
+        [[ "$file" == "$dir" ]] && continue
+        if [[ -L "$file" ]]; then return 1
+        elif [[ -f "$file" ]]; then rm -f -- "$file" || return 1
+        elif [[ -d "$file" ]]; then rmdir -- "$file" || return 1
+        else return 1; fi
+      done <<<"$inventory"
+      rmdir -- "$dir" || return 1
+    fi
+  done
+  if [[ -d "$RUN_ROOT/private-receipt" && ! -L "$RUN_ROOT/private-receipt" ]]; then
     rm -f -- "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json" "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256" || return 1
     rmdir -- "$RUN_ROOT/private-receipt" || return 1
   elif [[ -e "$RUN_ROOT/private-receipt" || -L "$RUN_ROOT/private-receipt" ]]; then return 1; fi

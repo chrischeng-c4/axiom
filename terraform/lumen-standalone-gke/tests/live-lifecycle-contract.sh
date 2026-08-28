@@ -17,6 +17,7 @@ shellcheck "$LIVE" "$REPAIR"
 
 # shellcheck source=/dev/null
 source "$LIVE"
+LIVE_ROOTS_BEFORE=$(find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-live.??????' -print | LC_ALL=C sort)
 if command -v sha256sum >/dev/null 2>&1; then
   CONTRACT_DIGEST=$(printf '%s' contract-run | sha256sum | awk '{print $1}')
 else
@@ -29,7 +30,7 @@ POOL_ID="lumen-np-$HASH"
 NODE_SA_ID="lumen-nodes-$HASH"
 OWNER_ID="lumen-standalone-$HASH"
 
-TMP=$(mktemp -d /private/tmp/lumen-live-lifecycle-contract.XXXXXX)
+TMP=$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-live-lifecycle-contract.XXXXXX")
 FIXTURE="$TMP/repo"
 STATE="$FIXTURE/test-state"
 CANDIDATE="$TMP/candidate"
@@ -41,9 +42,9 @@ cleanup() {
   trap - EXIT
   while IFS= read -r root; do
     [[ -z "$root" ]] && continue
-    if [[ "$root" == /private/tmp/lumen-standalone-gke-live.* && -d "$root" && ! -L "$root" ]]; then rm -rf -- "$root"; fi
+    if [[ "$root" == "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live."* && -d "$root" && ! -L "$root" ]]; then rm -rf -- "$root"; fi
   done <<<"$RETAINED_ROOTS"
-  if [[ "$TMP" == /private/tmp/lumen-live-lifecycle-contract.* && -d "$TMP" && ! -L "$TMP" ]]; then rm -rf -- "$TMP"; fi
+  if [[ "$TMP" == "$PRIVATE_TMP_ROOT/lumen-live-lifecycle-contract."* && -d "$TMP" && ! -L "$TMP" ]]; then rm -rf -- "$TMP"; fi
 }
 trap cleanup EXIT
 
@@ -59,6 +60,51 @@ expect_predicate_reject() {
   shift
   if ( "$@" ); then fail "predicate accepted forbidden mutation: $label"; fi
 }
+
+mkdir -p "$TMP/stat-fixture" "$TMP/path-real"
+chmod 700 "$TMP/path-real"
+printf '%s\n' sentinel >"$TMP/path-real/file"
+cat >"$TMP/stat-fixture/stat-polluted" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == -c ]]; then printf '%s\n' polluted; exit 1; fi
+printf '%s\n' 700
+EOF
+cat >"$TMP/stat-fixture/stat-gnu" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == -c && "$2" == %a && "$#" -eq 3 ]]; then printf '%s\n' 700; exit 0; fi
+if [[ "$1" == -f && "$2" == %Lp && "$#" -eq 3 ]]; then printf '%s\n' fake-filesystem-data; exit 1; fi
+exit 1
+EOF
+cat >"$TMP/stat-fixture/stat-bsd" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == -c ]]; then exit 1; fi
+printf '%s\n' 700
+EOF
+cat >"$TMP/stat-fixture/stat-bad" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == -c ]]; then printf '700\n701\n'; exit 0; fi
+EOF
+chmod 755 "$TMP/stat-fixture/stat-gnu" "$TMP/stat-fixture/stat-polluted" "$TMP/stat-fixture/stat-bsd" "$TMP/stat-fixture/stat-bad"
+ln -s stat-polluted "$TMP/stat-fixture/stat"
+if PATH="$TMP/stat-fixture:$SYSTEM_PATH" private_mode "$TMP/path-real"; then fail 'GNU stat pollution was accepted'; fi
+rm -f "$TMP/stat-fixture/stat"; ln -s stat-gnu "$TMP/stat-fixture/stat"
+[[ "$(PATH="$TMP/stat-fixture:$SYSTEM_PATH" private_mode "$TMP/path-real")" == 700 ]] || fail 'GNU stat oracle failed'
+rm -f "$TMP/stat-fixture/stat"; ln -s stat-bsd "$TMP/stat-fixture/stat"
+[[ "$(PATH="$TMP/stat-fixture:$SYSTEM_PATH" private_mode "$TMP/path-real")" == 700 ]] || fail 'BSD stat fallback oracle failed'
+rm -f "$TMP/stat-fixture/stat"; ln -s stat-bad "$TMP/stat-fixture/stat"
+if PATH="$TMP/stat-fixture:$SYSTEM_PATH" private_mode "$TMP/path-real"; then fail 'multi-line stat was accepted'; fi
+
+# Private path helpers must reject another root, dot segments, and symlinked
+# parents before a lifecycle can create or remove any state.
+mkdir -p "$TMP/path-real"
+ln -s "$TMP/path-real" "$TMP/path-link"
+expect_predicate_reject private-other-root safe_private_dir /
+expect_predicate_reject private-dot safe_private_dir "$TMP/./path-real"
+expect_predicate_reject private-symlink-dir safe_private_dir "$TMP/path-link"
+expect_predicate_reject private-symlink-file safe_private_file "$TMP/path-link/file"
+expect_predicate_reject private-new-symlink-parent safe_new_private_path "$TMP/path-link/new"
+ln -s "$TMP/path-real/file" "$TMP/path-link-leaf"
+expect_predicate_reject private-symlink-leaf safe_private_file "$TMP/path-link-leaf"
 
 mkdir -p "$FIXTURE/terraform/lumen-standalone-gke/scripts" \
   "$FIXTURE/kustomize/lumen-standalone-acceptance/tests" \
@@ -102,7 +148,7 @@ cat >"$FIXTURE/apps/lumen/scripts/standalone-gke-acceptance.sh" <<'EOF'
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 state="$repo/test-state"
-mode=$(<"$state/mode")
+mode=$(<"$state/mode"); private_tmp_root=$(cd -P /tmp && pwd -P)
 printf '%s\n' inner >>"$state/events"
 [[ "$#" -eq 2 && "$1" == --mode && "$2" == gke ]]
 while IFS='=' read -r name _; do case "$name" in *TOKEN*|*AUTHORIZATION*) exit 81 ;; esac; done < <(env)
@@ -113,7 +159,7 @@ for name in KUBECONFIG LUMEN_STANDALONE_GKE_CONTEXT LUMEN_STANDALONE_GKE_PROJECT
 [[ "$LUMEN_STANDALONE_GKE_CLUSTER" == "$(<"$state/cluster")" ]]
 [[ "$LUMEN_STANDALONE_GKE_NODE_POOL" == "$(<"$state/pool")" ]]
 [[ "$PATH" == "$(<"$state/expected-path")" ]]
-[[ "$KUBECONFIG" =~ ^/private/tmp/lumen-standalone-gke-live\.[A-Za-z0-9]{6}/kubeconfig$ ]]
+[[ "$KUBECONFIG" == "$private_tmp_root"/lumen-standalone-gke-live.*/kubeconfig && "${KUBECONFIG%/*}" =~ ^.*lumen-standalone-gke-live\.[A-Za-z0-9]{6}$ ]]
 [[ "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR" == "${KUBECONFIG%/kubeconfig}/private-receipt" ]]
 [[ "$LUMEN_STANDALONE_GKE_CONTEXT" == contract-context ]]
 [[ "$LUMEN_STANDALONE_GKE_PROJECT_ID" == abcde1 && "$LUMEN_STANDALONE_GKE_LOCATION" == us-central1-a ]]
@@ -161,7 +207,7 @@ cat >"$FIXTURE/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-state="$repo/test-state"; mode=$(<"$state/mode")
+state="$repo/test-state"; mode=$(<"$state/mode"); private_tmp_root=$(cd -P /tmp && pwd -P)
 [[ "${1:-}" == "-chdir=$repo/terraform/lumen-standalone-gke" ]] || exit 89
 shift
 cmd=${1:-}; [[ -n "$cmd" ]] || exit 90; shift
@@ -185,7 +231,7 @@ case "$cmd" in
     if [[ "${1:-}" == -destroy ]]; then destroy=1; shift; fi
     [[ "$#" -eq 9 && "$1" == -input=false && "$2" == -no-color && "$3" == -state=* && "$4" == -out=* ]] || exit 96
     state_file=${3#-state=}; out=${4#-out=}; run_root=${state_file%/terraform.tfstate}
-    [[ "$state_file" =~ ^/private/tmp/lumen-standalone-gke-live\.[A-Za-z0-9]{6}/terraform\.tfstate$ && "${out%/*}" == "$run_root" ]] || exit 97
+    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate && "${out%/*}" == "$run_root" ]] || exit 97
     [[ "$5" == '-var=project_id=abcde1' && "$6" == '-var=region=us-central1' && "$7" == '-var=gke_zone=us-central1-a' && "$8" == '-var=run_id=contract-run' && "$9" == '-var=storage_class_name=premium-rwo' ]] || exit 91
     if [[ "$destroy" -eq 0 ]]; then [[ "${out##*/}" == create.tfplan ]] || exit 98
     else case "${out##*/}" in destroy.tfplan|recovery-destroy.tfplan|repair-destroy.tfplan) ;; *) exit 98 ;; esac; fi
@@ -220,7 +266,7 @@ case "$cmd" in
   apply)
     [[ "$#" -eq 5 && "$1" == -input=false && "$2" == -no-color && "$3" == -state=* && "$4" == -backup=- ]] || exit 100
     state_file=${3#-state=}; file=$5; run_root=${state_file%/terraform.tfstate}
-    [[ "$state_file" =~ ^/private/tmp/lumen-standalone-gke-live\.[A-Za-z0-9]{6}/terraform\.tfstate$ && "${file%/*}" == "$run_root" ]] || exit 101
+    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate && "${file%/*}" == "$run_root" ]] || exit 101
     case "${file##*/}" in create.tfplan|destroy.tfplan|recovery-destroy.tfplan|repair-destroy.tfplan) ;; *) exit 102 ;; esac
     marker=$(<"$file")
     if [[ "$marker" == create ]]; then
@@ -237,7 +283,7 @@ case "$cmd" in
   state)
     [[ "$#" -eq 2 && "$1" == list && "$2" == -state=* ]] || exit 103
     state_file=${2#-state=}
-    [[ "$state_file" =~ ^/private/tmp/lumen-standalone-gke-live\.[A-Za-z0-9]{6}/terraform\.tfstate$ ]] || exit 104
+    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate ]] || exit 104
     event terraform:state-list
     resource=$(<"$state/resource-state")
     if [[ "$resource" == created ]]; then
@@ -274,8 +320,8 @@ EOF
 cat >"$FIXTURE/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P); state="$repo/test-state"; mode=$(<"$state/mode")
-if [[ "$#" -eq 7 && "$1" == --kubeconfig && "$2" =~ ^/private/tmp/lumen-standalone-gke-live\.[A-Za-z0-9]{6}/kubeconfig$ && "$3" == config && "$4" == view && "$5" == --raw && "$6" == -o && "$7" == json ]]; then
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P); state="$repo/test-state"; mode=$(<"$state/mode"); private_tmp_root=$(cd -P /tmp && pwd -P)
+  if [[ "$#" -eq 7 && "$1" == --kubeconfig && "$2" == "$private_tmp_root"/lumen-standalone-gke-live.??????/kubeconfig && "$3" == config && "$4" == view && "$5" == --raw && "$6" == -o && "$7" == json ]]; then
   printf '%s\n' "$2" >"$state/kubeconfig-path"
   printf '%s\n' kubectl:config >>"$state/events"; server=https://203.0.113.8; [[ "$mode" == kube-bad ]] && server=https://wrong.invalid
   jq -nc --arg s "$server" '{"current-context":"contract-context",contexts:[{name:"contract-context",context:{cluster:"contract-cluster",user:"contract-user"}}],clusters:[{name:"contract-cluster",cluster:{server:$s}}],users:[{name:"contract-user",user:{exec:{command:"gke-gcloud-auth-plugin"}}}]}'
@@ -318,11 +364,20 @@ expect_live_reject() {
   [[ -s "$CASE_STDERR" ]] || fail "live rejection had no evidence: $label"
 }
 
+assert_no_new_live_roots() {
+  local label=$1 root
+  for root in "$PRIVATE_TMP_ROOT"/lumen-standalone-gke-live.*; do
+    [[ -d "$root" ]] || continue
+    if ! grep -Fqx "$root" <<<"$LIVE_ROOTS_BEFORE" && ! grep -Fqx "$root" <<<"$RETAINED_ROOTS"; then
+      fail "$label left an unexpected private root"
+    fi
+  done
+}
+
 remember_repair_root() {
   local root
   root=$(sed -n 's|^terraform/lumen-standalone-gke/scripts/repair-destroy.sh --state-dir \([^ ]*\) --confirm-destroy .*$|\1|p' "$CASE_STDERR" | tail -n 1)
-  [[ "$root" =~ ^/private/tmp/lumen-standalone-gke-live\.[A-Za-z0-9]{6}$ && -d "$root" ]] || fail 'missing exact repair command and retained root'
-  RETAINED_ROOTS="${RETAINED_ROOTS}${RETAINED_ROOTS:+$'\n'}$root"
+  [[ "$root" == "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live."* && "${root##*/}" =~ ^lumen-standalone-gke-live\.[A-Za-z0-9]{6}$ && -d "$root" ]] || fail 'missing exact repair command and retained root'
   printf '%s' "$root"
 }
 
@@ -363,6 +418,7 @@ done
 reset_case create-uncertain create-apply-fail
 expect_live_reject create-uncertain
 uncertain_root=$(remember_repair_root)
+RETAINED_ROOTS="${RETAINED_ROOTS}${RETAINED_ROOTS:+$'\n'}$uncertain_root"
 [[ ! -e "$CASE_OUT" ]] || fail 'uncertain create published a receipt'
 ! grep -q 'terraform:plan:destroy' "$STATE/events" || fail 'uncertain create guessed a destroy plan'
 
@@ -376,6 +432,9 @@ if ! grep -q 'terraform:plan:destroy' "$STATE/events" || ! grep -q 'terraform:ap
 for mode in state-bad output-bad cluster-bad node-list-bad node-bad kube-bad storage-bad inner-fail verify-fail inner-sidecar-bad receipt-after-verify-tamper; do
   reset_case "$mode" "$mode"; expect_live_reject "$mode"
   [[ ! -e "$CASE_OUT" ]] || fail "$mode published a receipt"
+  ! grep -q '^terraform/lumen-standalone-gke/scripts/repair-destroy.sh ' "$CASE_STDERR" || fail "$mode unexpectedly retained repair state"
+  ! grep -q '^private lifecycle state was retained$' "$CASE_STDERR" || fail "$mode unexpectedly retained private state"
+  assert_no_new_live_roots "$mode"
   if ! grep -q 'terraform:plan:destroy' "$STATE/events" || ! grep -q 'terraform:apply:destroy' "$STATE/events"; then fail "$mode did not run failure cleanup"; fi
 done
 
@@ -387,7 +446,8 @@ grep -q 'terraform:apply:destroy' "$STATE/events" || fail 'recovery destroy plan
 
 for mode in destroy-apply-fail post-list-fail post-list-present; do
   reset_case "$mode" "$mode"; expect_live_reject "$mode"
-  remember_repair_root >/dev/null
+  retained_root=$(remember_repair_root)
+  RETAINED_ROOTS="${RETAINED_ROOTS}${RETAINED_ROOTS:+$'\n'}$retained_root"
   [[ ! -e "$CASE_OUT" ]] || fail "$mode published a receipt"
 done
 
@@ -400,7 +460,7 @@ expect_live_reject publication-extra
 # used by the executed lifecycle above.
 PROJECT_ID=abcde1; REGION=us-central1; GKE_ZONE=us-central1-a; RUN_ID=contract-run; CLUSTER=$CLUSTER_ID; NODE_POOL=$POOL_ID; NODE_SERVICE_ACCOUNT=$NODE_SA_ID; OWNER_LABEL=$OWNER_ID
 printf '%s\n' happy >"$STATE/mode"; printf '%s\n' created >"$STATE/resource-state"
-UNIT_KUBE_ROOT=$(mktemp -d /private/tmp/lumen-standalone-gke-live.XXXXXX)
+UNIT_KUBE_ROOT=$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live.XXXXXX")
 RETAINED_ROOTS="${RETAINED_ROOTS}${RETAINED_ROOTS:+$'\n'}$UNIT_KUBE_ROOT"
 PATH="$FIXTURE/bin:$SYSTEM_PATH" gcloud container clusters describe "$CLUSTER" --project=abcde1 --location=us-central1-a --format=json >"$TMP/valid-cluster.json"
 PATH="$FIXTURE/bin:$SYSTEM_PATH" gcloud container node-pools describe "$NODE_POOL" --cluster="$CLUSTER" --project=abcde1 --location=us-central1-a --format=json >"$TMP/valid-pool.json"
@@ -441,6 +501,124 @@ for entry in \
 done
 cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json"
 
+# A nested direct-looking state directory must be rejected before contract
+# loading or any Terraform command.
+mkdir -p "$uncertain_root/nested/lumen-standalone-gke-live.ABC123"
+cp "$uncertain_root/run-contract.json" "$uncertain_root/nested/lumen-standalone-gke-live.ABC123/run-contract.json"
+: >"$STATE/events"
+expect_reject repair-nested-state "$REPAIR_FIXTURE" --state-dir "$uncertain_root/nested/lumen-standalone-gke-live.ABC123" --confirm-destroy "$CLUSTER_ID"
+[[ -z "$(<"$STATE/events")" ]] || fail 'nested repair state reached Terraform'
+[[ -d "$uncertain_root" && -f "$uncertain_root/run-contract.json" ]] || fail 'nested repair rejected state lost evidence'
+
+# Contract paths and repair inputs are untrusted evidence.  Each mutation is
+# rejected before Terraform destroy, and the retained evidence must stay byte
+# for byte unchanged.
+repair_inventory() { find "$uncertain_root" -mindepth 1 -print | LC_ALL=C sort; }
+repair_sentinel_hash() { sha256_file "$uncertain_root/terraform.tfstate"; }
+assert_repair_unchanged() {
+  local label=$1 before_inventory=$2 before_hash=$3
+  [[ "$(repair_inventory)" == "$before_inventory" ]] || fail "$label changed retained inventory"
+  [[ "$(repair_sentinel_hash)" == "$before_hash" ]] || fail "$label changed retained state"
+  ! grep -q 'terraform:apply:destroy' "$STATE/events" || fail "$label applied destroy"
+  [[ ! -e "$TMP/out-create-uncertain" ]] || fail "$label wrote a public receipt"
+}
+run_repair_contract_mutation() {
+  local label=$1 filter=$2
+  cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json"
+  jq "$filter" "$TMP/run-contract.good" >"$TMP/mutated-contract.json"
+  cp "$TMP/mutated-contract.json" "$uncertain_root/run-contract.json"
+  local before_inventory before_hash
+  before_inventory=$(repair_inventory); before_hash=$(repair_sentinel_hash)
+  : >"$STATE/events"
+  expect_reject "repair-contract-$label" env PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID"
+  assert_repair_unchanged "repair-contract-$label" "$before_inventory" "$before_hash"
+}
+run_repair_contract_mutation private-root '.private_temp_root = (if .private_temp_root == "/private/tmp" then "/tmp" else "/private/tmp" end)'
+run_repair_contract_mutation direct-root '.state_dir = (if .private_temp_root == "/private/tmp" then "/private/tmp/lumen-standalone-gke-live.ZYX987" else "/tmp/lumen-standalone-gke-live.ZYX987" end)'
+mkdir -p "$uncertain_root/nested/lumen-standalone-gke-live.ABC123"
+run_repair_contract_mutation nested-root '.state_dir = (.state_dir + "/nested/lumen-standalone-gke-live.ABC123")'
+cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json"
+
+run_repair_path_type_mutation() {
+  local label=$1 target=$2
+  cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json"
+  rm -rf -- "${uncertain_root:?}/$target"
+  case "$target" in
+    run-contract.json|terraform.tfstate) ln -s "$TMP/path-real/file" "$uncertain_root/$target" ;;
+    terraform-data|control) ln -s "$TMP/path-real" "$uncertain_root/$target" ;;
+  esac
+  local before_inventory before_hash
+  before_inventory=$(repair_inventory); before_hash=$(repair_sentinel_hash)
+  : >"$STATE/events"
+  expect_reject "repair-path-$label" env PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID"
+  [[ -L "$uncertain_root/$target" ]] || fail "repair-path-$label removed offending entry"
+  assert_repair_unchanged "repair-path-$label" "$before_inventory" "$before_hash"
+  rm -f -- "$uncertain_root/$target"
+  case "$target" in
+    run-contract.json) cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json" ;;
+    terraform.tfstate) : >"$uncertain_root/terraform.tfstate" ;;
+    terraform-data|control) mkdir -m 700 "$uncertain_root/$target" ;;
+  esac
+}
+for pair in 'run-contract-leaf run-contract.json' 'terraform-state-leaf terraform.tfstate' 'terraform-data-directory terraform-data' 'control-directory control'; do
+  read -r label target <<<"$pair"
+  run_repair_path_type_mutation "$label" "$target"
+done
+
+# safe_remove_run_root must refuse every unexpected shape without deleting
+# any sentinel or the offending path.
+make_removal_negative_root() {
+  local label=$1
+  local root
+  root=$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live.XXXXXX")
+  chmod 700 "$root"
+  mkdir -m 700 "$root/terraform-data" "$root/control" "$root/private-receipt"
+  : >"$root/terraform.tfstate"; : >"$root/kubeconfig"; : >"$root/run-contract.json"
+  printf '%s\n' "$label-state" >"$root/terraform-data/sentinel"
+  printf '%s\n' "$label-control" >"$root/control/sentinel"
+  printf '%s\n' "$label-state" >"$root/private-receipt/lumen-standalone-gke-receipt.json"
+  printf '%s\n' "$label-sidecar" >"$root/private-receipt/lumen-standalone-gke-receipt.json.sha256"
+  RETAINED_ROOTS="${RETAINED_ROOTS}${RETAINED_ROOTS:+$'\n'}$root"
+  printf '%s' "$root"
+}
+run_removal_negative() {
+  local label=$1 mutation=$2 root
+  root=$(make_removal_negative_root "$label")
+  RETAINED_ROOTS="${RETAINED_ROOTS}${RETAINED_ROOTS:+$'\n'}$root"
+  local state_hash control_hash receipt_hash
+  state_hash=$(sha256_file "$root/terraform-data/sentinel")
+  control_hash=$(sha256_file "$root/control/sentinel")
+  receipt_hash=$(sha256_file "$root/private-receipt/lumen-standalone-gke-receipt.json")
+  case "$mutation" in
+    unknown) : >"$root/unknown" ;;
+    leaf) rm -f -- "$root/terraform.tfstate"; mkdir -m 700 "$root/terraform.tfstate" ;;
+    subtree) ln -s "$TMP/path-real/file" "$root/control/link" ;;
+    receipt) : >"$root/private-receipt/extra" ;;
+    receipt-leaf) rm -rf -- "${root:?}/private-receipt/lumen-standalone-gke-receipt.json.sha256"; mkdir -m 700 "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ;;
+  esac
+  RUN_ROOT="$root"
+  : >"$STATE/events"
+  expect_predicate_reject "safe-remove-$label" safe_remove_run_root
+  ! grep -q 'terraform:apply:destroy' "$STATE/events" || fail "safe-remove-$label applied destroy"
+  [[ ! -e "$TMP/out-create-uncertain" ]] || fail "safe-remove-$label wrote a public receipt"
+  [[ -e "$root" && -e "$root/terraform-data/sentinel" && -e "$root/control/sentinel" ]] || fail "safe-remove-$label deleted evidence"
+  if [[ "$mutation" == receipt-leaf ]]; then [[ -d "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ]] || fail "safe-remove-$label deleted offending entry"; else [[ -f "$root/private-receipt/lumen-standalone-gke-receipt.json" ]] || fail "safe-remove-$label deleted evidence"; fi
+  [[ "$(sha256_file "$root/terraform-data/sentinel")" == "$state_hash" && "$(sha256_file "$root/control/sentinel")" == "$control_hash" ]] || fail "safe-remove-$label changed sentinel"
+  if [[ "$mutation" != receipt-leaf ]]; then [[ "$(sha256_file "$root/private-receipt/lumen-standalone-gke-receipt.json")" == "$receipt_hash" ]] || fail "safe-remove-$label changed receipt"; fi
+  case "$mutation" in
+    unknown) [[ -e "$root/unknown" ]] ;;
+    leaf) [[ -d "$root/terraform.tfstate" ]] ;;
+    subtree) [[ -L "$root/control/link" ]] ;;
+    receipt) [[ -e "$root/private-receipt/extra" ]] ;;
+    receipt-leaf) [[ -d "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ]] ;;
+  esac
+}
+for pair in 'unknown unknown' 'named-leaf leaf' 'control-subtree subtree' 'receipt-extra receipt' 'receipt-leaf receipt-leaf'; do
+  read -r label mutation <<<"$pair"
+  run_removal_negative "$label" "$mutation"
+done
+RUN_ROOT=''
+
 # A fresh repair plan may contain a strict known delete subset when a prior
 # partial operation already removed other resources.
 : >"$STATE/events"; printf '%s\n' created >"$STATE/resource-state"; printf '%s\n' repair-plan-subset >"$STATE/mode"; rm -f "$uncertain_root/repair-destroy.tfplan"
@@ -460,5 +638,11 @@ for mode in repair-state-nonempty post-list-fail post-list-present; do
   [[ -d "$uncertain_root" && ! -e "$TMP/out-create-uncertain" ]] || fail "$mode deleted evidence or wrote a public receipt"
 done
 [[ -d "$uncertain_root" ]] || fail 'repair rejection deleted retained state'
+
+cleanup
+cleanup
+
+LIVE_ROOTS_AFTER=$(find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-live.??????' -print | LC_ALL=C sort)
+[[ "$LIVE_ROOTS_AFTER" == "$LIVE_ROOTS_BEFORE" ]] || fail 'cleanup changed live root inventory'
 
 printf '%s\n' 'live lifecycle cloud-free contract passed'
