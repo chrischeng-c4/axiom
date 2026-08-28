@@ -2204,6 +2204,28 @@ impl SetIndex {
         self.forward.get(&id).cloned()
     }
 
+    /// `set_members` MINUS the query-time tombstones — doc `id`'s member set as
+    /// a reader sees it, rather than as the immutable segment stored it.
+    ///
+    /// `set_members` deliberately does NOT subtract them: `drop_eid` calls it to
+    /// read the members it is about to un-index, and at that moment the id is not
+    /// yet tombstoned. Every OTHER caller wants the live answer, and a sealed-base
+    /// doc deleted after the seal is `Some(members)` there — the on-disk column
+    /// cannot be mutated, so the delete is recorded only in `tombstones`.
+    ///
+    /// This is the `live_` counterpart the other three arms already have
+    /// (`live_terms`, `live_elements`, `live_number_at`), and `KeywordIndex::keyword_at`
+    /// folds the same check inline. Without it, `to_snapshot` would resurrect a
+    /// deleted doc's memberships into the forward column, and `from_snapshot`
+    /// rebuilds the inverted index from exactly that column.
+    #[inline]
+    fn live_set_members(&self, id: u32) -> Option<BTreeSet<String>> {
+        if self.tombstones.contains(id) {
+            return None;
+        }
+        self.set_members(id)
+    }
+
     /// `true` once the sealed forward payload has been dropped to disk
     /// (Phase 2f-1) — the segment is attached. See `KeywordIndex::forward_dropped`.
     #[inline]
@@ -9556,8 +9578,10 @@ impl FieldIndex {
                 }
             }
             FieldIndex::Keyword(k) => FieldIndexSnapshot::Keyword {
+                // Gathered through the segment-aware accessor: after a seal,
+                // `k.terms` is only the post-seal tail, not the whole index.
                 terms: k
-                    .terms
+                    .live_terms()
                     .iter()
                     .map(|(v, set)| (v.clone(), set.iter().map(|id| eid(id)).collect()))
                     .collect(),
@@ -9573,15 +9597,16 @@ impl FieldIndex {
                 bytes: n.bytes,
             },
             FieldIndex::Set(s) => FieldIndexSnapshot::Set {
+                // Gathered through the segment-aware accessors: after a seal,
+                // both `s.elements` and `s.forward` are freed to disk and the
+                // raw fields are empty.
                 elements: s
-                    .elements
+                    .live_elements()
                     .iter()
                     .map(|(el, set)| (el.clone(), set.iter().map(|id| eid(id)).collect()))
                     .collect(),
-                forward: s
-                    .forward
-                    .iter()
-                    .map(|(id, set)| (eid(*id), set.clone()))
+                forward: (0..interner.to_eid.len() as u32)
+                    .filter_map(|id| s.live_set_members(id).map(|members| (eid(id), members)))
                     .collect(),
                 bytes: s.bytes,
             },
@@ -9692,17 +9717,22 @@ impl FieldIndex {
                 }
             }
             FieldIndexSnapshot::Keyword {
-                terms,
+                // The persisted inverted index is NOT trusted verbatim: it is
+                // rebuilt from `forward`, the way the Number arm below rebuilds
+                // `values` from its own `forward`. `forward` was always
+                // complete (even in a snapshot written before this fix), so
+                // this is what lets an already-bricked on-disk snapshot
+                // self-heal on restore without a re-index.
+                terms: _terms,
                 forward,
                 bytes,
             } => {
-                let mut t: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
-                for (v, set) in terms {
-                    t.insert(v, set.iter().map(|eid| interner.intern(eid)).collect());
-                }
                 let mut fwd: FastHashMap<u32, String> = FastHashMap::default();
+                let mut t: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
                 for (eid, v) in forward {
-                    fwd.insert(interner.intern(&eid), v);
+                    let id = interner.intern(&eid);
+                    t.entry(v.clone()).or_default().insert(id);
+                    fwd.insert(id, v);
                 }
                 FieldIndex::Keyword(KeywordIndex {
                     dup_values: dup_values_of(&t),
@@ -9731,17 +9761,26 @@ impl FieldIndex {
                 FieldIndex::Number(idx)
             }
             FieldIndexSnapshot::Set {
-                elements,
+                // The persisted inverted index is NOT trusted verbatim: it is
+                // rebuilt from `forward`, the way the Number arm below rebuilds
+                // `values` from its own `forward`. Unlike Keyword, a Set
+                // snapshot written before this fix cannot self-heal here — the
+                // seal emptied BOTH halves before the old `to_snapshot` ever
+                // read them, so `forward` in an already-shipped snapshot is
+                // also empty; only the `to_snapshot` fix above prevents that
+                // going forward.
+                elements: _elements,
                 forward,
                 bytes,
             } => {
-                let mut e: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
-                for (el, set) in elements {
-                    e.insert(el, set.iter().map(|eid| interner.intern(eid)).collect());
-                }
                 let mut fwd: FastHashMap<u32, BTreeSet<String>> = FastHashMap::default();
+                let mut e: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
                 for (eid, set) in forward {
-                    fwd.insert(interner.intern(&eid), set);
+                    let id = interner.intern(&eid);
+                    for el in &set {
+                        e.entry(el.clone()).or_default().insert(id);
+                    }
+                    fwd.insert(id, set);
                 }
                 FieldIndex::Set(SetIndex {
                     dup_values: dup_values_of(&e),
