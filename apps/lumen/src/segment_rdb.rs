@@ -1,286 +1,243 @@
 // CODEGEN-BEGIN
-//! Segment-checkpoint persistence store (Stage 2 Phase 2f-2) — the disk engine
-//! wired in as the running binary's "RDB".
+//! Durable segment-checkpoint generations.
 //!
-//! A segment checkpoint SUPERSEDES the CBOR RDB ([`crate::rdb`]): instead of
-//! serializing the whole materialized index into one `rdb-<seq>.lrb` blob, the
-//! engine seals every collection into columnar mmap segments
-//! (`<collection>/<field>.lseg` + EID column + a `_schema.json` sidecar) under a
-//! generation directory `gen-<seq>/`. Cold start reopens those segments WITHOUT a
-//! whole-collection load (the forward payload stays demand-paged on the mmaps),
-//! then tails the WAL from `<seq> + 1`.
+//! A checkpoint stores one directory per collection. Each collection contains
+//! mmap segments and `_schema.json`. New checkpoints also contain one
+//! top-level `_generation.json` manifest. The shared `storage-durable`
+//! generation store fsyncs the complete tree and changes `CURRENT` atomically.
+//! `CURRENT` is the only source of truth. A complete but unpointed directory is
+//! never selected during restart.
 //!
-//! ## Atomicity
-//!
-//! A checkpoint is written by:
-//!   1. staging the whole generation under a temp dir `.gen-<seq>.tmp/` (removed
-//!      first if a prior torn attempt left one),
-//!   2. having [`Engine::flush_to_segments`] seal every collection into it,
-//!   3. atomically `rename`-ing the temp dir to `gen-<seq>/`.
-//!
-//! The rename is the commit point: a `gen-<seq>/` directory exists IFF the whole
-//! checkpoint was staged successfully, so a torn checkpoint (a crash mid-stage)
-//! leaves only a `.gen-*.tmp` dir, which is ignored by load and swept on the next
-//! write. This is exactly [`crate::rdb::LocalFsRdbStore`]'s temp-file+rename model
-//! lifted to a directory. The sequence in the generation name is the total order
-//! — no separate pointer file is needed; the highest `gen-*` is the latest.
-//!
-//! ## Crash-safe same-seq swap (#1444)
-//!
-//! A same-seq re-save (routine: reshard apply/evict mutate engine state
-//! without advancing `applied_seq`, and the periodic snapshotter re-saves
-//! every tick with no skip condition) must replace an ALREADY-COMMITTED
-//! `gen-<seq>/` with the freshly-staged one. Deleting the old generation
-//! before renaming staging in would leave a window where a crash destroys
-//! the only durable copy of the previous good state while the new one is
-//! still hidden under its dot-prefixed staging name. Instead the old
-//! generation is moved ASIDE (`gen-<seq>.old/`) first, the staging dir is
-//! renamed onto `gen-<seq>/` (the same atomic commit point as the
-//! new-seq path), and only then is the aside copy removed:
-//!   1. `gen-<seq>/` -> `gen-<seq>.old/` (rename, cheap, same filesystem),
-//!   2. `.gen-<seq>.tmp/` -> `gen-<seq>/` (the commit point),
-//!   3. remove `gen-<seq>.old/` (best-effort cleanup).
-//! `.old`-suffixed names never parse as a `gen-<seq>` sequence (see
-//! [`SegmentRdbStore::seq_of`]), so they are already invisible to
-//! `generations()`/`load_latest`. [`SegmentRdbStore::reconcile_aside`]
-//! additionally self-heals a crash between steps 1 and 2: if `gen-<seq>/`
-//! is missing but `gen-<seq>.old/` is present, the aside copy is renamed
-//! back — recovering exactly the last successful save's predecessor at
-//! that seq. If both exist (crash after step 2, before step 3), the aside
-//! is stale and is removed. `reconcile_aside` runs under `save_lock`
-//! wherever a generation is committed or read back (`save`, `prune`,
-//! `reopen_into`), so recovery is guaranteed by the time any caller reads
-//! the newest generation, including at cold start.
+//! New directory names are `gen-<seq>-rev-<revision>`. A same-sequence save
+//! creates a new immutable revision. A background save below the active
+//! sequence is a no-op. Exact 0.4.28 `gen-<seq>` directories remain readable:
+//! on the first 0.4.29 restart, Lumen validates the exact highest legacy
+//! directory and then writes `CURRENT` once. It never falls back from a corrupt
+//! highest legacy directory.
 
+use std::collections::{BTreeSet, HashMap};
+use std::fmt;
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use serde::{Deserialize, Serialize};
+use storage_durable::{
+    CurrentReadErrorKind, CurrentTarget, FailureInjector, GenerationName, GenerationStore,
+    NoFailures, StagedGeneration,
+};
 
 use crate::storage::Engine;
 
-/// Filesystem-backed segment-checkpoint store: `<root>/gen-<seq>/`. The newest
-/// `gen-*` (by sequence) is the latest. Parallels [`crate::rdb::LocalFsRdbStore`]
-/// but persists the columnar segment tree instead of a CBOR blob.
-///
-/// ## Concurrency (#1397)
-///
-/// The serving binary shares one store instance between the on-demand
-/// checkpoint sink (`POST /admin/checkpoint`) and the periodic snapshotter —
-/// both call [`Self::save`]/[`Self::prune`] on clones of the same
-/// `Arc<SegmentRdbStore>`. Without serialization, one caller's
-/// [`Self::sweep_staging`] can delete another caller's in-flight staging
-/// dir, and two concurrent `save`s at the same `applied_seq` (routine during
-/// a quiet cutover, since reshard apply/evict mutate state without
-/// advancing `applied_seq`) can interleave their stage/flush/rename steps
-/// into a torn `gen-<seq>` directory that `load_latest` would then pick with
-/// no integrity check. `save_lock` fully serializes every mutating call on
-/// this store, so a caller only ever observes a fully-old or fully-new
-/// generation, never a partial one. It is wrapped in its own `Arc` (rather
-/// than relying on the struct's derived `Clone`) so the lock is shared even
-/// if a `SegmentRdbStore` value itself — not just an outer `Arc` around it —
-/// is cloned.
+const GENERATION_MANIFEST_FILE: &str = "_generation.json";
+const GENERATION_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SegmentGenerationManifest {
+    schema_version: u32,
+    sequence: u64,
+    revision: u64,
+    previous: Option<String>,
+}
+
 #[derive(Debug, Clone)]
+struct GenerationRecord {
+    name: GenerationName,
+    path: PathBuf,
+    sequence: u64,
+    revision: u64,
+    legacy: bool,
+    previous: Option<GenerationName>,
+}
+
+/// The exact generation selected by `CURRENT`, reopened into a fresh engine.
+#[derive(Clone)]
+pub struct LoadedSegmentGeneration {
+    pub name: GenerationName,
+    pub sequence: u64,
+    pub engine: Arc<Engine>,
+}
+
+impl GenerationRecord {
+    fn order_key(&self) -> (u8, u64) {
+        if self.legacy {
+            (0, self.sequence)
+        } else {
+            (1, self.revision)
+        }
+    }
+}
+
+/// Filesystem-backed segment checkpoints selected through one durable
+/// `CURRENT` pointer.
+///
+/// Clones and independently opened handles for the same canonical root share
+/// `save_lock` inside one process. The lock covers preparation, abandoned-stage
+/// cleanup, activation, reopen, and prune. As required by `GenerationStore`, one
+/// process must own all mutations for a root; cross-process writers are not
+/// supported.
+#[derive(Clone)]
 pub struct SegmentRdbStore {
     root: PathBuf,
     save_lock: Arc<Mutex<()>>,
+    generations: GenerationStore,
+}
+
+impl fmt::Debug for SegmentRdbStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SegmentRdbStore")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SegmentRdbStore {
-    /// Open (creating) the checkpoint root directory.
+    /// Open or create the checkpoint root.
+    ///
+    /// A new root receives the explicit empty `CURRENT` sentinel. A root with
+    /// exact 0.4.28 legacy generations remains uninitialized until
+    /// [`Self::reopen_into`] validates and adopts the highest one.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
+        Self::open_with_injector(root, Arc::new(NoFailures))
+    }
+
+    fn open_with_injector(
+        root: impl Into<PathBuf>,
+        injector: Arc<dyn FailureInjector>,
+    ) -> Result<Self> {
         let root = root.into();
         std::fs::create_dir_all(&root)
             .with_context(|| format!("create segment-checkpoint dir {}", root.display()))?;
-        Ok(Self {
+        let generations = GenerationStore::open_with_injector(&root, injector)
+            .with_context(|| format!("open generation store {}", root.display()))?;
+        let root = std::fs::canonicalize(&root)
+            .with_context(|| format!("canonicalize checkpoint root {}", root.display()))?;
+        let store = Self {
+            save_lock: shared_save_lock(&root)?,
             root,
-            save_lock: Arc::new(Mutex::new(())),
-        })
-    }
+            generations,
+        };
+        let _guard = store
+            .save_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        store.sweep_abandoned_staging()?;
 
-    /// The committed generation path for `seq`.
-    fn gen_path(&self, seq: u64) -> PathBuf {
-        self.root.join(format!("gen-{seq}"))
-    }
-
-    /// The staging path for `seq` (renamed to `gen_path` on commit).
-    fn staging_path(&self, seq: u64) -> PathBuf {
-        self.root.join(format!(".gen-{seq}.tmp"))
-    }
-
-    /// The aside path a same-seq re-save moves the OLD committed generation
-    /// to before renaming staging onto `gen_path` (#1444). Never parses as a
-    /// sequence via [`Self::seq_of`], so it is invisible to `generations()`
-    /// until [`Self::reconcile_aside`] resolves it.
-    fn aside_path(&self, seq: u64) -> PathBuf {
-        self.root.join(format!("gen-{seq}.old"))
-    }
-
-    /// Parse the sequence out of a committed `gen-<seq>` directory name.
-    fn seq_of(path: &Path) -> Option<u64> {
-        path.file_name()?
-            .to_str()?
-            .strip_prefix("gen-")?
-            .parse()
-            .ok()
-    }
-
-    /// Every committed generation, ascending by sequence. Staging dirs
-    /// (`.gen-*.tmp`) and stray entries are ignored.
-    fn generations(&self) -> Result<Vec<(u64, PathBuf)>> {
-        let mut out = Vec::new();
-        for entry in std::fs::read_dir(&self.root)
-            .with_context(|| format!("read checkpoint root {}", self.root.display()))?
-        {
-            let path = entry?.path();
-            if !path.is_dir() {
-                continue;
-            }
-            if let Some(seq) = Self::seq_of(&path) {
-                out.push((seq, path));
-            }
-        }
-        out.sort_by_key(|(seq, _)| *seq);
-        Ok(out)
-    }
-
-    /// Remove any leftover staging directories from torn prior attempts.
-    fn sweep_staging(&self) {
-        if let Ok(rd) = std::fs::read_dir(&self.root) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if p.is_dir()
-                    && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with(".gen-") && n.ends_with(".tmp"))
-                {
-                    let _ = std::fs::remove_dir_all(&p);
+        match store.generations.read_current() {
+            Ok(_) => {}
+            Err(error) if error.kind == CurrentReadErrorKind::Missing => {
+                store.reconcile_legacy_asides()?;
+                if store.legacy_records()?.is_empty() {
+                    store
+                        .generations
+                        .initialize_empty()
+                        .map_err(anyhow::Error::new)
+                        .context("initialize empty segment generation store")?;
                 }
             }
+            Err(error) => return Err(anyhow::Error::new(error).context("read CURRENT")),
         }
+        drop(_guard);
+        Ok(store)
     }
 
-    /// Resolve any leftover `gen-<seq>.old` aside directories left by a crash
-    /// during a same-seq re-save's swap (#1444, see the module doc's
-    /// "Crash-safe same-seq swap" section). For each `gen-<seq>.old` found:
-    /// if `gen-<seq>` is missing, the commit rename never landed — restore
-    /// the aside by renaming it back, recovering the last successful save's
-    /// predecessor. If `gen-<seq>` exists, the commit already landed and the
-    /// aside is stale cleanup leftover — remove it. Must run under
-    /// `save_lock` (called from `save`/`prune`/`reopen_into`, all of which
-    /// hold it) so it never races a concurrent swap.
-    fn reconcile_aside(&self) {
-        let Ok(rd) = std::fs::read_dir(&self.root) else {
-            return;
-        };
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if !p.is_dir() {
-                continue;
-            }
-            let Some(seq_str) = p
-                .file_name()
-                .and_then(|n| n.to_str())
-                .and_then(|n| n.strip_prefix("gen-"))
-                .and_then(|n| n.strip_suffix(".old"))
-            else {
-                continue;
-            };
-            if seq_str.parse::<u64>().is_err() {
-                continue;
-            }
-            let committed = self.root.join(format!("gen-{seq_str}"));
-            if committed.exists() {
-                let _ = std::fs::remove_dir_all(&p);
-            } else {
-                let _ = std::fs::rename(&p, &committed);
-            }
-        }
+    /// Open a store with deterministic filesystem failures for restore tests.
+    #[cfg(test)]
+    pub(crate) fn new_with_failure_injector(
+        root: impl Into<PathBuf>,
+        injector: Arc<dyn FailureInjector>,
+    ) -> Result<Self> {
+        Self::open_with_injector(root, injector)
     }
 
-    /// Checkpoint `engine` at `up_to_seq`: stage a full generation under a temp
-    /// dir, seal every collection into it via [`Engine::flush_to_segments`], then
-    /// atomically rename it to `gen-<up_to_seq>/`. The rename is the commit point
-    /// — a crash before it leaves only the temp dir (swept on the next call), so a
-    /// torn checkpoint never replaces a good one.
+    /// Checkpoint `engine` through a new immutable generation.
     ///
-    /// Serialized via `save_lock` (#1397): the checkpoint sink and the
-    /// periodic snapshotter can both call this on the same store instance,
-    /// including at an unchanged `up_to_seq` (reshard apply/evict mutate
-    /// engine state without advancing `applied_seq`, so a same-seq save is
-    /// NOT a no-op and must still run — it is only made safe, not skipped).
-    /// Holding the lock across sweep+stage+flush+rename means a concurrent
-    /// caller's `sweep_staging` can never delete this call's in-flight
-    /// staging dir, and two saves at the same seq simply run one after the
-    /// other instead of interleaving into a torn generation.
-    ///
-    /// The commit itself is crash-safe even when replacing an
-    /// already-committed generation at the same seq (#1444): the old
-    /// generation is moved aside — never deleted — before the new one is
-    /// renamed in, so `load_latest` always finds a complete generation at
-    /// least as new as this save's predecessor at every crash point. See
-    /// the module doc's "Crash-safe same-seq swap" section.
+    /// Same-sequence saves remain meaningful because reshard operations can
+    /// change state without advancing `applied_seq`. A lower sequence can only
+    /// be a stale background caller, so it returns without moving `CURRENT`.
     pub fn save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> {
+        self.save_inner(engine, up_to_seq, false).map(|_| ())
+    }
+
+    /// Save a generation for a restore operation.
+    ///
+    /// Unlike [`Self::save`], this never silently ignores a stale sequence and
+    /// always creates a new revision, including when the sequence is unchanged.
+    pub fn save_required(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<GenerationName> {
+        self.save_inner(engine, up_to_seq, true)
+    }
+
+    fn save_inner(
+        &self,
+        engine: &Arc<Engine>,
+        up_to_seq: u64,
+        required: bool,
+    ) -> Result<GenerationName> {
         let _guard = self
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.sweep_staging();
-        self.reconcile_aside();
-        let staging = self.staging_path(up_to_seq);
-        // A re-run at the same seq would collide; start from a clean staging dir.
-        let _ = std::fs::remove_dir_all(&staging);
-        std::fs::create_dir_all(&staging)
-            .with_context(|| format!("create staging {}", staging.display()))?;
+        self.sweep_abandoned_staging()?;
 
-        // Seal every collection into the staging dir.
-        if let Err(e) = engine.flush_to_segments(&staging, up_to_seq) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(e).context("flush collections to segment checkpoint");
+        let current = self.current_record()?;
+        if let Some(current) = &current {
+            if up_to_seq < current.sequence {
+                if required {
+                    bail!(
+                        "required segment generation sequence {up_to_seq} is below CURRENT sequence {}",
+                        current.sequence
+                    );
+                }
+                return Ok(current.name.clone());
+            }
         }
 
-        let committed = self.gen_path(up_to_seq);
-        if committed.exists() {
-            // A previously-committed generation at the same seq: move it
-            // aside instead of deleting it, so a crash before the commit
-            // rename below still leaves a complete generation recoverable
-            // by `reconcile_aside` — never a window with no good copy.
-            let aside = self.aside_path(up_to_seq);
-            let _ = std::fs::remove_dir_all(&aside);
-            std::fs::rename(&committed, &aside).with_context(|| {
-                format!(
-                    "move superseded checkpoint {} aside to {}",
-                    committed.display(),
-                    aside.display()
-                )
-            })?;
-            std::fs::rename(&staging, &committed).with_context(|| {
-                format!(
-                    "commit checkpoint {} -> {}",
-                    staging.display(),
-                    committed.display()
-                )
-            })?;
-            let _ = std::fs::remove_dir_all(&aside);
-        } else {
-            // No existing generation at this seq: the plain rename is
-            // already the atomic commit point, exactly as for a new seq.
-            std::fs::rename(&staging, &committed).with_context(|| {
-                format!(
-                    "commit checkpoint {} -> {}",
-                    staging.display(),
-                    committed.display()
-                )
-            })?;
+        let (revision, staged) = self.begin_next_generation(up_to_seq)?;
+        let staging_path = staged.path().to_path_buf();
+        if let Err(error) = engine.flush_to_segments(&staging_path, up_to_seq) {
+            let _ = std::fs::remove_dir_all(&staging_path);
+            return Err(error).context("flush collections to segment checkpoint");
         }
-        Ok(())
+
+        let previous = current.as_ref().map(|record| record.name.clone());
+        let manifest = SegmentGenerationManifest {
+            schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
+            sequence: up_to_seq,
+            revision,
+            previous: previous.as_ref().map(|name| name.as_str().to_owned()),
+        };
+        if let Err(error) = write_generation_manifest(&staging_path, &manifest) {
+            let _ = std::fs::remove_dir_all(&staging_path);
+            return Err(error);
+        }
+
+        let staged_record = GenerationRecord {
+            name: staged.generation().clone(),
+            path: staging_path.clone(),
+            sequence: up_to_seq,
+            revision,
+            legacy: false,
+            previous,
+        };
+        if let Err(error) = self.validate_record(&staged_record) {
+            let _ = std::fs::remove_dir_all(&staging_path);
+            return Err(error).context("validate staged segment generation");
+        }
+
+        self.generations
+            .commit(staged)
+            .map_err(anyhow::Error::new)
+            .with_context(|| {
+                format!("activate segment generation seq {up_to_seq} revision {revision}")
+            })?;
+        Ok(staged_record.name)
     }
 
-    /// Reopen the newest committed checkpoint into a FRESH engine, returning
-    /// `(engine, up_to_seq)`, or `None` when the store has no committed
-    /// generation. The WAL is tailed from `up_to_seq + 1`. Skips (and the caller
-    /// may prune) any torn generation — `generations()` only lists committed dirs,
-    /// and a generation with no readable collections returns seq 0.
+    /// Reopen the exact active checkpoint into a fresh engine.
     pub fn load_latest(&self) -> Result<Option<(Arc<Engine>, u64)>> {
         let engine = Arc::new(Engine::new());
         match self.reopen_into(&engine)? {
@@ -289,66 +246,692 @@ impl SegmentRdbStore {
         }
     }
 
-    /// Reopen the newest committed checkpoint INTO an existing `engine`, returning
-    /// `Some(up_to_seq)` or `None` when the store has no committed generation. Used
-    /// by the serving binary's cold start so the checkpoint lands in the same
-    /// engine the rest of the node (drain hooks, API state) already wraps.
+    /// Load exactly the generation named by `CURRENT`.
     ///
-    /// Runs [`Self::reconcile_aside`] under `save_lock` first (#1444): this is
-    /// the real cold-start entry point, so any `gen-<seq>.old` left by a
-    /// crash mid same-seq-swap is resolved before the newest generation is
-    /// picked, guaranteeing `load_latest`/`reopen_into` never miss a
-    /// generation that a completed save actually committed.
+    /// This method never performs legacy adoption and never searches for a
+    /// higher, unpointed generation.
+    pub fn load_current_generation(&self) -> Result<Option<LoadedSegmentGeneration>> {
+        let _guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let CurrentTarget::Generation(name) = self
+            .generations
+            .read_current()
+            .map_err(|error| anyhow::Error::new(error).context("read CURRENT"))?
+        else {
+            return Ok(None);
+        };
+        let record = self.record_for_name(name.clone())?;
+        let engine = Arc::new(Engine::new());
+        self.reopen_record(&engine, &record)?;
+        Ok(Some(LoadedSegmentGeneration {
+            name,
+            sequence: record.sequence,
+            engine,
+        }))
+    }
+
+    /// Reopen only the generation selected by `CURRENT`.
+    ///
+    /// If `CURRENT` is missing, this method performs the one allowed 0.4.28
+    /// migration: it validates the exact highest `gen-<seq>` directory, reopens
+    /// it, and only then adopts that exact name. Corruption is fatal and never
+    /// falls back to an older generation.
     pub fn reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> {
         let _guard = self
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.reconcile_aside();
-        let Some((_, path)) = self.generations()?.into_iter().next_back() else {
-            return Ok(None);
-        };
-        let seq = engine
-            .reopen_from_segment_dir(&path)
-            .with_context(|| format!("reopen checkpoint {}", path.display()))?;
-        Ok(Some(seq))
+        match self.generations.read_current() {
+            Ok(CurrentTarget::Empty) => Ok(None),
+            Ok(CurrentTarget::Generation(name)) => {
+                let record = self.record_for_name(name)?;
+                self.reopen_record(engine, &record).map(Some)
+            }
+            Err(error) if error.kind == CurrentReadErrorKind::Missing => {
+                self.reconcile_legacy_asides()?;
+                let Some(record) = self.legacy_records()?.into_iter().next_back() else {
+                    bail!("CURRENT is missing and no exact 0.4.28 generation can be adopted");
+                };
+                let seq = self.reopen_record(engine, &record)?;
+                self.generations
+                    .adopt_legacy(record.name.clone())
+                    .map_err(anyhow::Error::new)
+                    .with_context(|| format!("adopt legacy segment generation {}", record.name))?;
+                Ok(Some(seq))
+            }
+            Err(error) => Err(anyhow::Error::new(error).context("read CURRENT")),
+        }
     }
 
-    /// Drop committed generations older than the newest `keep` (retention). The
-    /// newest `keep` survive; returns how many were removed. Also sweeps any
-    /// torn staging dirs.
+    /// Retain the active generation and up to `keep - 1` prior generations.
     ///
-    /// Shares `save_lock` with [`Self::save`] (#1397): `sweep_staging` here
-    /// could otherwise delete a concurrent `save`'s in-flight staging dir.
+    /// `keep=0` still retains the active generation. Complete revisions newer
+    /// than `CURRENT` are failed pre-commit attempts and are removed. The method
+    /// never removes the directory named by `CURRENT`. If a prior prune already
+    /// removed the predecessor named by an immutable manifest, this call keeps
+    /// any unlinked older directories whose lineage it can no longer prove.
     pub fn prune(&self, keep: usize) -> Result<usize> {
         let _guard = self
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.sweep_staging();
-        self.reconcile_aside();
-        let all = self.generations()?;
-        if all.len() <= keep {
-            return Ok(0);
-        }
-        let to_drop = all.len() - keep;
-        let mut removed = 0;
-        for (_, path) in all.into_iter().take(to_drop) {
-            if std::fs::remove_dir_all(&path).is_ok() {
-                removed += 1;
+        self.sweep_abandoned_staging()?;
+        let (history, truncated) = self.active_history()?;
+        let all = self.generation_entries()?;
+
+        let retain: BTreeSet<_> = history
+            .iter()
+            .take(keep.max(1))
+            .map(|record| record.name.as_str().to_owned())
+            .collect();
+        let active_chain: BTreeSet<_> = history
+            .iter()
+            .map(|record| record.name.as_str().to_owned())
+            .collect();
+        let current = history.first();
+
+        let mut removed = 0usize;
+        for (name, path) in all {
+            if retain.contains(&name) {
+                continue;
             }
+            if truncated
+                && !active_chain.contains(&name)
+                && !current.is_some_and(|current| definitely_unpointed_after(&name, current))
+            {
+                continue;
+            }
+            std::fs::remove_dir_all(&path)
+                .with_context(|| format!("remove segment generation {}", path.display()))?;
+            removed += 1;
+        }
+        if removed > 0 {
+            sync_directory(&self.root).context("fsync checkpoint root after prune")?;
         }
         Ok(removed)
     }
 
-    /// The committed generation sequences, ascending (observability / tests).
+    /// Activated predecessor-chain sequences, ascending and de-duplicated.
     pub fn generation_seqs(&self) -> Result<Vec<u64>> {
         Ok(self
-            .generations()?
+            .active_history()?
+            .0
             .into_iter()
-            .map(|(seq, _)| seq)
+            .map(|record| record.sequence)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .collect())
     }
+
+    fn current_record(&self) -> Result<Option<GenerationRecord>> {
+        match self.generations.read_current() {
+            Ok(CurrentTarget::Empty) => Ok(None),
+            Ok(CurrentTarget::Generation(name)) => self.record_for_name(name).map(Some),
+            Err(error) => Err(anyhow::Error::new(error).context("read CURRENT")),
+        }
+    }
+
+    /// Return the exact activated predecessor chain, newest first. A missing
+    /// predecessor is an allowed retention boundary because prune never mutates
+    /// an immutable manifest merely to truncate its link.
+    fn active_history(&self) -> Result<(Vec<GenerationRecord>, bool)> {
+        let Some(mut record) = self.current_record()? else {
+            return Ok((Vec::new(), false));
+        };
+        let mut visited = BTreeSet::new();
+        let mut history = Vec::new();
+        let mut truncated = false;
+
+        loop {
+            let name = record.name.as_str().to_owned();
+            if !visited.insert(name.clone()) {
+                bail!("segment generation predecessor cycle at `{name}`");
+            }
+            let next = if let Some(previous) = &record.previous {
+                if let Some(previous_record) = self.record_if_present(previous.clone())? {
+                    if previous_record.sequence > record.sequence
+                        || previous_record.order_key() >= record.order_key()
+                    {
+                        bail!(
+                            "generation {} has non-predecessor link {}",
+                            record.name,
+                            previous
+                        );
+                    }
+                    Some(previous_record)
+                } else {
+                    truncated = true;
+                    None
+                }
+            } else if record.legacy {
+                self.legacy_records()?
+                    .into_iter()
+                    .filter(|candidate| candidate.legacy && candidate.sequence < record.sequence)
+                    .max_by_key(|candidate| candidate.sequence)
+            } else {
+                None
+            };
+            history.push(record);
+            let Some(next) = next else {
+                break;
+            };
+            record = next;
+        }
+        Ok((history, truncated))
+    }
+
+    fn begin_next_generation(&self, sequence: u64) -> Result<(u64, StagedGeneration)> {
+        let mut revision = self
+            .generation_entries()?
+            .into_iter()
+            .filter_map(|(name, _)| parse_revision_name(&name).map(|(_, revision)| revision))
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("segment generation revision exhausted"))?;
+
+        loop {
+            let name = GenerationName::parse(format!("gen-{sequence}-rev-{revision}"))
+                .map_err(anyhow::Error::new)
+                .context("build segment generation name")?;
+            match self.generations.begin(name) {
+                Ok(staged) => return Ok((revision, staged)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    revision = revision
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow!("segment generation revision exhausted"))?;
+                }
+                Err(error) => return Err(error).context("create segment generation staging"),
+            }
+        }
+    }
+
+    fn record_for_name(&self, name: GenerationName) -> Result<GenerationRecord> {
+        let path = self.generations.generation_path(&name);
+        let metadata = std::fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect segment generation {}", path.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            bail!(
+                "segment generation must be a real directory: {}",
+                path.display()
+            );
+        }
+        if let Some(sequence) = parse_legacy_name(name.as_str()) {
+            if path.join(GENERATION_MANIFEST_FILE).exists() {
+                bail!(
+                    "legacy generation {} unexpectedly contains {}",
+                    name,
+                    GENERATION_MANIFEST_FILE
+                );
+            }
+            return Ok(GenerationRecord {
+                name,
+                path,
+                sequence,
+                revision: 0,
+                legacy: true,
+                previous: None,
+            });
+        }
+
+        let (sequence, revision) = parse_revision_name(name.as_str())
+            .ok_or_else(|| anyhow!("CURRENT names an unsupported generation `{name}`"))?;
+        let manifest = read_generation_manifest(&path)?;
+        if manifest.schema_version != GENERATION_MANIFEST_SCHEMA_VERSION {
+            bail!(
+                "generation {} has unsupported manifest schema {}",
+                name,
+                manifest.schema_version
+            );
+        }
+        if manifest.sequence != sequence || manifest.revision != revision {
+            bail!(
+                "generation {} manifest does not match its directory name",
+                name
+            );
+        }
+        let previous = match manifest.previous {
+            Some(raw) => {
+                if !is_supported_generation_name(&raw) {
+                    bail!("generation {name} has unsupported predecessor `{raw}`");
+                }
+                if !is_older_predecessor(&raw, sequence, revision) {
+                    bail!("generation {name} has non-predecessor link `{raw}`");
+                }
+                Some(
+                    GenerationName::parse(raw)
+                        .map_err(anyhow::Error::new)
+                        .context("parse previous segment generation")?,
+                )
+            }
+            None => None,
+        };
+        if previous.as_ref() == Some(&name) {
+            bail!("generation {name} points to itself as predecessor");
+        }
+        Ok(GenerationRecord {
+            name,
+            path,
+            sequence,
+            revision,
+            legacy: false,
+            previous,
+        })
+    }
+
+    fn record_if_present(&self, name: GenerationName) -> Result<Option<GenerationRecord>> {
+        let path = self.generations.generation_path(&name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => self.record_for_name(name).map(Some),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => {
+                Err(error).with_context(|| format!("inspect segment generation {}", path.display()))
+            }
+        }
+    }
+
+    fn generation_entries(&self) -> Result<Vec<(String, PathBuf)>> {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(&self.root)
+            .with_context(|| format!("read checkpoint root {}", self.root.display()))?
+        {
+            let entry = entry?;
+            let Some(raw) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if parse_legacy_name(&raw).is_none() && parse_revision_name(&raw).is_none() {
+                continue;
+            }
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("inspect segment generation {}", path.display()))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                bail!(
+                    "segment generation must be a real directory: {}",
+                    path.display()
+                );
+            }
+            entries.push((raw, path));
+        }
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(entries)
+    }
+
+    fn legacy_records(&self) -> Result<Vec<GenerationRecord>> {
+        let mut records = Vec::new();
+        for (raw, _) in self.generation_entries()? {
+            if parse_legacy_name(&raw).is_none() {
+                continue;
+            }
+            let name = GenerationName::parse(raw)
+                .map_err(anyhow::Error::new)
+                .context("parse legacy segment generation")?;
+            records.push(self.record_for_name(name)?);
+        }
+        records.sort_by_key(|record| record.sequence);
+        Ok(records)
+    }
+
+    fn reopen_record(&self, engine: &Arc<Engine>, record: &GenerationRecord) -> Result<u64> {
+        let collections = self.validate_record(record)?;
+        self.reopen_once(engine.as_ref(), record, collections)?;
+        Ok(record.sequence)
+    }
+
+    /// Fully validate and reopen into a disposable engine before any caller
+    /// engine can change. Generations are immutable after activation, and the
+    /// serving process is their sole writer, so the second reopen sees the same
+    /// bytes without exposing a partly installed collection set on corruption.
+    fn validate_record(&self, record: &GenerationRecord) -> Result<usize> {
+        let collections = validate_generation_layout(record)?;
+        let verifier = Engine::new();
+        self.reopen_once(&verifier, record, collections)?;
+        Ok(collections)
+    }
+
+    fn reopen_once(
+        &self,
+        engine: &Engine,
+        record: &GenerationRecord,
+        collections: usize,
+    ) -> Result<()> {
+        let reopened = engine
+            .reopen_from_segment_dir(&record.path)
+            .with_context(|| format!("reopen checkpoint {}", record.path.display()))?;
+        if collections == 0 {
+            if reopened != 0 {
+                bail!(
+                    "empty generation {} reopened with unexpected sequence {reopened}",
+                    record.name
+                );
+            }
+        } else if reopened != record.sequence {
+            bail!(
+                "generation {} expected sequence {} but reopened {reopened}",
+                record.name,
+                record.sequence
+            );
+        }
+        Ok(())
+    }
+
+    fn sweep_abandoned_staging(&self) -> Result<()> {
+        let mut removed = false;
+        for entry in std::fs::read_dir(&self.root)
+            .with_context(|| format!("read checkpoint root {}", self.root.display()))?
+        {
+            let entry = entry?;
+            let Some(raw) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let legacy_stage = raw
+                .strip_prefix(".gen-")
+                .and_then(|name| name.strip_suffix(".tmp"))
+                .and_then(parse_canonical_u64)
+                .is_some();
+            let durable_stage = raw
+                .strip_prefix(".stage-")
+                .and_then(parse_revision_name)
+                .is_some();
+            if !legacy_stage && !durable_stage {
+                continue;
+            }
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("inspect checkpoint staging {}", path.display()))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                bail!(
+                    "checkpoint staging must be a real directory: {}",
+                    path.display()
+                );
+            }
+            std::fs::remove_dir_all(&path)
+                .with_context(|| format!("remove abandoned staging {}", path.display()))?;
+            removed = true;
+        }
+        if removed {
+            sync_directory(&self.root).context("fsync root after staging cleanup")?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_legacy_asides(&self) -> Result<()> {
+        let mut asides = Vec::new();
+        for entry in std::fs::read_dir(&self.root)
+            .with_context(|| format!("read checkpoint root {}", self.root.display()))?
+        {
+            let entry = entry?;
+            let Some(raw) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some(sequence) = raw
+                .strip_prefix("gen-")
+                .and_then(|name| name.strip_suffix(".old"))
+                .and_then(parse_canonical_u64)
+            else {
+                continue;
+            };
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("inspect legacy aside {}", path.display()))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                bail!("legacy aside must be a real directory: {}", path.display());
+            }
+            asides.push((sequence, path));
+        }
+        asides.sort_by_key(|(sequence, _)| *sequence);
+        let mut changed = false;
+        for (sequence, aside) in asides {
+            let committed = self.root.join(format!("gen-{sequence}"));
+            match std::fs::symlink_metadata(&committed) {
+                Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {
+                    std::fs::remove_dir_all(&aside).with_context(|| {
+                        format!("remove stale legacy aside {}", aside.display())
+                    })?;
+                }
+                Ok(_) => {
+                    bail!(
+                        "legacy checkpoint target must be a real directory: {}",
+                        committed.display()
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    std::fs::rename(&aside, &committed).with_context(|| {
+                        format!(
+                            "restore legacy checkpoint {} -> {}",
+                            aside.display(),
+                            committed.display()
+                        )
+                    })?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("inspect legacy checkpoint {}", committed.display())
+                    });
+                }
+            }
+            changed = true;
+        }
+        if changed {
+            sync_directory(&self.root).context("fsync root after legacy aside recovery")?;
+        }
+        Ok(())
+    }
+}
+
+fn parse_canonical_u64(raw: &str) -> Option<u64> {
+    let value = raw.parse::<u64>().ok()?;
+    (value.to_string() == raw).then_some(value)
+}
+
+fn parse_legacy_name(raw: &str) -> Option<u64> {
+    parse_canonical_u64(raw.strip_prefix("gen-")?)
+}
+
+fn parse_revision_name(raw: &str) -> Option<(u64, u64)> {
+    let rest = raw.strip_prefix("gen-")?;
+    let (sequence, revision) = rest.rsplit_once("-rev-")?;
+    Some((
+        parse_canonical_u64(sequence)?,
+        parse_canonical_u64(revision)?,
+    ))
+}
+
+fn is_supported_generation_name(raw: &str) -> bool {
+    parse_legacy_name(raw).is_some() || parse_revision_name(raw).is_some()
+}
+
+fn is_older_predecessor(raw: &str, current_sequence: u64, current_revision: u64) -> bool {
+    if let Some(sequence) = parse_legacy_name(raw) {
+        sequence <= current_sequence
+    } else if let Some((sequence, revision)) = parse_revision_name(raw) {
+        sequence <= current_sequence && revision < current_revision
+    } else {
+        false
+    }
+}
+
+fn definitely_unpointed_after(raw: &str, current: &GenerationRecord) -> bool {
+    if let Some(sequence) = parse_legacy_name(raw) {
+        sequence > current.sequence
+    } else if let Some((sequence, revision)) = parse_revision_name(raw) {
+        current.legacy || sequence > current.sequence || revision >= current.revision
+    } else {
+        false
+    }
+}
+
+fn write_generation_manifest(path: &Path, manifest: &SegmentGenerationManifest) -> Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(manifest).context("encode generation manifest")?;
+    bytes.push(b'\n');
+    std::fs::write(path.join(GENERATION_MANIFEST_FILE), bytes)
+        .with_context(|| format!("write generation manifest under {}", path.display()))
+}
+
+fn read_generation_manifest(path: &Path) -> Result<SegmentGenerationManifest> {
+    let manifest_path = path.join(GENERATION_MANIFEST_FILE);
+    let metadata = std::fs::symlink_metadata(&manifest_path)
+        .with_context(|| format!("inspect generation manifest {}", manifest_path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!(
+            "generation manifest must be a regular file: {}",
+            manifest_path.display()
+        );
+    }
+    if metadata.len() > 4096 {
+        bail!(
+            "generation manifest is too large: {}",
+            manifest_path.display()
+        );
+    }
+    let bytes = std::fs::read(&manifest_path)
+        .with_context(|| format!("read generation manifest {}", manifest_path.display()))?;
+    serde_json::from_slice(&bytes)
+        .with_context(|| format!("decode generation manifest {}", manifest_path.display()))
+}
+
+fn validate_generation_layout(record: &GenerationRecord) -> Result<usize> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&record.path)
+        .with_context(|| format!("read generation {}", record.path.display()))?
+    {
+        entries.push(entry?.path());
+    }
+    entries.sort();
+
+    let mut collections = 0usize;
+    for path in entries {
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            bail!("generation contains a symlink: {}", path.display());
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some(GENERATION_MANIFEST_FILE) {
+            if record.legacy || !metadata.is_file() {
+                bail!("invalid generation manifest entry: {}", path.display());
+            }
+            continue;
+        }
+        if !metadata.is_dir() {
+            bail!("unexpected generation entry: {}", path.display());
+        }
+        validate_real_tree(&path)?;
+
+        let schema_path = path.join(CHECKPOINT_SCHEMA_FILE);
+        let schema_metadata = std::fs::symlink_metadata(&schema_path)
+            .with_context(|| format!("inspect checkpoint schema {}", schema_path.display()))?;
+        if schema_metadata.file_type().is_symlink() || !schema_metadata.is_file() {
+            bail!(
+                "checkpoint schema must be a regular file: {}",
+                schema_path.display()
+            );
+        }
+        let schema: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&schema_path)
+                .with_context(|| format!("read checkpoint schema {}", schema_path.display()))?,
+        )
+        .with_context(|| format!("decode checkpoint schema {}", schema_path.display()))?;
+        let applied_seq = schema
+            .get("applied_seq")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                anyhow!(
+                    "checkpoint schema has no applied_seq: {}",
+                    schema_path.display()
+                )
+            })?;
+        if applied_seq != record.sequence {
+            bail!(
+                "checkpoint schema {} has sequence {applied_seq}, expected {}",
+                schema_path.display(),
+                record.sequence
+            );
+        }
+        collections += 1;
+    }
+
+    if !record.legacy {
+        if let Some(previous) = &record.previous {
+            if !is_older_predecessor(previous.as_str(), record.sequence, record.revision) {
+                bail!(
+                    "generation {} has non-predecessor link {}",
+                    record.name,
+                    previous
+                );
+            }
+        }
+        let manifest = read_generation_manifest(&record.path)?;
+        let expected_previous = record.previous.as_ref().map(GenerationName::as_str);
+        if manifest.schema_version != GENERATION_MANIFEST_SCHEMA_VERSION
+            || manifest.sequence != record.sequence
+            || manifest.revision != record.revision
+            || manifest.previous.as_deref() != expected_previous
+        {
+            bail!(
+                "generation {} manifest does not match its validated record",
+                record.name
+            );
+        }
+    }
+    Ok(collections)
+}
+
+fn validate_real_tree(root: &Path) -> Result<()> {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let metadata = std::fs::symlink_metadata(&directory)
+            .with_context(|| format!("inspect checkpoint path {}", directory.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            bail!(
+                "checkpoint directory must be a real directory: {}",
+                directory.display()
+            );
+        }
+
+        let mut entries = std::fs::read_dir(&directory)
+            .with_context(|| format!("read checkpoint directory {}", directory.display()))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort();
+        for path in entries {
+            let metadata = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("inspect checkpoint path {}", path.display()))?;
+            if metadata.file_type().is_symlink() {
+                bail!("checkpoint contains a symlink: {}", path.display());
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if !metadata.is_file() {
+                bail!(
+                    "checkpoint contains a special filesystem entry: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn shared_save_lock(root: &Path) -> Result<Arc<Mutex<()>>> {
+    static ROOT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+    let registry = ROOT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry
+        .lock()
+        .map_err(|_| anyhow!("segment root-lock registry poisoned"))?;
+    registry.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = registry.get(root).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+
+    let lock = Arc::new(Mutex::new(()));
+    registry.insert(root.to_path_buf(), Arc::downgrade(&lock));
+    Ok(lock)
+}
+
+fn sync_directory(path: &Path) -> std::io::Result<()> {
+    OpenOptions::new().read(true).open(path)?.sync_all()
 }
 
 #[cfg(test)]
@@ -377,8 +960,12 @@ mod tests {
     }
 
     fn index_kw(e: &Engine, eid: &str, v: &str) {
+        index_kw_in(e, "u", eid, v);
+    }
+
+    fn index_kw_in(e: &Engine, collection: &str, eid: &str, v: &str) {
         e.index(
-            "u",
+            collection,
             IndexRequest {
                 items: vec![IndexItem {
                     external_id: eid.into(),
@@ -390,6 +977,60 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    fn current_generation(store: &SegmentRdbStore) -> GenerationName {
+        match store.generations.read_current().unwrap() {
+            CurrentTarget::Generation(name) => name,
+            CurrentTarget::Empty => panic!("expected an active generation"),
+        }
+    }
+
+    fn install_unpointed_generation(
+        store: &SegmentRdbStore,
+        engine: &Arc<Engine>,
+        sequence: u64,
+        previous: Option<&GenerationName>,
+    ) -> GenerationName {
+        let (revision, staged) = store.begin_next_generation(sequence).unwrap();
+        let staging_path = staged.path().to_path_buf();
+        engine.flush_to_segments(&staging_path, sequence).unwrap();
+        write_generation_manifest(
+            &staging_path,
+            &SegmentGenerationManifest {
+                schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
+                sequence,
+                revision,
+                previous: previous.map(|name| name.as_str().to_owned()),
+            },
+        )
+        .unwrap();
+        let name = staged.generation().clone();
+        let target = store.generations.generation_path(&name);
+        drop(staged);
+        std::fs::rename(staging_path, &target).unwrap();
+        sync_directory(&store.root).unwrap();
+        name
+    }
+
+    fn first_segment_file(root: &Path) -> PathBuf {
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            let mut entries = std::fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().and_then(|extension| extension.to_str()) == Some("lseg")
+                {
+                    return path;
+                }
+            }
+        }
+        panic!("expected a segment file under {}", root.display());
     }
 
     #[test]
@@ -405,6 +1046,233 @@ mod tests {
         let (eng, seq) = store.load_latest().unwrap().expect("a checkpoint");
         assert_eq!(seq, 42);
         assert_eq!(eng.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    #[test]
+    fn adopts_exact_0428_generation_once_and_writes_exact_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("gen-42");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&legacy, 42).unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(!dir.path().join("CURRENT").exists());
+        let (loaded, sequence) = store.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 42);
+        assert_eq!(loaded.stats("u").unwrap().documents_indexed, 1);
+        assert_eq!(
+            std::fs::read(dir.path().join("CURRENT")).unwrap(),
+            b"generation:gen-42\n"
+        );
+
+        let restarted = SegmentRdbStore::new(dir.path()).unwrap();
+        assert_eq!(restarted.load_latest().unwrap().unwrap().1, 42);
+    }
+
+    #[test]
+    fn adopts_empty_0428_generation_without_losing_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("gen-42")).unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let (_, sequence) = store.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 42);
+        assert_eq!(
+            std::fs::read(dir.path().join("CURRENT")).unwrap(),
+            b"generation:gen-42\n"
+        );
+    }
+
+    #[test]
+    fn corrupt_highest_legacy_generation_blocks_fallback_and_adoption() {
+        let dir = tempfile::tempdir().unwrap();
+        let valid = dir.path().join("gen-42");
+        std::fs::create_dir(&valid).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&valid, 42).unwrap();
+        let corrupt = dir.path().join("gen-99");
+        std::fs::create_dir(&corrupt).unwrap();
+        std::fs::write(corrupt.join("not-a-collection"), b"corrupt").unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(store.load_latest().is_err());
+        assert!(!dir.path().join("CURRENT").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_nested_symlink_blocks_adoption() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("gen-42");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&legacy, 42).unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::write(&outside, b"outside").unwrap();
+        let collection = std::fs::read_dir(&legacy)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.is_dir())
+            .unwrap();
+        symlink(&outside, collection.join("nested-link")).unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(store.load_latest().is_err());
+        assert!(!dir.path().join("CURRENT").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parseable_legacy_aside_symlink_blocks_empty_initialization() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        symlink(target.path(), dir.path().join("gen-7.old")).unwrap();
+
+        assert!(SegmentRdbStore::new(dir.path()).is_err());
+        assert!(!dir.path().join("CURRENT").exists());
+    }
+
+    #[test]
+    fn empty_new_generation_preserves_sequence_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        store.save(&Arc::new(Engine::new()), 42).unwrap();
+
+        let restarted = SegmentRdbStore::new(dir.path()).unwrap();
+        let (_, sequence) = restarted.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 42);
+    }
+
+    #[test]
+    fn lower_sequence_save_is_a_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        store.save(&engine, 9).unwrap();
+        let current_before = std::fs::read(dir.path().join("CURRENT")).unwrap();
+
+        index_kw(&engine, "u2", "b@x.com");
+        store.save(&engine, 8).unwrap();
+
+        assert_eq!(
+            std::fs::read(dir.path().join("CURRENT")).unwrap(),
+            current_before
+        );
+        let (loaded, sequence) = store.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 9);
+        assert_eq!(loaded.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    #[test]
+    fn required_lower_sequence_rejects_without_changing_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        store.save(&engine, 9).unwrap();
+        let before = std::fs::read(dir.path().join("CURRENT")).unwrap();
+
+        let error = store.save_required(&engine, 8).unwrap_err();
+        assert!(error.to_string().contains("below CURRENT sequence 9"));
+        assert_eq!(std::fs::read(dir.path().join("CURRENT")).unwrap(), before);
+    }
+
+    #[test]
+    fn required_same_sequence_creates_distinct_revision_and_exact_loader_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        let first = store.save_required(&engine, 9).unwrap();
+        index_kw(&engine, "u2", "b@x.com");
+        let second = store.save_required(&engine, 9).unwrap();
+        assert_ne!(first, second);
+
+        let loaded = store.load_current_generation().unwrap().unwrap();
+        assert_eq!(loaded.name, second);
+        assert_eq!(loaded.sequence, 9);
+        assert_eq!(loaded.engine.stats("u").unwrap().documents_indexed, 2);
+    }
+
+    #[test]
+    fn exact_loader_never_selects_unpointed_higher_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        let current = store.save_required(&engine, 9).unwrap();
+        let unpointed = install_unpointed_generation(&store, &engine, 99, Some(&current));
+
+        let loaded = store.load_current_generation().unwrap().unwrap();
+        assert_eq!(loaded.name, current);
+        assert_eq!(loaded.sequence, 9);
+        assert_ne!(loaded.name, unpointed);
+    }
+
+    #[test]
+    fn exact_loader_never_adopts_a_legacy_generation_when_current_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("gen-42");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&legacy, 42).unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(!dir.path().join("CURRENT").exists());
+        assert!(store.load_current_generation().is_err());
+        assert!(
+            !dir.path().join("CURRENT").exists(),
+            "exact restore reload must not perform the 0.4.28 startup adoption"
+        );
+    }
+
+    #[test]
+    fn injected_store_commit_is_deterministic() {
+        #[derive(Default)]
+        struct FailRenameCurrent(Mutex<Vec<storage_durable::FailurePoint>>);
+
+        impl FailureInjector for FailRenameCurrent {
+            fn check(&self, point: &storage_durable::FailurePoint) -> std::io::Result<()> {
+                self.0.lock().unwrap().push(point.clone());
+                if point.step == storage_durable::CommitStep::RenameCurrent {
+                    return Err(std::io::Error::other("injected rename failure"));
+                }
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        SegmentRdbStore::new(dir.path()).unwrap();
+        let injector = Arc::new(FailRenameCurrent::default());
+        let store =
+            SegmentRdbStore::new_with_failure_injector(dir.path(), injector.clone()).unwrap();
+        let error = store
+            .save_required(&Arc::new(Engine::new()), 1)
+            .unwrap_err();
+        assert!(error.to_string().contains("activate segment generation"));
+        assert!(matches!(store.load_current_generation().unwrap(), None));
+        assert!(injector
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|point| point.step == storage_durable::CommitStep::RenameCurrent));
     }
 
     #[test]
@@ -455,15 +1323,114 @@ mod tests {
         assert_eq!(store.load_latest().unwrap().unwrap().1, 8);
     }
 
-    /// #1444 AC1: a same-seq re-save's swap has two rename steps (old
-    /// generation moved aside, then staging renamed onto the committed
-    /// path). This structurally — not probabilistically — proves the crash
-    /// window between those two steps is closed: it performs exactly the
-    /// first rename (`gen-<seq>` -> `gen-<seq>.old`) and then a cold start
-    /// (`load_latest`, a fresh store handle, no state carried over) must
-    /// still find a complete generation at `seq` containing the PRE-crash
-    /// (predecessor) committed data — not the never-committed replacement
-    /// staged alongside it, and not nothing.
+    #[test]
+    fn abandoned_durable_staging_is_swept_on_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let _first = SegmentRdbStore::new(dir.path()).unwrap();
+        let staging = dir.path().join(".stage-gen-9-rev-99");
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("partial"), b"partial").unwrap();
+
+        let _reopened = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn unrelated_legacy_like_directory_is_not_swept() {
+        let dir = tempfile::tempdir().unwrap();
+        let unrelated = dir.path().join(".gen-user.tmp");
+        std::fs::create_dir(&unrelated).unwrap();
+        std::fs::write(unrelated.join("owned-by-user"), b"keep").unwrap();
+
+        let _store = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(unrelated.is_dir());
+        assert_eq!(
+            std::fs::read(unrelated.join("owned-by-user")).unwrap(),
+            b"keep"
+        );
+    }
+
+    #[test]
+    fn staged_corruption_is_rejected_before_current_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        let (revision, staged) = store.begin_next_generation(7).unwrap();
+        let staging_path = staged.path().to_path_buf();
+        engine.flush_to_segments(&staging_path, 7).unwrap();
+        write_generation_manifest(
+            &staging_path,
+            &SegmentGenerationManifest {
+                schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
+                sequence: 7,
+                revision,
+                previous: None,
+            },
+        )
+        .unwrap();
+        std::fs::write(first_segment_file(&staging_path), b"corrupt").unwrap();
+        let record = GenerationRecord {
+            name: staged.generation().clone(),
+            path: staging_path,
+            sequence: 7,
+            revision,
+            legacy: false,
+            previous: None,
+        };
+
+        assert!(store.validate_record(&record).is_err());
+        assert_eq!(
+            store.generations.read_current().unwrap(),
+            CurrentTarget::Empty
+        );
+    }
+
+    #[test]
+    fn staged_manifest_must_parse_and_match_the_validated_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        let (revision, staged) = store.begin_next_generation(7).unwrap();
+        let staging_path = staged.path().to_path_buf();
+        engine.flush_to_segments(&staging_path, 7).unwrap();
+        let record = GenerationRecord {
+            name: staged.generation().clone(),
+            path: staging_path.clone(),
+            sequence: 7,
+            revision,
+            legacy: false,
+            previous: None,
+        };
+
+        std::fs::write(staging_path.join(GENERATION_MANIFEST_FILE), b"{\"").unwrap();
+        assert!(store.validate_record(&record).is_err());
+
+        write_generation_manifest(
+            &staging_path,
+            &SegmentGenerationManifest {
+                schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
+                sequence: 8,
+                revision,
+                previous: None,
+            },
+        )
+        .unwrap();
+        assert!(store.validate_record(&record).is_err());
+        assert_eq!(
+            store.generations.read_current().unwrap(),
+            CurrentTarget::Empty
+        );
+    }
+
+    /// Keep the historical test name because the release gate calls it by
+    /// exact name. The 0.4.29 model no longer moves the predecessor aside.
+    /// It installs a complete immutable replacement first. `CURRENT` remains
+    /// the sole commit point, so a crash before that pointer rename must reopen
+    /// the predecessor and ignore the complete replacement.
     #[test]
     fn same_seq_resave_crash_between_aside_and_commit_recovers_predecessor() {
         let dir = tempfile::tempdir().unwrap();
@@ -475,31 +1442,19 @@ mod tests {
         index_kw(&engine_a, "a1", "a1@x.com");
         store.save(&engine_a, 7).unwrap();
         assert_eq!(store.load_latest().unwrap().unwrap().1, 7);
+        let predecessor = current_generation(&store);
 
-        // A same-seq re-save's replacement generation, staged the way `save`
-        // stages it (flush completes) but never committed.
+        // Prepare the complete replacement and perform the generation rename.
+        // Do not change CURRENT. This is the exact pre-commit crash state.
         let engine_b = Arc::new(Engine::new());
         engine_b.create_collection("u", kw_schema()).unwrap();
         index_kw(&engine_b, "b1", "b1@x.com");
         index_kw(&engine_b, "b2", "b2@x.com");
-        let staging = store.staging_path(7);
-        std::fs::create_dir_all(&staging).unwrap();
-        engine_b.flush_to_segments(&staging, 7).unwrap();
+        let replacement = install_unpointed_generation(&store, &engine_b, 7, Some(&predecessor));
+        assert!(store.generations.generation_path(&replacement).is_dir());
+        assert_eq!(current_generation(&store), predecessor);
 
-        // Perform ONLY the swap's first rename — the exact crash point named
-        // by the issue: "between the old-generation removal point and the
-        // commit point". `committed` (gen-7) no longer exists; the aside
-        // (gen-7.old) holds the predecessor; the never-committed staging
-        // dir (.gen-7.tmp) still sits alongside both.
-        let committed = store.gen_path(7);
-        let aside = store.aside_path(7);
-        std::fs::rename(&committed, &aside).unwrap();
-        assert!(!committed.exists(), "commit rename never ran (the crash)");
-        assert!(staging.exists(), "staged replacement is untouched");
-        assert!(aside.exists(), "predecessor survives, just moved aside");
-
-        // Cold start from scratch: a brand-new store handle over the same
-        // root, exactly what a restarted pod does.
+        // Cold start from scratch, as a restarted pod does.
         let cold_store = SegmentRdbStore::new(dir.path()).unwrap();
         let (reloaded, seq) = cold_store
             .load_latest()
@@ -513,12 +1468,9 @@ mod tests {
              never-committed replacement (2 docs) or nothing"
         );
 
-        // Reconciliation also cleaned up: gen-7 is restored, gen-7.old is
-        // gone, and a normal save at 7 still works afterward (the swap
-        // machinery is not left in a wedged state by the recovery).
-        assert!(committed.is_dir());
-        assert!(!aside.exists());
+        // A normal same-sequence save activates a new immutable revision.
         cold_store.save(&engine_b, 7).unwrap();
+        assert_ne!(current_generation(&cold_store), replacement);
         assert_eq!(
             cold_store
                 .load_latest()
@@ -530,6 +1482,193 @@ mod tests {
                 .documents_indexed,
             2
         );
+    }
+
+    #[test]
+    fn complete_unpointed_higher_generation_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let active_engine = Arc::new(Engine::new());
+        active_engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&active_engine, "u1", "a@x.com");
+        store.save(&active_engine, 7).unwrap();
+        let active = current_generation(&store);
+
+        let later_engine = Arc::new(Engine::new());
+        later_engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&later_engine, "u1", "a@x.com");
+        index_kw(&later_engine, "u2", "b@x.com");
+        install_unpointed_generation(&store, &later_engine, 99, Some(&active));
+
+        let restarted = SegmentRdbStore::new(dir.path()).unwrap();
+        let (loaded, sequence) = restarted.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 7);
+        assert_eq!(loaded.stats("u").unwrap().documents_indexed, 1);
+        assert_eq!(current_generation(&restarted), active);
+    }
+
+    #[test]
+    fn corrupt_current_manifest_fails_without_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        store.save(&engine, 7).unwrap();
+        store.save(&engine, 8).unwrap();
+        let current = current_generation(&store);
+        let current_path = store.generations.generation_path(&current);
+        let mut manifest = read_generation_manifest(&current_path).unwrap();
+        manifest.sequence = 999;
+        write_generation_manifest(&current_path, &manifest).unwrap();
+
+        let restarted = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(restarted.load_latest().is_err());
+        assert_eq!(current_generation(&restarted), current);
+    }
+
+    #[test]
+    fn unsupported_predecessor_name_blocks_prune_without_deleting_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        store.save(&engine, 1).unwrap();
+        store.save(&engine, 2).unwrap();
+        let current = current_generation(&store);
+        let current_path = store.generations.generation_path(&current);
+        let mut manifest = read_generation_manifest(&current_path).unwrap();
+        let predecessor = manifest.previous.clone().unwrap();
+        manifest.previous = Some("missing-safe-name".to_owned());
+        write_generation_manifest(&current_path, &manifest).unwrap();
+
+        assert!(store.prune(1).is_err());
+        assert!(current_path.is_dir());
+        assert!(dir.path().join(predecessor).is_dir());
+    }
+
+    #[test]
+    fn missing_future_predecessor_blocks_prune_without_deleting_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        store.save(&engine, 1).unwrap();
+        store.save(&engine, 2).unwrap();
+        let current = current_generation(&store);
+        let current_path = store.generations.generation_path(&current);
+        let mut manifest = read_generation_manifest(&current_path).unwrap();
+        let predecessor = manifest.previous.clone().unwrap();
+        manifest.previous = Some("gen-999-rev-1".to_owned());
+        write_generation_manifest(&current_path, &manifest).unwrap();
+
+        assert!(store.prune(1).is_err());
+        assert!(current_path.is_dir());
+        assert!(dir.path().join(predecessor).is_dir());
+    }
+
+    #[test]
+    fn missing_older_predecessor_makes_prune_conservative() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        store.save(&engine, 1).unwrap();
+        store.save(&engine, 2).unwrap();
+        let current = current_generation(&store);
+        let current_path = store.generations.generation_path(&current);
+        let mut manifest = read_generation_manifest(&current_path).unwrap();
+        let real_predecessor = manifest.previous.clone().unwrap();
+        manifest.previous = Some("gen-0-rev-0".to_owned());
+        write_generation_manifest(&current_path, &manifest).unwrap();
+
+        assert_eq!(store.prune(1).unwrap(), 0);
+        assert!(current_path.is_dir());
+        assert!(dir.path().join(real_predecessor).is_dir());
+    }
+
+    #[test]
+    fn full_reopen_validation_leaves_target_engine_unchanged_on_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("gen-42");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("a", kw_schema()).unwrap();
+        source.create_collection("z", kw_schema()).unwrap();
+        index_kw_in(&source, "a", "a1", "a@x.com");
+        index_kw_in(&source, "z", "z1", "z@x.com");
+        source.flush_to_segments(&legacy, 42).unwrap();
+        std::fs::write(first_segment_file(&legacy.join("7a")), b"corrupt").unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let target = Arc::new(Engine::new());
+        target.create_collection("existing", kw_schema()).unwrap();
+        index_kw_in(&target, "existing", "e1", "existing@x.com");
+
+        assert!(store.reopen_into(&target).is_err());
+        assert_eq!(
+            target.stats("existing").unwrap().documents_indexed,
+            1,
+            "validation failure must not replace or partly extend the caller engine"
+        );
+        assert!(target.stats("a").is_err());
+        assert!(target.stats("z").is_err());
+        assert!(!dir.path().join("CURRENT").exists());
+    }
+
+    #[test]
+    fn malformed_unpointed_revision_does_not_block_save_or_prune() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        store.save(&engine, 1).unwrap();
+
+        let malformed = dir.path().join("gen-200-rev-999");
+        std::fs::create_dir(&malformed).unwrap();
+        std::fs::write(malformed.join(GENERATION_MANIFEST_FILE), b"not-json").unwrap();
+
+        store.save(&engine, 2).unwrap();
+        assert_eq!(store.load_latest().unwrap().unwrap().1, 2);
+        assert_eq!(store.prune(1).unwrap(), 2);
+        assert!(!malformed.exists());
+        assert_eq!(store.generation_seqs().unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn prune_follows_active_chain_and_removes_aborted_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+        store.save(&engine, 1).unwrap();
+        store.save(&engine, 2).unwrap();
+        let active = current_generation(&store);
+        let aborted = install_unpointed_generation(&store, &engine, 200, Some(&active));
+        let aborted_path = store.generations.generation_path(&aborted);
+        store.save(&engine, 3).unwrap();
+
+        assert_eq!(store.prune(2).unwrap(), 2);
+        assert!(!aborted_path.exists());
+        assert_eq!(store.generation_seqs().unwrap(), vec![2, 3]);
+        assert_eq!(store.load_latest().unwrap().unwrap().1, 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parseable_generation_symlink_fails_closed() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        symlink(target.path(), dir.path().join("gen-99")).unwrap();
+
+        assert!(SegmentRdbStore::new(dir.path()).is_err());
     }
 
     /// #1389 AC1: a `reshard:apply` batch applied to a target shard, and a
@@ -658,6 +1797,40 @@ mod tests {
                 "round {round}: cold start after concurrent saves must be complete"
             );
         }
+    }
+
+    #[test]
+    fn independently_opened_handles_share_checkpoint_preparation_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Arc::new(SegmentRdbStore::new(dir.path()).unwrap());
+        let second = Arc::new(SegmentRdbStore::new(dir.path()).unwrap());
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "u1", "a@x.com");
+
+        for sequence in 1..=10 {
+            let left = {
+                let store = first.clone();
+                let engine = engine.clone();
+                std::thread::spawn(move || store.save(&engine, sequence))
+            };
+            let right = {
+                let store = second.clone();
+                let engine = engine.clone();
+                std::thread::spawn(move || store.save(&engine, sequence))
+            };
+            left.join().unwrap().unwrap();
+            right.join().unwrap().unwrap();
+        }
+
+        assert_eq!(first.load_latest().unwrap().unwrap().1, 10);
+        assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(".stage-"))
+        }));
     }
 }
 // CODEGEN-END

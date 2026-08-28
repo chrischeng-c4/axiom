@@ -14,21 +14,27 @@ name = "service_k8s"
 path = "src/lib.rs"
 
 [features]
-# The certificate lifecycle builds and tests with no cloud dependency at all
-# (#3110 R8): `--no-default-features` drops the CA Service requester and leaves
-# the state machine, the projection, and the in-process signer intact.
-default = ["gcp-cas"]
-gcp-cas = ["dep:reqwest", "dep:serde_urlencoded"]
+# `full` is the compatibility profile used by existing operators.  The
+# render-only profile is intentionally additive: it names the pure rendering
+# surface without changing the default build or the source-compatible adapter.
+default = ["full"]
+render-only = []
+controller = ["render-only", "dep:kube", "dep:k8s-openapi", "dep:axum", "dep:metrics-prometheus", "dep:cli-std"]
+certificate = ["dep:rcgen", "dep:x509-parser", "dep:kube", "dep:k8s-openapi"]
+gcp-cas-client = ["certificate", "dep:reqwest", "dep:serde_urlencoded"]
+# Compatibility alias retained for downstream manifests.
+gcp-cas = ["full"]
+full = ["controller", "certificate", "gcp-cas-client"]
 
 [dependencies]
 # Pinned to Lumen's operator surface so the workspace lock stays single-versioned.
-kube = { version = "0.98", features = ["runtime", "derive", "client"] }
-k8s-openapi = { version = "0.24", features = ["v1_32"] }
-cli-std = { path = "../cli-std", default-features = false }
-metrics-prometheus = { path = "../metrics-prometheus" }
+kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }
+k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
+cli-std = { path = "../cli-std", default-features = false, optional = true }
+metrics-prometheus = { path = "../metrics-prometheus", optional = true }
 # HTTP/1.1 on purpose: the controller's `/metrics` is a Prometheus scrape
 # target, so the kit's h2c `service-http` is the wrong transport here (#2620).
-axum = { workspace = true }
+axum = { workspace = true, optional = true }
 schemars = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -40,8 +46,8 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 # Certificate lifecycle (#3110). `rcgen` needs `x509-parser` to parse a CSR back
 # out of PEM, which the in-process signer does on every issuance.
-rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
-x509-parser = "0.17"
+rcgen = { version = "0.13", features = ["pem", "x509-parser"], optional = true }
+x509-parser = { version = "0.17", optional = true }
 sha2 = "0.10"
 base64 = { workspace = true }
 time = { version = "0.3", default-features = false }
@@ -62,23 +68,36 @@ chrono = { workspace = true }
 [[test]]
 name = "certificate_kubernetes_store"
 path = "e2e/certificate_kubernetes_store.rs"
+required-features = ["certificate"]
 
 [[test]]
 name = "certificate_lifecycle"
 path = "e2e/certificate_lifecycle.rs"
+required-features = ["certificate"]
 
 [[test]]
 name = "certificate_ownership"
 path = "e2e/certificate_ownership.rs"
+required-features = ["certificate"]
 
 [[test]]
 name = "certificate_rotation"
 path = "e2e/certificate_rotation.rs"
+required-features = ["certificate"]
 
 [[test]]
 name = "certificate_status"
 path = "e2e/certificate_status.rs"
+required-features = ["certificate"]
 
 [[test]]
 name = "lifecycle_render"
 path = "e2e/lifecycle_render.rs"
+
+[[test]]
+name = "stateful_instance_render"
+path = "e2e/stateful_instance_render.rs"
+
+[[test]]
+name = "stateful_adapter_equivalence"
+path = "e2e/stateful_adapter_equivalence.rs"

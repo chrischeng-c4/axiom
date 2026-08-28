@@ -47,8 +47,9 @@ infer the security mode from whether one conventional file happens to exist.
 
 ### Standalone
 
-- Base URL normally uses `http://127.0.0.1:7373`.
-- No credential source is configured or read.
+- Local development normally uses `http://127.0.0.1:7373` and reads no credential.
+- In-cluster generated Lumen clients use `http://lumen.lumen.svc.cluster.local:7373` and opt into the Kubernetes default ServiceAccount token at `/var/run/secrets/kubernetes.io/serviceaccount/token`.
+- The provider rereads the token once per request, only for exact non-empty `.svc.cluster.local` HTTP or HTTPS hosts.
 - No private CA is required.
 - A caller must opt into a different listener explicitly.
 
@@ -72,6 +73,9 @@ The token is opaque to the portable client contract. Kubernetes TokenReview is
 the canonical verifier for signature, expiration, audience, bound identity,
 and ServiceAccount shape. A local diagnostic check does not replace the server
 decision.
+
+ManagedKsa is not the Standalone in-cluster profile. Its private audience,
+HTTPS, and private-CA requirements remain unchanged.
 
 ## Generated client behavior
 
@@ -242,10 +246,11 @@ variables, and CA ConfigMap rotation reaches the file.
 
 ## Current boundaries
 
-- TypeScript and Python accept construction-time static auth values. Rust has
-  no generated default Authorization input.
-- No generated client reads a projected KSA token before each request.
-- No generated client exposes explicit Standalone and ManagedKsa profiles.
+- TypeScript and Python retain construction-time static auth values.
+- Generated TypeScript, Python, and Rust Lumen clients also opt into the
+  Kubernetes default ServiceAccount token for eligible in-cluster Service DNS
+  requests. ManagedKsa remains a separate private-audience profile.
+- No generated client workload template or published SDK package exists.
 - No generated client provides the complete safe-retry behavior above.
 - No generated client exposes the NDJSON reindex stream or one typed Lumen API
   error.

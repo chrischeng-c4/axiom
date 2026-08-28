@@ -150,6 +150,25 @@ Managed runtime can be persistent, but it is not highly available. The target
 production baseline uses three voters for each shard across three zones. See
 the [GKE guide](docs/gke.md) for the support tiers and topology contract.
 
+Standalone GKE uses the shared `StatefulInstancePlan` boundary. It renders one
+StatefulSet and one separately owned PVC instance. It is not Managed or Fleet
+adoption, HA, TLS, Ingress, LoadBalancer, or general Kubernetes support.
+
+Bare `lumen serve` is loopback and in-memory until `--data-dir` or
+`LUMEN_DATA_DIR` is set. The shipped image defaults to segment persistence at
+`/var/lib/lumen/data`; retain container data with a named volume at that exact
+path. The public Standalone entry points are:
+
+```text
+lumen standalone compose patch --file <compose.yaml> [--name <name>]
+lumen standalone gke init --out lumen.yaml
+lumen standalone gke render --file lumen.yaml --out lumen-dist
+lumen standalone backup --compose <compose.yaml> --out <snapshot>
+lumen standalone restore --compose <compose.yaml> --file <snapshot> --replace
+lumen standalone backup --gke lumen.yaml --out <snapshot>
+lumen standalone restore --gke lumen.yaml --file <snapshot> --replace
+```
+
 Use the [deployment guide](docs/deployment.md) for installation and the
 [authentication guide](docs/authentication.md) for request identity. Use the
 [client integration guide](docs/client-integration.md) for generated-client,

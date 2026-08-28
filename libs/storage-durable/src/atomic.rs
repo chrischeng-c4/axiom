@@ -19,13 +19,61 @@
 //!   do not allow opening a directory as a file. On those, the parent fsync is
 //!   quietly not happening and the durability of the commit is whatever the OS
 //!   orders by itself -- there is no error to observe.
+use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::FsyncPolicy;
+use crate::{CommitFailureClass, FsyncPolicy};
+
+/// A strict single-file replacement failure.
+#[derive(Debug)]
+pub struct StrictAtomicWriteError {
+    class: CommitFailureClass,
+    path: PathBuf,
+    source: io::Error,
+}
+
+impl StrictAtomicWriteError {
+    pub fn class(&self) -> CommitFailureClass {
+        self.class
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn io_error(&self) -> &io::Error {
+        &self.source
+    }
+}
+
+impl fmt::Display for StrictAtomicWriteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.class {
+            CommitFailureClass::PreCommit => write!(
+                formatter,
+                "strict atomic write pre-commit failure for {}: {}",
+                self.path.display(),
+                self.source
+            ),
+            CommitFailureClass::CommitUncertain => write!(
+                formatter,
+                "strict atomic write commit uncertain for {}: {}",
+                self.path.display(),
+                self.source
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StrictAtomicWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 /// Write `bytes` to `path` through a temp file, fsync according to `policy`,
 /// then atomically rename it into place.
@@ -81,6 +129,150 @@ pub fn sync_parent_dir(path: impl AsRef<Path>) -> Result<()> {
     }
 }
 
+/// Strictly fsync the parent directory of `path`.
+///
+/// Unlike [`sync_parent_dir`], this function never treats an unsupported or
+/// denied directory open as success. Use it for a commit protocol that must not
+/// report success without a proven directory fsync.
+pub fn strict_sync_parent_dir(path: impl AsRef<Path>) -> Result<()> {
+    let parent = strict_parent(path.as_ref());
+    let dir = OpenOptions::new()
+        .read(true)
+        .open(parent)
+        .with_context(|| format!("open dir {} for strict fsync", parent.display()))?;
+    dir.sync_all()
+        .with_context(|| format!("strict fsync dir {}", parent.display()))
+}
+
+fn strict_sync_parent_dir_io(parent: &Path) -> io::Result<()> {
+    let dir = OpenOptions::new().read(true).open(parent)?;
+    dir.sync_all()
+}
+
+#[derive(Clone, Copy)]
+enum StrictFailureStep {
+    Write,
+    SyncFile,
+    Rename,
+    SyncParent,
+}
+
+/// Replace one regular file with a strictly durable sibling replacement.
+pub fn atomic_write_strict(
+    path: impl AsRef<Path>,
+    bytes: &[u8],
+) -> std::result::Result<(), StrictAtomicWriteError> {
+    let mut never_fail = |_step: StrictFailureStep| Ok(());
+    atomic_write_strict_inner(path.as_ref(), bytes, &mut never_fail)
+}
+
+fn atomic_write_strict_inner(
+    path: &Path,
+    bytes: &[u8],
+    failure: &mut dyn FnMut(StrictFailureStep) -> io::Result<()>,
+) -> std::result::Result<(), StrictAtomicWriteError> {
+    let error = |class, source| StrictAtomicWriteError {
+        class,
+        path: path.to_path_buf(),
+        source,
+    };
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.file_type().is_file() => {
+            return Err(error(
+                CommitFailureClass::PreCommit,
+                io::Error::new(io::ErrorKind::InvalidInput, "target must be a regular file"),
+            ));
+        }
+        Ok(_) => {}
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => return Err(error(CommitFailureClass::PreCommit, source)),
+    }
+
+    let parent = strict_parent(path);
+    let (temporary, mut file) = match strict_output_temp(parent, path) {
+        Ok(value) => value,
+        Err(source) => return Err(error(CommitFailureClass::PreCommit, source)),
+    };
+    let mut renamed = false;
+    let result = (|| {
+        failure(StrictFailureStep::Write)?;
+        file.write_all(bytes)?;
+        failure(StrictFailureStep::SyncFile)?;
+        file.sync_all()?;
+        drop(file);
+        failure(StrictFailureStep::Rename)?;
+        std::fs::rename(&temporary, path)?;
+        renamed = true;
+        failure(StrictFailureStep::SyncParent)?;
+        strict_sync_parent_dir_io(parent)
+    })();
+    match result {
+        Ok(()) => Ok(()),
+        Err(source) => {
+            let class = if renamed {
+                CommitFailureClass::CommitUncertain
+            } else {
+                CommitFailureClass::PreCommit
+            };
+            let _ = std::fs::remove_file(&temporary);
+            Err(error(class, source))
+        }
+    }
+}
+
+fn strict_output_temp(parent: &Path, target: &Path) -> io::Result<(PathBuf, File)> {
+    let filename = target
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "target must name a file"))?
+        .to_string_lossy();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for attempt in 0..1000u32 {
+        let temporary = parent.join(format!(".{filename}.strict-{stamp}-{attempt}"));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(source) => return Err(source),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique strict temporary file",
+    ))
+}
+
+#[cfg(test)]
+fn atomic_write_strict_injected(
+    path: &Path,
+    bytes: &[u8],
+    fail_at: StrictFailureStep,
+) -> std::result::Result<(), StrictAtomicWriteError> {
+    let mut failure = move |step| {
+        if std::mem::discriminant(&step) == std::mem::discriminant(&fail_at) {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "injected strict failure",
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    atomic_write_strict_inner(path, bytes, &mut failure)
+}
+
+fn strict_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
 fn temp_path(path: &Path) -> std::path::PathBuf {
     let mut tmp = path.as_os_str().to_os_string();
     tmp.push(".tmp");
@@ -98,6 +290,19 @@ fn is_directory_open_unsupported(err: &io::Error) -> bool {
 mod tests {
     use super::*;
 
+    fn strict_temps(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .contains(".strict-")
+            })
+            .collect()
+    }
+
     #[test]
     fn atomic_write_replaces_bytes() {
         let dir = tempfile::tempdir().unwrap();
@@ -105,6 +310,86 @@ mod tests {
         atomic_write(&path, b"one", FsyncPolicy::Always).unwrap();
         atomic_write(&path, b"two", FsyncPolicy::Always).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"two");
+    }
+
+    #[test]
+    fn strict_parent_sync_accepts_a_real_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.bin");
+        std::fs::write(&path, b"state").unwrap();
+        strict_sync_parent_dir(&path).unwrap();
+    }
+
+    #[test]
+    fn strict_parent_sync_resolves_a_bare_filename_to_the_working_directory() {
+        assert_eq!(strict_parent(Path::new("state.bin")), Path::new("."));
+    }
+
+    #[test]
+    fn strict_write_replaces_bytes_and_requires_an_existing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.bin");
+        std::fs::write(&path, b"old").unwrap();
+        atomic_write_strict(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        let missing = dir.path().join("missing/state.bin");
+        let error = atomic_write_strict(&missing, b"new").unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::PreCommit);
+        assert_eq!(error.path(), missing);
+    }
+
+    #[test]
+    fn strict_write_rejects_directory_and_symlink_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().join("directory");
+        std::fs::create_dir(&directory).unwrap();
+        assert_eq!(
+            atomic_write_strict(&directory, b"new").unwrap_err().class(),
+            CommitFailureClass::PreCommit
+        );
+        #[cfg(unix)]
+        {
+            let target = dir.path().join("target");
+            std::fs::write(&target, b"old").unwrap();
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            assert_eq!(
+                atomic_write_strict(&link, b"new").unwrap_err().class(),
+                CommitFailureClass::PreCommit
+            );
+            assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        }
+    }
+
+    #[test]
+    fn every_precommit_failure_preserves_old_bytes_and_cleans_temp() {
+        for fail_at in [
+            StrictFailureStep::Write,
+            StrictFailureStep::SyncFile,
+            StrictFailureStep::Rename,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("state.bin");
+            std::fs::write(&path, b"old").unwrap();
+            let error = atomic_write_strict_injected(&path, b"new", fail_at).unwrap_err();
+            assert_eq!(error.class(), CommitFailureClass::PreCommit);
+            assert_eq!(std::fs::read(&path).unwrap(), b"old");
+            assert!(strict_temps(dir.path()).is_empty());
+        }
+    }
+
+    #[test]
+    fn postrename_parent_sync_failure_is_uncertain_and_new_bytes_are_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.bin");
+        std::fs::write(&path, b"old").unwrap();
+        let error =
+            atomic_write_strict_injected(&path, b"new", StrictFailureStep::SyncParent).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::CommitUncertain);
+        assert_eq!(error.path(), path);
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert!(strict_temps(dir.path()).is_empty());
+        assert!(error.to_string().contains("commit uncertain"));
     }
 }
 // CODEGEN-END

@@ -129,6 +129,12 @@ Every source contributes one part of the Managed result.
 The planned shared Fleet library is not implemented yet. Current Fleet code
 still lives in `apps/lumen`.
 
+Both Kubernetes paths use the shared `StatefulInstancePlan` adapter boundary.
+Standalone owns one independent PVC instance, while Managed and Fleet use
+StatefulSet `volumeClaimTemplates`. Local and Compose use auth-off; Standalone
+GKE uses in-cluster authentication. Standalone GKE does not adopt Managed or
+Fleet runtimes and does not expand the contract to HA.
+
 The [protocol guide](docs/protocol.md) is an index over these sources. It is not
 a new protocol implementation or a second copy of the route contract. The
 [generated-client guide](clients/README.md) describes how the current OpenAPI

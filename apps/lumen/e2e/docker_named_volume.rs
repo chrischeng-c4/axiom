@@ -2,6 +2,8 @@
 
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
+use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -45,6 +47,14 @@ fn is(line: &str, expected: &str) -> bool {
         .is_some_and(|word| word.eq_ignore_ascii_case(expected))
 }
 
+fn instruction_identity(line: &str, prefix: &str) -> bool {
+    let line = line.to_ascii_uppercase();
+    let prefix = prefix.to_ascii_uppercase();
+    line == prefix
+        || line.starts_with(&format!("{prefix}="))
+        || line.starts_with(&format!("{prefix} "))
+}
+
 fn data_copy(line: &str) -> bool {
     let words: Vec<_> = line.split_whitespace().collect();
     is(line, "COPY")
@@ -67,7 +77,6 @@ fn valid(content: &str, exp_seed: &str, exp_base: &str) -> Result<(), &'static s
         .filter_map(|(i, line)| is(line, "FROM").then_some(i))
         .collect();
     reject!(froms.is_empty(), "no-stages");
-    reject!(instrs.iter().any(|line| is(line, "VOLUME")), "volume");
     let seed_slice = froms
         .iter()
         .enumerate()
@@ -98,13 +107,6 @@ fn valid(content: &str, exp_seed: &str, exp_base: &str) -> Result<(), &'static s
     for (idx, line) in instrs[last_from..].iter().enumerate() {
         let abs = last_from + idx;
         let words: Vec<&str> = line.split_whitespace().collect();
-        reject!(
-            is(line, "ENV")
-                && ["LUMEN_DATA_DIR", "LUMEN_PERSISTENCE", "LUMEN_WAL"]
-                    .iter()
-                    .any(|name| line.contains(name)),
-            "persistent-env"
-        );
         if is(line, "USER") {
             let user = words.get(1).copied().unwrap_or("");
             reject!(!matches!(user, "65532" | "65532:65532"), "root-user");
@@ -116,6 +118,35 @@ fn valid(content: &str, exp_seed: &str, exp_base: &str) -> Result<(), &'static s
             copies.push((abs, line));
         }
     }
+    let entrypoint = ep_idx.ok_or("missing-entrypoint")?;
+    reject!(
+        instrs
+            .iter()
+            .any(|line| instruction_identity(line, "ENV LUMEN_FSYNC")),
+        "fsync-knob"
+    );
+    for (prefix, expected) in [
+        ("ENV LUMEN_HOST", "ENV LUMEN_HOST=0.0.0.0"),
+        (
+            "ENV LUMEN_DATA_DIR",
+            "ENV LUMEN_DATA_DIR=/var/lib/lumen/data",
+        ),
+        ("ENV LUMEN_PERSISTENCE", "ENV LUMEN_PERSISTENCE=segment"),
+        ("ENV LUMEN_WAL", "ENV LUMEN_WAL=embedded"),
+        ("VOLUME", "VOLUME [\"/var/lib/lumen/data\"]"),
+    ] {
+        let matches: Vec<_> = instrs
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| instruction_identity(line, prefix))
+            .collect();
+        reject!(matches.is_empty(), "missing-image-default");
+        reject!(matches.len() != 1, "duplicate-image-default");
+        let (index, actual) = matches[0];
+        reject!(index < last_from, "builder-only-image-default");
+        reject!(actual != expected, "invalid-image-default");
+        reject!(index >= entrypoint, "late-image-default");
+    }
     if copies.is_empty() {
         return if b_copies > 0 {
             Err("builder-only-copy")
@@ -125,10 +156,7 @@ fn valid(content: &str, exp_seed: &str, exp_base: &str) -> Result<(), &'static s
     }
     reject!(copies.len() > 1, "duplicate-copy");
     let (copy_idx, copy_line) = copies[0];
-    reject!(
-        copy_idx >= ep_idx.ok_or("missing-entrypoint")?,
-        "copy-order"
-    );
+    reject!(copy_idx >= entrypoint, "copy-order");
     let tokens: Vec<&str> = copy_line.split_whitespace().collect();
     let exp_from = format!("--from={exp_seed}");
     reject!(tokens.get(1) != Some(&exp_from.as_str()), "copy-source");
@@ -199,7 +227,10 @@ fn test_release_dockerfile_rejects_mutable_final_base() {
     let root = repo_root();
     let content = std::fs::read_to_string(root.join("apps/lumen/Dockerfile.release")).unwrap();
     let mutated = one(&content, RELEASE_STATIC_BASE, STATIC_BASE);
-    assert_eq!(valid(&mutated, "seed", RELEASE_STATIC_BASE), Err("final-base"));
+    assert_eq!(
+        valid(&mutated, "seed", RELEASE_STATIC_BASE),
+        Err("final-base")
+    );
 }
 
 const FIXTURE: &str = "\
@@ -207,6 +238,11 @@ FROM debian:bookworm-slim AS builder\n\
 RUN mkdir -p -m 0750 /out/lumen-data && touch /out/lumen-data/.lumen-volume-seed\n\
 FROM gcr.io/distroless/cc-debian12:nonroot\n\
 COPY --from=builder --chown=65532:65532 /out/lumen-data/ /var/lib/lumen/data/\n\
+ENV LUMEN_HOST=0.0.0.0\n\
+ENV LUMEN_DATA_DIR=/var/lib/lumen/data\n\
+ENV LUMEN_PERSISTENCE=segment\n\
+ENV LUMEN_WAL=embedded\n\
+VOLUME [\"/var/lib/lumen/data\"]\n\
 ENTRYPOINT [\"/usr/local/bin/lumen\"]\n";
 
 #[test]
@@ -243,18 +279,18 @@ fn test_source_dockerfile_negative_mutations() {
         (C(ORDER, MOVED), "copy-flags"),
         (C(DST, "/var/lib/lumen/data/ /extra/"), "copy-source"),
         (R(CC_BASE, "debian:bookworm-slim"), "final-base"),
-        (F("ENV LUMEN_DATA_DIR=bad"), "persistent-env"),
-        (F("ENV LUMEN_PERSISTENCE=bad"), "persistent-env"),
-        (F("ENV LUMEN_WAL=bad"), "persistent-env"),
+        (F("ENV LUMEN_DATA_DIR=bad"), "duplicate-image-default"),
+        (F("ENV LUMEN_PERSISTENCE=bad"), "duplicate-image-default"),
+        (F("ENV LUMEN_WAL=bad"), "duplicate-image-default"),
         (F("USER root"), "root-user"),
         (F("USER root:root"), "root-user"),
         (F("USER 0"), "root-user"),
         (F("USER 0:0"), "root-user"),
         (F("USER 0:65532"), "root-user"),
         (F("USER 12345"), "root-user"),
-        (F("VOLUME /data"), "volume"),
-        (S("VOLUME /out/d"), "volume"),
-        (S("volume \\\n /out/d"), "volume"),
+        (F("VOLUME /data"), "duplicate-image-default"),
+        (S("VOLUME /out/d"), "duplicate-image-default"),
+        (S("volume \\\n /out/d"), "duplicate-image-default"),
         (Missing, "missing-copy"),
         (Builder, "builder-only-copy"),
         (Duplicate, "duplicate-copy"),
@@ -274,6 +310,75 @@ fn test_source_dockerfile_negative_mutations() {
         };
         assert_eq!(valid(&content, "builder", CC_BASE), Err(why));
     }
+
+    for (exact, wrong) in [
+        ("ENV LUMEN_HOST=0.0.0.0", "ENV LUMEN_HOST=127.0.0.1"),
+        (
+            "ENV LUMEN_DATA_DIR=/var/lib/lumen/data",
+            "ENV LUMEN_DATA_DIR=/data",
+        ),
+        (
+            "ENV LUMEN_PERSISTENCE=segment",
+            "ENV LUMEN_PERSISTENCE=cbor",
+        ),
+        ("ENV LUMEN_WAL=embedded", "ENV LUMEN_WAL=auto"),
+        ("VOLUME [\"/var/lib/lumen/data\"]", "VOLUME [\"/data\"]"),
+    ] {
+        let exact_line = format!("{exact}\n");
+        let missing = one(FIXTURE, &exact_line, "");
+        assert_eq!(
+            valid(&missing, "builder", CC_BASE),
+            Err("missing-image-default")
+        );
+        assert_eq!(
+            valid(
+                &one(FIXTURE, &exact_line, &format!("{exact}\n{exact}\n")),
+                "builder",
+                CC_BASE,
+            ),
+            Err("duplicate-image-default")
+        );
+        assert_eq!(
+            valid(&one(FIXTURE, exact, wrong), "builder", CC_BASE),
+            Err("invalid-image-default")
+        );
+        assert_eq!(
+            valid(
+                &one(
+                    &missing,
+                    "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+                    &format!("ENTRYPOINT [\"/usr/local/bin/lumen\"]\n{exact}\n"),
+                ),
+                "builder",
+                CC_BASE,
+            ),
+            Err("late-image-default")
+        );
+        assert_eq!(
+            valid(
+                &one(
+                    &missing,
+                    "FROM debian:bookworm-slim AS builder\n",
+                    &format!("FROM debian:bookworm-slim AS builder\n{exact}\n"),
+                ),
+                "builder",
+                CC_BASE,
+            ),
+            Err("builder-only-image-default")
+        );
+    }
+    assert_eq!(
+        valid(
+            &one(
+                FIXTURE,
+                "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+                "ENV LUMEN_FSYNC=always\nENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+            ),
+            "builder",
+            CC_BASE,
+        ),
+        Err("fsync-knob")
+    );
 }
 
 fn docker(args: &[&str]) -> Result<String, String> {
@@ -412,16 +517,50 @@ impl Drop for Guard {
 }
 
 const COMMON_ENV: [&str; 4] = ["-e", "LUMEN_AUTH=off", "-e", "LUMEN_GRACE_SECS=1"];
-const PERSIST_ENV: [&str; 8] = [
-    "-e",
-    "LUMEN_WAL=embedded",
-    "-e",
-    "LUMEN_DATA_DIR=/var/lib/lumen/data",
-    "-e",
-    "LUMEN_PERSISTENCE=segment",
-    "-e",
-    "LUMEN_SNAPSHOT_SECS=3600",
-];
+
+fn candidate_image() -> String {
+    let image = std::env::var("LUMEN_DOCKER_CANDIDATE_IMAGE")
+        .expect("set LUMEN_DOCKER_CANDIDATE_IMAGE to the verified candidate digest");
+    validate_candidate_image(&image).unwrap_or_else(|reason| panic!("{reason}: {image}"));
+    image
+}
+
+fn validate_candidate_image(image: &str) -> Result<(), &'static str> {
+    let digest = image
+        .strip_prefix("ghcr.io/chrischeng-c4/lumen@sha256:")
+        .ok_or("candidate image must use canonical GHCR repository and @sha256 digest")?;
+    if digest.len() != 64 {
+        return Err("candidate sha256 must contain 64 hex digits");
+    }
+    if !digest
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("candidate sha256 must be lowercase hexadecimal");
+    }
+    Ok(())
+}
+
+#[test]
+fn live_gate_accepts_only_the_exact_candidate_digest_shape() {
+    let valid = format!(
+        "ghcr.io/chrischeng-c4/lumen@sha256:{}",
+        "0123456789abcdef".repeat(4)
+    );
+    assert_eq!(validate_candidate_image(&valid), Ok(()));
+    for invalid in [
+        "ghcr.io/chrischeng-c4/lumen:0.4.29".to_owned(),
+        "ghcr.io/other/lumen@sha256:".to_owned() + &"0".repeat(64),
+        "ghcr.io/chrischeng-c4/lumen@sha256:abc".to_owned(),
+        format!("ghcr.io/chrischeng-c4/lumen@sha256:{}", "A".repeat(64)),
+        format!("ghcr.io/chrischeng-c4/lumen@sha256:{}", "g".repeat(64)),
+    ] {
+        assert!(
+            validate_candidate_image(&invalid).is_err(),
+            "invalid candidate accepted: {invalid}"
+        );
+    }
+}
 
 async fn start(
     guard: &mut Guard,
@@ -447,7 +586,6 @@ async fn start(
     if let Some(v) = vol {
         mount_arg = format!("type=volume,src={v},dst=/var/lib/lumen/data");
         args.extend(["--mount", &mount_arg]);
-        args.extend(PERSIST_ENV);
     }
     args.push(img);
     let cid = docker(&args).unwrap_or_else(|e| panic!("run {name}: {e}"));
@@ -515,9 +653,22 @@ type L<'a> = (
     ([&'a str; 2], Option<&'a str>),
     (&'a str, &'a str, &'a str),
     bool,
+    StopMode,
 );
 
-async fn step(guard: &mut Guard, client: &Client, img: &str, s: S<'_>) -> String {
+#[derive(Clone, Copy)]
+enum StopMode {
+    Graceful,
+    HardKill,
+}
+
+async fn step(
+    guard: &mut Guard,
+    client: &Client,
+    img: &str,
+    s: S<'_>,
+    stop_mode: StopMode,
+) -> String {
     let ((name, vol), (coll, value), (write_id, expected_id)) = s;
     let (id, port) = start(guard, client, name, img, vol).await;
     if let Some(doc_id) = write_id {
@@ -564,14 +715,32 @@ async fn step(guard: &mut Guard, client: &Client, img: &str, s: S<'_>) -> String
             format!("search expected 404, got {st}"),
         );
     }
-    let stop = Command::new("docker")
-        .args(["stop", "--time=5", &id])
-        .output()
-        .expect("docker stop");
-    need(stop.status.success(), &id, format!("stop {name} failed"));
+    let stop = match stop_mode {
+        StopMode::Graceful => Command::new("docker")
+            .args(["stop", "--time=5", &id])
+            .output()
+            .expect("docker stop"),
+        StopMode::HardKill => Command::new("docker")
+            .args(["kill", "--signal=KILL", &id])
+            .output()
+            .expect("docker kill"),
+    };
+    need(
+        stop.status.success(),
+        &id,
+        format!("terminate {name} failed"),
+    );
     let code =
         docker(&["inspect", "--format", "{{.State.ExitCode}}", &id]).expect("inspect exit code");
-    need(code == "0", &id, format!("{name} exit code {code}"));
+    let expected_code = match stop_mode {
+        StopMode::Graceful => "0",
+        StopMode::HardKill => "137",
+    };
+    need(
+        code == expected_code,
+        &id,
+        format!("{name} exit code {code}, expected {expected_code}"),
+    );
     let rm = Command::new("docker")
         .args(["rm", &id])
         .output()
@@ -582,7 +751,7 @@ async fn step(guard: &mut Guard, client: &Client, img: &str, s: S<'_>) -> String
 }
 
 async fn pair(guard: &mut Guard, client: &Client, img: &str, lane: L<'_>) {
-    let ((suffixes, vol), (coll, doc_id, value), survives) = lane;
+    let ((suffixes, vol), (coll, doc_id, value), survives, first_stop) = lane;
     let names = suffixes.map(|suffix| format!("{}-{suffix}", guard.run_id));
     let a = (
         (&*names[0], vol),
@@ -594,8 +763,8 @@ async fn pair(guard: &mut Guard, client: &Client, img: &str, lane: L<'_>) {
         (coll, value),
         (None, survives.then_some(doc_id)),
     );
-    let first = step(guard, client, img, a).await;
-    let second = step(guard, client, img, b).await;
+    let first = step(guard, client, img, a, first_stop).await;
+    let second = step(guard, client, img, b, StopMode::Graceful).await;
     assert_ne!(
         first, second,
         "replacement container must have a distinct ID"
@@ -604,33 +773,17 @@ async fn pair(guard: &mut Guard, client: &Client, img: &str, lane: L<'_>) {
 
 #[ignore]
 #[tokio::test]
-async fn named_volume_survives_container_replacement_and_no_volume_is_ephemeral() {
+async fn digest_bound_volume_survives_replacement_and_hard_kill_but_anonymous_volume_does_not() {
     docker(&["info"]).expect("docker unavailable");
-    let root = repo_root();
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let run_id = format!("lumen-test-{epoch}");
     let mut guard = Guard::new(run_id.clone());
-    let img_tag = format!("{run_id}-img:test");
+    let image = candidate_image();
     let run_label = format!("lumen.run_id={run_id}");
-    assert_absent("image", &img_tag);
-    let build = Command::new("docker")
-        .current_dir(&root)
-        .args(["build", "--label", &run_label])
-        .args(["-f", "apps/lumen/Dockerfile"])
-        .args(["-t", &img_tag, "."])
-        .output()
-        .expect("build image");
-    assert!(
-        build.status.success(),
-        "build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    guard.items.push(("image", img_tag.clone()));
-    let user =
-        docker(&["inspect", "--format", "{{.Config.User}}", &img_tag]).expect("inspect user");
+    let user = docker(&["inspect", "--format", "{{.Config.User}}", &image]).expect("inspect user");
     assert!(
         matches!(user.as_str(), "65532" | "65532:65532"),
         "user must be 65532, got {user:?}"
@@ -648,11 +801,238 @@ async fn named_volume_survives_container_replacement_and_no_volume_is_ephemeral(
     docker(&["volume", "create", "--label", &run_label, &vol]).expect("create volume");
     guard.items.push(("volume", vol.clone()));
     let (coll_p, id_p, val_p) = ("coll_p", "doc_p", format!("val_p_{run_id}"));
-    let persistent = ((["ca", "cb"], Some(&*vol)), (coll_p, id_p, &*val_p), true);
-    pair(&mut guard, &client, &img_tag, persistent).await;
+    let persistent = (
+        (["ca", "cb"], Some(&*vol)),
+        (coll_p, id_p, &*val_p),
+        true,
+        StopMode::Graceful,
+    );
+    pair(&mut guard, &client, &image, persistent).await;
+    let (coll_k, id_k, val_k) = ("coll_k", "doc_k", format!("val_k_{run_id}"));
+    let hard_kill = (
+        (["ce", "cf"], Some(&*vol)),
+        (coll_k, id_k, &*val_k),
+        true,
+        StopMode::HardKill,
+    );
+    pair(&mut guard, &client, &image, hard_kill).await;
     let (coll_e, id_e, val_e) = ("coll_e", "doc_e", format!("val_e_{run_id}"));
-    let ephemeral = ((["cc", "cd"], None), (coll_e, id_e, &*val_e), false);
-    pair(&mut guard, &client, &img_tag, ephemeral).await;
+    let ephemeral = (
+        (["cc", "cd"], None),
+        (coll_e, id_e, &*val_e),
+        false,
+        StopMode::Graceful,
+    );
+    pair(&mut guard, &client, &image, ephemeral).await;
     guard.cleanup().expect("cleanup must succeed");
     guard.verify_cleaned();
+}
+
+struct ComposeGuard {
+    file: PathBuf,
+    project: String,
+}
+
+impl ComposeGuard {
+    fn command(&self, args: &[&str]) -> std::process::Output {
+        Command::new("docker")
+            .args(["compose", "--project-name", &self.project, "--file"])
+            .arg(&self.file)
+            .args(args)
+            .output()
+            .expect("run docker compose")
+    }
+
+    fn success(&self, args: &[&str]) -> String {
+        let output = self.command(args);
+        assert!(
+            output.status.success(),
+            "docker compose {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+}
+
+impl Drop for ComposeGuard {
+    fn drop(&mut self) {
+        let _ = self.command(&["down", "--volumes", "--remove-orphans"]);
+    }
+}
+
+fn yaml_key(value: &str) -> YamlValue {
+    YamlValue::String(value.into())
+}
+
+fn compose_volumes(project: &str) -> Vec<String> {
+    let project_filter = format!("label=com.docker.compose.project={project}");
+    let output = Command::new("docker")
+        .args([
+            "volume",
+            "ls",
+            "--filter",
+            &project_filter,
+            "--filter",
+            "label=com.docker.compose.volume=lumen-data",
+            "--format",
+            "{{.Name}}",
+        ])
+        .output()
+        .expect("list Compose volumes");
+    assert!(
+        output.status.success(),
+        "list Compose volumes: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn set_compose_candidate_and_run_labels(file: &std::path::Path, image: &str, run_id: &str) {
+    let mut root: YamlValue = serde_yaml::from_slice(&fs::read(file).unwrap()).unwrap();
+    let root = root.as_mapping_mut().unwrap();
+    let services = root
+        .get_mut(&yaml_key("services"))
+        .and_then(YamlValue::as_mapping_mut)
+        .unwrap();
+    let service = services
+        .get_mut(&yaml_key("lumen"))
+        .and_then(YamlValue::as_mapping_mut)
+        .unwrap();
+    service.insert(yaml_key("image"), yaml_key(image));
+    let labels = service
+        .get_mut(&yaml_key("labels"))
+        .and_then(YamlValue::as_mapping_mut)
+        .unwrap();
+    labels.insert(yaml_key("lumen.run_id"), yaml_key(run_id));
+    let environment = service
+        .get_mut(&yaml_key("environment"))
+        .and_then(YamlValue::as_mapping_mut)
+        .unwrap();
+    environment.insert(yaml_key("LUMEN_GRACE_SECS"), yaml_key("1"));
+
+    let volumes = root
+        .get_mut(&yaml_key("volumes"))
+        .and_then(YamlValue::as_mapping_mut)
+        .unwrap();
+    let volume = volumes
+        .get_mut(&yaml_key("lumen-data"))
+        .and_then(YamlValue::as_mapping_mut)
+        .unwrap();
+    let mut volume_labels = YamlMapping::new();
+    volume_labels.insert(yaml_key("lumen.run_id"), yaml_key(run_id));
+    volume.insert(yaml_key("labels"), YamlValue::Mapping(volume_labels));
+    fs::write(file, serde_yaml::to_string(&root).unwrap()).unwrap();
+}
+
+async fn wait_fixed_compose_port(client: &Client, cid: &str) {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(15) {
+        if client
+            .get("http://127.0.0.1:7373/healthz")
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("Compose container health timeout\n{}", logs(cid));
+}
+
+#[ignore]
+#[tokio::test]
+async fn digest_bound_compose_down_keeps_volume_and_down_v_deletes_it() {
+    docker(&["info"]).expect("docker unavailable");
+    let image = candidate_image();
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let run_id = format!("lumen-compose-test-{epoch}");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("compose.yaml");
+    let patch = Command::new(env!("CARGO_BIN_EXE_lumen"))
+        .args(["standalone", "compose", "patch", "--file"])
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(
+        patch.status.success(),
+        "patch failed: {}",
+        String::from_utf8_lossy(&patch.stderr)
+    );
+    set_compose_candidate_and_run_labels(&file, &image, &run_id);
+    let compose = ComposeGuard {
+        file,
+        project: run_id.clone(),
+    };
+    assert!(compose_volumes(&run_id).is_empty());
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .unwrap();
+    compose.success(&["up", "-d"]);
+    let first = compose.success(&["ps", "--quiet", "lumen"]);
+    let volumes = compose_volumes(&run_id);
+    assert_eq!(volumes.len(), 1, "expected one Lumen Compose volume");
+    let volume = volumes[0].clone();
+    assert_eq!(label("container", &first), Ok(Some(run_id.clone())));
+    assert_eq!(label("volume", &volume), Ok(Some(run_id.clone())));
+    wait_fixed_compose_port(&client, &first).await;
+    let put = client
+        .put("http://127.0.0.1:7373/collections/compose_durable")
+        .json(&json!({"fields":{"k":{"type":"keyword"}}}))
+        .send()
+        .await
+        .unwrap();
+    assert!(put.status().is_success());
+    let (status, _) = post(
+        &client,
+        &first,
+        "/collections/compose_durable/index",
+        7373,
+        json!({"items":[{"external_id":"doc","field":"k","value":"survives"}]}),
+    )
+    .await;
+    assert!(status.is_success());
+
+    compose.success(&["down"]);
+    assert_eq!(label("volume", &volume), Ok(Some(run_id.clone())));
+    compose.success(&["up", "-d"]);
+    let second = compose.success(&["ps", "--quiet", "lumen"]);
+    assert_ne!(first, second);
+    wait_fixed_compose_port(&client, &second).await;
+    let (status, body) = post(
+        &client,
+        &second,
+        "/collections/compose_durable/search",
+        7373,
+        json!({"query":{"term":{"field":"k","value":"survives"}},"limit":10}),
+    )
+    .await;
+    assert!(status.is_success(), "search after down: {status} {body}");
+    assert_eq!(body["total"], 1);
+
+    compose.success(&["down", "-v"]);
+    assert_eq!(label("volume", &volume), Ok(None));
+    compose.success(&["up", "-d"]);
+    let third = compose.success(&["ps", "--quiet", "lumen"]);
+    wait_fixed_compose_port(&client, &third).await;
+    let (status, _) = post(
+        &client,
+        &third,
+        "/collections/compose_durable/search",
+        7373,
+        json!({"query":{"term":{"field":"k","value":"survives"}},"limit":10}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

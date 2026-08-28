@@ -274,6 +274,64 @@ fn gen_lang_selects_emitter() {
     }
 }
 
+#[test]
+fn gen_all_languages_opt_into_the_default_ksa_token_per_request() {
+    for (lang, runtime, needles) in [
+        (
+            "ts",
+            "runtime.ts",
+            &[
+                "node:fs/promises",
+                "attachFileBearer",
+                "unavailable in this runtime",
+            ][..],
+        ),
+        (
+            "py",
+            "client.py",
+            &[
+                "Path(_FILE_BEARER_TOKEN_PATH).read_text",
+                "_file_bearer_headers",
+            ][..],
+        ),
+        (
+            "rust",
+            "client.rs",
+            &["attach_file_bearer", "with_default_header"][..],
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = lumen()
+            .args(["spec", "gen", "--lang", lang, "--out"])
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "spec gen --lang {lang} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(dir.path().join(".openapi-codegen.json").is_file());
+        let source = std::fs::read_to_string(dir.path().join(runtime)).unwrap();
+        assert!(
+            source.contains("/var/run/secrets/kubernetes.io/serviceaccount/token"),
+            "{lang} did not embed the Kubernetes default token path"
+        );
+        assert!(
+            source.contains(".svc.cluster.local"),
+            "{lang} did not bind automatic auth to cluster Service DNS"
+        );
+        assert!(
+            !source.contains("/var/run/secrets/lumen.axiom.dev/token"),
+            "{lang} mixed the Managed private-audience token contract into Standalone"
+        );
+        for needle in needles {
+            assert!(source.contains(needle), "{lang} runtime missing {needle:?}");
+        }
+    }
+}
+
 /// An explicit target remains an auditable override of the project policy.
 #[test]
 fn gen_target_override_writes_the_requested_contract() {

@@ -1,6 +1,6 @@
 //! Deterministic contract test for Lumen standalone container and binary defaults.
 
-use std::path::PathBuf;
+use std::{fs, io::Write, path::PathBuf, process::Command};
 
 const EXPECTED_DOCKERFILES: &[&str] = &[
     "apps/lumen/Dockerfile",
@@ -45,18 +45,969 @@ fn replace_exact(source: &str, target: &str, replacement: &str) -> String {
     source.replacen(target, replacement, 1)
 }
 
+fn insert_after_first_from(source: &str, instruction: &str) -> String {
+    let mut output = String::with_capacity(source.len() + instruction.len() + 1);
+    let mut inserted = false;
+    for line in source.split_inclusive('\n') {
+        output.push_str(line);
+        if !inserted && line.trim_start().to_ascii_uppercase().starts_with("FROM ") {
+            output.push_str(instruction);
+            output.push('\n');
+            inserted = true;
+        }
+    }
+    assert!(inserted, "fixture has no FROM instruction");
+    output
+}
+
+const DURABLE_BEGIN: &str = "  # DURABLE-CONTRACT-BEGIN\n";
+const DURABLE_END: &str = "  # DURABLE-CONTRACT-END\n";
+const DURABLE_BLOCK_SHA256: &str =
+    "1e14c631716089051ba574d85bbcd42dd2105b472966c1a0595e4fab81d0b33e";
+const CANDIDATE_ROOT_REGEX: &str = "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$";
+const OLD_IMAGE: &str =
+    "ghcr.io/chrischeng-c4/lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
+const DATA_MOUNT: &str = "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\"";
+const OLD_RUN: &str = concat!(
+    "docker run -d --name \"$OLD_CONTAINER\" ",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
+    "-e LUMEN_AUTH=off -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1 ",
+    "-p 127.0.0.1::7373 \"$OLD_IMAGE\" >/dev/null"
+);
+const CANDIDATE_RUN: &str = concat!(
+    "docker run -d --name \"$CANDIDATE_CONTAINER\" ",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
+    "-e LUMEN_AUTH=off -p 127.0.0.1::7373 ",
+    "\"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null"
+);
+const REPLACEMENT_RUN: &str = concat!(
+    "docker run -d --name \"$REPLACEMENT_CONTAINER\" ",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
+    "-e LUMEN_AUTH=off -p 127.0.0.1::7373 ",
+    "\"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null"
+);
+const CANDIDATE_RUN_SOURCE: &str = concat!(
+    "  docker run -d --name \"$CANDIDATE_CONTAINER\" ",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off \\\n",
+    "    -p 127.0.0.1::7373 \"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null\n"
+);
+const REPLACEMENT_RUN_SOURCE: &str = concat!(
+    "  docker run -d --name \"$REPLACEMENT_CONTAINER\" ",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off \\\n",
+    "    -p 127.0.0.1::7373 \"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null\n"
+);
+const CANDIDATE_AUTH_LINE: &str = concat!(
+    "  docker run -d --name \"$CANDIDATE_CONTAINER\" ",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off \\\n"
+);
+const CURRENT_FIRST_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+\n",b) else 1)' "$TEMP_DIR/current-first""#;
+const CURRENT_REV_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+-rev-[1-9][0-9]*\n",b) else 1)' "$TEMP_DIR/current-rev""#;
+const CURRENT_REPLACEMENT_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+-rev-[1-9][0-9]*\n",b) else 1)' "$TEMP_DIR/current-replacement""#;
+
+fn durable_script_block(source: &str) -> Result<&str, String> {
+    let starts = source.matches(DURABLE_BEGIN).count();
+    if starts != 1 {
+        return Err(format!(
+            "durable block must have one start marker, found {starts}"
+        ));
+    }
+    let ends = source.matches(DURABLE_END).count();
+    if ends != 1 {
+        return Err(format!(
+            "durable block must have one end marker, found {ends}"
+        ));
+    }
+    let start = source
+        .find(DURABLE_BEGIN)
+        .ok_or_else(|| "durable block start marker is missing".to_string())?
+        + DURABLE_BEGIN.len();
+    let end = source[start..]
+        .find(DURABLE_END)
+        .map(|offset| start + offset)
+        .ok_or_else(|| "durable block end marker is before its start".to_string())?;
+    let block = &source[start..end];
+    if block.trim().is_empty() {
+        return Err("durable block is empty".to_string());
+    }
+    Ok(block)
+}
+
+fn strip_shell_comment(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_start = true;
+    for ch in raw.chars() {
+        if escaped {
+            output.push(ch);
+            escaped = false;
+            token_start = ch.is_whitespace();
+            continue;
+        }
+        match quote {
+            Some('\'') => {
+                output.push(ch);
+                if ch == '\'' {
+                    quote = None;
+                }
+                token_start = false;
+            }
+            Some('"') => {
+                output.push(ch);
+                if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    quote = None;
+                }
+                token_start = false;
+            }
+            None if ch == '\\' => {
+                output.push(ch);
+                escaped = true;
+                token_start = false;
+            }
+            None if ch == '\'' || ch == '"' => {
+                output.push(ch);
+                quote = Some(ch);
+                token_start = false;
+            }
+            None if ch == '#' && token_start => break,
+            None => {
+                output.push(ch);
+                token_start = ch.is_whitespace();
+            }
+            Some(other) => unreachable!("unsupported shell quote delimiter: {other}"),
+        }
+    }
+    output
+}
+
+fn has_unescaped_continuation(line: &str) -> bool {
+    let slash_count = line.chars().rev().take_while(|ch| *ch == '\\').count();
+    slash_count % 2 == 1
+}
+
+fn durable_logical_lines(block: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut pending = String::new();
+    for raw in block.lines() {
+        let active = strip_shell_comment(raw);
+        let trimmed = active.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let continued = has_unescaped_continuation(trimmed);
+        let part = if continued {
+            trimmed.strip_suffix('\\').expect("continuation suffix")
+        } else {
+            trimmed
+        };
+        if !pending.is_empty() {
+            pending.push(' ');
+        }
+        pending.push_str(part.trim_end());
+        if continued {
+            continue;
+        }
+        lines.push(std::mem::take(&mut pending));
+    }
+    if !pending.is_empty() {
+        lines.push(pending);
+    }
+    lines
+}
+
+fn sha256_text(content: &str) -> Result<String, String> {
+    let mut file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| error.to_string())?;
+    let path = file.path();
+
+    let shasum = Command::new("shasum")
+        .args(["-a", "256"])
+        .arg(path)
+        .output();
+    if let Ok(output) = shasum {
+        if output.status.success() {
+            if let Some(digest) = String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .next()
+            {
+                return Ok(digest.to_string());
+            }
+        }
+    }
+
+    let sha256sum = Command::new("sha256sum").arg(path).output();
+    if let Ok(output) = sha256sum {
+        if output.status.success() {
+            if let Some(digest) = String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .next()
+            {
+                return Ok(digest.to_string());
+            }
+        }
+    }
+    Err("neither shasum nor sha256sum could hash the durable block".to_string())
+}
+
+fn require_exact_once(lines: &[String], expected: &str, detail: &str) -> Result<usize, String> {
+    let matches: Vec<_> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| (line == expected).then_some(index))
+        .collect();
+    if matches.len() != 1 {
+        return Err(format!(
+            "{detail}: expected one active command, found {}",
+            matches.len()
+        ));
+    }
+    Ok(matches[0])
+}
+
+fn require_active_contains(lines: &[String], expected: &str, detail: &str) -> Result<(), String> {
+    if lines.iter().any(|line| line.contains(expected)) {
+        Ok(())
+    } else {
+        Err(format!("{detail}: missing active text {expected:?}"))
+    }
+}
+
+fn require_before(
+    lines: &[String],
+    assignment: &str,
+    command: &str,
+    detail: &str,
+) -> Result<(), String> {
+    let assignment = require_exact_once(lines, assignment, detail)?;
+    let command = require_exact_once(lines, command, detail)?;
+    if assignment < command {
+        Ok(())
+    } else {
+        Err(format!(
+            "{detail}: container is not tracked before docker run"
+        ))
+    }
+}
+
+fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
+    let block = durable_script_block(source)?;
+    let lines = durable_logical_lines(block);
+
+    require_active_contains(&lines, CANDIDATE_ROOT_REGEX, "candidate root digest")?;
+    require_exact_once(
+        &lines,
+        &format!("OLD_IMAGE=\"{OLD_IMAGE}\""),
+        "old root digest",
+    )?;
+    require_exact_once(
+        &lines,
+        "VOLUME=\"lumen-smoke-durable-${ID_SUFFIX}\"",
+        "run volume",
+    )?;
+    require_exact_once(
+        &lines,
+        "if docker volume inspect \"$VOLUME\" >/dev/null 2>&1; then",
+        "volume ownership check",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker volume create \"$VOLUME\" >/dev/null",
+        "volume creation",
+    )?;
+    require_exact_once(&lines, "CREATED_VOLUME=1", "owned volume tracking")?;
+    require_exact_once(
+        &lines,
+        "if [[ \"$CREATED_VOLUME\" == 1 ]]; then",
+        "owned volume cleanup",
+    )?;
+    require_exact_once(
+        &lines,
+        "if ! docker volume rm \"$VOLUME\" >/dev/null 2>&1; then",
+        "volume cleanup",
+    )?;
+    require_exact_once(
+        &lines,
+        "if ! docker rm -f \"$container\" >/dev/null 2>&1; then",
+        "container cleanup",
+    )?;
+    require_exact_once(
+        &lines,
+        "if [[ -n \"$TEMP_DIR\" ]] && ! rm -rf -- \"$TEMP_DIR\"; then",
+        "temporary cleanup",
+    )?;
+    require_active_contains(
+        &lines,
+        "if [[ \"$exit_code\" -ne 0 ]]; then",
+        "main failure preservation",
+    )?;
+    require_active_contains(
+        &lines,
+        "if [[ \"$cleanup_failed\" -ne 0 ]]; then",
+        "cleanup failure",
+    )?;
+    require_exact_once(&lines, "trap cleanup_durable EXIT", "cleanup exit trap")?;
+    require_exact_once(&lines, "trap 'exit 130' INT", "INT signal trap")?;
+    require_exact_once(&lines, "trap 'exit 143' TERM", "TERM signal trap")?;
+
+    require_before(&lines, "CREATED_OLD=\"$OLD_CONTAINER\"", OLD_RUN, "old run")?;
+    require_before(
+        &lines,
+        "CREATED_CANDIDATE=\"$CANDIDATE_CONTAINER\"",
+        CANDIDATE_RUN,
+        "candidate run",
+    )?;
+    require_before(
+        &lines,
+        "CREATED_REPLACEMENT=\"$REPLACEMENT_CONTAINER\"",
+        REPLACEMENT_RUN,
+        "replacement run",
+    )?;
+    require_exact_once(&lines, OLD_RUN, "old image command")?;
+    require_exact_once(&lines, CANDIDATE_RUN, "candidate image command")?;
+    require_exact_once(&lines, REPLACEMENT_RUN, "replacement image command")?;
+    if lines
+        .iter()
+        .filter(|line| line.contains(DATA_MOUNT))
+        .count()
+        != 3
+    {
+        return Err("each run must mount only the named volume at the data path".to_string());
+    }
+    require_exact_once(
+        &lines,
+        "docker kill \"$CANDIDATE_CONTAINER\" >/dev/null",
+        "hard-kill proof",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker rm \"$CANDIDATE_CONTAINER\" >/dev/null",
+        "candidate removal",
+    )?;
+
+    require_exact_once(
+        &lines,
+        "[[ -d \"$1\" ]] || return 1",
+        "legacy checkpoint directory",
+    )?;
+    require_exact_once(
+        &lines,
+        "[[ ! -e \"$1/CURRENT\" ]] || return 1",
+        "legacy CURRENT absence",
+    )?;
+    require_exact_once(
+        &lines,
+        "[[ \"$base\" =~ ^gen-[0-9]+$ ]] && return 0",
+        "legacy generation name",
+    )?;
+    require_exact_once(
+        &lines,
+        "has_legacy_generation \"$TEMP_DIR/old-data\" && break",
+        "legacy checkpoint adoption",
+    )?;
+    require_active_contains(&lines, "/readyz", "readiness proof")?;
+    require_exact_once(
+        &lines,
+        "request -X POST \"$url/collections/durable/search\" -H 'Content-Type: application/json' -d \"{\\\"query\\\":{\\\"term\\\":{\\\"field\\\":\\\"tag\\\",\\\"value\\\":\\\"$value\\\"}},\\\"limit\\\":10}\" -o \"$response\"",
+        "search request",
+    )?;
+    require_exact_once(
+        &lines,
+        "jq -e --arg id \"durable-${value}\" '.total == 1 and (.hits | length) == 1 and .hits[0].external_id == $id' \"$response\" >/dev/null",
+        "search response assertion",
+    )?;
+    require_exact_once(
+        &lines,
+        "request -X PUT \"$OLD_URL/collections/durable\" -H 'Content-Type: application/json' -d '{\"fields\":{\"tag\":{\"type\":\"keyword\"}}}' -o \"$TEMP_DIR/create\"",
+        "collection creation",
+    )?;
+    require_exact_once(
+        &lines,
+        "request -X POST \"$OLD_URL/collections/durable/index\" -H 'Content-Type: application/json' -d '{\"items\":[{\"external_id\":\"durable-first\",\"field\":\"tag\",\"value\":\"first\"}]}' -o \"$TEMP_DIR/index-first\"",
+        "first record",
+    )?;
+    require_exact_once(
+        &lines,
+        "request -X POST \"$CANDIDATE_URL/collections/durable/index\" -H 'Content-Type: application/json' -d '{\"items\":[{\"external_id\":\"durable-second\",\"field\":\"tag\",\"value\":\"second\"}]}' -o \"$TEMP_DIR/index-second\"",
+        "second record",
+    )?;
+    for search in [
+        "assert_search \"$OLD_URL\" first",
+        "assert_search \"$CANDIDATE_URL\" first",
+        "assert_search \"$CANDIDATE_URL\" second",
+        "assert_search \"$REPLACEMENT_URL\" first",
+        "assert_search \"$REPLACEMENT_URL\" second",
+    ] {
+        require_exact_once(&lines, search, "search proof")?;
+    }
+    require_exact_once(
+        &lines,
+        "docker cp \"$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-first\"",
+        "CURRENT adoption",
+    )?;
+    require_exact_once(&lines, CURRENT_FIRST_ASSERT, "CURRENT adoption bytes")?;
+    require_exact_once(
+        &lines,
+        "request -X POST \"$CANDIDATE_URL/admin/checkpoint\" -H 'Content-Type: application/json' -d '{}' -o \"$TEMP_DIR/checkpoint\"",
+        "checkpoint request",
+    )?;
+    require_exact_once(
+        &lines,
+        "jq -e '.persisted == true' \"$TEMP_DIR/checkpoint\" >/dev/null",
+        "persisted checkpoint",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker cp \"$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-rev\"",
+        "candidate revision copy",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker cp \"$REPLACEMENT_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-replacement\"",
+        "replacement revision copy",
+    )?;
+    require_exact_once(&lines, CURRENT_REV_ASSERT, "candidate revision bytes")?;
+    require_exact_once(
+        &lines,
+        CURRENT_REPLACEMENT_ASSERT,
+        "replacement revision bytes",
+    )?;
+
+    for line in &lines {
+        if line.contains("if false") || line.contains("false &&") || line.contains("|| true") {
+            return Err(format!("dead or bypassed durable proof: {line}"));
+        }
+        if [
+            "docker build",
+            "docker rmi",
+            "docker system prune",
+            "docker container prune",
+            "docker volume prune",
+        ]
+        .iter()
+        .any(|forbidden| line.contains(forbidden))
+        {
+            return Err(format!(
+                "durable block has forbidden cleanup or image action: {line}"
+            ));
+        }
+        if line.starts_with("docker rm -f ")
+            && line != "docker rm -f \"$OLD_CONTAINER\" >/dev/null"
+            && line != "if ! docker rm -f \"$container\" >/dev/null 2>&1; then"
+        {
+            return Err(format!(
+                "durable block has unscoped container cleanup: {line}"
+            ));
+        }
+        if line.starts_with("docker volume rm ")
+            && line != "if ! docker volume rm \"$VOLUME\" >/dev/null 2>&1; then"
+        {
+            return Err(format!("durable block has unscoped volume cleanup: {line}"));
+        }
+        if (line.starts_with("echo ") || line.starts_with("cat "))
+            && (line.contains("$response")
+                || line.contains("$TEMP_DIR/search")
+                || line.contains("/CURRENT")
+                || line.contains("$TEMP_DIR/current"))
+        {
+            return Err(format!(
+                "durable block exposes private response bytes: {line}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_durable_script_bytes(source: &str) -> Result<(), String> {
+    let block = durable_script_block(source)?;
+    let digest = sha256_text(block)?;
+    if digest != DURABLE_BLOCK_SHA256 {
+        return Err(format!(
+            "durable block digest changed: expected {DURABLE_BLOCK_SHA256}, got {digest}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_durable_script(source: &str) -> Result<(), String> {
+    validate_durable_script_semantics(source)?;
+    validate_durable_script_bytes(source)
+}
+
+fn insert_after_exact(source: &str, target: &str, addition: &str) -> String {
+    replace_exact(source, target, &format!("{target}{addition}"))
+}
+
+fn candidate_with_override(source: &str, variable: &str) -> String {
+    replace_exact(
+        source,
+        CANDIDATE_AUTH_LINE,
+        &format!(
+            "  docker run -d --name \"$CANDIDATE_CONTAINER\" {DATA_MOUNT} -e LUMEN_AUTH=off -e {variable}=forbidden \\\n"
+        ),
+    )
+}
+
+fn assert_durable_rejected(label: &str, source: String) {
+    assert!(
+        validate_durable_script_semantics(&source).is_err(),
+        "mutation must fail: {label}"
+    );
+}
+
+#[test]
+fn test_durable_script_contract_and_negative_mutations() {
+    let path = repo_root().join("apps/lumen/scripts/standalone-container-smoke.sh");
+    let source = fs::read_to_string(path).expect("read durable smoke script");
+    validate_durable_script(&source).expect("durable script contract");
+
+    let byte_drift = insert_after_exact(&source, DURABLE_BEGIN, "  # reviewed byte drift\n");
+    validate_durable_script_semantics(&byte_drift)
+        .expect("a comment-only byte drift keeps the durable semantics");
+    assert!(
+        validate_durable_script_bytes(&byte_drift).is_err(),
+        "durable block digest must reject a generic byte drift"
+    );
+
+    assert_durable_rejected(
+        "full-line comment",
+        replace_exact(
+            &source,
+            "  assert_search \"$OLD_URL\" first\n",
+            "  # assert_search \"$OLD_URL\" first\n",
+        ),
+    );
+    assert_durable_rejected(
+        "inline comment truncation",
+        replace_exact(
+            &source,
+            "  assert_search \"$CANDIDATE_URL\" first\n",
+            "  assert_search # \"$CANDIDATE_URL\" first\n",
+        ),
+    );
+    assert_durable_rejected(
+        "quoted prose",
+        replace_exact(
+            &source,
+            "  assert_search \"$CANDIDATE_URL\" second\n",
+            "  : 'assert_search \"$CANDIDATE_URL\" second'\n",
+        ),
+    );
+    assert_durable_rejected(
+        "if-false dead branch",
+        replace_exact(
+            &source,
+            "  assert_search \"$REPLACEMENT_URL\" first\n",
+            "  if false; then assert_search \"$REPLACEMENT_URL\" first; fi\n",
+        ),
+    );
+    assert_durable_rejected(
+        "false-and dead proof",
+        replace_exact(
+            &source,
+            "  assert_search \"$REPLACEMENT_URL\" second\n",
+            "  false && assert_search \"$REPLACEMENT_URL\" second\n",
+        ),
+    );
+    assert_durable_rejected(
+        "true bypass",
+        replace_exact(
+            &source,
+            "  assert_search \"$CANDIDATE_URL\" first\n",
+            "  assert_search \"$CANDIDATE_URL\" first || true\n",
+        ),
+    );
+    for (label, target, replacement) in [
+        (
+            "cleanup exit trap removed",
+            "  trap cleanup_durable EXIT\n",
+            "",
+        ),
+        (
+            "cleanup exit trap quoted",
+            "  trap cleanup_durable EXIT\n",
+            "  : 'trap cleanup_durable EXIT'\n",
+        ),
+        (
+            "cleanup exit trap dead branch",
+            "  trap cleanup_durable EXIT\n",
+            "  if false; then trap cleanup_durable EXIT; fi\n",
+        ),
+        ("INT signal trap removed", "  trap 'exit 130' INT\n", ""),
+        (
+            "TERM signal trap quoted",
+            "  trap 'exit 143' TERM\n",
+            "  : 'trap exit 143 TERM'\n",
+        ),
+    ] {
+        assert_durable_rejected(label, replace_exact(&source, target, replacement));
+    }
+
+    for (label, replacement) in [
+        ("candidate tag", "\"ghcr.io/chrischeng-c4/lumen:latest\""),
+        ("candidate local image", "\"./lumen\""),
+        (
+            "candidate child image",
+            "\"${LUMEN_STANDALONE_DURABLE_IMAGE}-child\"",
+        ),
+    ] {
+        assert_durable_rejected(
+            label,
+            replace_exact(
+                &source,
+                CANDIDATE_RUN_SOURCE,
+                &CANDIDATE_RUN_SOURCE.replace("\"$LUMEN_STANDALONE_DURABLE_IMAGE\"", replacement),
+            ),
+        );
+    }
+    assert_durable_rejected(
+        "old digest drift",
+        replace_exact(
+            &source,
+            OLD_IMAGE,
+            "ghcr.io/chrischeng-c4/lumen@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    );
+    assert_durable_rejected(
+        "replacement image differs",
+        replace_exact(
+            &source,
+            REPLACEMENT_RUN_SOURCE,
+            &REPLACEMENT_RUN_SOURCE.replace(
+                "\"$LUMEN_STANDALONE_DURABLE_IMAGE\"",
+                "\"ghcr.io/chrischeng-c4/lumen:other\"",
+            ),
+        ),
+    );
+    for (label, replacement) in [
+        (
+            "anonymous mount",
+            "--mount \"type=volume,dst=/var/lib/lumen/data\"",
+        ),
+        (
+            "bind mount",
+            "--mount \"type=bind,src=$TEMP_DIR,dst=/var/lib/lumen/data\"",
+        ),
+        (
+            "wrong data path",
+            "--mount \"type=volume,src=$VOLUME,dst=/data\"",
+        ),
+    ] {
+        assert_durable_rejected(
+            label,
+            replace_exact(
+                &source,
+                CANDIDATE_RUN_SOURCE,
+                &CANDIDATE_RUN_SOURCE.replace(DATA_MOUNT, replacement),
+            ),
+        );
+    }
+    for variable in [
+        "LUMEN_DATA_DIR",
+        "LUMEN_PERSISTENCE",
+        "LUMEN_WAL",
+        "LUMEN_FSYNC",
+        "LUMEN_SNAPSHOT_SECS",
+        "LUMEN_GRACE_SECS",
+    ] {
+        assert_durable_rejected(variable, candidate_with_override(&source, variable));
+    }
+
+    for (label, target) in [
+        (
+            "first record",
+            "  request -X POST \"$OLD_URL/collections/durable/index\" -H 'Content-Type: application/json' -d '{\"items\":[{\"external_id\":\"durable-first\",\"field\":\"tag\",\"value\":\"first\"}]}' -o \"$TEMP_DIR/index-first\"\n",
+        ),
+        (
+            "second record",
+            "  request -X POST \"$CANDIDATE_URL/collections/durable/index\" -H 'Content-Type: application/json' -d '{\"items\":[{\"external_id\":\"durable-second\",\"field\":\"tag\",\"value\":\"second\"}]}' -o \"$TEMP_DIR/index-second\"\n",
+        ),
+        (
+            "search request",
+            "    request -X POST \"$url/collections/durable/search\" -H 'Content-Type: application/json' \\\n      -d \"{\\\"query\\\":{\\\"term\\\":{\\\"field\\\":\\\"tag\\\",\\\"value\\\":\\\"$value\\\"}},\\\"limit\\\":10}\" -o \"$response\"\n",
+        ),
+        ("old first search", "  assert_search \"$OLD_URL\" first\n"),
+        ("candidate first search", "  assert_search \"$CANDIDATE_URL\" first\n"),
+        ("candidate second search", "  assert_search \"$CANDIDATE_URL\" second\n"),
+        ("replacement first search", "  assert_search \"$REPLACEMENT_URL\" first\n"),
+        ("replacement second search", "  assert_search \"$REPLACEMENT_URL\" second\n"),
+        (
+            "CURRENT adoption check",
+            "  docker cp \"$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-first\"\n",
+        ),
+        (
+            "revision check",
+            "  python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb\"generation:gen-[0-9]+-rev-[1-9][0-9]*\\n\",b) else 1)' \"$TEMP_DIR/current-rev\"\n",
+        ),
+        (
+            "checkpoint request",
+            "  request -X POST \"$CANDIDATE_URL/admin/checkpoint\" -H 'Content-Type: application/json' -d '{}' -o \"$TEMP_DIR/checkpoint\"\n",
+        ),
+        (
+            "persisted checkpoint",
+            "  jq -e '.persisted == true' \"$TEMP_DIR/checkpoint\" >/dev/null\n",
+        ),
+    ] {
+        assert_durable_rejected(label, replace_exact(&source, target, ""));
+    }
+    for (label, assertion) in [
+        ("CURRENT adoption quoted prose", CURRENT_FIRST_ASSERT),
+        ("candidate revision quoted prose", CURRENT_REV_ASSERT),
+        (
+            "replacement revision quoted prose",
+            CURRENT_REPLACEMENT_ASSERT,
+        ),
+    ] {
+        assert_durable_rejected(
+            label,
+            replace_exact(
+                &source,
+                &format!("  {assertion}\n"),
+                "  : 'CURRENT assertion is prose, not a proof'\n",
+            ),
+        );
+    }
+    for (label, copy) in [
+        (
+            "CURRENT adoption copy",
+            "  docker cp \"$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-first\"\n",
+        ),
+        (
+            "candidate revision copy",
+            "  docker cp \"$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-rev\"\n",
+        ),
+        (
+            "replacement revision copy",
+            "  docker cp \"$REPLACEMENT_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-replacement\"\n",
+        ),
+    ] {
+        assert_durable_rejected(label, replace_exact(&source, copy, ""));
+    }
+
+    for action in [
+        "docker container prune -f\n",
+        "docker volume prune -f\n",
+        "docker system prune -af\n",
+        "docker build -t lumen:bad .\n",
+        "docker rmi lumen:bad\n",
+        "docker rm -f $(docker ps -aq)\n",
+    ] {
+        assert_durable_rejected(
+            action.trim(),
+            insert_after_exact(&source, DURABLE_BEGIN, &format!("  {action}")),
+        );
+    }
+    assert_durable_rejected(
+        "response output",
+        insert_after_exact(
+            &source,
+            "  assert_search \"$CANDIDATE_URL\" first\n",
+            "  cat \"$TEMP_DIR/search-first\"\n",
+        ),
+    );
+    assert_durable_rejected(
+        "CURRENT output",
+        insert_after_exact(
+            &source,
+            "  docker cp \"$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT\" \"$TEMP_DIR/current-first\"\n",
+            "  echo \"$(cat \"$TEMP_DIR/current-first\")\"\n",
+        ),
+    );
+}
+
+fn validate_compose_contract(source: &str) -> Result<(), String> {
+    let document: serde_yaml::Value = serde_yaml::from_str(source).map_err(|e| e.to_string())?;
+    let services = document
+        .get("services")
+        .and_then(serde_yaml::Value::as_mapping)
+        .ok_or("services must be a mapping")?;
+    let expected_services = ["otel-collector", "lumen", "prometheus", "jaeger", "grafana"];
+    if services.len() != expected_services.len()
+        || expected_services
+            .iter()
+            .any(|name| !services.contains_key(serde_yaml::Value::String((*name).into())))
+    {
+        return Err("Compose service inventory changed".into());
+    }
+    for (name, image) in [
+        (
+            "otel-collector",
+            "otel/opentelemetry-collector-contrib:0.119.0",
+        ),
+        ("prometheus", "prom/prometheus:v3.1.0"),
+        ("jaeger", "jaegertracing/all-in-one:1.65.0"),
+        ("grafana", "grafana/grafana:11.5.1"),
+    ] {
+        if services
+            .get(serde_yaml::Value::String(name.into()))
+            .and_then(|service| service.get("image"))
+            .and_then(serde_yaml::Value::as_str)
+            != Some(image)
+        {
+            return Err(format!("{name} image changed"));
+        }
+    }
+    let lumen = document
+        .get("services")
+        .and_then(|v| v.get("lumen"))
+        .ok_or("services.lumen is missing")?;
+    let mounts = lumen
+        .get("volumes")
+        .and_then(serde_yaml::Value::as_sequence)
+        .ok_or("services.lumen.volumes must be a sequence")?;
+    if mounts.len() != 1 || mounts[0].as_str() != Some("lumen-data:/var/lib/lumen/data") {
+        return Err("services.lumen must mount exactly lumen-data:/var/lib/lumen/data".into());
+    }
+    let ports = lumen
+        .get("ports")
+        .and_then(serde_yaml::Value::as_sequence)
+        .ok_or("services.lumen.ports must be a sequence")?;
+    if ports.len() != 1 || ports[0].as_str() != Some("7373:7373") {
+        return Err("services.lumen must expose exactly 7373:7373".into());
+    }
+    let named_volumes = document
+        .get("volumes")
+        .and_then(serde_yaml::Value::as_mapping)
+        .ok_or("top-level volumes must be a mapping")?;
+    if !named_volumes
+        .get(serde_yaml::Value::String("lumen-data".into()))
+        .is_some_and(serde_yaml::Value::is_mapping)
+    {
+        return Err("top-level lumen-data volume is missing".into());
+    }
+    if document
+        .get("networks")
+        .and_then(|v| v.get("default"))
+        .and_then(|v| v.get("name"))
+        .and_then(serde_yaml::Value::as_str)
+        != Some("lumen-otlp")
+    {
+        return Err("default network name changed".into());
+    }
+    let environment = lumen
+        .get("environment")
+        .and_then(serde_yaml::Value::as_mapping)
+        .ok_or("services.lumen.environment must be a mapping")?;
+    if environment.get(serde_yaml::Value::String("LUMEN_AUTH".into()))
+        != Some(&serde_yaml::Value::String("off".into()))
+    {
+        return Err("LUMEN_AUTH must remain off".into());
+    }
+    for forbidden in [
+        "LUMEN_DATA_DIR",
+        "LUMEN_PERSISTENCE",
+        "LUMEN_WAL",
+        "LUMEN_FSYNC",
+    ] {
+        if environment.contains_key(serde_yaml::Value::String(forbidden.into())) {
+            return Err(format!("forbidden persistence override: {forbidden}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_checked_in_compose_satisfies_durability_contract() {
+    let source = std::fs::read_to_string(repo_root().join("apps/lumen/compose.yaml"))
+        .expect("read compose file");
+    validate_compose_contract(&source).expect("compose durability contract must hold");
+}
+
+#[test]
+fn test_negative_compose_durability_mutations() {
+    let source = std::fs::read_to_string(repo_root().join("apps/lumen/compose.yaml"))
+        .expect("read compose file");
+    let mount = "      - lumen-data:/var/lib/lumen/data\n";
+    for replacement in [
+        "      - /var/lib/lumen/data\n",
+        "      - ./lumen-data:/var/lib/lumen/data\n",
+        "      - lumen-data:/data\n",
+        "      - other-data:/var/lib/lumen/data\n",
+    ] {
+        assert!(validate_compose_contract(&replace_exact(&source, mount, replacement)).is_err());
+    }
+    for replacement in [
+        "volumes:\n",
+        "volumes:\n  lumen-data: scalar\n",
+        "volumes:\n  lumen-data: []\n",
+    ] {
+        assert!(validate_compose_contract(&replace_exact(
+            &source,
+            "volumes:\n  lumen-data: {}\n",
+            replacement,
+        ))
+        .is_err());
+    }
+    assert!(validate_compose_contract(&replace_exact(
+        &source,
+        "LUMEN_AUTH: \"off\"",
+        "LUMEN_AUTH: \"on\""
+    ))
+    .is_err());
+    for forbidden in [
+        "LUMEN_DATA_DIR",
+        "LUMEN_PERSISTENCE",
+        "LUMEN_WAL",
+        "LUMEN_FSYNC",
+    ] {
+        let mutated = source.replace(
+            "LUMEN_OTLP_ENDPOINT: http://otel-collector:4317",
+            &format!(
+                "LUMEN_OTLP_ENDPOINT: http://otel-collector:4317\n      {forbidden}: forbidden"
+            ),
+        );
+        assert!(
+            validate_compose_contract(&mutated).is_err(),
+            "{forbidden} must be rejected"
+        );
+    }
+    assert!(validate_compose_contract(&replace_exact(
+        &source,
+        "    ports: [\"7373:7373\"]",
+        "    ports: [\"7374:7373\"]",
+    ))
+    .is_err());
+    assert!(validate_compose_contract(&source.replace(
+        "\nnetworks:\n",
+        "\n  extra:\n    image: example/extra:1\n\nnetworks:\n",
+    ))
+    .is_err());
+    assert!(validate_compose_contract(&replace_exact(
+        &source,
+        "  jaeger:\n    image: jaegertracing/all-in-one:1.65.0\n    environment:\n      COLLECTOR_OTLP_ENABLED: \"true\"\n    ports: [\"16686:16686\"] # Jaeger UI\n",
+        "",
+    ))
+    .is_err());
+    assert!(validate_compose_contract(&replace_exact(
+        &source,
+        "otel/opentelemetry-collector-contrib:0.119.0",
+        "otel/opentelemetry-collector-contrib:changed",
+    ))
+    .is_err());
+    assert!(validate_compose_contract(&replace_exact(
+        &source,
+        "name: lumen-otlp",
+        "name: changed-network",
+    ))
+    .is_err());
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DockerfileValidationError {
     InventoryMismatch(Vec<String>, Vec<String>),
     NoStagesFound(String),
-    MissingFinalStageEnv(String),
-    BuilderStageOnly(String),
-    DuplicateEnv(String, usize),
+    MissingFinalStageInstruction(String, String),
+    BuilderStageOnly(String, String),
+    DuplicateInstruction(String, String, usize),
     MissingEntrypoint(String),
-    PlacedAfterEntrypoint(String),
+    PlacedAfterEntrypoint(String, String),
     ForbiddenHostFlagInEntrypoint(String),
     ForbiddenHostFlagInCmd(String),
-    InvalidEnvValue(String, String),
+    InvalidInstruction(String, String, String),
+    ForbiddenFsyncKnob(String),
 }
 
 pub fn validate_inventory(discovered: &[String]) -> Result<(), DockerfileValidationError> {
@@ -100,37 +1051,7 @@ pub fn validate_dockerfile_content(
         return Err(DockerfileValidationError::NoStagesFound(error_path));
     }
 
-    let mut envs = Vec::new();
-    for (s_idx, s_lines) in stages.iter().enumerate() {
-        for (num, l) in s_lines {
-            if l.trim().starts_with("ENV LUMEN_HOST") {
-                envs.push((s_idx, *num, l.trim()));
-            }
-        }
-    }
-
     let last_s = stages.len() - 1;
-    if envs.is_empty() {
-        return Err(DockerfileValidationError::MissingFinalStageEnv(error_path));
-    }
-    if envs.len() > 1 {
-        return Err(DockerfileValidationError::DuplicateEnv(
-            error_path,
-            envs.len(),
-        ));
-    }
-
-    let (s_idx, env_num, env_str) = envs[0];
-    if s_idx != last_s {
-        return Err(DockerfileValidationError::BuilderStageOnly(error_path));
-    }
-    if env_str != "ENV LUMEN_HOST=0.0.0.0" {
-        return Err(DockerfileValidationError::InvalidEnvValue(
-            error_path,
-            env_str.to_string(),
-        ));
-    }
-
     let entrypoints: Vec<(usize, &str)> = stages[last_s]
         .iter()
         .filter(|(_, l)| l.trim().starts_with("ENTRYPOINT"))
@@ -144,14 +1065,79 @@ pub fn validate_dockerfile_content(
     for (_, ep_line) in &entrypoints {
         if ep_line.contains("--host") {
             return Err(DockerfileValidationError::ForbiddenHostFlagInEntrypoint(
-                error_path,
+                error_path.clone(),
             ));
         }
     }
 
     let (last_ep_num, _) = entrypoints.last().unwrap();
-    if *last_ep_num <= env_num {
-        return Err(DockerfileValidationError::PlacedAfterEntrypoint(error_path));
+    if stages.iter().flatten().any(|(_, line)| {
+        line.trim()
+            .strip_prefix("ENV ")
+            .is_some_and(|value| value.starts_with("LUMEN_FSYNC"))
+    }) {
+        return Err(DockerfileValidationError::ForbiddenFsyncKnob(
+            error_path.clone(),
+        ));
+    }
+
+    const REQUIRED: [(&str, &str); 5] = [
+        ("ENV LUMEN_HOST", "ENV LUMEN_HOST=0.0.0.0"),
+        (
+            "ENV LUMEN_DATA_DIR",
+            "ENV LUMEN_DATA_DIR=/var/lib/lumen/data",
+        ),
+        ("ENV LUMEN_PERSISTENCE", "ENV LUMEN_PERSISTENCE=segment"),
+        ("ENV LUMEN_WAL", "ENV LUMEN_WAL=embedded"),
+        ("VOLUME", "VOLUME [\"/var/lib/lumen/data\"]"),
+    ];
+    for (prefix, expected) in REQUIRED {
+        let matches: Vec<_> = stages
+            .iter()
+            .enumerate()
+            .flat_map(|(stage, lines)| {
+                lines.iter().filter_map(move |(line_number, line)| {
+                    let line = line.trim();
+                    (line == prefix
+                        || line.starts_with(&format!("{prefix} "))
+                        || line.starts_with(&format!("{prefix}=")))
+                    .then_some((stage, *line_number, line))
+                })
+            })
+            .collect();
+        if matches.is_empty() {
+            return Err(DockerfileValidationError::MissingFinalStageInstruction(
+                error_path.clone(),
+                expected.into(),
+            ));
+        }
+        if matches.len() > 1 {
+            return Err(DockerfileValidationError::DuplicateInstruction(
+                error_path.clone(),
+                expected.into(),
+                matches.len(),
+            ));
+        }
+        let (stage, line_number, actual) = matches[0];
+        if stage != last_s {
+            return Err(DockerfileValidationError::BuilderStageOnly(
+                error_path.clone(),
+                expected.into(),
+            ));
+        }
+        if actual != expected {
+            return Err(DockerfileValidationError::InvalidInstruction(
+                error_path.clone(),
+                prefix.into(),
+                actual.into(),
+            ));
+        }
+        if line_number >= *last_ep_num {
+            return Err(DockerfileValidationError::PlacedAfterEntrypoint(
+                error_path.clone(),
+                expected.into(),
+            ));
+        }
     }
 
     if stages[last_s]
@@ -225,28 +1211,8 @@ fn test_negative_fixtures_per_file() {
         };
 
         check(
-            replace_exact(content, "ENV LUMEN_HOST=0.0.0.0\n", ""),
-            DockerfileValidationError::MissingFinalStageEnv(p.clone()),
-        );
-        check(
-            replace_exact(
-                content,
-                "ENV LUMEN_HOST=0.0.0.0\n",
-                "ENV LUMEN_HOST=0.0.0.0\nENV LUMEN_HOST=0.0.0.0\n",
-            ),
-            DockerfileValidationError::DuplicateEnv(p.clone(), 2),
-        );
-        check(
             replace_exact(content, "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n", ""),
             DockerfileValidationError::MissingEntrypoint(p.clone()),
-        );
-        check(
-            replace_exact(
-                content,
-                "ENV LUMEN_HOST=0.0.0.0\nENTRYPOINT [\"/usr/local/bin/lumen\"]",
-                "ENTRYPOINT [\"/usr/local/bin/lumen\"]\nENV LUMEN_HOST=0.0.0.0",
-            ),
-            DockerfileValidationError::PlacedAfterEntrypoint(p.clone()),
         );
         check(
             replace_exact(
@@ -267,35 +1233,71 @@ fn test_negative_fixtures_per_file() {
         check(
             replace_exact(
                 content,
+                "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+                "ENV LUMEN_FSYNC=always\nENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+            ),
+            DockerfileValidationError::ForbiddenFsyncKnob(p.clone()),
+        );
+
+        let required = [
+            (
+                "ENV LUMEN_HOST",
                 "ENV LUMEN_HOST=0.0.0.0",
                 "ENV LUMEN_HOST=127.0.0.1",
             ),
-            DockerfileValidationError::InvalidEnvValue(
-                p.clone(),
-                "ENV LUMEN_HOST=127.0.0.1".to_string(),
+            (
+                "ENV LUMEN_DATA_DIR",
+                "ENV LUMEN_DATA_DIR=/var/lib/lumen/data",
+                "ENV LUMEN_DATA_DIR=/data",
             ),
-        );
-
-        let without_final = replace_exact(content, "ENV LUMEN_HOST=0.0.0.0\n", "");
-        let builder_only = if without_final.contains("AS builder") {
-            replace_exact(
-                &without_final,
-                "AS builder\n",
-                "AS builder\nENV LUMEN_HOST=0.0.0.0\n",
-            )
-        } else if without_final.contains("AS fetch") {
-            replace_exact(
-                &without_final,
-                "AS fetch\n",
-                "AS fetch\nENV LUMEN_HOST=0.0.0.0\n",
-            )
-        } else {
-            format!("FROM rust:1.92-slim AS builder\nENV LUMEN_HOST=0.0.0.0\n\n{without_final}")
-        };
-        assert_eq!(
-            validate_dockerfile_content(path, &builder_only),
-            Err(DockerfileValidationError::BuilderStageOnly(p))
-        );
+            (
+                "ENV LUMEN_PERSISTENCE",
+                "ENV LUMEN_PERSISTENCE=segment",
+                "ENV LUMEN_PERSISTENCE=cbor",
+            ),
+            (
+                "ENV LUMEN_WAL",
+                "ENV LUMEN_WAL=embedded",
+                "ENV LUMEN_WAL=auto",
+            ),
+            (
+                "VOLUME",
+                "VOLUME [\"/var/lib/lumen/data\"]",
+                "VOLUME [\"/data\"]",
+            ),
+        ];
+        for (prefix, exact, wrong) in required {
+            let exact_line = format!("{exact}\n");
+            let missing = replace_exact(content, &exact_line, "");
+            check(
+                missing.clone(),
+                DockerfileValidationError::MissingFinalStageInstruction(p.clone(), exact.into()),
+            );
+            check(
+                replace_exact(content, &exact_line, &format!("{exact}\n{exact}\n")),
+                DockerfileValidationError::DuplicateInstruction(p.clone(), exact.into(), 2),
+            );
+            check(
+                replace_exact(content, exact, wrong),
+                DockerfileValidationError::InvalidInstruction(
+                    p.clone(),
+                    prefix.into(),
+                    wrong.into(),
+                ),
+            );
+            check(
+                replace_exact(
+                    &missing,
+                    "ENTRYPOINT [\"/usr/local/bin/lumen\"]\n",
+                    &format!("ENTRYPOINT [\"/usr/local/bin/lumen\"]\n{exact}\n"),
+                ),
+                DockerfileValidationError::PlacedAfterEntrypoint(p.clone(), exact.into()),
+            );
+            check(
+                insert_after_first_from(&missing, exact),
+                DockerfileValidationError::BuilderStageOnly(p.clone(), exact.into()),
+            );
+        }
     });
 }
 

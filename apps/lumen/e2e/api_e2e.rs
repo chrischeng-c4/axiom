@@ -116,6 +116,24 @@ async fn readyz_reports_draining() {
 }
 
 #[tokio::test]
+async fn readyz_reports_restart_required_as_not_ready() {
+    let engine = Arc::new(lumen::storage::Engine::new());
+    let coord = WriteCoordinator::start(Arc::new(MemWal::new()), engine.clone());
+    let state = lumen::api::AppState::with_components(
+        engine,
+        Arc::new(lumen::auth::AuthConfig::open()),
+        coord.clone(),
+    );
+    coord.require_restart();
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    s.get("/healthz").await.assert_status_ok();
+    let ready = s.get("/readyz").await;
+    ready.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(ready.text(), "draining");
+}
+
+#[tokio::test]
 async fn version_reports_build_provenance() {
     let s = server();
     let resp = s.get("/version").await;

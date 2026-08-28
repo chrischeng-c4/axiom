@@ -10,9 +10,10 @@ and passes a principal to service code. Its Kubernetes support reads projected
 ServiceAccount tokens, requests short-lived tokens, delegates identity checks
 to TokenReview, and delegates permission checks to SubjectAccessReview.
 
-The library does not decide what a service resource means. An app supplies its
-audience, protected operations, Kubernetes resource mapping, and access policy.
-Kubernetes remains the identity and authorization authority.
+The library does not decide what a service resource means. An app selects an
+explicit service audience or the explicitly named Kubernetes-default profile.
+It also supplies protected operations, Kubernetes resource mapping, and access
+policy. Kubernetes remains the identity and authorization authority.
 
 ## Primary workflow
 
@@ -25,8 +26,13 @@ Kubernetes remains the identity and authorization authority.
 ## Authenticate a Kubernetes caller
 
 `DelegatedAuthenticator` accepts only a Kubernetes ServiceAccount principal.
-It asks TokenReview to validate the bearer token for an explicit audience. It
-then asks SubjectAccessReview about app-supplied resource attributes.
+`DelegatedAuthConfig::new` asks TokenReview to validate the bearer token for at
+least one explicit audience. It rejects an empty audience list.
+`DelegatedAuthConfig::kubernetes_default` is the separate opt-in for a service
+that intentionally accepts the default ServiceAccount token mounted in a Pod.
+That profile omits `spec.audiences`, so the API server validates against its
+configured audiences. Both profiles then ask SubjectAccessReview about
+app-supplied resource attributes.
 
 The app owns the API group, namespace, resource, resource name, and verb. The
 library owns the review calls, response validation, principal parsing, caches,
@@ -109,15 +115,16 @@ contribution.
 ### Kubernetes delegated authorization
 
 - ID: `kubernetes-delegated-authorization`
-- Promise: Accept only a reviewed ServiceAccount identity and require an
-  explicit SubjectAccessReview allowance for app-supplied resource attributes.
+- Promise: Accept only a reviewed ServiceAccount identity under an explicit
+  service-audience or Kubernetes-default profile, and require an explicit
+  SubjectAccessReview allowance for app-supplied resource attributes.
 - Sources:
   - [`libs/service-auth`](./) provides TokenReview and SubjectAccessReview
     clients, strict ServiceAccount principal parsing, caches, metrics, and
     fail-closed response validation.
   - `external:kubernetes` validates the token, resolves the ServiceAccount
     identity, evaluates RBAC, and returns the review decisions.
-- Gate: `cargo test -p service-auth`
+- Gate: `cargo test -p service-auth --features k8s`
 
 ### Projected workload token reading
 

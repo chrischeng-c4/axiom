@@ -3,8 +3,8 @@
 //!
 //! Drives the real axum router via `axum-test::TestServer`. Mirrors
 //! the README §1b contract for `FieldType::Vector` + the `knn`
-//! query node, and verifies that backup + restore preserves the
-//! kNN top-K.
+//! query node. FlatCpu has an exact top-K order contract; default HNSW only
+//! promises persistence of live vector IDs, not topology, order, or scores.
 //!
 //! ## Contracts inherited from the retired EC shells
 //!
@@ -18,8 +18,8 @@
 //!
 //! - `lumen-claim-vector-filtered-knn` — Filtered kNN returns the nearest vector within
 //!   the filter without recall collapse.
-//! - `lumen-claim-vector-hnsw` — CPU vector kNN returns ordered nearest-neighbor
-//!   results and preserves restore behavior.
+//! - `lumen-claim-vector-hnsw` — CPU vector kNN orders each response. Explicit `flat-cpu`
+//!   preserves exact top-K order across backup/restore; default HNSW preserves live IDs only.
 
 use std::sync::Arc;
 
@@ -197,41 +197,41 @@ async fn filtered_knn_returns_nearest_within_filter_no_recall_collapse() {
 }
 
 #[tokio::test]
-async fn knn_backup_then_restore_preserves_topk_order() {
+async fn flat_cpu_backup_then_restore_preserves_exact_topk_order() {
     let src = server();
     src.put("/collections/items")
         .json(&json!({
             "fields": {
                 "embedding": {
                     "type": "vector",
-                    "dim": 32,
-                    "metric": "l2"
+                    "dim": 2,
+                    "metric": "l2",
+                    "backend": "flat-cpu"
                 }
             }
         }))
         .await
         .assert_status_ok();
 
-    let mut rng = Lcg::new(0xFACE_BEEF);
-    let mut items = Vec::with_capacity(60);
-    for i in 0..60 {
-        let v = rng.vec(32);
-        items.push(json!({
-            "external_id": format!("v{i}"),
-            "field": "embedding",
-            "value": vec_json(&v),
-        }));
-    }
+    let items: Vec<Value> = (0..60usize)
+        .map(|i| {
+            json!({
+                "external_id": format!("v{i:02}"),
+                "field": "embedding",
+                "value": vec_json(&[i as f32, 0.0]),
+            })
+        })
+        .collect();
     src.post("/collections/items/index")
         .json(&json!({ "items": items }))
         .await
         .assert_status_ok();
 
-    let query = rng.vec(32);
+    let query = vec_json(&[0.25, 0.0]);
     let r0 = src
         .post("/collections/items/search")
         .json(&json!({
-            "query": { "knn": { "field": "embedding", "vector": vec_json(&query), "k": 5 } },
+            "query": { "knn": { "field": "embedding", "vector": query, "k": 5 } },
             "limit": 5
         }))
         .await;
@@ -243,11 +243,17 @@ async fn knn_backup_then_restore_preserves_topk_order() {
         .iter()
         .map(|h| h["external_id"].as_str().unwrap().to_string())
         .collect();
+    assert_eq!(ids_before, ["v00", "v01", "v02", "v03", "v04"]);
+    assert_eq!(body0["hits"].as_array().unwrap().len(), 5);
 
     // Snapshot the source and restore into a fresh engine.
     let dump = src.get("/admin/backup").await;
     dump.assert_status_ok();
     let snap: Value = dump.json();
+    assert_eq!(
+        snap["collections"]["items"]["fields"]["embedding"]["spec"]["backend"],
+        "flat-cpu"
+    );
 
     let dst = server();
     dst.post("/admin/restore")
@@ -258,7 +264,7 @@ async fn knn_backup_then_restore_preserves_topk_order() {
     let r1 = dst
         .post("/collections/items/search")
         .json(&json!({
-            "query": { "knn": { "field": "embedding", "vector": vec_json(&query), "k": 5 } },
+            "query": { "knn": { "field": "embedding", "vector": [0.25, 0.0], "k": 5 } },
             "limit": 5
         }))
         .await;
@@ -271,10 +277,78 @@ async fn knn_backup_then_restore_preserves_topk_order() {
         .map(|h| h["external_id"].as_str().unwrap().to_string())
         .collect();
 
+    assert_eq!(body1["hits"].as_array().unwrap().len(), 5);
+    assert_eq!(ids_after, ids_before);
+}
+
+#[tokio::test]
+async fn default_hnsw_backup_then_restore_preserves_all_live_ids_without_order_claim() {
+    let src = server();
+    src.put("/collections/items")
+        .json(&json!({
+            "fields": {
+                "embedding": { "type": "vector", "dim": 2, "metric": "l2" }
+            }
+        }))
+        .await
+        .assert_status_ok();
+
+    let items: Vec<Value> = (0..60usize)
+        .map(|i| {
+            json!({
+                "external_id": format!("v{i:02}"),
+                "field": "embedding",
+                "value": vec_json(&[i as f32, 0.0]),
+            })
+        })
+        .collect();
+    src.post("/collections/items/index")
+        .json(&json!({ "items": items }))
+        .await
+        .assert_status_ok();
+
+    let query = json!({
+        "query": { "knn": { "field": "embedding", "vector": [0.25, 0.0], "k": 60 } },
+        "limit": 60
+    });
+    let r0 = src.post("/collections/items/search").json(&query).await;
+    r0.assert_status_ok();
+    let body0: Value = r0.json();
+    let ids_before: std::collections::BTreeSet<String> = body0["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(body0["hits"].as_array().unwrap().len(), 60);
+    let expected: std::collections::BTreeSet<String> =
+        (0..60).map(|i| format!("v{i:02}")).collect();
+    assert_eq!(ids_before, expected);
+
+    let dump = src.get("/admin/backup").await;
+    dump.assert_status_ok();
+    let snap: Value = dump.json();
     assert_eq!(
-        ids_before, ids_after,
-        "top-K ids changed after restore: {ids_before:?} -> {ids_after:?}"
+        snap["collections"]["items"]["fields"]["embedding"]["spec"]["backend"],
+        "hnsw-cpu"
     );
+
+    let dst = server();
+    dst.post("/admin/restore")
+        .json(&snap)
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+    let r1 = dst.post("/collections/items/search").json(&query).await;
+    r1.assert_status_ok();
+    let body1: Value = r1.json();
+    let ids_after: std::collections::BTreeSet<String> = body1["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(body1["hits"].as_array().unwrap().len(), 60);
+    assert_eq!(ids_after, expected);
 }
 
 #[tokio::test]

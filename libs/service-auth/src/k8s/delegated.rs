@@ -155,8 +155,9 @@ pub struct MissingAudience;
 impl std::fmt::Display for MissingAudience {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(
-            "delegated auth requires at least one audience; \
-             a TokenReview with no requested audience accepts the apiserver's own token",
+            "DelegatedAuthConfig::new requires at least one audience; use the explicitly named \
+             kubernetes_default constructor only when default Kubernetes ServiceAccount tokens \
+             are the intended caller credential",
         )
     }
 }
@@ -167,6 +168,9 @@ impl std::error::Error for MissingAudience {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelegatedAuthConfig {
     audiences: Vec<String>,
+    /// An explicit opt-in to TokenReview's Kubernetes-default audience mode.
+    /// This can never be reached through [`Self::new`].
+    kubernetes_default: bool,
     /// Cache TTLs and the stale window. See [`CachePolicy`].
     pub cache: CachePolicy,
 }
@@ -186,12 +190,34 @@ impl DelegatedAuthConfig {
         }
         Ok(Self {
             audiences,
+            kubernetes_default: false,
             cache: CachePolicy::default(),
         })
     }
 
+    /// Accept the default ServiceAccount token mounted by Kubernetes.
+    ///
+    /// This deliberately asks TokenReview to use the apiserver's configured
+    /// audiences. It is for in-cluster services whose public contract says a
+    /// caller's default KSA identity is the credential. Services that mint a
+    /// private audience must continue to use [`Self::new`].
+    pub fn kubernetes_default() -> Self {
+        Self {
+            audiences: Vec::new(),
+            kubernetes_default: true,
+            cache: CachePolicy::default(),
+        }
+    }
+
+    /// The audiences to put in TokenReview. Empty is meaningful only when
+    /// [`Self::uses_kubernetes_default`] is true; the kube backend then omits
+    /// `spec.audiences` rather than sending an empty array.
     pub fn audiences(&self) -> &[String] {
         &self.audiences
+    }
+
+    pub fn uses_kubernetes_default(&self) -> bool {
+        self.kubernetes_default
     }
 
     pub fn with_cache_policy(mut self, cache: CachePolicy) -> Self {
@@ -518,11 +544,12 @@ impl DelegatedAuthenticator {
                 PrincipalRejection::NotAuthenticated,
             ));
         }
-        let intersects = outcome
-            .audiences
-            .iter()
-            .any(|granted| self.config.audiences.iter().any(|want| want == granted));
-        if !intersects {
+        let audience_accepted = self.config.kubernetes_default
+            || outcome
+                .audiences
+                .iter()
+                .any(|granted| self.config.audiences.iter().any(|want| want == granted));
+        if !audience_accepted {
             return Err(AuthRejection::AudienceMismatch);
         }
         ServiceAccountPrincipal::from_review(true, outcome.identity)
@@ -709,6 +736,56 @@ mod tests {
             vec![AUDIENCE.to_string()],
             "the audience must be requested explicitly, never left to the apiserver default"
         );
+    }
+
+    /// The unsafe-looking empty audience request is reachable only through
+    /// the constructor that names why it exists. TokenReview, not this
+    /// library, then validates the token against the apiserver's audiences.
+    #[tokio::test]
+    async fn the_explicit_kubernetes_default_profile_accepts_a_default_ksa_token() {
+        let backend = Arc::new(
+            ScriptedBackend::default()
+                .with_token(Ok(reviewed("system:serviceaccount:tenant-a:reader", &[]))),
+        );
+        let config = DelegatedAuthConfig::kubernetes_default();
+        assert!(config.uses_kubernetes_default());
+        let auth = DelegatedAuthenticator::with_clock(
+            backend.clone(),
+            config,
+            Arc::new(ManualClock::new(0)),
+        );
+
+        let principal = auth.authenticate("default-ksa-token").await.unwrap();
+        assert_eq!(principal.namespace(), "tenant-a");
+        assert_eq!(principal.name(), "reader");
+        assert_eq!(
+            backend.token_calls.lock().unwrap()[0],
+            Vec::<String>::new(),
+            "the explicit Kubernetes-default profile must omit requested audiences"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_kubernetes_default_profile_still_rejects_bad_identity_shapes() {
+        for (username, authenticated, reason) in [
+            ("alice@example.com", true, "not_a_service_account"),
+            (
+                "system:serviceaccount:tenant-a:reader",
+                false,
+                "not_authenticated",
+            ),
+        ] {
+            let mut outcome = reviewed(username, &[]);
+            outcome.authenticated = authenticated;
+            let backend = Arc::new(ScriptedBackend::default().with_token(Ok(outcome)));
+            let auth = DelegatedAuthenticator::with_clock(
+                backend,
+                DelegatedAuthConfig::kubernetes_default(),
+                Arc::new(ManualClock::new(0)),
+            );
+            let error = auth.authenticate("default-ksa-token").await.unwrap_err();
+            assert_eq!(error.reason(), reason);
+        }
     }
 
     /// AC1: a token the apiserver considers valid, but not for us.
@@ -1049,6 +1126,10 @@ mod tests {
             Err(MissingAudience)
         );
         assert!(DelegatedAuthConfig::new(vec![AUDIENCE.into()]).is_ok());
+        assert!(DelegatedAuthConfig::kubernetes_default().uses_kubernetes_default());
+        assert!(DelegatedAuthConfig::kubernetes_default()
+            .audiences()
+            .is_empty());
     }
 
     #[tokio::test]

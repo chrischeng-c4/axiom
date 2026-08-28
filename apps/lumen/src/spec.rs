@@ -159,10 +159,10 @@ Use the smallest topic that answers the task:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
 - `lumen llm --topic quickstart` — copy-paste local create → index → search flow.
-- `lumen llm --topic auth` — request-authentication contract: private ClusterIP
-  TLS and a short-lived Kubernetes ServiceAccount token as two independent
-  checks, `required` vs `disabled`, and the TokenReview/SubjectAccessReview
-  model that replaced the retired bearer/Google registry.
+- `lumen llm --topic auth` — request-authentication contract: local auth-off,
+  Standalone in-cluster default ServiceAccount tokens, Managed private-audience
+  tokens, and the TokenReview/SubjectAccessReview model that replaced the
+  retired bearer/Google registry.
 - `lumen llm --topic deployment` — Kubernetes-native deployment topology:
   StatefulSet, shardCount, replicasPerShard, HPA boundary, reshard workflow,
   and empty-PVC bootstrap.
@@ -381,36 +381,49 @@ pub fn llm_auth_md() -> String {
         r#"# lumen auth
 
 ## Runtime contract
-Two independent checks stand between a caller and a collection, and neither
-substitutes for the other:
+Kubernetes deployments use a private ClusterIP and a short-lived Kubernetes
+ServiceAccount token in `Authorization: Bearer`. The cluster answers both the
+identity and authorization questions.
 
-- **Transport.** In production the serving port is private TLS on a ClusterIP
-  Service, signed by a private CA. A caller verifies the server; the server does
-  not verify the caller's certificate.
-- **Request identity.** A short-lived, audience-bound Kubernetes ServiceAccount
-  token in `Authorization: Bearer`, answered by the cluster.
+Managed keeps two independent checks. Its serving port uses private TLS, and
+its request token has the private `lumen.axiom.dev` audience. Standalone
+in-cluster is the simple one-Pod profile. It uses cleartext only inside the
+cluster network and accepts the mounted token for the calling Pod's configured
+KSA. The server checks that KSA against `allowedServiceAccounts`.
 
 Server modes:
 
 ```env
-LUMEN_AUTH=required        # production: every request is TokenReview'd
-LUMEN_AUTH=disabled        # local and kind only: every request resolves to open
+LUMEN_AUTH=required        # Managed private-audience token
+LUMEN_AUTH=in-cluster      # Standalone mounted configured-KSA token
+LUMEN_AUTH=off             # Compose and local development
 ```
 
-`LUMEN_AUTH=required` proves both delegation grants at startup — that it can
-reach kube-apiserver, and that its own ServiceAccount may create `TokenReview`
-and `SubjectAccessReview` in this namespace. If either fails the process **does
-not start**, naming the missing `system:auth-delegator` binding. Discovering it
-on the first request would mean serving 503s while looking healthy.
+`required` and `in-cluster` prove both delegation grants at startup. The
+process must reach kube-apiserver. Its ServiceAccount must be allowed to create
+`TokenReview` and `SubjectAccessReview`. If either check fails, the process
+does not start. The error names the missing `system:auth-delegator` binding.
 
-There is no third mode and no degradation: a `required` process that loses its
-verifier rejects requests rather than falling back to open.
+There is no degradation. An authenticated process that loses its verifier
+rejects requests. It never falls back to open. `disabled` remains an alias for
+`off`.
 
 Probe/spec/scrape routes stay auth-exempt regardless: `/healthz`, `/readyz`,
 `/metrics`, `/openapi.json`, and `/docs`.
 
-## Transport: private ClusterIP TLS, terminated by lumen
-Production traffic is **not** published. There is no Ingress, no Gateway, no
+## Standalone in-cluster transport
+Standalone GKE uses one cleartext ClusterIP Service:
+
+```env
+LUMEN_URL=http://lumen.lumen.svc.cluster.local:7373
+```
+
+The renderer also creates a NetworkPolicy. It does not create an Ingress,
+Gateway, LoadBalancer, or NodePort. Compose stays on
+`http://127.0.0.1:7373` with `LUMEN_AUTH=off`.
+
+## Managed transport: private ClusterIP TLS, terminated by lumen
+Managed traffic is **not** published. There is no Ingress, no Gateway, no
 LoadBalancer, no NodePort, and no service mesh terminating TLS on lumen's
 behalf. The listener holds the private key itself, so the connection a caller
 authenticates is the connection lumen serves — an edge that terminates TLS and
@@ -451,12 +464,14 @@ The CRD configures **no** credential source. `spec.tokensSecret`,
 that sets any of them is rejected by the API server's strict decoding rather
 than applied and quietly ignored.
 
-Every request under `auth: required` carries a short-lived, audience-bound
-ServiceAccount token obtained from the TokenRequest API, and lumen answers two
-questions with the cluster rather than with a file it was handed:
+Every request under `auth: required` or `auth: in-cluster` carries a short-lived
+ServiceAccount token. Lumen answers two questions with the cluster rather than
+with a file it was handed:
 
-- **Who is this?** `TokenReview`, with the audience `lumen.axiom.dev` checked.
-  The principal it returns must be exactly
+- **Who is this?** Managed `required` sends `lumen.axiom.dev` as the requested
+  TokenReview audience. Standalone `in-cluster` omits the requested audience,
+  so kube-apiserver checks its configured default audiences. The principal
+  must be exactly
   `system:serviceaccount:<namespace>:<name>`; nothing else is accepted as an
   identity.
 - **May they do this?** `SubjectAccessReview` against the virtual resources
@@ -519,9 +534,17 @@ server that cannot be verified is a wrong anchor or a wrong name, and both are
 fixable.
 
 ## Generated clients
-`lumen spec gen --lang rust|py|ts` emits a client that takes the same two
-values — the CA bundle and the name it expects the server to assert — and
-verifies against that anchor *instead of* the public roots:
+`lumen spec gen --lang rust|py|ts` opts the generated source into the mounted
+token for the calling Pod's configured KSA, at
+`/var/run/secrets/kubernetes.io/serviceaccount/token`. The client rereads it
+before each request to an exact non-empty `*.svc.cluster.local` HTTP or HTTPS
+host. An explicit Authorization header wins and prevents a file read. Local,
+Docker, IP, and external URLs do not read or send the token. An eligible
+browser request fails before transport.
+
+Managed callers keep the private-audience contract. They supply the
+audience-bound Authorization value explicitly and configure the CA bundle and
+the name that the server must assert. Private trust replaces the public roots:
 
 ```rust
 Client::with_private_ca(
@@ -548,9 +571,10 @@ client that verified one name while addressing another would be checking a
 certificate it never actually relies on. No generated client offers a way to
 skip verification.
 
-The KSA token travels as it always did — `auth_token="<token>"` or
+For Managed, pass `auth_token="<token>"` or
 `default_headers={"Authorization": "Bearer <token>"}` on `Client` and
-`AsyncClient`.
+`AsyncClient`. This explicit value takes precedence over the Standalone default
+token provider.
 "#,
     );
     out.push_str("\n## Shared auth primitive\n");
@@ -1024,6 +1048,18 @@ set) is unaffected and keeps today's behavior: `--wal auto` still resolves to
 any restart loses all data. This is intentional dev-mode behavior, not a bug:
 set `--data-dir`/`LUMEN_DATA_DIR` (and optionally `--persistence=segment`)
 explicitly to get the same durability the operator now wires by default.
+
+The shipped image supplies `LUMEN_DATA_DIR=/var/lib/lumen/data`,
+`LUMEN_PERSISTENCE=segment`, `LUMEN_WAL=embedded`, and
+`VOLUME ["/var/lib/lumen/data"]`. A named volume or a caller-managed bind mount
+at that exact path lets container data survive replacement.
+
+Standalone GKE uses the shared `StatefulInstancePlan` boundary to render one
+StatefulSet plus a separately owned PVC instance. Its public config has no image
+field; the renderer fixes the published version. The Standalone GKE live
+acceptance is manual, controller-run, and paid. It is separate from
+Managed/operator GCP acceptance, and candidate CI makes no GKE or `gcloud`
+claim.
 
 ## `replicasPerShard > 1` — raft-HA
 - Fixed replica count `shardCount * replicasPerShard` (raft needs a known,

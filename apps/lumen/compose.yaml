@@ -27,10 +27,11 @@ services:
     depends_on: [otel-collector]
     environment:
       LUMEN_HOST: "0.0.0.0"
-      LUMEN_WAL: embedded
       LUMEN_OTLP_ENDPOINT: http://otel-collector:4317
       LUMEN_AUTH: "off"
       LUMEN_LOG_FORMAT: json
+    volumes:
+      - lumen-data:/var/lib/lumen/data
     ports: ["7373:7373"]
 
   prometheus:
@@ -60,3 +61,6 @@ services:
 networks:
   default:
     name: lumen-otlp
+
+volumes:
+  lumen-data: {}

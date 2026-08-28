@@ -67,17 +67,30 @@ Generated clients provide bounded transport settings and private-CA trust. The
 private trust replaces public roots. It does not add a private CA to the public
 root set. There is no skip-verification option.
 
-Current credential inputs are static:
+Legacy generation keeps credential access disabled and byte-compatible. An
+explicit generation-time request-auth extension can add a generic file-bearer
+provider. The provider is parameterized by its file, URL suffix, and schemes;
+the shared library does not know Kubernetes or Lumen policy.
+
+With the extension enabled, the generated client rereads the file once before
+each eligible request. The caller selects the allowed HTTP schemes and one
+exact DNS suffix at generation time. Lumen selects HTTP and HTTPS with
+`.svc.cluster.local`. An explicit Authorization header wins without reading
+the file. Missing, unreadable, empty, or whitespace-only files fail before
+transport. Localhost, IP, Docker, external, lookalike, userinfo, path-spoofed,
+and trailing-dot hosts do not read or send a token. TypeScript rejects an
+eligible browser request before transport.
+
+Current credential inputs are:
 
 | Language | Current request credential surface |
 |---|---|
-| TypeScript | `ClientConfig.headers` can hold a fixed Authorization header. |
-| Python | `auth_token` or `default_headers` is copied when the client is created. |
-| Rust | No generated default Authorization-header input exists. |
+| TypeScript | `ClientConfig.headers` can hold a fixed Authorization header. The generator can also add the file-bearer provider. |
+| Python | `auth_token` or `default_headers` is copied when the client is created. The generator can also add the file-bearer provider. |
+| Rust | The generator can add the file-bearer provider. |
 
-No generated client calls a provider before each request. No generated client
-discovers or rotates a Kubernetes ServiceAccount token. See
-[current support](STATUS.md) and the
+The extension is opt-in. Calls through the legacy APIs do not read a
+credential. See [current support](STATUS.md) and the
 [dynamic provider outcome](ROADMAP.md#dynamic-request-auth-provider).
 
 No generated client applies an operation-aware retry policy. The planned
@@ -131,6 +144,7 @@ contribution.
 | QUERY and POST-twin dispatch | `query-post-twin-dispatch` | Call OpenAPI `query` operations directly or through their documented POST twin. | `libs/openapi-codegen` |
 | Transport and private trust | `transport-private-trust` | Generate bounded transports that can replace public trust with one private CA. | `libs/openapi-codegen` |
 | Static request credentials | `static-request-credentials` | Supply fixed request headers in TypeScript and fixed token or header values in Python. | `libs/openapi-codegen` |
+| Dynamic per-request auth provider | `dynamic-per-request-auth-provider` | Optionally read a current file bearer value immediately before an eligible request. | `libs/openapi-codegen` |
 
 ### Multi-language client generation
 
@@ -181,6 +195,16 @@ contribution.
   - [`libs/openapi-codegen`](./) provides TypeScript default headers and Python
     construction-time token and header inputs.
 - Gate: `cargo test -p openapi-codegen`
+
+### Dynamic per-request auth provider
+
+- ID: `dynamic-per-request-auth-provider`
+- Promise: Optionally read a current file bearer value immediately before an
+  eligible request.
+- Sources:
+  - [`libs/openapi-codegen`](./) provides the generic extension. Applications
+    choose the file, URL suffix, and schemes.
+- Gate: `cargo test -p openapi-codegen --locked`
 
 ## Supporting documents
 

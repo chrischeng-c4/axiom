@@ -11,6 +11,22 @@ on:
         description: Exact successful lumen-release-candidate run ID.
         required: true
         type: string
+      standalone_gke_receipt_b64:
+        description: Base64 of the sanitized lumen-standalone-gke-receipt.json bytes.
+        required: true
+        type: string
+      standalone_gke_receipt_sha256:
+        description: Lowercase SHA-256 of the sanitized lumen-standalone-gke-receipt.json bytes.
+        required: true
+        type: string
+      standalone_gke_receipt_sidecar_b64:
+        description: Base64 of the exact lumen-standalone-gke-receipt.json.sha256 sidecar bytes.
+        required: true
+        type: string
+      standalone_gke_receipt_sidecar_sha256:
+        description: Lowercase SHA-256 of the exact lumen-standalone-gke-receipt.json.sha256 sidecar bytes.
+        required: true
+        type: string
 
 concurrency:
   group: lumen-release-promotion-${{ inputs.version }}
@@ -33,6 +49,7 @@ jobs:
       candidate_attempt: ${{ steps.contract.outputs.candidate_attempt }}
       candidate_url: ${{ steps.contract.outputs.candidate_url }}
       pr_url: ${{ steps.contract.outputs.pr_url }}
+      standalone_gke_receipt_sha256: ${{ steps.contract.outputs.standalone_gke_receipt_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,6 +72,31 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Decode and bind sanitized standalone GKE receipt
+        id: gke_receipt
+        env:
+          STANDALONE_GKE_RECEIPT_B64: ${{ inputs.standalone_gke_receipt_b64 }}
+          STANDALONE_GKE_RECEIPT_SHA256: ${{ inputs.standalone_gke_receipt_sha256 }}
+          STANDALONE_GKE_RECEIPT_SIDECAR_B64: ${{ inputs.standalone_gke_receipt_sidecar_b64 }}
+          STANDALONE_GKE_RECEIPT_SIDECAR_SHA256: ${{ inputs.standalone_gke_receipt_sidecar_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gke-receipt
+          decode_exact() {
+            local encoded="$1" expected="$2" output="$3" actual
+            [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ && $((${#encoded} % 4)) -eq 0 ]] || { echo "receipt input is not canonical base64" >&2; exit 1; }
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "receipt input SHA-256 is invalid" >&2; exit 1; }
+            printf '%s' "$encoded" | base64 --decode > "$output"
+            actual="$(sha256sum "$output" | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || { echo "receipt input SHA-256 does not bind decoded bytes" >&2; exit 1; }
+          }
+          decode_exact "$STANDALONE_GKE_RECEIPT_B64" "$STANDALONE_GKE_RECEIPT_SHA256" gke-receipt/lumen-standalone-gke-receipt.json
+          decode_exact "$STANDALONE_GKE_RECEIPT_SIDECAR_B64" "$STANDALONE_GKE_RECEIPT_SIDECAR_SHA256" gke-receipt/lumen-standalone-gke-receipt.json.sha256
+          {
+            echo "receipt=$PWD/gke-receipt/lumen-standalone-gke-receipt.json"
+            echo "sidecar=$PWD/gke-receipt/lumen-standalone-gke-receipt.json.sha256"
+          } >> "$GITHUB_OUTPUT"
       - name: Verify tag ruleset, candidate receipt, and supply chain
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,14 +109,17 @@ jobs:
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --mode candidate \
+            --standalone-gke-receipt "${{ steps.gke_receipt.outputs.receipt }}" \
+            --standalone-gke-receipt-sidecar "${{ steps.gke_receipt.outputs.sidecar }}" \
             --output promotion-contract.json
       - name: Export immutable candidate contract
         id: contract
         shell: bash
         run: |
           set -euo pipefail
-          jq -e --arg commit "$GITHUB_SHA" --arg run "${{ inputs.candidate_run_id }}" '
+          jq -e --arg commit "$GITHUB_SHA" --arg run "${{ inputs.candidate_run_id }}" --arg receipt "${{ inputs.standalone_gke_receipt_sha256 }}" '
             .commit == $commit and .candidate_run_id == $run and
+            .standalone_gke_receipt_sha256 == $receipt and
             [.root_digest,.amd64_digest,.arm64_digest] | all(test("^sha256:[0-9a-f]{64}$"))
           ' promotion-contract.json >/dev/null
           {
@@ -84,6 +129,7 @@ jobs:
             echo "candidate_attempt=$(jq -r .candidate_attempt promotion-contract.json)"
             echo "candidate_url=$(jq -r .candidate_url promotion-contract.json)"
             echo "pr_url=$(jq -r .pr_url promotion-contract.json)"
+            echo "standalone_gke_receipt_sha256=$(jq -r .standalone_gke_receipt_sha256 promotion-contract.json)"
           } >> "$GITHUB_OUTPUT"
 
   publish-release:
@@ -110,6 +156,31 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Decode and bind sanitized standalone GKE receipt
+        id: gke_receipt
+        env:
+          STANDALONE_GKE_RECEIPT_B64: ${{ inputs.standalone_gke_receipt_b64 }}
+          STANDALONE_GKE_RECEIPT_SHA256: ${{ inputs.standalone_gke_receipt_sha256 }}
+          STANDALONE_GKE_RECEIPT_SIDECAR_B64: ${{ inputs.standalone_gke_receipt_sidecar_b64 }}
+          STANDALONE_GKE_RECEIPT_SIDECAR_SHA256: ${{ inputs.standalone_gke_receipt_sidecar_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gke-receipt
+          decode_exact() {
+            local encoded="$1" expected="$2" output="$3" actual
+            [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ && $((${#encoded} % 4)) -eq 0 ]] || { echo "receipt input is not canonical base64" >&2; exit 1; }
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "receipt input SHA-256 is invalid" >&2; exit 1; }
+            printf '%s' "$encoded" | base64 --decode > "$output"
+            actual="$(sha256sum "$output" | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || { echo "receipt input SHA-256 does not bind decoded bytes" >&2; exit 1; }
+          }
+          decode_exact "$STANDALONE_GKE_RECEIPT_B64" "$STANDALONE_GKE_RECEIPT_SHA256" gke-receipt/lumen-standalone-gke-receipt.json
+          decode_exact "$STANDALONE_GKE_RECEIPT_SIDECAR_B64" "$STANDALONE_GKE_RECEIPT_SIDECAR_SHA256" gke-receipt/lumen-standalone-gke-receipt.json.sha256
+          {
+            echo "receipt=$PWD/gke-receipt/lumen-standalone-gke-receipt.json"
+            echo "sidecar=$PWD/gke-receipt/lumen-standalone-gke-receipt.json.sha256"
+          } >> "$GITHUB_OUTPUT"
       - name: Re-query exact candidate immediately before stable writes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,12 +193,15 @@ jobs:
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --mode candidate \
+            --standalone-gke-receipt "${{ steps.gke_receipt.outputs.receipt }}" \
+            --standalone-gke-receipt-sidecar "${{ steps.gke_receipt.outputs.sidecar }}" \
             --output promotion-contract.json
           jq -e \
             --arg root "${{ needs.verify-inputs.outputs.root_digest }}" \
             --arg amd64 "${{ needs.verify-inputs.outputs.amd64_digest }}" \
             --arg arm64 "${{ needs.verify-inputs.outputs.arm64_digest }}" \
-            '.root_digest == $root and .amd64_digest == $amd64 and .arm64_digest == $arm64' \
+            --arg receipt "${{ needs.verify-inputs.outputs.standalone_gke_receipt_sha256 }}" \
+            '.root_digest == $root and .amd64_digest == $amd64 and .arm64_digest == $arm64 and .standalone_gke_receipt_sha256 == $receipt' \
             promotion-contract.json >/dev/null
       - name: Exit safely if this exact public release already exists
         id: existing_release
@@ -152,6 +226,8 @@ jobs:
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --mode public \
+            --standalone-gke-receipt "${{ steps.gke_receipt.outputs.receipt }}" \
+            --standalone-gke-receipt-sidecar "${{ steps.gke_receipt.outputs.sidecar }}" \
             --output promotion-contract.json
       - name: Download exact candidate release bytes
         if: steps.existing_release.outputs.exists == 'false'
@@ -239,13 +315,14 @@ jobs:
           - Root index digest: ${{ needs.verify-inputs.outputs.root_digest }}
           - linux/amd64 digest: ${{ needs.verify-inputs.outputs.amd64_digest }}
           - linux/arm64 digest: ${{ needs.verify-inputs.outputs.arm64_digest }}
+          - Standalone GKE receipt SHA-256: ${{ needs.verify-inputs.outputs.standalone_gke_receipt_sha256 }}
           - Release path: landed main -> untagged candidate verification -> protected annotated tag -> promotion of the same candidate digest.
           - Placement path: a non-empty nodeSelector with the default initialMachineType skips the legacy capacity catalog.
           - Legacy placement path: an empty selector, tolerations-only placement, or a non-default initialMachineType still requires lumen-system/lumen-capacity-catalog.
-          - Compatibility: no API, CRD, or runtime-default migration.
+          - Compatibility: shipped Docker images default to durable segment storage at /var/lib/lumen/data; bare lumen serve stays ephemeral without --data-dir or LUMEN_DATA_DIR. A 0.4.28 segment volume upgrades one way on first 0.4.29 start; in-place downgrade is unsupported.
           EOF
           gh release create "lumen@${{ inputs.version }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "lumen@${{ inputs.version }}" --notes-file release-notes.md \
-            candidate/lumen-*.tar.gz candidate/lumen-*.tar.gz.sha256 candidate/spdx-amd64.json candidate/spdx-arm64.json
+            candidate/lumen-*.tar.gz candidate/lumen-*.tar.gz.sha256 candidate/spdx-amd64.json candidate/spdx-arm64.json gke-receipt/lumen-standalone-gke-receipt.json gke-receipt/lumen-standalone-gke-receipt.json.sha256
       - name: Publicly verify immutable tag, release bytes, and promoted image
         if: steps.existing_release.outputs.exists == 'false'
         env:
@@ -259,4 +336,6 @@ jobs:
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --mode public \
+            --standalone-gke-receipt "${{ steps.gke_receipt.outputs.receipt }}" \
+            --standalone-gke-receipt-sidecar "${{ steps.gke_receipt.outputs.sidecar }}" \
             --output promotion-contract.json

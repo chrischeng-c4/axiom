@@ -47,9 +47,9 @@ axios runtime. Both forms also emit TanStack Query hooks.
 
 | Language | Generated form | Transport | Auth input | Current limits |
 |---|---|---|---|---|
-| TypeScript | Promise-based typed client with fetch or axios runtime and TanStack Query hooks | HTTP/1.1 through fetch or axios; a supplied Node fetch or axios instance can use the private CA | Fixed values in `ClientConfig.headers` | No request-time auth provider, NDJSON stream method, or typed API error. The target manifest does not list axios, TanStack Query, or Node private-CA helper dependencies. |
-| Python | Pydantic models with sync `Client` and async `AsyncClient` | Generated HTTP/2-capable h2c and TLS runtime | Fixed `auth_token` or `default_headers` at construction | No request-time auth provider, NDJSON stream method, or typed API error. The runtime needs Python and Pydantic 2. |
-| Rust | Serde models with a blocking client | `reqwest::blocking` over HTTP/1.1 or negotiated TLS | No generated default Authorization input | No Managed auth path, async client, NDJSON stream method, or typed API error. Component unions become `serde_json::Value`; string enums become `String`. |
+| TypeScript | Promise-based typed client with fetch or axios runtime and TanStack Query hooks | HTTP/1.1 through fetch or axios; Node-only file-bearer opt-in for eligible cluster URLs | Explicit file-bearer provider or fixed headers | No published package, NDJSON stream method, or typed API error. Browser use hard-fails for eligible token URLs. |
+| Python | Pydantic models with sync `Client` and async `AsyncClient` | Generated HTTP/2-capable h2c and TLS runtime | Explicit file-bearer opt-in or fixed headers | No published package, NDJSON stream method, or typed API error. The runtime needs Python and Pydantic 2. |
+| Rust | Serde models with a blocking client | `reqwest::blocking` over HTTP/1.1 or negotiated TLS | Explicit file-bearer opt-in | No published package, async client, NDJSON stream method, or typed API error. Component unions become `serde_json::Value`; string enums become `String`. |
 
 All three generated clients support Lumen's dedicated `QUERY` operations and a
 runtime POST fallback. They generate ordinary JSON operations. The current
@@ -57,26 +57,24 @@ operation model ignores non-JSON request and response content.
 
 ## Connect
 
-Standalone normally uses `http://127.0.0.1:7373` with no credential. Set the
-generated client base URL to the reachable Standalone listener.
+Standalone in-cluster clients use `http://lumen.lumen.svc.cluster.local:7373`
+and the generated Lumen client opts into the Kubernetes default ServiceAccount
+token at `/var/run/secrets/kubernetes.io/serviceaccount/token`.
 
 Managed uses `https://<instance>.<namespace>.svc:7373`. Supply the public
 serving CA and the Service DNS name that the certificate asserts. Private trust
 replaces public roots. No generated client offers skip-verification mode.
 
-OpenAPI declares bearer authentication. That declaration does not obtain a
-Kubernetes token. Binding a pod to a ServiceAccount also does not add a token
-to an HTTP request.
+OpenAPI declares bearer authentication. The Lumen generation command adds the
+explicit generic file-bearer provider for in-cluster HTTP and HTTPS only.
 
-TypeScript and Python application code can currently pass a short-lived token,
-but the application must obtain and refresh it. The Rust generated client has
-no default Authorization input. Generated clients do not yet read
-`/var/run/secrets/lumen.axiom.dev/token` before each request.
+The provider rereads the Kubernetes token before each request. Explicit
+Authorization headers always win. External and local hosts do not read it.
 
-The planned API makes the choice explicit. `Standalone` never reads a token
-file. `ManagedKsa` requires the HTTPS Service DNS, CA path, and fixed token
-path. It rereads the opaque token before each request. A missing, unreadable, or
-empty token fails before transport. A `401` never downgrades to anonymous.
+`ManagedKsa` remains separate. It requires HTTPS, private CA trust, and the
+fixed `/var/run/secrets/lumen.axiom.dev/token` path. It keeps its private
+audience contract unchanged. A missing, unreadable, or empty token fails before
+transport. A `401` never downgrades to anonymous.
 Server-side TokenReview, not client-side token parsing, remains authoritative.
 
 For a human shell, use `lumen connect`. It obtains an audience-bound token

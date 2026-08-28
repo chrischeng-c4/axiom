@@ -28,7 +28,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "2db0a5a68be4c4514144acf4552feb13750aeff5c90f6a678e9b9436c78ba882";
+    "aa64a94dfbc22ba99dec404ae303792102171306566acfb82c731396d560a034";
 const RELEASE_PERF_GATE: &str =
     "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
@@ -242,6 +242,8 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
             &[
                 "set -euo pipefail",
                 "cargo test -p service-k8s",
+                "cargo test -p storage-durable",
+                "cargo test -p service-backup --features http-client",
                 "bash scripts/raft-implementor-build.sh",
                 "cargo test -p raft-runtime",
                 "python3 scripts/meta/test_readme_contract.py",
@@ -259,19 +261,80 @@ fn exact_shell_lines(content: &str, expected: &[&str]) -> bool {
     shell_logical_lines(content) == expected
 }
 
+fn strip_shell_comment(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_start = true;
+    for ch in raw.chars() {
+        if escaped {
+            output.push(ch);
+            escaped = false;
+            token_start = ch.is_whitespace();
+            continue;
+        }
+        match quote {
+            Some('\'') => {
+                output.push(ch);
+                if ch == '\'' {
+                    quote = None;
+                }
+                token_start = false;
+            }
+            Some('"') => {
+                output.push(ch);
+                if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    quote = None;
+                }
+                token_start = false;
+            }
+            None if ch == '\\' => {
+                output.push(ch);
+                escaped = true;
+                token_start = false;
+            }
+            None if ch == '\'' || ch == '"' => {
+                output.push(ch);
+                quote = Some(ch);
+                token_start = false;
+            }
+            None if ch == '#' && token_start => break,
+            None => {
+                output.push(ch);
+                token_start = ch.is_whitespace();
+            }
+            Some(other) => unreachable!("unsupported shell quote delimiter: {other}"),
+        }
+    }
+    output
+}
+
+fn has_unescaped_continuation(line: &str) -> bool {
+    let slash_count = line.chars().rev().take_while(|ch| *ch == '\\').count();
+    slash_count % 2 == 1
+}
+
 fn shell_logical_lines(content: &str) -> Vec<String> {
     let mut logical = Vec::new();
     let mut pending = String::new();
-    for line in content.lines().map(str::trim) {
-        if line.is_empty() || line.starts_with('#') {
+    for raw in content.lines() {
+        let active = strip_shell_comment(raw);
+        let line = active.trim();
+        if line.is_empty() {
             continue;
         }
-        let continued = line.ends_with('\\');
-        let part = line.strip_suffix('\\').unwrap_or(line).trim_end();
+        let continued = has_unescaped_continuation(line);
+        let part = if continued {
+            line.strip_suffix('\\').expect("continuation suffix")
+        } else {
+            line
+        };
         if !pending.is_empty() {
             pending.push(' ');
         }
-        pending.push_str(part);
+        pending.push_str(part.trim_end());
         if !continued {
             logical.push(std::mem::take(&mut pending));
         }
@@ -282,6 +345,247 @@ fn shell_logical_lines(content: &str) -> Vec<String> {
     logical
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShellToken {
+    Word(String, bool),
+    Separator,
+}
+
+fn shell_tokens(line: &str) -> Vec<ShellToken> {
+    let mut tokens = Vec::new();
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_start = true;
+    let mut chars = line.chars().peekable();
+    let flush_word = |tokens: &mut Vec<ShellToken>, word: &mut String, quoted: &mut bool| {
+        if !word.is_empty() {
+            tokens.push(ShellToken::Word(std::mem::take(word), *quoted));
+            *quoted = false;
+        }
+    };
+    while let Some(ch) = chars.next() {
+        if escaped {
+            word.push(ch);
+            escaped = false;
+            token_start = false;
+            continue;
+        }
+        match quote {
+            Some('\'') => {
+                if ch == '\'' {
+                    quote = None;
+                } else {
+                    word.push(ch);
+                }
+                token_start = false;
+            }
+            Some('"') => {
+                if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    quote = None;
+                } else {
+                    word.push(ch);
+                }
+                token_start = false;
+            }
+            None if ch == '\\' => {
+                escaped = true;
+                token_start = false;
+            }
+            None if ch == '\'' || ch == '"' => {
+                quote = Some(ch);
+                quoted = true;
+                token_start = false;
+            }
+            None if ch == '#' && token_start => break,
+            None if ch.is_whitespace() => {
+                flush_word(&mut tokens, &mut word, &mut quoted);
+                token_start = true;
+            }
+            None if ch == ';' || ch == '|' || ch == '&' => {
+                flush_word(&mut tokens, &mut word, &mut quoted);
+                if (ch == '|' || ch == '&') && chars.peek() == Some(&ch) {
+                    chars.next();
+                }
+                tokens.push(ShellToken::Separator);
+                token_start = true;
+            }
+            None => {
+                word.push(ch);
+                token_start = false;
+            }
+            Some(other) => unreachable!("unsupported shell quote delimiter: {other}"),
+        }
+    }
+    flush_word(&mut tokens, &mut word, &mut quoted);
+    tokens
+}
+
+fn is_gcloud_command(word: &str) -> bool {
+    word == "gcloud" || word.ends_with("/gcloud")
+}
+
+fn is_shell_c_invocation(words: &[String], index: usize) -> bool {
+    let word = words[index].as_str();
+    let shell = word == "bash" || word == "sh" || word.ends_with("/bash") || word.ends_with("/sh");
+    shell && words[index + 1..].iter().any(|word| word == "-c")
+}
+
+fn active_shell_c_invocation(tokens: &[ShellToken]) -> bool {
+    tokens.iter().enumerate().any(|(index, token)| {
+        let ShellToken::Word(shell, false) = token else {
+            return false;
+        };
+        (shell == "bash" || shell == "sh" || shell.ends_with("/bash") || shell.ends_with("/sh"))
+            && tokens[index + 1..]
+                .iter()
+                .any(|token| matches!(token, ShellToken::Word(option, false) if option == "-c"))
+    })
+}
+
+fn command_segment_executes_gcloud(words: &[String]) -> bool {
+    let mut index = 0;
+    while index < words.len() {
+        let word = words[index].as_str();
+        if [
+            "if", "then", "do", "done", "else", "elif", "fi", "for", "while", "case", "esac", "{",
+            "}", "!",
+        ]
+        .contains(&word)
+            || word.contains('=')
+        {
+            index += 1;
+            continue;
+        }
+        if word == "sudo" {
+            index += 1;
+            while index < words.len() {
+                let option = words[index].as_str();
+                if option == "--" {
+                    index += 1;
+                    break;
+                }
+                if !option.starts_with('-') {
+                    break;
+                }
+                index += if ["-u", "-g", "-h", "-p", "-r", "-t", "-C"].contains(&option) {
+                    2
+                } else {
+                    1
+                };
+            }
+            continue;
+        }
+        if word == "env" {
+            index += 1;
+            while index < words.len() {
+                let option = words[index].as_str();
+                if option == "--" {
+                    index += 1;
+                    break;
+                }
+                if option.contains('=') {
+                    index += 1;
+                    continue;
+                }
+                if option.starts_with('-') {
+                    index += if ["-u", "-C"].contains(&option) { 2 } else { 1 };
+                    continue;
+                }
+                break;
+            }
+            continue;
+        }
+        if word == "command" {
+            index += 1;
+            let mut lookup_only = false;
+            while index < words.len() && words[index].starts_with('-') {
+                lookup_only |= words[index] == "-v" || words[index] == "-V";
+                index += 1;
+            }
+            if lookup_only {
+                return false;
+            }
+            continue;
+        }
+        if word == "time" {
+            index += 1;
+            while index < words.len() && words[index].starts_with('-') {
+                index += 1;
+            }
+            continue;
+        }
+        if (word == "bash" || word == "sh" || word.ends_with("/bash") || word.ends_with("/sh"))
+            && is_shell_c_invocation(words, index)
+        {
+            return true;
+        }
+        return is_gcloud_command(word);
+    }
+    false
+}
+
+fn logical_line_executes_gcloud(line: &str) -> bool {
+    let mut segment = Vec::new();
+    for token in shell_tokens(line) {
+        match token {
+            ShellToken::Word(word, quoted) => segment.push(ShellToken::Word(word, quoted)),
+            ShellToken::Separator => {
+                if active_shell_c_invocation(&segment)
+                    || command_segment_executes_gcloud(
+                        &segment
+                            .iter()
+                            .filter_map(|token| match token {
+                                ShellToken::Word(word, _) => Some(word.clone()),
+                                ShellToken::Separator => None,
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                {
+                    return true;
+                }
+                segment.clear();
+            }
+        }
+    }
+    active_shell_c_invocation(&segment)
+        || command_segment_executes_gcloud(
+            &segment
+                .iter()
+                .filter_map(|token| match token {
+                    ShellToken::Word(word, _) => Some(word.clone()),
+                    ShellToken::Separator => None,
+                })
+                .collect::<Vec<_>>(),
+        )
+}
+
+fn validate_no_gcloud_execution(workflow: &Yaml) -> Result<(), Finding> {
+    let jobs = field(workflow, "jobs")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding("CANDIDATE_ONLY"))?;
+    for job in jobs.values() {
+        let Some(steps) = field(job, "steps").and_then(Yaml::as_sequence) else {
+            continue;
+        };
+        for step in steps {
+            let Some(run) = field(step, "run").and_then(Yaml::as_str) else {
+                continue;
+            };
+            if shell_logical_lines(run)
+                .iter()
+                .any(|line| logical_line_executes_gcloud(line))
+            {
+                return Err(Finding("CANDIDATE_ONLY"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn named_step<'a>(workflow: &'a Yaml, job_name: &str, step_name: &str) -> Option<&'a Yaml> {
     let steps = field(job(workflow, job_name)?, "steps")?.as_sequence()?;
     let matches = steps
@@ -289,6 +593,79 @@ fn named_step<'a>(workflow: &'a Yaml, job_name: &str, step_name: &str) -> Option
         .filter(|step| field(step, "name").and_then(Yaml::as_str) == Some(step_name))
         .collect::<Vec<_>>();
     (matches.len() == 1).then_some(matches[0])
+}
+
+fn indexed_step_by_id<'a>(
+    workflow: &'a Yaml,
+    job_name: &str,
+    step_id: &str,
+) -> Result<(usize, &'a Yaml), Finding> {
+    let steps = field(job(workflow, job_name).ok_or(Finding("IMAGE"))?, "steps")
+        .and_then(Yaml::as_sequence)
+        .ok_or(Finding("IMAGE"))?;
+    let matches = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| field(step, "id").and_then(Yaml::as_str) == Some(step_id))
+        .collect::<Vec<_>>();
+    require(matches.len() == 1, "IMAGE")?;
+    Ok(matches[0])
+}
+
+fn validate_candidate_image_outputs(workflow: &Yaml) -> Result<(), Finding> {
+    const BUILD_PUSH: &str = "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a";
+    let image_job = job(workflow, "ghcr-image-and-attest").ok_or(Finding("IMAGE"))?;
+    let outputs = field(image_job, "outputs")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding("IMAGE"))?;
+    let expected_outputs = [
+        ("image_repo", "${{ steps.tags.outputs.image_repo }}"),
+        ("candidate_tag", "${{ steps.tags.outputs.candidate_tag }}"),
+        ("root_digest", "${{ steps.push.outputs.digest }}"),
+        (
+            "amd64_digest",
+            "${{ steps.platform_digests.outputs.amd64_digest }}",
+        ),
+        (
+            "arm64_digest",
+            "${{ steps.platform_digests.outputs.arm64_digest }}",
+        ),
+    ];
+    require(outputs.len() == expected_outputs.len(), "IMAGE")?;
+    for (name, expected) in expected_outputs {
+        require(
+            outputs.get(&key(name)).and_then(Yaml::as_str) == Some(expected),
+            "IMAGE",
+        )?;
+    }
+
+    let (tags_index, tags) = indexed_step_by_id(workflow, "ghcr-image-and-attest", "tags")?;
+    let (push_index, push) = indexed_step_by_id(workflow, "ghcr-image-and-attest", "push")?;
+    let (platform_index, platform) =
+        indexed_step_by_id(workflow, "ghcr-image-and-attest", "platform_digests")?;
+    require(
+        tags_index < push_index && push_index < platform_index,
+        "IMAGE",
+    )?;
+    require(
+        field(tags, "name").and_then(Yaml::as_str)
+            == Some("Resolve run-scoped candidate image identity"),
+        "IMAGE",
+    )?;
+    require(
+        field(push, "name").and_then(Yaml::as_str)
+            == Some("Build and push only the candidate index"),
+        "IMAGE",
+    )?;
+    require(
+        field(push, "uses").and_then(Yaml::as_str) == Some(BUILD_PUSH),
+        "IMAGE",
+    )?;
+    require(
+        field(platform, "name").and_then(Yaml::as_str)
+            == Some("Extract exact two platform child digests"),
+        "IMAGE",
+    )
 }
 
 fn validate_exact_run_step(
@@ -517,12 +894,15 @@ fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), 
                 RELEASE_PERF_GATE,
                 "cargo test -p lumen --locked --features release --test release_feature_set",
                 "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
+                "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
             ],
         ),
         "GATES",
     )?;
     for gate in [
         "cargo test -p service-k8s",
+        "cargo test -p storage-durable",
+        "cargo test -p service-backup --features http-client",
         "bash scripts/raft-implementor-build.sh",
         "cargo test -p raft-runtime",
         "python3 scripts/meta/test_readme_contract.py",
@@ -587,7 +967,7 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
     )
 }
 
-fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
+fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Finding> {
     let workflow: Yaml = serde_yaml::from_str(source).map_err(|_| Finding("YAML"))?;
     let events = field(&workflow, "on")
         .and_then(Yaml::as_mapping)
@@ -636,6 +1016,8 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         jobs.len() == names.len() && names.iter().all(|name| job(&workflow, name).is_some()),
         "JOBS",
     )?;
+    validate_candidate_image_outputs(&workflow)?;
+    validate_no_gcloud_execution(&workflow)?;
     validate_uv_setup(&workflow)?;
     validate_libraries_job(&workflow)?;
     validate_product_gate_partition(&workflow, source)?;
@@ -754,6 +1136,7 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         "cargo test -p lumen --features \"operator delegated-auth\"",
         "cargo test -p lumen --locked --features release --test release_feature_set",
         "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
+        "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
         RELEASE_PERF_GATE,
         "cargo test -p service-k8s", "cargo test -p raft-runtime",
         "bash scripts/raft-implementor-build.sh", "git -c core.fsmonitor=false diff --check",
@@ -771,7 +1154,6 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         "imagetools create",
         ":latest",
         "gke-gcloud-auth-plugin",
-        "gcloud container clusters",
         "git tag ",
     ] {
         require(!source.contains(forbidden), "CANDIDATE_ONLY")?;
@@ -845,6 +1227,11 @@ fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
         "MANIFEST",
     )?;
     validate_dockerfile(dockerfile)?;
+    Ok(())
+}
+
+fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
+    validate_workflow_semantics(source, dockerfile)?;
     require(
         sha256_bytes(source.as_bytes()) == WORKFLOW_BYTES_SHA256,
         "WORKFLOW_BYTES",
@@ -942,6 +1329,22 @@ fn dockerfile() -> String {
 #[test]
 fn live_candidate_contract_is_fail_closed() {
     let source = workflow();
+    const DURABLE_GATE: &str = "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable";
+    for (replacement, finding) in [
+        ("# LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
+        ("echo 'LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable'", "GATES"),
+        ("if false; then LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable; fi", "GATES"),
+        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
+        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
+        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}:latest\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
+        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh bind", "GATES"),
+    ] {
+        let changed = source.replace(DURABLE_GATE, replacement);
+        assert_eq!(
+            validate_workflow_semantics(&changed, &dockerfile()).unwrap_err(),
+            Finding(finding)
+        );
+    }
     validate_workflow(&source, &dockerfile()).expect("candidate workflow contract");
     let (script, mode) = verifier();
     validate_verifier(&script, mode).expect("candidate verifier contract");
@@ -951,6 +1354,62 @@ fn live_candidate_contract_is_fail_closed() {
 #[test]
 fn candidate_source_mutations_fail_with_stable_categories() {
     let source = workflow();
+    let root_digest_metadata = replace_once(
+        &source,
+        "root_digest: ${{ steps.push.outputs.digest }}",
+        "root_digest: ${{ steps.push.outputs.metadata }}",
+    );
+    assert_eq!(
+        validate_workflow_semantics(&root_digest_metadata, &dockerfile()).unwrap_err(),
+        Finding("IMAGE")
+    );
+    let gcloud_anchor = "          echo \"workflow_ref=$WORKFLOW_REF\"\n";
+    for (label, injection) in [
+        ("gcloud tab", "          gcloud\tcontainer clusters list\n"),
+        (
+            "gcloud continuation",
+            "          gcloud \\\n          container clusters list\n",
+        ),
+        (
+            "gcloud executable path",
+            "          /usr/local/bin/gcloud container clusters list\n",
+        ),
+        (
+            "gcloud sudo wrapper",
+            "          sudo -u root gcloud container clusters list\n",
+        ),
+        (
+            "gcloud env wrapper",
+            "          env gcloud container clusters list\n",
+        ),
+        (
+            "gcloud command wrapper",
+            "          command gcloud container clusters list\n",
+        ),
+        (
+            "gcloud bash c wrapper",
+            "          bash -c 'gcloud container clusters list'\n",
+        ),
+        (
+            "gcloud sh c wrapper",
+            "          sh -c 'gcloud container clusters list'\n",
+        ),
+        (
+            "gcloud env path bash c wrapper",
+            "          /usr/bin/env bash -c 'gcloud container clusters list'\n",
+        ),
+    ] {
+        let changed = replace_once(
+            &source,
+            gcloud_anchor,
+            &format!("{gcloud_anchor}{injection}"),
+        );
+        assert_eq!(
+            validate_workflow_semantics(&changed, &dockerfile()).unwrap_err(),
+            Finding("CANDIDATE_ONLY"),
+            "{label} mutation passed"
+        );
+    }
     let same_name_step = replace_once(
         &source,
         "      - name: Log in to GHCR with read-only job access\n        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0\n        with:\n          registry: ghcr.io\n          username: ${{ github.actor }}\n          password: ${{ github.token }}\n",
@@ -1153,14 +1612,14 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     expect_workflow(&source, "cargo test -p service-k8s", "true", "LIBRARIES");
     expect_workflow(
         &source,
-        "          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
-        "          bash scripts/raft-implementor-build.sh\n          cargo test -p service-k8s",
+        "          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client\n          bash scripts/raft-implementor-build.sh",
+        "          bash scripts/raft-implementor-build.sh\n          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client",
         "LIBRARIES",
     );
     expect_workflow(
         &source,
-        "          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
-        "          cargo test -p service-k8s\n          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
+        "          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client\n          bash scripts/raft-implementor-build.sh",
+        "          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client\n          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
         "LIBRARIES",
     );
     for (from, to) in [

@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::{sync_parent_dir, FsyncPolicy};
+use crate::{strict_sync_parent_dir, sync_parent_dir, FsyncPolicy};
 
 const HEADER_LEN: usize = 16;
 
@@ -122,6 +122,17 @@ impl FramedLogWriter {
         self.flush()?;
         self.file.get_ref().sync_all().context("fsync log")?;
         sync_parent_dir(&self.path)?;
+        self.last_sync = Instant::now();
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Flush and fsync the log, then require a successful parent-directory
+    /// fsync. This is the pre-commit boundary used by durable replacement.
+    pub fn sync_strict(&mut self) -> Result<()> {
+        self.flush()?;
+        self.file.get_ref().sync_all().context("strict fsync log")?;
+        strict_sync_parent_dir(&self.path)?;
         self.last_sync = Instant::now();
         self.dirty = false;
         Ok(())
@@ -320,6 +331,16 @@ mod tests {
         assert_eq!(FramedLogReader::read_frames(&path, 0).unwrap().len(), 2);
         let _ = FramedLogWriter::open(&path, FsyncPolicy::Always).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().len(), good_len);
+    }
+
+    #[test]
+    fn strict_sync_persists_file_and_parent_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.log");
+        let mut log = FramedLogWriter::open(&path, FsyncPolicy::Always).unwrap();
+        log.append(1, b"one").unwrap();
+        log.sync_strict().unwrap();
+        assert_eq!(FramedLogReader::read_frames(&path, 0).unwrap().len(), 1);
     }
 }
 // CODEGEN-END

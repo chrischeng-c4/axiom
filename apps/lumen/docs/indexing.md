@@ -48,6 +48,9 @@ Lumen owns:
 - shard and replica placement inside a Lumen runtime; and
 - recovery of the derived index within its stated durability contract.
 
+Docker with its persistent named volume provides a durable backend boundary.
+There is no uniform durable-acknowledgement contract across all backends.
+
 The planned generated client owns the mechanics of one Lumen HTTP request. It
 supplies typed errors, deadline and cancellation, safe retry, and idempotency
 inputs. That support does not take ownership of the caller's source transaction,

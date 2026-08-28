@@ -1,5 +1,6 @@
 //! Stable release-promotion oracle. Keep it independent from `release_candidate`.
 
+use base64::Engine as _;
 use serde_json::json;
 use serde_yaml::{Mapping, Value};
 use std::fs;
@@ -14,9 +15,9 @@ const VERSION: &str = "0.4.28";
 const COMMIT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
-    "00ea2d2d6e0ec181096a89fe2689b9d44ccd36bb154984d587df302007c5a738";
+    "14cbd1d902c2961ff2efae64a11a68fe82aeb9ee767e56b338acd8ea76b6a2b4";
 const PROMOTION_VERIFIER_BYTES_SHA256: &str =
-    "2ef49bea62c290cf9e336e22a36abd6fd555d33e10c2ec5ead44b0f16528fe84";
+    "4da124818b89753107c1797b70e95d6b99745595913eaf0ac3eab901d9b67cd3";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const COSIGN_INSTALLER: &str = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6";
 const SETUP_BUILDX: &str = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f";
@@ -26,6 +27,45 @@ const PUBLIC_RELEASE_NOTE_STATEMENTS: &[&str] = &[
     "- Placement path: a non-empty nodeSelector with the default initialMachineType skips the legacy capacity catalog.",
     "- Legacy placement path: an empty selector, tolerations-only placement, or a non-default initialMachineType still requires lumen-system/lumen-capacity-catalog.",
 ];
+const PUBLIC_COMPATIBILITY_NOTE: &str = "- Compatibility: shipped Docker images default to durable segment storage at /var/lib/lumen/data; bare lumen serve stays ephemeral without --data-dir or LUMEN_DATA_DIR. A 0.4.28 segment volume upgrades one way on first 0.4.29 start; in-place downgrade is unsupported.";
+const PUBLIC_RECEIPT_NOTE: &str = "- Standalone GKE receipt SHA-256: ${{ needs.verify-inputs.outputs.standalone_gke_receipt_sha256 }}";
+const PUBLIC_RECEIPT_INPUTS: &[(&str, &str)] = &[
+    (
+        "standalone_gke_receipt_b64",
+        "Base64 of the sanitized lumen-standalone-gke-receipt.json bytes.",
+    ),
+    (
+        "standalone_gke_receipt_sha256",
+        "Lowercase SHA-256 of the sanitized lumen-standalone-gke-receipt.json bytes.",
+    ),
+    (
+        "standalone_gke_receipt_sidecar_b64",
+        "Base64 of the exact lumen-standalone-gke-receipt.json.sha256 sidecar bytes.",
+    ),
+    (
+        "standalone_gke_receipt_sidecar_sha256",
+        "Lowercase SHA-256 of the exact lumen-standalone-gke-receipt.json.sha256 sidecar bytes.",
+    ),
+];
+const PUBLIC_RECEIPT_DECODE_RUN: &str = r#"set -euo pipefail
+mkdir -p gke-receipt
+decode_exact() {
+  local encoded="$1" expected="$2" output="$3" actual
+  [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ && $((${#encoded} % 4)) -eq 0 ]] || { echo "receipt input is not canonical base64" >&2; exit 1; }
+  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "receipt input SHA-256 is invalid" >&2; exit 1; }
+  printf '%s' "$encoded" | base64 --decode > "$output"
+  actual="$(sha256sum "$output" | awk '{print $1}')"
+  [[ "$actual" == "$expected" ]] || { echo "receipt input SHA-256 does not bind decoded bytes" >&2; exit 1; }
+}
+decode_exact "$STANDALONE_GKE_RECEIPT_B64" "$STANDALONE_GKE_RECEIPT_SHA256" gke-receipt/lumen-standalone-gke-receipt.json
+decode_exact "$STANDALONE_GKE_RECEIPT_SIDECAR_B64" "$STANDALONE_GKE_RECEIPT_SIDECAR_SHA256" gke-receipt/lumen-standalone-gke-receipt.json.sha256
+{
+  echo "receipt=$PWD/gke-receipt/lumen-standalone-gke-receipt.json"
+  echo "sidecar=$PWD/gke-receipt/lumen-standalone-gke-receipt.json.sha256"
+} >> "$GITHUB_OUTPUT"
+"#;
+const OLD_PUBLIC_COMPATIBILITY_NOTE: &str =
+    "- Compatibility: no API, CRD, or runtime-default migration.";
 const RECOVERY_TAG_OBJECT: &str = "5b7b4d9a8b8b5596cb9fcfa149008a8f1313da82";
 const RECOVERY_ROOT: &str =
     "sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
@@ -110,11 +150,23 @@ fn sha256(path: &Path) -> String {
 }
 
 fn write_archive_pair(root: &Path, target: &str) -> (String, String, String, String) {
+    write_archive_pair_for_version(root, target, VERSION)
+}
+
+fn write_archive_pair_for_version(
+    root: &Path,
+    target: &str,
+    version: &str,
+) -> (String, String, String, String) {
     let stage = root.join("stage").join(format!("lumen-{target}"));
     fs::create_dir_all(&stage).unwrap();
     fs::write(stage.join("README.md"), "fixture\n").unwrap();
     let binary = stage.join("lumen");
-    fs::write(&binary, format!("#!/bin/sh\necho 'lumen {VERSION}'\n")).unwrap();
+    fs::write(
+        &binary,
+        format!("#!/bin/sh\n# target={target}\necho 'lumen {version}'\n"),
+    )
+    .unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
 
     let archive = format!("lumen-{target}.tar.gz");
@@ -218,6 +270,225 @@ fn run_fixture(fixture: &ReleaseFixture) -> std::process::Output {
         .arg(&fixture.public)
         .output()
         .unwrap()
+}
+
+fn refresh_sha256_sidecar(path: &Path) {
+    fs::write(
+        path.with_extension("json.sha256"),
+        format!(
+            "{}  {}\n",
+            sha256(path),
+            path.file_name().unwrap().to_string_lossy()
+        ),
+    )
+    .unwrap();
+}
+
+fn archive_member_sha256(root: &Path, target: &str) -> String {
+    let output = Command::new("tar")
+        .args(["-xOzf"])
+        .arg(root.join(format!("lumen-{target}.tar.gz")))
+        .arg(format!("lumen-{target}/lumen"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "cannot stream fixture controller CLI: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    sha256_bytes(&output.stdout)
+}
+
+struct GkeReceiptFixture {
+    release: ReleaseFixture,
+    receipt: PathBuf,
+    sidecar: PathBuf,
+}
+
+fn gke_receipt_fixture() -> GkeReceiptFixture {
+    let release = release_fixture();
+    let manifest_path = release.candidate.join("final-candidate-manifest.json");
+    let mut manifest =
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&manifest_path).unwrap())
+            .unwrap();
+    manifest["version"] = serde_json::Value::String("0.4.29".to_owned());
+    manifest["tag"] = serde_json::Value::String("lumen@0.4.29".to_owned());
+    for target in [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+    ] {
+        let (archive, archive_sha, sidecar, sidecar_sha) =
+            write_archive_pair_for_version(&release.candidate, target, "0.4.29");
+        fs::copy(
+            &release.candidate.join(&archive),
+            release.public.join(&archive),
+        )
+        .unwrap();
+        fs::copy(
+            &release.candidate.join(&sidecar),
+            release.public.join(&sidecar),
+        )
+        .unwrap();
+        let entry = manifest["artifacts"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["target"] == target)
+            .unwrap();
+        entry["archive_sha256"] = serde_json::Value::String(archive_sha);
+        entry["sidecar_sha256"] = serde_json::Value::String(sidecar_sha);
+    }
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    refresh_sha256_sidecar(&manifest_path);
+
+    let target = "x86_64-unknown-linux-gnu";
+    let root = format!("sha256:{}", "1".repeat(64));
+    let amd64 = format!("sha256:{}", "2".repeat(64));
+    let arm64 = format!("sha256:{}", "3".repeat(64));
+    let receipt = release.candidate.join("lumen-standalone-gke-receipt.json");
+    let body = json!({
+        "schema": "lumen.standalone-gke-receipt/v1",
+        "stage": "slice-b-live",
+        "complete": true,
+        "candidate": {
+            "repository": "chrischeng-c4/axiom",
+            "version": "0.4.29",
+            "commit": COMMIT,
+            "workflow_ref": "chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main",
+            "run_id": RUN_ID,
+            "run_attempt": "1",
+            "manifest_sha256": sha256(&manifest_path),
+            "root_digest": root,
+            "amd64_digest": amd64,
+            "arm64_digest": arm64,
+            "controller_cli": {"target": target, "sha256": archive_member_sha256(&release.candidate, target)},
+            "observed_runtime_child_digest": format!("sha256:{}", "2".repeat(64)),
+        },
+        "matrix": {
+            "clusterip_only": "passed",
+            "network_policy": "passed",
+            "allowed_ksa": "passed",
+            "unlisted_ksa": "passed",
+            "missing_token": "passed",
+            "bad_token": "passed",
+            "tokenreview": "passed",
+            "subjectaccessreview": "passed",
+            "application_admin_403": "passed",
+            "admin_backup_restore": "passed",
+            "pod_replacement": "passed",
+            "pvc_recovery": "passed",
+            "vertical_resize": "passed",
+            "cleanup": "passed",
+            "required_continuity": {
+                "profile": "LUMEN_AUTH=required",
+                "audience": "lumen.axiom.dev",
+                "observed_runtime_child_digest": format!("sha256:{}", "2".repeat(64)),
+                "projected_allowed_2xx": "passed",
+                "same_ksa_default_token_401": "passed",
+                "projected_unlisted_403": "passed",
+                "tokenreview_delta": 1,
+                "subjectaccessreview_delta": 2,
+                "allowed_delta": 3,
+                "denied_delta": 4,
+            }
+        },
+        "redaction": {
+            "kubeconfig_retained": false,
+            "token_retained": false,
+            "authorization_retained": false,
+            "secret_retained": false,
+            "cluster_identity_retained": false,
+            "command_output_retained": false,
+            "canary_scan": true,
+        }
+    });
+    fs::write(&receipt, serde_json::to_vec(&body).unwrap()).unwrap();
+    let sidecar = receipt.with_extension("json.sha256");
+    fs::write(
+        &sidecar,
+        format!("{}  lumen-standalone-gke-receipt.json\n", sha256(&receipt)),
+    )
+    .unwrap();
+    fs::copy(
+        &receipt,
+        release.public.join("lumen-standalone-gke-receipt.json"),
+    )
+    .unwrap();
+    fs::copy(
+        &sidecar,
+        release
+            .public
+            .join("lumen-standalone-gke-receipt.json.sha256"),
+    )
+    .unwrap();
+    GkeReceiptFixture {
+        release,
+        receipt,
+        sidecar,
+    }
+}
+
+fn run_gke_receipt_fixture(fixture: &GkeReceiptFixture) -> Output {
+    Command::new("bash")
+        .arg(release_script())
+        .args([
+            "--repo",
+            "chrischeng-c4/axiom",
+            "--tag",
+            "lumen@0.4.29",
+            "--commit",
+            COMMIT,
+            "--candidate-run-id",
+            RUN_ID,
+            "--mode",
+            "fixture",
+            "--candidate-receipt-dir",
+        ])
+        .arg(&fixture.release.candidate)
+        .arg("--release-assets-dir")
+        .arg(&fixture.release.public)
+        .arg("--standalone-gke-receipt")
+        .arg(&fixture.receipt)
+        .arg("--standalone-gke-receipt-sidecar")
+        .arg(&fixture.sidecar)
+        .output()
+        .unwrap()
+}
+
+fn run_public_receipt_decoder(
+    receipt_b64: String,
+    receipt_sha256: String,
+    sidecar_b64: String,
+    sidecar_sha256: String,
+) -> (TempDir, Output) {
+    let temp = TempDir::new("public-receipt-decoder");
+    let output = temp.0.join("github-output");
+    let result = Command::new("bash")
+        .args(["-c", PUBLIC_RECEIPT_DECODE_RUN, "bash"])
+        .current_dir(&temp.0)
+        .env("GITHUB_OUTPUT", &output)
+        .env("STANDALONE_GKE_RECEIPT_B64", receipt_b64)
+        .env("STANDALONE_GKE_RECEIPT_SHA256", receipt_sha256)
+        .env("STANDALONE_GKE_RECEIPT_SIDECAR_B64", sidecar_b64)
+        .env("STANDALONE_GKE_RECEIPT_SIDECAR_SHA256", sidecar_sha256)
+        .output()
+        .unwrap();
+    (temp, result)
+}
+
+fn rewrite_receipt(fixture: &GkeReceiptFixture, receipt: &serde_json::Value) {
+    fs::write(&fixture.receipt, serde_json::to_vec(receipt).unwrap()).unwrap();
+    fs::write(
+        &fixture.sidecar,
+        format!(
+            "{}  lumen-standalone-gke-receipt.json\n",
+            sha256(&fixture.receipt)
+        ),
+    )
+    .unwrap();
 }
 
 fn workflow_path() -> PathBuf {
@@ -436,6 +707,28 @@ fn execute_verifier_function(verifier: &str, function: &str, input: &str) -> Out
         .unwrap()
 }
 
+fn execute_verifier_function_with_arg(
+    verifier: &str,
+    function: &str,
+    argument: &str,
+    input: &str,
+) -> Output {
+    let temp = TempDir::new("pagination-arg");
+    let script_path = temp.0.join("verifier.sh");
+    let input_path = temp.0.join("input.json");
+    fs::write(&script_path, verifier).unwrap();
+    fs::write(&input_path, input).unwrap();
+    Command::new("bash")
+        .args(["-c", "source \"$1\"; \"$2\" \"$3\" < \"$4\""])
+        .arg("bash")
+        .arg(&script_path)
+        .arg(function)
+        .arg(argument)
+        .arg(&input_path)
+        .output()
+        .unwrap()
+}
+
 fn execute_page_flattener(function: &str, pages: &str) -> Value {
     let output = execute_verifier_function(
         include_str!("../scripts/verify-release-artifacts.sh"),
@@ -637,6 +930,97 @@ fn validate_run_step(
     Ok(())
 }
 
+fn validate_release_creation_step(step: &Value, path: &str) -> Result<(), String> {
+    validate_run_step(
+        step,
+        path,
+        "Create exact GitHub Release with candidate bytes",
+        &["name", "if", "env", "shell", "run"],
+        &[],
+        Some("steps.existing_release.outputs.exists == 'false'"),
+        None,
+        true,
+    )?;
+    let step = yaml_mapping(step, path)?;
+    let run = yaml_text(yaml_field(step, "run", path)?, &format!("{path}.run"))?;
+    let lines = run.lines().collect::<Vec<_>>();
+    let expected = [
+        "set -euo pipefail",
+        "cat > release-notes.md <<EOF",
+        "# lumen@${{ inputs.version }}",
+        "",
+        "- Source commit: $GITHUB_SHA",
+        "- Pull request: ${{ needs.verify-inputs.outputs.pr_url }}",
+        "- Candidate run: ${{ needs.verify-inputs.outputs.candidate_url }}",
+        "- Promotion run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT",
+        "- Root index digest: ${{ needs.verify-inputs.outputs.root_digest }}",
+        "- linux/amd64 digest: ${{ needs.verify-inputs.outputs.amd64_digest }}",
+        "- linux/arm64 digest: ${{ needs.verify-inputs.outputs.arm64_digest }}",
+        PUBLIC_RECEIPT_NOTE,
+        PUBLIC_RELEASE_NOTE_STATEMENTS[0],
+        PUBLIC_RELEASE_NOTE_STATEMENTS[1],
+        PUBLIC_RELEASE_NOTE_STATEMENTS[2],
+        PUBLIC_COMPATIBILITY_NOTE,
+        "EOF",
+        "gh release create \"lumen@${{ inputs.version }}\" --repo \"$GITHUB_REPOSITORY\" --target \"$GITHUB_SHA\" --title \"lumen@${{ inputs.version }}\" --notes-file release-notes.md \\",
+        "  candidate/lumen-*.tar.gz candidate/lumen-*.tar.gz.sha256 candidate/spdx-amd64.json candidate/spdx-arm64.json gke-receipt/lumen-standalone-gke-receipt.json gke-receipt/lumen-standalone-gke-receipt.json.sha256",
+    ];
+    if lines.as_slice() != expected {
+        return Err(format!(
+            "{path}.run release-note heredoc or create command changed"
+        ));
+    }
+    let body = &lines[2..16];
+    if body
+        .iter()
+        .filter(|line| **line == PUBLIC_COMPATIBILITY_NOTE)
+        .count()
+        != 1
+    {
+        return Err(format!(
+            "{path}.run compatibility note is not one raw heredoc body line"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_public_receipt_decoder(step: &Value, path: &str) -> Result<(), String> {
+    let step = yaml_mapping(step, path)?;
+    exact_keys(step, &["name", "id", "env", "shell", "run"], path)?;
+    expect_text(
+        step,
+        "name",
+        "Decode and bind sanitized standalone GKE receipt",
+        path,
+    )?;
+    expect_text(step, "id", "gke_receipt", path)?;
+    expect_text(step, "shell", "bash", path)?;
+    let env = yaml_mapping(yaml_field(step, "env", path)?, &format!("{path}.env"))?;
+    let expected_env = PUBLIC_RECEIPT_INPUTS
+        .iter()
+        .map(|(name, _)| name.to_ascii_uppercase())
+        .collect::<Vec<_>>();
+    let expected_env_refs = PUBLIC_RECEIPT_INPUTS
+        .iter()
+        .map(|(name, _)| format!("${{{{ inputs.{name} }}}}"))
+        .collect::<Vec<_>>();
+    exact_keys(
+        env,
+        &expected_env.iter().map(String::as_str).collect::<Vec<_>>(),
+        &format!("{path}.env"),
+    )?;
+    for (name, value) in expected_env.iter().zip(expected_env_refs.iter()) {
+        expect_text(env, name, value, &format!("{path}.env"))?;
+    }
+    let run = yaml_text(yaml_field(step, "run", path)?, &format!("{path}.run"))?;
+    if run != PUBLIC_RECEIPT_DECODE_RUN {
+        return Err(format!(
+            "{path}.run receipt decode and hash binding changed"
+        ));
+    }
+    Ok(())
+}
+
 fn count(text: &str, needle: &str) -> usize {
     text.match_indices(needle).count()
 }
@@ -661,7 +1045,14 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
     )?;
     exact_keys(
         inputs,
-        &["version", "candidate_run_id"],
+        &[
+            "version",
+            "candidate_run_id",
+            "standalone_gke_receipt_b64",
+            "standalone_gke_receipt_sha256",
+            "standalone_gke_receipt_sidecar_b64",
+            "standalone_gke_receipt_sidecar_sha256",
+        ],
         "workflow.on.workflow_dispatch.inputs",
     )?;
     for (name, description) in [
@@ -670,7 +1061,13 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
             "candidate_run_id",
             "Exact successful lumen-release-candidate run ID.",
         ),
-    ] {
+    ]
+    .into_iter()
+    .chain(
+        PUBLIC_RECEIPT_INPUTS
+            .iter()
+            .map(|(name, description)| (*name, *description)),
+    ) {
         let input_path = format!("workflow.on.workflow_dispatch.inputs.{name}");
         let input = yaml_mapping(
             yaml_field(inputs, name, "workflow.on.workflow_dispatch.inputs")?,
@@ -751,6 +1148,7 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
             "candidate_attempt",
             "candidate_url",
             "pr_url",
+            "standalone_gke_receipt_sha256",
         ],
         "workflow.jobs.verify-inputs.outputs",
     )?;
@@ -761,6 +1159,7 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         "candidate_attempt",
         "candidate_url",
         "pr_url",
+        "standalone_gke_receipt_sha256",
     ] {
         expect_text(
             outputs,
@@ -773,7 +1172,7 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         yaml_field(verify, "steps", "workflow.jobs.verify-inputs")?,
         "workflow.jobs.verify-inputs.steps",
     )?;
-    if verify_steps.len() != 7 {
+    if verify_steps.len() != 8 {
         return Err("verify-inputs step count changed".to_owned());
     }
     validate_action_step(
@@ -822,28 +1221,32 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         ],
         None,
     )?;
+    validate_public_receipt_decoder(&verify_steps[5], "workflow.jobs.verify-inputs.steps[5]")?;
     validate_run_step(
-        &verify_steps[5],
-        "workflow.jobs.verify-inputs.steps[5]",
+        &verify_steps[6],
+        "workflow.jobs.verify-inputs.steps[6]",
         "Verify tag ruleset, candidate receipt, and supply chain",
         &["name", "env", "shell", "run"],
         &[
             "verify-release-artifacts.sh",
             "--mode candidate",
             "--output promotion-contract.json",
+            "--standalone-gke-receipt \"${{ steps.gke_receipt.outputs.receipt }}\"",
+            "--standalone-gke-receipt-sidecar \"${{ steps.gke_receipt.outputs.sidecar }}\"",
         ],
         None,
         None,
         true,
     )?;
     validate_run_step(
-        &verify_steps[6],
-        "workflow.jobs.verify-inputs.steps[6]",
+        &verify_steps[7],
+        "workflow.jobs.verify-inputs.steps[7]",
         "Export immutable candidate contract",
         &["name", "id", "shell", "run"],
         &[
             ".commit == $commit",
             "candidate_run_id",
+            ".standalone_gke_receipt_sha256 == $receipt",
             "root_digest=$(jq -r",
         ],
         None,
@@ -893,7 +1296,7 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         yaml_field(publish, "steps", "workflow.jobs.publish-release")?,
         "workflow.jobs.publish-release.steps",
     )?;
-    if publish_steps.len() != 11 {
+    if publish_steps.len() != 12 {
         return Err("publish-release step count changed".to_owned());
     }
     validate_action_step(
@@ -928,23 +1331,27 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         ],
         None,
     )?;
+    validate_public_receipt_decoder(&publish_steps[4], "workflow.jobs.publish-release.steps[4]")?;
     validate_run_step(
-        &publish_steps[4],
-        "workflow.jobs.publish-release.steps[4]",
+        &publish_steps[5],
+        "workflow.jobs.publish-release.steps[5]",
         "Re-query exact candidate immediately before stable writes",
         &["name", "env", "shell", "run"],
         &[
             "verify-release-artifacts.sh",
             "--mode candidate",
             ".root_digest == $root",
+            ".standalone_gke_receipt_sha256 == $receipt",
+            "--standalone-gke-receipt \"${{ steps.gke_receipt.outputs.receipt }}\"",
+            "--standalone-gke-receipt-sidecar \"${{ steps.gke_receipt.outputs.sidecar }}\"",
         ],
         None,
         None,
         true,
     )?;
     validate_run_step(
-        &publish_steps[5],
-        "workflow.jobs.publish-release.steps[5]",
+        &publish_steps[6],
+        "workflow.jobs.publish-release.steps[6]",
         "Exit safely if this exact public release already exists",
         &["name", "id", "env", "shell", "run"],
         &["gh api graphql", "release(tagName", "exists=true"],
@@ -953,18 +1360,23 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         true,
     )?;
     validate_run_step(
-        &publish_steps[6],
-        "workflow.jobs.publish-release.steps[6]",
+        &publish_steps[7],
+        "workflow.jobs.publish-release.steps[7]",
         "Verify existing public release without moving latest",
         &["name", "if", "env", "shell", "run"],
-        &["verify-release-artifacts.sh", "--mode public"],
+        &[
+            "verify-release-artifacts.sh",
+            "--mode public",
+            "--standalone-gke-receipt \"${{ steps.gke_receipt.outputs.receipt }}\"",
+            "--standalone-gke-receipt-sidecar \"${{ steps.gke_receipt.outputs.sidecar }}\"",
+        ],
         Some("steps.existing_release.outputs.exists == 'true'"),
         None,
         true,
     )?;
     validate_run_step(
-        &publish_steps[7],
-        "workflow.jobs.publish-release.steps[7]",
+        &publish_steps[8],
+        "workflow.jobs.publish-release.steps[8]",
         "Download exact candidate release bytes",
         &["name", "if", "env", "shell", "run"],
         &["gh run download", "final-candidate-manifest.json"],
@@ -973,8 +1385,8 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         true,
     )?;
     validate_run_step(
-        &publish_steps[8],
-        "workflow.jobs.publish-release.steps[8]",
+        &publish_steps[9],
+        "workflow.jobs.publish-release.steps[9]",
         "Promote exact root digest to semver and safe latest",
         &["name", "if", "env", "shell", "run"],
         &[
@@ -986,29 +1398,21 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         None,
         true,
     )?;
-    validate_run_step(
-        &publish_steps[9],
-        "workflow.jobs.publish-release.steps[9]",
-        "Create exact GitHub Release with candidate bytes",
-        &["name", "if", "env", "shell", "run"],
-        &[
-            "gh release create",
-            "candidate/lumen-*.tar.gz",
-            "Compatibility: no API, CRD, or runtime-default migration.",
-            PUBLIC_RELEASE_NOTE_STATEMENTS[0],
-            PUBLIC_RELEASE_NOTE_STATEMENTS[1],
-            PUBLIC_RELEASE_NOTE_STATEMENTS[2],
-        ],
-        Some("steps.existing_release.outputs.exists == 'false'"),
-        None,
-        true,
-    )?;
-    validate_run_step(
+    validate_release_creation_step(
         &publish_steps[10],
         "workflow.jobs.publish-release.steps[10]",
+    )?;
+    validate_run_step(
+        &publish_steps[11],
+        "workflow.jobs.publish-release.steps[11]",
         "Publicly verify immutable tag, release bytes, and promoted image",
         &["name", "if", "env", "shell", "run"],
-        &["verify-release-artifacts.sh", "--mode public"],
+        &[
+            "verify-release-artifacts.sh",
+            "--mode public",
+            "--standalone-gke-receipt \"${{ steps.gke_receipt.outputs.receipt }}\"",
+            "--standalone-gke-receipt-sidecar \"${{ steps.gke_receipt.outputs.sidecar }}\"",
+        ],
         Some("steps.existing_release.outputs.exists == 'false'"),
         None,
         true,
@@ -1029,10 +1433,11 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
         "/git/refs/tags",
         "deleteref",
         "updateref",
-        "gke",
         "gcloud",
         "kubectl",
         "kind create",
+        "gh run upload",
+        "actions/upload-artifact",
     ] {
         if lower.contains(forbidden) {
             return Err(format!(
@@ -1300,7 +1705,54 @@ fn promotion_workflow_is_semantically_frozen_and_exactly_hashed() {
 #[test]
 fn promotion_workflow_rejects_high_risk_source_mutations() {
     let workflow = include_str!("../../../.github/workflows/lumen-release.yml");
-    let mutations = [
+    let yaml_comment = workflow.replacen(
+        "        run: |\n          set -euo pipefail\n          cat > release-notes.md <<EOF",
+        "        # run: |\n          set -euo pipefail\n          cat > release-notes.md <<EOF",
+        1,
+    );
+    let shell_comment = workflow.replacen(
+        "          cat > release-notes.md <<EOF",
+        "          # cat > release-notes.md <<EOF",
+        1,
+    );
+    let dead_heredoc = workflow
+        .replacen(
+            "          cat > release-notes.md <<EOF",
+            "          if false; then\n          cat > release-notes.md <<EOF",
+            1,
+        )
+        .replacen("          EOF\n", "          EOF\n          fi\n", 1);
+    let quoted_opener = workflow.replacen(
+        "          cat > release-notes.md <<EOF",
+        "          printf '%s\\n' 'cat > release-notes.md <<EOF'",
+        1,
+    );
+    let quoted_bullet = workflow.replacen(
+        &format!("          {PUBLIC_COMPATIBILITY_NOTE}"),
+        &format!("          printf '%s\\n' '{PUBLIC_COMPATIBILITY_NOTE}'"),
+        1,
+    );
+    let quoted_create = workflow.replacen(
+        "          gh release create ",
+        "          printf '%s\\n' 'gh release create ",
+        1,
+    );
+    let create_line = "          gh release create \"lumen@${{ inputs.version }}\" --repo \"$GITHUB_REPOSITORY\" --target \"$GITHUB_SHA\" --title \"lumen@${{ inputs.version }}\" --notes-file release-notes.md \\\n";
+    let reordered = workflow.replacen(
+        "          cat > release-notes.md <<EOF\n",
+        &format!("{create_line}          cat > release-notes.md <<EOF\n"),
+        1,
+    );
+    let generated_notes = workflow.replacen("--notes-file release-notes.md", "--generate-notes", 1);
+    let mutations = vec![
+        ("yaml comment", yaml_comment),
+        ("shell comment", shell_comment),
+        ("dead heredoc", dead_heredoc),
+        ("quoted opener", quoted_opener),
+        ("quoted bullet", quoted_bullet),
+        ("quoted create", quoted_create),
+        ("create before heredoc", reordered),
+        ("generate-notes substitution", generated_notes),
         (
             "extra trigger",
             workflow.replacen(
@@ -1342,6 +1794,46 @@ fn promotion_workflow_rejects_high_risk_source_mutations() {
             workflow.replacen(
                 "docker buildx imagetools create --tag \"$semver_ref\" \"$root_ref\"",
                 "docker buildx imagetools create --tag \"$semver_ref\" \"${image_repo}:release-candidate\"",
+                1,
+            ),
+        ),
+        (
+            "commented receipt decode",
+            workflow.replacen(
+                "          decode_exact \"$STANDALONE_GKE_RECEIPT_B64\"",
+                "          # decode_exact \"$STANDALONE_GKE_RECEIPT_B64\"",
+                1,
+            ),
+        ),
+        (
+            "quoted receipt decode",
+            workflow.replacen(
+                "          decode_exact \"$STANDALONE_GKE_RECEIPT_B64\"",
+                "          printf '%s\\n' 'decode_exact \"$STANDALONE_GKE_RECEIPT_B64\"",
+                1,
+            ),
+        ),
+        (
+            "no-op receipt decoder",
+            workflow.replacen(
+                "            printf '%s' \"$encoded\" | base64 --decode > \"$output\"",
+                "            true # base64 --decode",
+                1,
+            ),
+        ),
+        (
+            "divergent receipt sidecar",
+            workflow.replacen(
+                "--standalone-gke-receipt-sidecar \"${{ steps.gke_receipt.outputs.sidecar }}\"",
+                "--standalone-gke-receipt-sidecar \"candidate/final-candidate-manifest.json.sha256\"",
+                1,
+            ),
+        ),
+        (
+            "candidate artifact rewrite",
+            workflow.replacen(
+                "          gh run download",
+                "          gh run upload\n          gh run download",
                 1,
             ),
         ),
@@ -1409,7 +1901,7 @@ fn public_release_notes_are_bound_to_candidate_and_promotion_evidence() {
         PUBLIC_RELEASE_NOTE_STATEMENTS[0],
         PUBLIC_RELEASE_NOTE_STATEMENTS[1],
         PUBLIC_RELEASE_NOTE_STATEMENTS[2],
-        "- Compatibility: no API, CRD, or runtime-default migration.",
+        PUBLIC_COMPATIBILITY_NOTE,
     ] {
         assert!(workflow.contains(note_line), "missing public release-note field: {note_line}");
     }
@@ -1421,10 +1913,11 @@ fn public_release_notes_are_bound_to_candidate_and_promotion_evidence() {
         "index(\"- Root index digest: \" + $root) != null",
         "index(\"- linux/amd64 digest: \" + $amd64) != null",
         "index(\"- linux/arm64 digest: \" + $arm64) != null",
+        "index(\"- Standalone GKE receipt SHA-256: \" + $receipt_sha256) != null",
         "index(\"- Release path: landed main -> untagged candidate verification -> protected annotated tag -> promotion of the same candidate digest.\") != null",
         "index(\"- Placement path: a non-empty nodeSelector with the default initialMachineType skips the legacy capacity catalog.\") != null",
         "index(\"- Legacy placement path: an empty selector, tolerations-only placement, or a non-default initialMachineType still requires lumen-system/lumen-capacity-catalog.\") != null",
-        "index(\"- Compatibility: no API, CRD, or runtime-default migration.\") != null",
+        "index(\"- Compatibility: shipped Docker images default to durable segment storage at /var/lib/lumen/data; bare lumen serve stays ephemeral without --data-dir or LUMEN_DATA_DIR. A 0.4.28 segment volume upgrades one way on first 0.4.29 start; in-place downgrade is unsupported.\") != null",
         "^- Promotion run: https://github\\\\.com/",
         "public GitHub Release notes do not bind exact promotion evidence",
     ] {
@@ -1442,6 +1935,136 @@ fn public_release_notes_are_bound_to_candidate_and_promotion_evidence() {
         assert!(
             validate_promotion_workflow(&drifted).is_err(),
             "promotion validator accepted release-note drift: {statement}"
+        );
+    }
+    let drifted = workflow.replacen(
+        PUBLIC_RECEIPT_NOTE,
+        "- Standalone GKE receipt SHA-256: mutable",
+        1,
+    );
+    assert_ne!(
+        drifted, workflow,
+        "receipt-note drift fixture must change bytes"
+    );
+    assert!(
+        validate_promotion_workflow(&drifted).is_err(),
+        "promotion validator accepted a mutable receipt hash note"
+    );
+}
+
+#[test]
+fn public_release_note_body_helper_is_hermetic_and_fail_closed() {
+    let verifier = include_str!("../scripts/verify-release-artifacts.sh");
+    assert!(verifier.contains("verify_public_release_notes <<<\"$release_json\""));
+    let valid = format!(r#"{{"body":"{PUBLIC_COMPATIBILITY_NOTE}"}}"#);
+    assert!(
+        execute_verifier_function(verifier, "verify_public_release_notes", &valid)
+            .status
+            .success(),
+        "exact compatibility bullet was rejected"
+    );
+    let receipt_sha256 = "a".repeat(64);
+    let receipt_note = format!("- Standalone GKE receipt SHA-256: {receipt_sha256}");
+    let valid_with_receipt = format!(
+        r#"{{"body":{}}}"#,
+        serde_json::to_string(&format!("{PUBLIC_COMPATIBILITY_NOTE}\n{receipt_note}")).unwrap()
+    );
+    assert!(
+        execute_verifier_function_with_arg(
+            verifier,
+            "verify_public_release_notes",
+            &receipt_sha256,
+            &valid_with_receipt,
+        )
+        .status
+        .success(),
+        "exact standalone GKE receipt hash note was rejected"
+    );
+    for (name, body) in [
+        ("missing", PUBLIC_COMPATIBILITY_NOTE.to_owned()),
+        (
+            "commented",
+            format!("{PUBLIC_COMPATIBILITY_NOTE}\n<!-- {receipt_note} -->"),
+        ),
+        (
+            "quoted",
+            format!("{PUBLIC_COMPATIBILITY_NOTE}\n> {receipt_note}"),
+        ),
+        (
+            "divergent",
+            format!(
+                "{PUBLIC_COMPATIBILITY_NOTE}\n- Standalone GKE receipt SHA-256: {}",
+                "b".repeat(64)
+            ),
+        ),
+    ] {
+        let input = format!(r#"{{"body":{}}}"#, serde_json::to_string(&body).unwrap());
+        assert!(
+            !execute_verifier_function_with_arg(
+                verifier,
+                "verify_public_release_notes",
+                &receipt_sha256,
+                &input,
+            )
+            .status
+            .success(),
+            "receipt-note helper accepted {name} body"
+        );
+    }
+    let variants = [
+        ("missing", "release notes".to_owned()),
+        ("old", OLD_PUBLIC_COMPATIBILITY_NOTE.to_owned()),
+        (
+            "changed",
+            PUBLIC_COMPATIBILITY_NOTE.replace("durable segment storage", "durable data storage"),
+        ),
+        (
+            "generalized",
+            PUBLIC_COMPATIBILITY_NOTE.replace("A 0.4.28 segment volume", "Every 0.4.28 volume"),
+        ),
+        (
+            "additive generalized",
+            format!("{PUBLIC_COMPATIBILITY_NOTE}\n- Compatibility: Every 0.4.28 volume upgrades one way."),
+        ),
+        (
+            "duplicate exact note",
+            format!("{PUBLIC_COMPATIBILITY_NOTE}\n{PUBLIC_COMPATIBILITY_NOTE}"),
+        ),
+        ("blockquote", format!("> {PUBLIC_COMPATIBILITY_NOTE}")),
+        ("fenced", format!("```\n{PUBLIC_COMPATIBILITY_NOTE}\n```")),
+        ("tilde fenced", format!("~~~\n{PUBLIC_COMPATIBILITY_NOTE}\n~~~")),
+        (
+            "html comment",
+            format!("<!-- {PUBLIC_COMPATIBILITY_NOTE} -->"),
+        ),
+        (
+            "indented blockquote",
+            format!("    > {PUBLIC_COMPATIBILITY_NOTE}"),
+        ),
+        (
+            "indented backtick fence",
+            format!("    ```\n{PUBLIC_COMPATIBILITY_NOTE}\n    ```"),
+        ),
+        (
+            "indented tilde fence",
+            format!("\t~~~\n{PUBLIC_COMPATIBILITY_NOTE}\n\t~~~"),
+        ),
+        (
+            "indented html comment",
+            format!("    <!-- {PUBLIC_COMPATIBILITY_NOTE} -->"),
+        ),
+        (
+            "embedded html comment",
+            format!("<div><!--\n{PUBLIC_COMPATIBILITY_NOTE}\n--></div>"),
+        ),
+    ];
+    for (name, body) in variants {
+        let input = format!(r#"{{"body":{}}}"#, serde_json::to_string(&body).unwrap());
+        assert!(
+            !execute_verifier_function(verifier, "verify_public_release_notes", &input)
+                .status
+                .success(),
+            "compatibility body helper accepted {name} variant"
         );
     }
 }
@@ -1633,6 +2256,316 @@ fn fixture_mode_requires_exact_candidate_bytes_and_private_home_binary() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("LOCAL FIXTURE ONLY"));
+}
+
+#[test]
+fn fixture_mode_accepts_the_exact_0_4_29_standalone_gke_receipt() {
+    let fixture = gke_receipt_fixture();
+    let output = run_gke_receipt_fixture(&fixture);
+    assert!(
+        output.status.success(),
+        "0.4.29 receipt fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn public_receipt_dispatch_decode_is_executable_and_fail_closed() {
+    let fixture = gke_receipt_fixture();
+    let receipt = fs::read(&fixture.receipt).unwrap();
+    let sidecar = fs::read(&fixture.sidecar).unwrap();
+    let receipt_b64 = base64::engine::general_purpose::STANDARD.encode(&receipt);
+    let sidecar_b64 = base64::engine::general_purpose::STANDARD.encode(&sidecar);
+    let receipt_sha256 = sha256(&fixture.receipt);
+    let sidecar_sha256 = sha256(&fixture.sidecar);
+
+    let (temp, output) = run_public_receipt_decoder(
+        receipt_b64.clone(),
+        receipt_sha256.clone(),
+        sidecar_b64.clone(),
+        sidecar_sha256.clone(),
+    );
+    assert!(
+        output.status.success(),
+        "valid Base64 receipt dispatch input failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(temp.0.join("gke-receipt/lumen-standalone-gke-receipt.json")).unwrap(),
+        receipt
+    );
+    assert_eq!(
+        fs::read(
+            temp.0
+                .join("gke-receipt/lumen-standalone-gke-receipt.json.sha256"),
+        )
+        .unwrap(),
+        sidecar
+    );
+
+    for (name, b64, sha, sidecar_b64_input, sidecar_sha) in [
+        (
+            "non-base64 receipt",
+            "not!base64".to_owned(),
+            receipt_sha256.clone(),
+            sidecar_b64.clone(),
+            sidecar_sha256.clone(),
+        ),
+        (
+            "wrong receipt hash",
+            receipt_b64.clone(),
+            "0".repeat(64),
+            sidecar_b64.clone(),
+            sidecar_sha256.clone(),
+        ),
+        (
+            "wrong sidecar hash",
+            receipt_b64.clone(),
+            receipt_sha256.clone(),
+            sidecar_b64.clone(),
+            "0".repeat(64),
+        ),
+        (
+            "quoted base64 newline",
+            format!("{}\n", receipt_b64),
+            receipt_sha256.clone(),
+            sidecar_b64.clone(),
+            sidecar_sha256.clone(),
+        ),
+    ] {
+        let (_, output) = run_public_receipt_decoder(b64, sha, sidecar_b64_input, sidecar_sha);
+        assert!(
+            !output.status.success(),
+            "receipt decoder accepted {name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn fixture_mode_rejects_standalone_gke_receipt_schema_and_candidate_binding_drift() {
+    macro_rules! assert_receipt_rejected {
+        ($name:literal, $mutate:expr) => {{
+            let fixture = gke_receipt_fixture();
+            let mut receipt =
+                serde_json::from_slice::<serde_json::Value>(&fs::read(&fixture.receipt).unwrap())
+                    .unwrap();
+            ($mutate)(&mut receipt);
+            rewrite_receipt(&fixture, &receipt);
+            let output = run_gke_receipt_fixture(&fixture);
+            assert!(
+                !output.status.success(),
+                "standalone GKE receipt mutation passed: {}\n{}",
+                $name,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }};
+    }
+
+    assert_receipt_rejected!("missing top key", |receipt: &mut serde_json::Value| {
+        receipt.as_object_mut().unwrap().remove("stage");
+    });
+    assert_receipt_rejected!("extra top key", |receipt: &mut serde_json::Value| {
+        receipt["extra"] = json!(true);
+    });
+    assert_receipt_rejected!(
+        "missing candidate key",
+        |receipt: &mut serde_json::Value| {
+            receipt["candidate"]
+                .as_object_mut()
+                .unwrap()
+                .remove("manifest_sha256");
+        }
+    );
+    assert_receipt_rejected!("extra candidate key", |receipt: &mut serde_json::Value| {
+        receipt["candidate"]["timestamp"] = json!(0);
+    });
+    assert_receipt_rejected!(
+        "missing controller CLI key",
+        |receipt: &mut serde_json::Value| {
+            receipt["candidate"]["controller_cli"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sha256");
+        }
+    );
+    assert_receipt_rejected!(
+        "extra controller CLI key",
+        |receipt: &mut serde_json::Value| {
+            receipt["candidate"]["controller_cli"]["archive"] = json!("unbound");
+        }
+    );
+    assert_receipt_rejected!(
+        "missing required continuity key",
+        |receipt: &mut serde_json::Value| {
+            receipt["matrix"]["required_continuity"]
+                .as_object_mut()
+                .unwrap()
+                .remove("audience");
+        }
+    );
+    assert_receipt_rejected!(
+        "extra required continuity key",
+        |receipt: &mut serde_json::Value| {
+            receipt["matrix"]["required_continuity"]["timestamp"] = json!(0);
+        }
+    );
+    assert_receipt_rejected!(
+        "required continuity scalar",
+        |receipt: &mut serde_json::Value| {
+            receipt["matrix"]["required_continuity"] = json!("passed");
+        }
+    );
+    assert_receipt_rejected!(
+        "zero required continuity delta",
+        |receipt: &mut serde_json::Value| {
+            receipt["matrix"]["required_continuity"]["tokenreview_delta"] = json!(0);
+        }
+    );
+    assert_receipt_rejected!(
+        "fractional required continuity delta",
+        |receipt: &mut serde_json::Value| {
+            receipt["matrix"]["required_continuity"]["allowed_delta"] = json!(1.5);
+        }
+    );
+    assert_receipt_rejected!(
+        "mismatched observed runtime child",
+        |receipt: &mut serde_json::Value| {
+            receipt["candidate"]["observed_runtime_child_digest"] =
+                json!(format!("sha256:{}", "4".repeat(64)));
+        }
+    );
+    assert_receipt_rejected!(
+        "missing redaction key",
+        |receipt: &mut serde_json::Value| {
+            receipt["redaction"]
+                .as_object_mut()
+                .unwrap()
+                .remove("canary_scan");
+        }
+    );
+    assert_receipt_rejected!("extra redaction key", |receipt: &mut serde_json::Value| {
+        receipt["redaction"]["cluster_name"] = json!("sensitive");
+    });
+    assert_receipt_rejected!(
+        "redaction value drift",
+        |receipt: &mut serde_json::Value| {
+            receipt["redaction"]["token_retained"] = json!(true);
+        }
+    );
+    for key in [
+        "manifest_sha256",
+        "root_digest",
+        "amd64_digest",
+        "arm64_digest",
+        "run_id",
+    ] {
+        let fixture = gke_receipt_fixture();
+        let mut receipt =
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&fixture.receipt).unwrap())
+                .unwrap();
+        receipt["candidate"][key] = json!(format!("mismatch-{key}"));
+        rewrite_receipt(&fixture, &receipt);
+        assert!(
+            !run_gke_receipt_fixture(&fixture).status.success(),
+            "candidate {key} drift passed"
+        );
+    }
+    assert_receipt_rejected!(
+        "wrong but listed controller target",
+        |receipt: &mut serde_json::Value| {
+            receipt["candidate"]["controller_cli"]["target"] = json!("aarch64-apple-darwin");
+        }
+    );
+    assert_receipt_rejected!(
+        "wrong controller hash",
+        |receipt: &mut serde_json::Value| {
+            receipt["candidate"]["controller_cli"]["sha256"] = json!("0".repeat(64));
+        }
+    );
+}
+
+#[test]
+fn fixture_mode_rejects_standalone_gke_receipt_sidecar_size_and_version_bypasses() {
+    for (name, rewrite) in [
+        (
+            "wrong filename",
+            format!("{}  other.json\n", "0".repeat(64)),
+        ),
+        (
+            "extra sidecar line",
+            format!(
+                "{}  lumen-standalone-gke-receipt.json\nextra\n",
+                "0".repeat(64)
+            ),
+        ),
+    ] {
+        let fixture = gke_receipt_fixture();
+        fs::write(&fixture.sidecar, rewrite).unwrap();
+        let output = run_gke_receipt_fixture(&fixture);
+        assert!(
+            !output.status.success(),
+            "standalone GKE receipt {name} sidecar passed"
+        );
+    }
+    let fixture = gke_receipt_fixture();
+    let mut oversized = fs::read(&fixture.receipt).unwrap();
+    oversized.extend(std::iter::repeat_n(b' ', 16385));
+    fs::write(&fixture.receipt, oversized).unwrap();
+    fs::write(
+        &fixture.sidecar,
+        format!(
+            "{}  lumen-standalone-gke-receipt.json\n",
+            sha256(&fixture.receipt)
+        ),
+    )
+    .unwrap();
+    assert!(
+        !run_gke_receipt_fixture(&fixture).status.success(),
+        "oversized standalone GKE receipt passed"
+    );
+
+    let fixture = gke_receipt_fixture();
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            "source \"$1\"; TAG=lumen@0.4.28; STANDALONE_GKE_RECEIPT=\"$2\"; STANDALONE_GKE_RECEIPT_SIDECAR=\"$3\"; validate_standalone_gke_receipt",
+            "bash",
+        ])
+        .arg(release_script())
+        .arg(&fixture.receipt)
+        .arg(&fixture.sidecar)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "a standalone GKE receipt was accepted for a pre-0.4.29 tag"
+    );
+}
+
+#[test]
+fn fixture_mode_rejects_changed_public_standalone_gke_receipt_bytes() {
+    for (name, path) in [
+        ("receipt", "lumen-standalone-gke-receipt.json"),
+        ("sidecar", "lumen-standalone-gke-receipt.json.sha256"),
+    ] {
+        let fixture = gke_receipt_fixture();
+        fs::write(
+            fixture.release.public.join(path),
+            format!("changed-{name}\n"),
+        )
+        .unwrap();
+        let output = run_gke_receipt_fixture(&fixture);
+        assert!(
+            !output.status.success(),
+            "changed public standalone GKE {name} bytes passed"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("public standalone GKE"),
+            "changed public standalone GKE {name} did not reach the exact byte check: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]

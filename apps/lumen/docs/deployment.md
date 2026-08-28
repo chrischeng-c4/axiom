@@ -21,6 +21,15 @@ lumen serve
 The default endpoint is `http://127.0.0.1:7373`. The default index is in memory.
 Add `--data-dir <path>` when the index must survive a process restart.
 
+A bare `lumen serve` remains loopback and in-memory unless `--data-dir` or
+`LUMEN_DATA_DIR` is set.
+
+The shipped image defaults are `LUMEN_DATA_DIR=/var/lib/lumen/data`,
+`LUMEN_PERSISTENCE=segment`, `LUMEN_WAL=embedded`, and
+`VOLUME ["/var/lib/lumen/data"]`.
+
+A 0.4.28 volume upgrades only when it contains a valid segment checkpoint in the exact legacy `gen-<seq>` form. On the first 0.4.29 start, Lumen validates the highest such generation and atomically writes `CURRENT`. A corrupt highest legacy generation fails startup and never falls back to an older generation. After 0.4.29 writes or adopts `CURRENT`, in-place downgrade to 0.4.28 is unsupported. Keep a pre-upgrade volume copy or backup for rollback.
+
 ### Container
 
 Every Lumen release publishes multi-arch container images to GitHub Packages (GHCR)
@@ -55,9 +64,12 @@ local kind runs do not prove GKE, Regional HA, Fleet, or autoscaling.
 
 Shipped container images set `LUMEN_HOST=0.0.0.0` by default so published
 ports are reachable from the host without extra environment variables. The bare
-binary continues to default to `127.0.0.1`. Omitting both the volume mount and
-data directory uses the explicit in-memory, ephemeral path where state is lost
-on container replacement:
+binary continues to default to `127.0.0.1` and in-memory storage. The shipped
+image defaults to segment storage at its VOLUME path. With no mount at
+`/var/lib/lumen/data`, Docker supplies an anonymous volume. `docker run --rm`
+removes that anonymous volume with the container. Deliberate replacement
+retention uses a named volume or a caller-managed bind mount at the exact data
+path:
 
 ```bash
 docker run --rm -p 127.0.0.1:7373:7373 \
@@ -65,8 +77,9 @@ docker run --rm -p 127.0.0.1:7373:7373 \
   "$IMAGE"
 ```
 
-Use a named volume mounted directly at `/var/lib/lumen/data` when local data must
-survive container replacement:
+Use a named volume mounted directly at `/var/lib/lumen/data`, or a
+caller-managed bind mount at that exact path, when local data must survive
+container replacement:
 
 ```bash
 docker volume create lumen-data
@@ -74,9 +87,6 @@ docker volume create lumen-data
 docker run -d --name lumen -p 127.0.0.1:7373:7373 \
   --mount type=volume,src=lumen-data,dst=/var/lib/lumen/data \
   -e LUMEN_AUTH=off \
-  -e LUMEN_WAL=embedded \
-  -e LUMEN_DATA_DIR=/var/lib/lumen/data \
-  -e LUMEN_PERSISTENCE=segment \
   -e LUMEN_GRACE_SECS=1 \
   "$IMAGE"
 ```
@@ -90,12 +100,48 @@ docker rm lumen
 docker run -d --name lumen -p 127.0.0.1:7373:7373 \
   --mount type=volume,src=lumen-data,dst=/var/lib/lumen/data \
   -e LUMEN_AUTH=off \
-  -e LUMEN_WAL=embedded \
-  -e LUMEN_DATA_DIR=/var/lib/lumen/data \
-  -e LUMEN_PERSISTENCE=segment \
   -e LUMEN_GRACE_SECS=1 \
   "$IMAGE"
 ```
+
+The checked-in Compose patch is this storage-only YAML excerpt:
+
+```yaml
+services:
+  lumen:
+    volumes:
+      - lumen-data:/var/lib/lumen/data
+volumes:
+  lumen-data: {}
+```
+
+Use the public patch command for a caller-owned Compose file:
+
+```bash
+lumen standalone compose patch --file <compose.yaml> [--name <name>]
+```
+
+It refuses an existing same-name service unless it has the label
+`com.axiom.lumen.managed: 'true'`. It does not update the checked-in
+`apps/lumen/compose.yaml` application.
+
+Compose and GKE backup/restore runs must use the administrative restore path
+with `--replace`. Restore without `--replace` is refused. Keep backup storage
+separate from the runtime PVC or named volume.
+
+Use the public commands for local backups and restores:
+
+```bash
+lumen standalone backup --compose apps/lumen/compose.yaml --out /tmp/lumen.snapshot
+lumen standalone restore --compose apps/lumen/compose.yaml --file /tmp/lumen.snapshot --replace
+lumen standalone backup --gke lumen.yaml --out /tmp/lumen-gke.snapshot
+lumen standalone restore --gke lumen.yaml --file /tmp/lumen-gke.snapshot --replace
+```
+
+For a GKE runtime, the CLI port-forwards to the Service, makes a 600-second
+Kubernetes-default-audience TokenRequest for `<name>-admin`, and keeps that
+token only in memory. An app uses only
+`LUMEN_URL=http://<name>.<namespace>.svc.cluster.local:7373`.
 
 The container process listens on every container interface by default. The
 published host port still listens only on `127.0.0.1`.

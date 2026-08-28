@@ -276,6 +276,10 @@ GKE = """# Demo GKE
 
 This guide defines the current and target GKE deployment contract.
 
+## Standalone GKE instance
+
+Standalone renders one StatefulSet and one separately owned PVC instance.
+
 ## Contract map
 
 | Fact | Canonical source | Discovery |
@@ -718,7 +722,9 @@ class ProjectDocsContractTest(unittest.TestCase):
         self.adopt_environment_and_client_integration_docs()
         gke = self.project / "docs/gke.md"
         gke.write_text(
-            GKE.replace("## Support tiers", "## Environments").replace(
+            GKE.replace("## Standalone GKE instance\n\n", "")
+            .replace("## Support tiers", "## Environments")
+            .replace(
                 "| Fact | Canonical source | Discovery |",
                 "| Fact | Source | Discovery |",
             ),

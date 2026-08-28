@@ -18,7 +18,9 @@ destination without copying tracker state.
   commit and index apply, while in-memory mode is explicitly ephemeral.
 - Boundary: The selected backend can use different internal logs and fsync
   mechanisms, but a persistent 2xx has one public meaning. This outcome does
-  not make the derived index the caller's source of truth.
+  not make the derived index the caller's source of truth. The Docker image
+  selecting a durable backend does not complete the uniform durable-2xx or
+  crash-injection outcome.
 - Completion evidence: Crash-injection tests cover every persistent backend
   before commit, after commit, before apply, and after apply. Acknowledged
   values survive restart, rejected values do not appear, and in-memory startup
@@ -278,10 +280,14 @@ destination without copying tracker state.
 ### Projected KSA client auth
 
 - ID: `projected-ksa-client-auth`
-- Outcome: A generated Lumen client has explicit Standalone and Managed KSA
-  connection profiles. Application code never holds the credential value.
-- Boundary: Standalone never reads a token file. `ManagedKsa` requires HTTPS
-  Service DNS, a CA path, and the fixed token path
+- Outcome: A generated Lumen client keeps local Standalone credential-free,
+  supports the Kubernetes default ServiceAccount token for in-cluster
+  Standalone, and has an explicit Managed KSA connection profile. Application
+  code never holds the credential value.
+- Boundary: Local and Compose Standalone never read a token file. In-cluster
+  Standalone reads the Kubernetes default ServiceAccount token only for an
+  exact Service DNS URL. `ManagedKsa` requires HTTPS Service DNS, a CA path,
+  and the fixed token path
   `/var/run/secrets/lumen.axiom.dev/token`. The application or platform projects
   the audience `lumen.axiom.dev` token and CA into its workload. Fleet does not
   mutate client workloads. `libs/service-auth` supplies a portable opaque token
@@ -291,12 +297,13 @@ destination without copying tracker state.
   Server-side TokenReview remains authoritative for signature, expiry,
   audience, and KSA identity. A `401` never downgrades to anonymous.
 - Completion evidence: Generated TypeScript, Python, and Rust integration tests
-  prove explicit Standalone use with no credential access, Managed use with a
-  valid token and private CA, a new opaque token on the next request after
-  kubelet rotation, hard failure for missing, unreadable, and empty Managed
-  files, server rejection of expired, wrong-audience, and malformed tokens, no
-  anonymous fallback after `401`, and no credential in arguments, environment,
-  status, Events, logs, or error text.
+  prove local Standalone use with no credential access, in-cluster Standalone
+  use with the default token, Managed use with a valid audience-bound token and
+  private CA, a new opaque token on the next request after kubelet rotation,
+  hard failure for missing, unreadable, and empty required files, server
+  rejection of expired, wrong-audience, and malformed tokens, no anonymous
+  fallback after `401`, and no credential in arguments, environment, status,
+  Events, logs, or error text.
 - Tracking: [#3799](https://github.com/chrischeng-c4/axiom/issues/3799) (`lumen@0.4.36`).
 
 ### Managed auth unification

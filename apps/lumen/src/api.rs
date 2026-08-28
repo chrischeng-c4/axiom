@@ -41,11 +41,14 @@ use axum::middleware::{from_fn, Next};
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::{StorageFullError, SubmitStalled, WriteCoordinator, WriteSink};
+use crate::coordinator::{
+    MutationGate, RestartRequired, StorageFullError, SubmitStalled, WriteCoordinator, WriteSink,
+};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::reshard::ReshardBatch;
 use crate::routing::VirtualBucketShardMap;
+use crate::segment_restore::{RestoreNotCommitted, RestoreUnavailable};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
     Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
@@ -81,6 +84,20 @@ impl MetricsProvider for ServingMetrics {
     }
 }
 
+/// Readiness is false after either graceful drain or an unresolved durable
+/// boundary. Liveness remains true so Kubernetes can restart the process
+/// without hiding its diagnostic endpoints.
+struct ServingReadiness {
+    engine: Arc<Engine>,
+    writer: Arc<dyn WriteSink>,
+}
+
+impl ReadinessHook for ServingReadiness {
+    fn is_draining(&self) -> bool {
+        self.engine.is_draining() || self.writer.restart_required()
+    }
+}
+
 /// How many authorization checks one request may have in flight at once.
 ///
 /// The multi-collection paths (`GET /collections`, `POST /collections:search`)
@@ -112,6 +129,9 @@ pub struct AppState {
     /// segment-checkpoint implementation when segment persistence is
     /// configured. See [`CheckpointSink`].
     pub checkpoint: Arc<dyn CheckpointSink>,
+    /// Restore backend for `POST /admin/restore`. Defaults to an in-memory
+    /// candidate-and-swap sink; the server binary may wire a durable variant.
+    restore_sink: Arc<dyn RestoreSink>,
     /// Bounded write pause on still-moving virtual buckets during a
     /// reshard's final `CatchingUp` pass (#1396 R2). Defaults to unarmed
     /// (every write passes through unchanged); the reshard driver arms it
@@ -159,6 +179,44 @@ pub trait CheckpointSink: Send + Sync {
     /// on disk to fall behind). `Err` on a real write failure, which callers
     /// (the reshard driver) must treat as "not yet durable" and retry.
     async fn checkpoint_now(&self) -> Result<bool>;
+}
+
+/// Restore backend for the administrative restore operation.
+#[async_trait]
+pub trait RestoreSink: Send + Sync {
+    async fn restore(&self, snapshot: SnapshotV1) -> Result<()>;
+}
+
+/// Default restore implementation for the in-memory engine.
+///
+/// The snapshot is restored into a disposable candidate before the exclusive
+/// mutation gate is acquired. This keeps malformed snapshots from waiting
+/// behind in-flight writes and makes the live replacement a single swap.
+struct InMemoryRestoreSink {
+    engine: Arc<Engine>,
+    mutation_gate: Option<MutationGate>,
+}
+
+impl InMemoryRestoreSink {
+    fn new(engine: Arc<Engine>, mutation_gate: Option<MutationGate>) -> Self {
+        Self {
+            engine,
+            mutation_gate,
+        }
+    }
+}
+
+#[async_trait]
+impl RestoreSink for InMemoryRestoreSink {
+    async fn restore(&self, snapshot: SnapshotV1) -> Result<()> {
+        let candidate = Engine::new();
+        candidate.restore(snapshot)?;
+        let _permit = match &self.mutation_gate {
+            Some(gate) => Some(gate.exclusive().await?),
+            None => None,
+        };
+        self.engine.activate_replacement(candidate)
+    }
 }
 
 /// Default [`CheckpointSink`] for deployments/tests with no configured
@@ -494,12 +552,16 @@ impl AppState {
             write_backend: Arc::new(LocalWriteBackend {
                 writer: writer.clone(),
             }),
-            engine,
+            engine: engine.clone(),
             verifier: Arc::new(LumenVerifier::new(auth.clone())),
             auth,
             cluster: None,
-            writer,
+            writer: writer.clone(),
             checkpoint: Arc::new(NoopCheckpoint),
+            restore_sink: Arc::new(InMemoryRestoreSink::new(
+                engine.clone(),
+                writer.mutation_gate(),
+            )),
             write_fence: WriteFence::default(),
             routed: None,
         }
@@ -531,6 +593,11 @@ impl AppState {
     /// control/observe `POST /admin/checkpoint` behavior.
     pub fn with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self {
         self.checkpoint = checkpoint;
+        self
+    }
+
+    pub fn with_restore_sink(mut self, restore_sink: Arc<dyn RestoreSink>) -> Self {
+        self.restore_sink = restore_sink;
         self
     }
 
@@ -710,18 +777,17 @@ impl Modify for SecurityAddon {
                         .scheme(HttpAuthScheme::Bearer)
                         .bearer_format("opaque")
                         .description(Some(
-                            "A short-lived, audience-bound Kubernetes ServiceAccount token, \
-                             obtained from the TokenRequest API. There is no configurable \
-                             credential source and no static token to issue: under \
-                             `auth: required` this header is resolved by the cluster itself, \
-                             through TokenReview for the caller's identity and \
-                             SubjectAccessReview for what that identity may do; under \
-                             `auth: disabled` it is ignored entirely. A Google access token, \
-                             ID token, ADC credential, or metadata-server token is never \
-                             accepted here. The token is a bearer credential, so it is only \
-                             ever sent over the instance's own TLS: production is a private \
-                             ClusterIP the serving pod terminates itself, with no Ingress, \
-                             Gateway, LoadBalancer, NodePort, or mesh in front of it.",
+                            "A short-lived Kubernetes ServiceAccount bearer token, verified by \
+                             TokenReview for caller identity and SubjectAccessReview for each \
+                             operation. Managed `LUMEN_AUTH=required` keeps the \
+                             `lumen.axiom.dev` audience and private TLS contract. Standalone \
+                             `LUMEN_AUTH=in-cluster` accepts the Kubernetes default \
+                             ServiceAccount token only on its private ClusterIP Service; the \
+                             generated clients attach that token only to an exact \
+                             `*.svc.cluster.local` URL. `LUMEN_AUTH=off` ignores the header. A \
+                             Google access token, ID token, ADC credential, or metadata-server \
+                             token is never accepted. Neither profile exposes Ingress, Gateway, \
+                             LoadBalancer, or NodePort.",
                         ))
                         .build(),
                 ),
@@ -884,8 +950,12 @@ pub fn router_with_admission(
         engine: state.engine.clone(),
         verifier: state.verifier.clone(),
     });
+    let readiness = Arc::new(ServingReadiness {
+        engine: state.engine.clone(),
+        writer: state.writer.clone(),
+    });
     let probes = service_http::standard_probe_routes_canonical_json(
-        state.engine.clone(),
+        readiness,
         Some(metrics),
         crate::spec::openapi_json,
     );
@@ -1081,6 +1151,14 @@ fn enforce_write_fence(
 /// are exempt — they keep serving while degraded (see the `readyz`
 /// discussion in this issue's report: a degraded node still answers reads).
 fn enforce_storage_writable(state: &AppState) -> Result<(), ApiErr> {
+    if state.writer.restart_required() {
+        return Err(ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "restart_required",
+            "node observed an unresolved durability boundary; restart this Lumen process before retrying any mutation"
+                .to_string(),
+        ));
+    }
     if state.engine.metrics().is_storage_degraded() {
         return Err(ApiErr::new(
             StatusCode::INSUFFICIENT_STORAGE,
@@ -1092,6 +1170,16 @@ fn enforce_storage_writable(state: &AppState) -> Result<(), ApiErr> {
         ));
     }
     Ok(())
+}
+
+async fn acquire_direct_mutation_permit(
+    state: &AppState,
+) -> Result<Option<tokio::sync::OwnedRwLockReadGuard<()>>, ApiErr> {
+    enforce_storage_writable(state)?;
+    let Some(gate) = state.writer.mutation_gate() else {
+        return Ok(None);
+    };
+    gate.shared().await.map(Some).map_err(ApiErr::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -1141,7 +1229,9 @@ async fn version() -> Json<serde_json::Value> {
 /// OpenAPI metadata for the shared `/readyz` implementation in service-http.
 #[allow(dead_code)]
 async fn readyz(State(state): State<AppState>) -> (StatusCode, &'static str) {
-    if state.engine.is_draining() {
+    if state.writer.restart_required() {
+        (StatusCode::SERVICE_UNAVAILABLE, "restart required")
+    } else if state.engine.is_draining() {
         (StatusCode::SERVICE_UNAVAILABLE, "draining")
     } else {
         (StatusCode::OK, "ok")
@@ -2257,6 +2347,8 @@ async fn backup_to_local(
     responses(
         (status = 204, description = "Engine state replaced from the snapshot"),
         (status = 403, description = "Missing admin role", body = ApiError),
+        (status = 500, description = "Restore failed", body = ApiError),
+        (status = 503, description = "Restore temporarily unavailable", body = ApiError),
         (status = 422, description = "Malformed or incompatible snapshot", body = ApiError),
         (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
@@ -2268,7 +2360,11 @@ async fn restore(
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
     enforce_storage_writable(&state)?;
-    state.engine.restore(snap).map_err(ApiErr::from)?;
+    state
+        .restore_sink
+        .restore(snap)
+        .await
+        .map_err(ApiErr::from)?;
     tracing::info!(
         target: "lumen.audit",
         event = "restore_applied",
@@ -2313,6 +2409,7 @@ async fn reshard_apply(
     Json(batch): Json<ReshardBatch>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
     let outcome = state
         .engine
         .apply_reshard_batch(batch.snapshot, None)
@@ -2363,6 +2460,7 @@ async fn reshard_prune(
     Json(chunk): Json<crate::reshard::ReshardPruneChunk>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
     let to_map_version = chunk.to_map_version;
     let bucket = chunk.bucket;
     let collection_id = chunk.collection_id.clone();
@@ -2471,6 +2569,7 @@ async fn reshard_evict(
     Json(req): Json<ReshardEvictRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    let _mutation_permit = acquire_direct_mutation_permit(&state).await?;
     let map =
         VirtualBucketShardMap::new(req.map_version, req.assignments, req.physical_shard_count)
             .map_err(ApiErr::from)?;
@@ -2518,6 +2617,9 @@ async fn admin_checkpoint(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure_admin(Role::Admin).await?;
+    // The concrete checkpoint sink acquires the shared checkpoint permit. An
+    // API-level permit here can deadlock behind a queued exclusive restore.
+    enforce_storage_writable(&state)?;
     let persisted = state
         .checkpoint
         .checkpoint_now()
@@ -2842,6 +2944,27 @@ impl From<anyhow::Error> for ApiErr {
                 e.to_string(),
             );
         }
+        if e.downcast_ref::<RestartRequired>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "restart_required",
+                e.to_string(),
+            );
+        }
+        if e.downcast_ref::<RestoreNotCommitted>().is_some() {
+            return Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "restore_not_committed",
+                e.to_string(),
+            );
+        }
+        if e.downcast_ref::<RestoreUnavailable>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "restore_unavailable",
+                e.to_string(),
+            );
+        }
         // #2516: a durable write path genuinely hit ENOSPC — the write
         // coordinator already flipped the sticky degraded gauge before
         // producing this error. Report 507 Insufficient Storage with the
@@ -2958,3 +3081,86 @@ impl From<crate::auth::AuthErr> for ApiErr {
     }
 }
 // CODEGEN-END
+
+#[cfg(test)]
+mod restore_sink_tests {
+    use super::*;
+    use crate::types::CreateCollectionRequest;
+    use std::collections::BTreeMap;
+
+    fn collection_request() -> CreateCollectionRequest {
+        serde_json::from_value(serde_json::json!({
+            "fields": { "value": { "type": "keyword" } }
+        }))
+        .expect("valid collection request")
+    }
+
+    #[tokio::test]
+    async fn invalid_snapshot_is_rejected_before_exclusive_gate() {
+        let engine = Arc::new(Engine::new());
+        let gate = MutationGate::default();
+        let shared = gate.shared().await.expect("shared permit");
+        let sink = InMemoryRestoreSink::new(engine, Some(gate));
+        let invalid = SnapshotV1 {
+            version: 999,
+            collections: BTreeMap::new(),
+        };
+
+        let result = tokio::time::timeout(Duration::from_millis(100), sink.restore(invalid))
+            .await
+            .expect("invalid snapshot must not wait for the exclusive gate");
+        assert!(result.is_err());
+        drop(shared);
+    }
+
+    #[tokio::test]
+    async fn default_sink_atomically_replaces_live_state() {
+        let live = Arc::new(Engine::new());
+        live.create_collection("old", collection_request())
+            .expect("old collection");
+        let state = AppState::open(live.clone());
+
+        let source = Engine::new();
+        source
+            .create_collection("new", collection_request())
+            .expect("new collection");
+        let snapshot = source.snapshot().expect("snapshot");
+
+        state
+            .restore_sink
+            .restore(snapshot)
+            .await
+            .expect("restore succeeds");
+        let restored = live.snapshot().expect("restored snapshot");
+        assert!(!restored.collections.contains_key("old"));
+        assert!(restored.collections.contains_key("new"));
+    }
+
+    #[tokio::test]
+    async fn restore_not_committed_maps_to_stable_500_envelope() {
+        let response = ApiErr::from(anyhow::Error::new(RestoreNotCommitted(
+            "CURRENT was not moved".to_string(),
+        )))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(envelope["error"], "restore_not_committed");
+    }
+
+    #[tokio::test]
+    async fn restore_unavailable_maps_to_stable_503_envelope() {
+        let response = ApiErr::from(anyhow::Error::new(RestoreUnavailable(
+            "NATS/Raft topology is unsupported".to_string(),
+        )))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(envelope["error"], "restore_unavailable");
+    }
+}

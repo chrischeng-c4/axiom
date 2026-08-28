@@ -76,6 +76,7 @@ QUERYING_H2 = (
 )
 GKE_H2 = (
     "Purpose",
+    "Standalone GKE instance",
     "Contract map",
     "Support tiers",
     "Runtime size and topology",

@@ -8,10 +8,20 @@
 mod atomic;
 mod framed_log;
 mod fsync;
+mod generation;
 mod snapshot_store;
 
-pub use atomic::{atomic_write, sync_parent_dir};
+pub use atomic::{
+    atomic_write, atomic_write_strict, strict_sync_parent_dir, sync_parent_dir,
+    StrictAtomicWriteError,
+};
 pub use framed_log::{FramedLogReader, FramedLogWriter, LogFrame};
 pub use fsync::FsyncPolicy;
+pub use generation::{
+    CommitError, CommitFailureClass, CommitStep, CurrentReadError, CurrentReadErrorKind,
+    CurrentTarget, FailureInjector, FailurePoint, GenerationName, GenerationNameError,
+    GenerationNameErrorKind, GenerationStore, NoFailures, StagedGeneration, CURRENT_FILE_NAME,
+    CURRENT_TEMP_FILE_NAME, EMPTY_CURRENT_BYTES,
+};
 pub use snapshot_store::{SnapshotFile, SnapshotFileStore};
 // CODEGEN-END

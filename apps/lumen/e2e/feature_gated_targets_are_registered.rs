@@ -85,6 +85,11 @@ const REGISTRY: &[GatedTarget] = &[
         gate: r#"#![cfg(feature = "operator")]"#,
         required_features: &["operator"],
     },
+    GatedTarget {
+        path: "apps/lumen/e2e/standalone_backup_restore_cli.rs",
+        gate: r#"#![cfg(unix)]"#,
+        required_features: &[],
+    },
 ];
 
 const MAINTAINED_CMD: &str = r#"`cargo test -p lumen --features "operator delegated-auth"`"#;
