@@ -14,6 +14,61 @@ This guide separates three independent choices:
 
 None of these choices silently enables another one.
 
+## Standalone GKE instance
+
+Standalone GKE uses the shared `StatefulInstancePlan` boundary to render one
+StatefulSet plus a separately owned PVC instance. It
+is not Managed or Fleet adoption, HA, TLS, Ingress, LoadBalancer, or general
+Kubernetes support. The public `lumen.yaml` has only `name`, `namespace`,
+`nodePool`, `cpu`, `memory`, `storageSize`, `storageClass`, and
+`allowedServiceAccounts`; it has no image field.
+
+Initialize and render the instance locally, then inspect the generated storage
+and runtime directories before applying them:
+
+```bash
+lumen standalone gke init --out lumen.yaml
+lumen standalone gke render --file lumen.yaml --out lumen-dist
+kubectl apply -k lumen-dist/storage
+kubectl apply -k lumen-dist/runtime
+```
+
+The output root may be absent, empty, or an existing Lumen-managed root. A
+non-empty unmanaged root is refused. The public configuration has exactly these
+eight fields and no image field. `name` and `namespace` default to `lumen`.
+`storageSize` and `storageClass` default to `20Gi` and `premium-rwo`.
+`nodePool`, `cpu`, `memory`, and a nonempty `allowedServiceAccounts` list are
+required:
+
+```yaml
+name: lumen
+namespace: lumen
+nodePool: data-pool
+cpu: 500m
+memory: 512Mi
+storageSize: 20Gi
+storageClass: premium-rwo
+allowedServiceAccounts:
+  - apps/my-client
+```
+
+An app uses `LUMEN_URL=http://<name>.<namespace>.svc.cluster.local:7373`;
+the concrete default is `http://lumen.lumen.svc.cluster.local:7373`. The
+client reads the mounted token for the calling Pod's configured KSA, not an SA
+named `default`. The server checks that KSA against `allowedServiceAccounts`.
+
+The Standalone GKE live acceptance is controller-run, manual, and paid. It is
+separate from the existing Managed/operator GCP acceptance. Candidate CI does
+not claim GKE or `gcloud` coverage. Before the `lumen@0.4.29` release, the
+controller must run this gate against the exact candidate. It checks the
+Standalone `LUMEN_AUTH=in-cluster` matrix and the inherited Managed
+`LUMEN_AUTH=required` continuity matrix: a projected `lumen.axiom.dev` token is
+allowed, the same KSA's default token returns `401`, and a projected unlisted
+KSA returns `403`. It also checks cleanup and writes a sanitized receipt only
+after every check passes. The gate has not passed until the controller records
+that receipt. Its private cluster inputs and exact execution remain
+controller-owned.
+
 ## Contract map
 
 | Fact | Canonical source | Discovery |

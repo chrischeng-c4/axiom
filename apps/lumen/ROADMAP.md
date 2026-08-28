@@ -18,7 +18,9 @@ destination without copying tracker state.
   commit and index apply, while in-memory mode is explicitly ephemeral.
 - Boundary: The selected backend can use different internal logs and fsync
   mechanisms, but a persistent 2xx has one public meaning. This outcome does
-  not make the derived index the caller's source of truth.
+  not make the derived index the caller's source of truth. The Docker image
+  selecting a durable backend does not complete the uniform durable-2xx or
+  crash-injection outcome.
 - Completion evidence: Crash-injection tests cover every persistent backend
   before commit, after commit, before apply, and after apply. Acknowledged
   values survive restart, rejected values do not appear, and in-memory startup

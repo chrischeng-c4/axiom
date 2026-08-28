@@ -141,6 +141,34 @@ pub(crate) struct StandaloneArgs {
 pub(crate) enum StandaloneCmd {
     Compose(StandaloneComposeArgs),
     Gke(StandaloneGkeArgs),
+    Backup(StandaloneBackupArgs),
+    Restore(StandaloneRestoreArgs),
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneBackupArgs {
+    #[arg(long, conflicts_with = "gke", required_unless_present = "gke")]
+    pub(crate) compose: Option<PathBuf>,
+    #[arg(long, conflicts_with = "compose", required_unless_present = "compose")]
+    pub(crate) gke: Option<PathBuf>,
+    #[arg(long)]
+    pub(crate) out: PathBuf,
+    #[arg(long, requires = "compose", conflicts_with = "gke")]
+    pub(crate) name: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub(crate) struct StandaloneRestoreArgs {
+    #[arg(long, conflicts_with = "gke", required_unless_present = "gke")]
+    pub(crate) compose: Option<PathBuf>,
+    #[arg(long, conflicts_with = "compose", required_unless_present = "compose")]
+    pub(crate) gke: Option<PathBuf>,
+    #[arg(long)]
+    pub(crate) file: PathBuf,
+    #[arg(long, required = true)]
+    pub(crate) replace: bool,
+    #[arg(long, requires = "compose", conflicts_with = "gke")]
+    pub(crate) name: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -1125,7 +1153,7 @@ async fn main() -> Result<()> {
     lumen::tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
-        Command::Standalone(args) => standalone::run(args),
+        Command::Standalone(args) => standalone::run(args).await,
         Command::Serve(args) => serve(args).await,
         Command::Spec(args) => {
             // `spec gen` writes a typed client; everything else prints to stdout.
@@ -1264,8 +1292,9 @@ async fn issue(args: IssueArgs) -> Result<()> {
 /// (offline; no engine or server) and write it into `--out`.
 fn spec_gen(args: GenArgs) -> Result<()> {
     use openapi_codegen::{
-        generate_for_target_with_file_bearer_auth, FileBearerAuth, FileBearerScheme, GenOptions,
-        HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
+        generate_for_target_with_file_bearer_auth as generate_for_target_with_file_auth,
+        FileBearerAuth, FileBearerScheme, GenOptions, HttpClient, Lang, TargetPolicy,
+        MANIFEST_FILE,
     };
 
     const TARGET_POLICY: &str = include_str!("../../clients/codegen.toml");
@@ -1296,12 +1325,8 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         ".svc.cluster.local",
         [FileBearerScheme::Http, FileBearerScheme::Https],
     )?;
-    let output = generate_for_target_with_file_bearer_auth(
-        &lumen::spec::openapi_json(),
-        &opts,
-        target,
-        &auth,
-    )?;
+    let output =
+        generate_for_target_with_file_auth(&lumen::spec::openapi_json(), &opts, target, &auth)?;
     output.write_to_dir(&args.out)?;
     for file in &output.files {
         let path = args.out.join(&file.rel_path);
@@ -2422,7 +2447,7 @@ fn render_operator_yaml(args: &K8sOperatorRenderArgs) -> Result<String> {
         namespace,
     ));
     out.push_str("\n---\n");
-    let mut deployment = cli_std::artifact::replace_kubernetes_namespace(
+    let deployment = cli_std::artifact::replace_kubernetes_namespace(
         &cli_std::artifact::strip_source_ownership_markers(include_str!(
             "../../k8s/operator/deployment.yaml"
         )),

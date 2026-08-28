@@ -28,6 +28,10 @@ path = "src/bin/lumen-bench.rs"
 name = "standalone_gke_render"
 path = "e2e/standalone_gke_render.rs"
 
+[[test]]
+name = "standalone_gke_acceptance_contract"
+path = "e2e/standalone_gke_acceptance_contract.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-nats = { workspace = true }
@@ -579,6 +583,11 @@ path = "e2e/standalone_container_contract.rs"
 [[test]]
 name = "standalone_compose_patch"
 path = "e2e/standalone_compose_patch.rs"
+
+[[test]]
+name = "standalone_backup_restore_cli"
+path = "e2e/standalone_backup_restore_cli.rs"
+required-features = []
 
 [[test]]
 name = "stats_metadata_e2e"

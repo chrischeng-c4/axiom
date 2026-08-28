@@ -21,11 +21,34 @@ not exist in the current source. The Standalone default-token provider does.
 **Current.** `lumen serve` defaults to `LUMEN_AUTH=off` and listens on
 `127.0.0.1`. Compose keeps that auth-off behavior on a loopback port.
 
-Standalone GKE uses `LUMEN_AUTH=in-cluster`. It accepts the Kubernetes default
-ServiceAccount token through TokenReview. It checks every protected operation
-through SubjectAccessReview. The renderer creates one private ClusterIP,
+Standalone GKE uses `LUMEN_AUTH=in-cluster`. TokenReview authenticates the
+calling KSA from the mounted token for the calling Pod's configured KSA.
+The server checks that KSA against `allowedServiceAccounts`. SubjectAccessReview
+and RBAC authorize every protected operation. The renderer creates one private
+ClusterIP,
 NetworkPolicy, the allowed application RoleBindings, and a separate management
 ServiceAccount.
+
+ClusterIP and NetworkPolicy control reachability only. TokenReview authenticates
+the calling KSA; SubjectAccessReview and RBAC are the authorization boundary.
+Never derive the NetworkPolicy namespace list from the KSA allow-list.
+
+For an SDK client running at an exact `.svc.cluster.local` URL, the generated
+client uses the mounted token for the calling Pod's configured KSA automatically.
+This does not add a client configuration knob.
+
+The token file is reread for each request. Automatic KSA use is restricted to
+exact `.svc.cluster.local` URLs. Local, browser, and external clients do not
+read or send a KSA token. An explicit `Authorization` header always wins.
+
+The `lumen@0.4.29` release gate is a controller-run manual live GKE check. It
+must verify both this Standalone `in-cluster` path and the inherited Managed
+`required` path. The required continuity checks use a projected
+`lumen.axiom.dev` token for success, the same KSA's default token for `401`,
+and a projected unlisted KSA for `403`. The gate also verifies cleanup and a
+sanitized receipt. The gate is not claimed as passed here until the controller
+records that receipt. Cluster credentials, private inputs, and exact execution
+stay with the controller.
 
 ### Managed
 
@@ -108,8 +131,11 @@ ServiceAccount token path belongs only to Standalone in-cluster URLs.
 6. Lumen asks SubjectAccessReview in the Standalone namespace.
 
 An allowed application KSA receives collection, schema, index, and search
-access. It receives no `lumenadmin` grant, so `/admin/*` returns `403`. The
-renderer creates `<name>-admin` for backup and restore.
+access. A missing or bad token returns `401`. A TokenReview-valid but unlisted
+KSA returns `403`. A listed KSA receives collection, schema, index, and search
+access, but `/admin/*` returns `403`; only `<name>-admin` receives admin RBAC.
+The renderer creates `<name>-admin` for backup and restore. The runtime Service
+ClusterIP and NetworkPolicy limit reachability to cluster workloads.
 
 ## Planned whole-runtime access
 
@@ -230,7 +256,7 @@ Generated clients keep the deployment profiles separate:
 | Profile | Required inputs | Credential behavior |
 |---|---|---|
 | Local or Compose Standalone | Loopback or non-cluster URL | Never inspect a token or CA file. |
-| In-cluster Standalone | Exact non-empty `*.svc.cluster.local` HTTP or HTTPS URL | Read the Kubernetes default ServiceAccount token before every request. |
+| In-cluster Standalone | Exact non-empty `*.svc.cluster.local` HTTP or HTTPS URL | Read the mounted token for the calling Pod's configured KSA before every request. |
 | `ManagedKsa` | HTTPS Service DNS, CA path, and fixed audience-bound token path | Planned explicit profile. Read the opaque token before every request and fail before transport if a required input is missing. |
 
 An in-cluster Standalone application uses the standard mounted token:

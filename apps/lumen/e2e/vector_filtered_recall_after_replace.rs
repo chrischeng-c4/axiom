@@ -139,7 +139,10 @@ async fn ids_after(rounds: usize) -> Vec<String> {
     index_corpus(&s, "items").await;
     replace_corpus(&s, "items", rounds).await;
     let ids = filtered_ids(&s, "items").await;
-    eprintln!("replace_rounds={rounds} live_corpus={CORPUS} hits={} ids={ids:?}", ids.len());
+    eprintln!(
+        "replace_rounds={rounds} live_corpus={CORPUS} hits={} ids={ids:?}",
+        ids.len()
+    );
     ids
 }
 
@@ -291,4 +294,70 @@ fn selective_knn_with_fewer_than_k_allowed_after_replace_falls_back_to_exact_sca
         before + 1,
         "allow-set smaller than k cannot satisfy out.len() == k and must fall back to exact scan"
     );
+}
+
+#[test]
+fn unresolved_nearest_orphans_force_exact_fallback() {
+    use lumen::types::{VectorBackend, VectorMetric, VectorSpec};
+    use lumen::vector_index::{HnswCpuIndex, VectorIndex};
+
+    const CORPUS: usize = 60;
+    const K: usize = 5;
+    const EF_SEARCH: usize = 65;
+
+    let spec = VectorSpec {
+        dim: 3,
+        metric: VectorMetric::L2,
+        backend: VectorBackend::HnswCpu,
+        quantize: None,
+    };
+    let orphaned = HnswCpuIndex::new(spec.clone());
+    orphaned.set_ef_search(EF_SEARCH);
+    for i in 0..CORPUS {
+        let eid = format!("v{i:02}");
+        orphaned
+            .add(&eid, &[i as f32, 0.0, 0.0])
+            .expect("initial insert");
+    }
+    for i in 0..K {
+        let eid = format!("v{i:02}");
+        orphaned
+            .add(&eid, &[(1000 + i) as f32, 0.0, 0.0])
+            .expect("orphaning replacement insert");
+    }
+    assert_eq!(orphaned.len(), CORPUS);
+
+    let allowed = |eid: &str| {
+        eid.strip_prefix('v')
+            .and_then(|n| n.parse::<usize>().ok())
+            .is_some_and(|i| (K..K * 3).contains(&i))
+    };
+    let before = orphaned.exact_scan_fallbacks();
+    let hits = orphaned
+        .search_knn_filtered(&[0.0, 0.0, 0.0], K, &allowed)
+        .expect("orphaned search");
+    let after = orphaned.exact_scan_fallbacks();
+    let ids: Vec<String> = hits.into_iter().map(|(eid, _)| eid).collect();
+    let expected: Vec<String> = (K..K * 2).map(|i| format!("v{i:02}")).collect();
+    assert_eq!(ids, expected);
+    assert_eq!(after, before + 1);
+
+    let clean = HnswCpuIndex::new(spec);
+    clean.set_ef_search(EF_SEARCH);
+    for i in 0..CORPUS {
+        let eid = format!("v{i:02}");
+        let coordinate = if i < K { 1000 + i } else { i };
+        clean
+            .add(&eid, &[coordinate as f32, 0.0, 0.0])
+            .expect("clean insert");
+    }
+    assert_eq!(clean.len(), CORPUS);
+    let before = clean.exact_scan_fallbacks();
+    let hits = clean
+        .search_knn_filtered(&[0.0, 0.0, 0.0], K, &allowed)
+        .expect("clean search");
+    let after = clean.exact_scan_fallbacks();
+    let ids: Vec<String> = hits.into_iter().map(|(eid, _)| eid).collect();
+    assert_eq!(ids, expected);
+    assert_eq!(after, before);
 }

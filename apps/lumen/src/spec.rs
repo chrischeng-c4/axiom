@@ -388,13 +388,14 @@ identity and authorization questions.
 Managed keeps two independent checks. Its serving port uses private TLS, and
 its request token has the private `lumen.axiom.dev` audience. Standalone
 in-cluster is the simple one-Pod profile. It uses cleartext only inside the
-cluster network and accepts the Kubernetes default ServiceAccount token.
+cluster network and accepts the mounted token for the calling Pod's configured
+KSA. The server checks that KSA against `allowedServiceAccounts`.
 
 Server modes:
 
 ```env
 LUMEN_AUTH=required        # Managed private-audience token
-LUMEN_AUTH=in-cluster      # Standalone Kubernetes default token
+LUMEN_AUTH=in-cluster      # Standalone mounted configured-KSA token
 LUMEN_AUTH=off             # Compose and local development
 ```
 
@@ -533,8 +534,8 @@ server that cannot be verified is a wrong anchor or a wrong name, and both are
 fixable.
 
 ## Generated clients
-`lumen spec gen --lang rust|py|ts` opts the generated source into the
-Kubernetes default ServiceAccount token at
+`lumen spec gen --lang rust|py|ts` opts the generated source into the mounted
+token for the calling Pod's configured KSA, at
 `/var/run/secrets/kubernetes.io/serviceaccount/token`. The client rereads it
 before each request to an exact non-empty `*.svc.cluster.local` HTTP or HTTPS
 host. An explicit Authorization header wins and prevents a file read. Local,
@@ -1047,6 +1048,18 @@ set) is unaffected and keeps today's behavior: `--wal auto` still resolves to
 any restart loses all data. This is intentional dev-mode behavior, not a bug:
 set `--data-dir`/`LUMEN_DATA_DIR` (and optionally `--persistence=segment`)
 explicitly to get the same durability the operator now wires by default.
+
+The shipped image supplies `LUMEN_DATA_DIR=/var/lib/lumen/data`,
+`LUMEN_PERSISTENCE=segment`, `LUMEN_WAL=embedded`, and
+`VOLUME ["/var/lib/lumen/data"]`. A named volume or a caller-managed bind mount
+at that exact path lets container data survive replacement.
+
+Standalone GKE uses the shared `StatefulInstancePlan` boundary to render one
+StatefulSet plus a separately owned PVC instance. Its public config has no image
+field; the renderer fixes the published version. The Standalone GKE live
+acceptance is manual, controller-run, and paid. It is separate from
+Managed/operator GCP acceptance, and candidate CI makes no GKE or `gcloud`
+claim.
 
 ## `replicasPerShard > 1` — raft-HA
 - Fixed replica count `shardCount * replicasPerShard` (raft needs a known,

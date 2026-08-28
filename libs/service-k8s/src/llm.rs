@@ -30,6 +30,10 @@ StatefulSet-style serving fleets, headless/client Services, PodDisruptionBudget,
 CronJob backup runners, and PVC resize helpers. It does not decide service CRD
 field names or lifecycle policy on its own.
 
+The shared adapter preserves service-owned identity, image, storage, and
+lifecycle decisions. It does not adopt a runtime or decide the service's
+persistence policy.
+
 ## Stateful capacity axes
 Storage and compute scale independently. `plan_shard_split` plans one new
 physical shard when the busiest shard is strictly above 1 GiB by default.

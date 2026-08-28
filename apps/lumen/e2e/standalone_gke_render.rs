@@ -231,6 +231,22 @@ fn render_emits_one_durable_in_cluster_instance_and_split_rbac() {
         delegation["metadata"]["name"],
         "lumen.lumen.search.auth-delegator"
     );
+    assert_eq!(
+        delegation["metadata"]["labels"]["app.kubernetes.io/managed-by"],
+        "lumen-standalone"
+    );
+    assert_eq!(
+        delegation["metadata"]["labels"]["lumen.axiom.dev/owner-namespace"],
+        "lumen"
+    );
+    assert_eq!(
+        delegation["roleRef"],
+        serde_json::json!({
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:auth-delegator"
+        })
+    );
     assert_eq!(delegation["subjects"][0]["name"], "search");
 
     let policy = yaml(out.join("runtime/networkpolicy.yaml"));

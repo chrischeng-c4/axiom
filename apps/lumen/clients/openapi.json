@@ -370,6 +370,26 @@
               }
             }
           },
+          "500": {
+            "description": "Restore failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Restore temporarily unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "507": {
             "description": "Node in ENOSPC degraded read-only mode (#2516)",
             "content": {
