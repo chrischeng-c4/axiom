@@ -439,6 +439,10 @@ fn statefulset_wires_serving_contract_single_member() {
     assert_eq!(sts["spec"]["replicas"], 1);
     assert_eq!(sts["spec"]["serviceName"], "search-headless");
     assert_eq!(sts["spec"]["podManagementPolicy"], "Parallel");
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["enableServiceLinks"],
+        false
+    );
     assert_eq!(sts["spec"]["updateStrategy"]["type"], "RollingUpdate");
     assert!(
         sts["spec"]["strategy"].is_null(),

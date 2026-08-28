@@ -18,6 +18,20 @@ use super::{
 /// Compatibility adapter for the historical render root.  The root API stays
 /// source-compatible while the stateful shape is assembled by this module.
 pub fn render_compat_service_statefulset(p: ServiceStatefulSet) -> Value {
+    render_compat_service_statefulset_impl(p, None)
+}
+
+pub(super) fn render_compat_service_statefulset_with_links(
+    p: ServiceStatefulSet,
+    enable_service_links: bool,
+) -> Value {
+    render_compat_service_statefulset_impl(p, Some(enable_service_links))
+}
+
+fn render_compat_service_statefulset_impl(
+    p: ServiceStatefulSet,
+    enable_service_links: Option<bool>,
+) -> Value {
     let ServiceStatefulSet {
         cx,
         name,
@@ -111,6 +125,7 @@ pub fn render_compat_service_statefulset(p: ServiceStatefulSet) -> Value {
     plan.topology_spread_constraints = topology_spread_constraints;
     plan.revision_history_limit = revision_history_limit;
     plan.update_strategy = update_strategy;
+    plan.enable_service_links = enable_service_links;
     let rendered = stateful_instance(plan).expect("validated compatibility stateful plan");
     rendered.workload
 }
@@ -191,6 +206,9 @@ pub struct StatefulInstancePlan<'a> {
     pub node_selector: Option<Value>,
     pub tolerations: Vec<Value>,
     pub topology_spread_constraints: Vec<Value>,
+    /// Explicitly control Kubernetes service-link environment injection.
+    /// `None` preserves the historical default; service profiles may set it.
+    pub enable_service_links: Option<bool>,
     pub revision_history_limit: Option<i32>,
     pub update_strategy: Option<Value>,
 }
@@ -237,6 +255,7 @@ impl<'a> StatefulInstancePlan<'a> {
             node_selector: None,
             tolerations: Vec::new(),
             topology_spread_constraints: Vec::new(),
+            enable_service_links: None,
             revision_history_limit: None,
             update_strategy: None,
         }
@@ -484,6 +503,9 @@ pub fn stateful_instance(
         sts_spec["template"]["spec"]["topologySpreadConstraints"] =
             json!(topology_spread_constraints);
     }
+    if let Some(value) = plan.enable_service_links {
+        sts_spec["template"]["spec"]["enableServiceLinks"] = json!(value);
+    }
     if let Some(value) = plan.revision_history_limit {
         sts_spec["revisionHistoryLimit"] = json!(value);
     }
@@ -581,6 +603,30 @@ mod tests {
             json!({"spec": {"resources": {"requests": {"storage": "20Gi"}}}}),
             "/data",
         )
+    }
+
+    #[test]
+    fn service_links_are_opt_in_and_explicit() {
+        let default = plan(StatefulStorageAttachment::VolumeClaimTemplate(template_claim()));
+        assert!(default.enable_service_links.is_none());
+        assert!(stateful_instance(default).unwrap().workload["spec"]["template"]["spec"]
+            .get("enableServiceLinks").is_none());
+
+        let mut disabled = plan(StatefulStorageAttachment::VolumeClaimTemplate(template_claim()));
+        disabled.enable_service_links = Some(false);
+        assert_eq!(
+            stateful_instance(disabled).unwrap().workload["spec"]["template"]["spec"]
+                ["enableServiceLinks"],
+            false
+        );
+
+        let mut enabled = plan(StatefulStorageAttachment::VolumeClaimTemplate(template_claim()));
+        enabled.enable_service_links = Some(true);
+        assert_eq!(
+            stateful_instance(enabled).unwrap().workload["spec"]["template"]["spec"]
+                ["enableServiceLinks"],
+            true
+        );
     }
 
     #[test]

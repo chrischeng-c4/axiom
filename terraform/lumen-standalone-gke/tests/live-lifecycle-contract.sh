@@ -18,6 +18,7 @@ shellcheck "$LIVE" "$REPAIR"
 # shellcheck source=/dev/null
 source "$LIVE"
 LIVE_ROOTS_BEFORE=$(find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-live.??????' -print | LC_ALL=C sort)
+REPAIR_ROOTS_BEFORE=$(find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-repair.??????' -print | LC_ALL=C sort)
 if command -v sha256sum >/dev/null 2>&1; then
   CONTRACT_DIGEST=$(printf '%s' contract-run | sha256sum | awk '{print $1}')
 else
@@ -208,22 +209,45 @@ cat >"$FIXTURE/bin/terraform" <<'EOF'
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 state="$repo/test-state"; mode=$(<"$state/mode"); private_tmp_root=$(cd -P /tmp && pwd -P)
+repair_work_dir=${LUMEN_STANDALONE_GKE_REPAIR_WORK_DIR:-}
 [[ "${1:-}" == "-chdir=$repo/terraform/lumen-standalone-gke" ]] || exit 89
 shift
 cmd=${1:-}; [[ -n "$cmd" ]] || exit 90; shift
 event() { printf '%s\n' "$1" >>"$state/events"; }
+plan_context=live
 plan_json() {
   local action=$1 kind=$2
-  if [[ "$kind" == missing ]]; then jq -nc --arg a "$action" '{resource_changes:["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline"]|map({address:.,change:{actions:[$a]}})}'
-  elif [[ "$kind" == subset ]]; then jq -nc --arg a "$action" '{resource_changes:["google_service_account.nodes"]|map({address:.,change:{actions:[$a]}})}'
-  elif [[ "$kind" == extra ]]; then jq -nc --arg a "$action" '{resource_changes:["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_service_account.nodes","google_compute_network.extra"]|map({address:.,change:{actions:[$a]}})}'
-  elif [[ "$kind" == unknown ]]; then jq -nc --arg a "$action" '{resource_changes:["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_compute_network.unknown"]|map({address:.,change:{actions:[$a]}})}'
-  elif [[ "$kind" == wrong-action ]]; then jq -nc '{resource_changes:["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_service_account.nodes"]|map({address:.,change:{actions:["update"]}})}'
-  else jq -nc --arg a "$action" '{resource_changes:["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_service_account.nodes"]|map({address:.,change:{actions:[$a]}})}'; fi
+  if [[ "$action" != delete && "$kind" == valid ]] ||
+    [[ "$action" == delete && "$kind" == valid && "$plan_context" != repair ]]; then
+    jq -nc --arg a "$action" '{resource_changes:["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_service_account.nodes"]|map({address:.,change:{actions:[$a]}})}'
+    return
+  fi
+  local addresses='["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_service_account.nodes"]'
+  [[ "$kind" == wrong-action ]] && action=update
+  case "$kind" in
+    missing) addresses='["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline"]' ;;
+    subset) addresses='["google_service_account.nodes"]' ;;
+    extra) addresses='["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_service_account.nodes","google_compute_network.extra"]' ;;
+    unknown) addresses='["google_container_cluster.standalone","google_container_node_pool.standalone","google_project_iam_member.node_baseline","google_compute_network.unknown"]' ;;
+  esac
+  jq -nc --arg a "$action" --argjson addresses "$addresses" --arg c lumen-sa-1ab6cf668e --arg p lumen-np-1ab6cf668e --arg n lumen-nodes-1ab6cf668e --arg o lumen-standalone-1ab6cf668e --arg project abcde1 --arg zone us-central1-a --arg node_email lumen-nodes-1ab6cf668e@abcde1.iam.gserviceaccount.com '
+    {resource_changes: ($addresses | map(
+      if . == "google_container_cluster.standalone" then {address:.,mode:"managed",type:"google_container_cluster",name:"standalone",change:{actions:[$a],before:{project:$project,name:$c,location:$zone,resource_labels:{"lumen-owner":$o}},after:null}}
+      elif . == "google_container_node_pool.standalone" then {address:.,mode:"managed",type:"google_container_node_pool",name:"standalone",change:{actions:[$a],before:{project:$project,name:$p,location:$zone,cluster:$c,node_config:[{service_account:$node_email,labels:{"lumen-owner":$o}}]},after:null}}
+      elif . == "google_project_iam_member.node_baseline" then {address:.,mode:"managed",type:"google_project_iam_member",name:"node_baseline",change:{actions:[$a],before:{project:$project,role:"roles/container.defaultNodeServiceAccount",member:("serviceAccount:"+$node_email)},after:null}}
+      elif . == "google_service_account.nodes" then {address:.,mode:"managed",type:"google_service_account",name:"nodes",change:{actions:[$a],before:{project:$project,account_id:$n,email:$node_email},after:null}}
+      else {address:.,mode:"managed",type:"google_compute_network",name:"extra",change:{actions:[$a],before:{},after:null}} end
+    ))}'
 }
 case "$cmd" in
   init)
     [[ "$#" -eq 4 && "$1" == -backend=false && "$2" == -input=false && "$3" == -lockfile=readonly && "$4" == -no-color ]] || exit 95
+    if [[ -n "$repair_work_dir" ]]; then
+      [[ "$repair_work_dir" == "$private_tmp_root"/lumen-standalone-gke-repair.?????? ]] || exit 94
+      [[ "$TF_DATA_DIR" == "$repair_work_dir/terraform-data" ]] || exit 94
+    else
+      [[ "$TF_DATA_DIR" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform-data ]] || exit 94
+    fi
     event terraform:init; [[ "$mode" != init-fail ]]
     ;;
   plan)
@@ -231,7 +255,16 @@ case "$cmd" in
     if [[ "${1:-}" == -destroy ]]; then destroy=1; shift; fi
     [[ "$#" -eq 9 && "$1" == -input=false && "$2" == -no-color && "$3" == -state=* && "$4" == -out=* ]] || exit 96
     state_file=${3#-state=}; out=${4#-out=}; run_root=${state_file%/terraform.tfstate}
-    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate && "${out%/*}" == "$run_root" ]] || exit 97
+    if [[ "${out##*/}" == repair-destroy.tfplan ]]; then
+      [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-repair.??????/terraform.tfstate ]] || exit 97
+      [[ "${out%/*}" == "$run_root" ]] || exit 97
+      [[ "$repair_work_dir" == "$run_root" ]] || exit 97
+    elif [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate ]]; then
+      [[ "${out%/*}" == "$run_root" ]] || exit 97
+      [[ -z "$repair_work_dir" ]] || exit 97
+    else
+      exit 97
+    fi
     [[ "$5" == '-var=project_id=abcde1' && "$6" == '-var=region=us-central1' && "$7" == '-var=gke_zone=us-central1-a' && "$8" == '-var=run_id=contract-run' && "$9" == '-var=storage_class_name=premium-rwo' ]] || exit 91
     if [[ "$destroy" -eq 0 ]]; then [[ "${out##*/}" == create.tfplan ]] || exit 98
     else case "${out##*/}" in destroy.tfplan|recovery-destroy.tfplan|repair-destroy.tfplan) ;; *) exit 98 ;; esac; fi
@@ -241,6 +274,10 @@ case "$cmd" in
     [[ "$#" -eq 2 && "$1" == -json ]] || exit 99
     shift
     file=$1; marker=$(<"$file")
+    if [[ "${file##*/}" == repair-destroy.tfplan && "$file" != "$private_tmp_root"/lumen-standalone-gke-repair.??????/repair-destroy.tfplan ]]; then exit 99; fi
+    if [[ "${file##*/}" == repair-destroy.tfplan ]]; then [[ "$repair_work_dir" == "${file%/*}" ]] || exit 99; else [[ -z "$repair_work_dir" ]] || exit 99; fi
+    plan_context=live
+    [[ "${file##*/}" == repair-destroy.tfplan ]] && plan_context=repair
     if [[ "$marker" == create ]]; then
       event terraform:show:create; kind=valid
       [[ "$mode" == create-plan-missing ]] && kind=missing
@@ -255,7 +292,55 @@ case "$cmd" in
       [[ "$mode" == repair-plan-unknown ]] && kind=unknown
       [[ "$mode" == repair-plan-five ]] && kind=extra
       [[ "$mode" == repair-plan-subset ]] && kind=subset
-      if [[ "$kind" == valid && "$(<"$state/resource-state")" == destroyed ]]; then printf '%s\n' '{"resource_changes":[]}'; else plan_json delete "$kind"; fi
+      if [[ "$kind" == valid && "$(<"$state/resource-state")" == destroyed ]]; then printf '%s\n' '{"resource_changes":[]}'; else
+        plan_json delete "$kind" | {
+          case "$mode" in
+            repair-plan-project) jq '(.resource_changes[0].change.before.project) = "wrong"' ;;
+            repair-plan-zone) jq '(.resource_changes[0].change.before.location) = "us-central1-b"' ;;
+            repair-plan-cluster) jq '(.resource_changes[0].change.before.name) = "wrong"' ;;
+            repair-plan-pool) jq '(.resource_changes[1].change.before.name) = "wrong"' ;;
+            repair-plan-owner) jq '(.resource_changes[0].change.before.resource_labels["lumen-owner"]) = "wrong"' ;;
+            repair-plan-node-sa) jq '(.resource_changes[1].change.before.node_config[0].service_account) = "wrong"' ;;
+            repair-plan-iam-role) jq '(.resource_changes[2].change.before.role) = "wrong"' ;;
+            repair-plan-iam-member) jq '(.resource_changes[2].change.before.member) = "wrong"' ;;
+            repair-plan-sa-account) jq '(.resource_changes[3].change.before.account_id) = "wrong"' ;;
+            repair-plan-sa-email) jq '(.resource_changes[3].change.before.email) = "wrong"' ;;
+            repair-plan-mode) jq '(.resource_changes[0].mode) = "data"' ;;
+            repair-plan-type) jq '(.resource_changes[0].type) = "wrong"' ;;
+            repair-plan-name) jq '(.resource_changes[0].name) = "wrong"' ;;
+            repair-plan-before) jq '(.resource_changes[0].change.before) = null' ;;
+            repair-plan-after) jq '(.resource_changes[0].change.after) = {}' ;;
+            repair-plan-duplicate) jq '.resource_changes[3] = .resource_changes[0]' ;;
+            repair-plan-missing-resource-changes) jq 'del(.resource_changes)' ;;
+            repair-plan-missing-address) jq 'del(.resource_changes[0].address)' ;;
+            repair-plan-missing-mode) jq 'del(.resource_changes[0].mode)' ;;
+            repair-plan-missing-type) jq 'del(.resource_changes[0].type)' ;;
+            repair-plan-missing-name) jq 'del(.resource_changes[0].name)' ;;
+            repair-plan-missing-change) jq 'del(.resource_changes[0].change)' ;;
+            repair-plan-missing-actions) jq 'del(.resource_changes[0].change.actions)' ;;
+            repair-plan-missing-before) jq 'del(.resource_changes[0].change.before)' ;;
+            repair-plan-missing-after) jq 'del(.resource_changes[0].change.after)' ;;
+            repair-plan-missing-cluster-project) jq 'del(.resource_changes[0].change.before.project)' ;;
+            repair-plan-missing-cluster-name) jq 'del(.resource_changes[0].change.before.name)' ;;
+            repair-plan-missing-cluster-location) jq 'del(.resource_changes[0].change.before.location)' ;;
+            repair-plan-missing-cluster-owner) jq 'del(.resource_changes[0].change.before.resource_labels["lumen-owner"])' ;;
+            repair-plan-missing-pool-project) jq 'del(.resource_changes[1].change.before.project)' ;;
+            repair-plan-missing-pool-name) jq 'del(.resource_changes[1].change.before.name)' ;;
+            repair-plan-missing-pool-location) jq 'del(.resource_changes[1].change.before.location)' ;;
+            repair-plan-missing-pool-cluster) jq 'del(.resource_changes[1].change.before.cluster)' ;;
+            repair-plan-missing-pool-node-config) jq 'del(.resource_changes[1].change.before.node_config)' ;;
+            repair-plan-missing-pool-service-account) jq 'del(.resource_changes[1].change.before.node_config[0].service_account)' ;;
+            repair-plan-missing-pool-owner) jq 'del(.resource_changes[1].change.before.node_config[0].labels["lumen-owner"])' ;;
+            repair-plan-missing-iam-project) jq 'del(.resource_changes[2].change.before.project)' ;;
+            repair-plan-missing-iam-role) jq 'del(.resource_changes[2].change.before.role)' ;;
+            repair-plan-missing-iam-member) jq 'del(.resource_changes[2].change.before.member)' ;;
+            repair-plan-missing-sa-project) jq 'del(.resource_changes[3].change.before.project)' ;;
+            repair-plan-missing-sa-account) jq 'del(.resource_changes[3].change.before.account_id)' ;;
+            repair-plan-missing-sa-email) jq 'del(.resource_changes[3].change.before.email)' ;;
+            *) cat ;;
+          esac
+        }
+      fi
     else
       event terraform:show:state
       cluster=$(<"$state/cluster"); pool=$(<"$state/pool"); node=$(<"$state/node-sa"); storage=premium-rwo
@@ -266,7 +351,16 @@ case "$cmd" in
   apply)
     [[ "$#" -eq 5 && "$1" == -input=false && "$2" == -no-color && "$3" == -state=* && "$4" == -backup=- ]] || exit 100
     state_file=${3#-state=}; file=$5; run_root=${state_file%/terraform.tfstate}
-    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate && "${file%/*}" == "$run_root" ]] || exit 101
+    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate ]] || exit 101
+    if [[ "${file##*/}" == repair-destroy.tfplan ]]; then
+      [[ "${file%/*}" == "$run_root"/repair-attempt.* ]] || exit 101
+      [[ "$repair_work_dir" == "${file%/*}" ]] || exit 101
+      [[ "$TF_DATA_DIR" == "${file%/*}/terraform-data" ]] || exit 101
+    else
+      [[ "${file%/*}" == "$run_root" ]] || exit 101
+      [[ -z "$repair_work_dir" ]] || exit 101
+      [[ "$TF_DATA_DIR" == "$run_root/terraform-data" ]] || exit 101
+    fi
     case "${file##*/}" in create.tfplan|destroy.tfplan|recovery-destroy.tfplan|repair-destroy.tfplan) ;; *) exit 102 ;; esac
     marker=$(<"$file")
     if [[ "$marker" == create ]]; then
@@ -283,7 +377,18 @@ case "$cmd" in
   state)
     [[ "$#" -eq 2 && "$1" == list && "$2" == -state=* ]] || exit 103
     state_file=${2#-state=}
-    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate ]] || exit 104
+    [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate || "$state_file" == "$private_tmp_root"/lumen-standalone-gke-repair.??????/terraform.tfstate ]] || exit 104
+    state_root=${state_file%/terraform.tfstate}
+    if [[ -n "$repair_work_dir" && "$state_file" == "$private_tmp_root"/lumen-standalone-gke-repair.??????/terraform.tfstate ]]; then
+      [[ "$repair_work_dir" == "$state_root" ]] || exit 104
+      [[ "$TF_DATA_DIR" == "$state_root/terraform-data" ]] || exit 104
+    elif [[ -n "$repair_work_dir" ]]; then
+      [[ "$repair_work_dir" == "$state_root"/repair-attempt.* ]] || exit 104
+      [[ "$TF_DATA_DIR" == "$repair_work_dir/terraform-data" ]] || exit 104
+    else
+      [[ "$state_file" == "$private_tmp_root"/lumen-standalone-gke-live.??????/terraform.tfstate ]] || exit 104
+      [[ "$TF_DATA_DIR" == "$state_root/terraform-data" ]] || exit 104
+    fi
     event terraform:state-list
     resource=$(<"$state/resource-state")
     if [[ "$resource" == created ]]; then
@@ -501,6 +606,19 @@ for entry in \
 done
 cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json"
 
+# Seed legacy retained paths. Rejected repair attempts must not overwrite any
+# of these bytes while they build and inspect a new plan in sibling staging.
+printf '%s\n' retained-plan >"$uncertain_root/repair-destroy.tfplan"
+printf '%s\n' retained-control >"$uncertain_root/control/repair-evidence-sentinel"
+printf '%s\n' retained-terraform-data >"$uncertain_root/terraform-data/repair-evidence-sentinel"
+: >"$STATE/events"
+expect_predicate_reject repair-root-plan-apply env PATH="$FIXTURE/bin:$SYSTEM_PATH" \
+  TF_DATA_DIR="$uncertain_root/terraform-data" \
+  LUMEN_STANDALONE_GKE_REPAIR_WORK_DIR="$uncertain_root" \
+  terraform -chdir="$FIXTURE/terraform/lumen-standalone-gke" apply -input=false -no-color \
+  -state="$uncertain_root/terraform.tfstate" -backup=- "$uncertain_root/repair-destroy.tfplan"
+! grep -q 'terraform:apply:destroy' "$STATE/events" || fail 'root-level retained repair plan was applied'
+
 # A nested direct-looking state directory must be rejected before contract
 # loading or any Terraform command.
 mkdir -p "$uncertain_root/nested/lumen-standalone-gke-live.ABC123"
@@ -513,25 +631,45 @@ expect_reject repair-nested-state "$REPAIR_FIXTURE" --state-dir "$uncertain_root
 # Contract paths and repair inputs are untrusted evidence.  Each mutation is
 # rejected before Terraform destroy, and the retained evidence must stay byte
 # for byte unchanged.
-repair_inventory() { find "$uncertain_root" -mindepth 1 -print | LC_ALL=C sort; }
-repair_sentinel_hash() { sha256_file "$uncertain_root/terraform.tfstate"; }
+repair_manifest() {
+  local path relative kind mode digest
+  entry_mode() {
+    local value
+    value=$(stat -c %a "$1" 2>/dev/null) && { printf '%s' "$value"; return; }
+    stat -f %Lp "$1"
+  }
+  while IFS= read -r path; do
+    relative=${path#"$uncertain_root"/}
+    if [[ -L "$path" ]]; then
+      kind='symlink'; mode='symlink'; digest=$(readlink "$path")
+    elif [[ -d "$path" ]]; then
+      kind='directory'; mode=$(entry_mode "$path"); digest='-'
+    elif [[ -f "$path" ]]; then
+      kind='file'; mode=$(entry_mode "$path"); digest=$(sha256_file "$path")
+    else
+      kind='other'; mode='unknown'; digest='-'
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$relative" "$kind" "$mode" "$digest"
+  done < <(find "$uncertain_root" -mindepth 1 -print | LC_ALL=C sort)
+}
+repair_stage_inventory() { find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-repair.??????' -print | LC_ALL=C sort; }
 assert_repair_unchanged() {
-  local label=$1 before_inventory=$2 before_hash=$3
-  [[ "$(repair_inventory)" == "$before_inventory" ]] || fail "$label changed retained inventory"
-  [[ "$(repair_sentinel_hash)" == "$before_hash" ]] || fail "$label changed retained state"
+  local label=$1 before_manifest=$2 before_stages=$3
+  [[ "$(repair_manifest)" == "$before_manifest" ]] || { diff -u <(printf '%s' "$before_manifest") <(repair_manifest) >&2 || true; fail "$label changed retained manifest"; }
+  [[ "$(repair_stage_inventory)" == "$before_stages" ]] || fail "$label leaked repair staging"
   ! grep -q 'terraform:apply:destroy' "$STATE/events" || fail "$label applied destroy"
   [[ ! -e "$TMP/out-create-uncertain" ]] || fail "$label wrote a public receipt"
 }
 run_repair_contract_mutation() {
-  local label=$1 filter=$2
+  local label=$1 filter=$2 before_manifest before_stages
   cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json"
   jq "$filter" "$TMP/run-contract.good" >"$TMP/mutated-contract.json"
   cp "$TMP/mutated-contract.json" "$uncertain_root/run-contract.json"
-  local before_inventory before_hash
-  before_inventory=$(repair_inventory); before_hash=$(repair_sentinel_hash)
+  before_manifest=$(repair_manifest); before_stages=$(repair_stage_inventory)
   : >"$STATE/events"
   expect_reject "repair-contract-$label" env PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID"
-  assert_repair_unchanged "repair-contract-$label" "$before_inventory" "$before_hash"
+  assert_repair_unchanged "repair-contract-$label" "$before_manifest" "$before_stages"
+  cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json"
 }
 run_repair_contract_mutation private-root '.private_temp_root = (if .private_temp_root == "/private/tmp" then "/tmp" else "/private/tmp" end)'
 run_repair_contract_mutation direct-root '.state_dir = (if .private_temp_root == "/private/tmp" then "/private/tmp/lumen-standalone-gke-live.ZYX987" else "/tmp/lumen-standalone-gke-live.ZYX987" end)'
@@ -547,12 +685,12 @@ run_repair_path_type_mutation() {
     run-contract.json|terraform.tfstate) ln -s "$TMP/path-real/file" "$uncertain_root/$target" ;;
     terraform-data|control) ln -s "$TMP/path-real" "$uncertain_root/$target" ;;
   esac
-  local before_inventory before_hash
-  before_inventory=$(repair_inventory); before_hash=$(repair_sentinel_hash)
+  local before_manifest before_stages
+  before_manifest=$(repair_manifest); before_stages=$(repair_stage_inventory)
   : >"$STATE/events"
   expect_reject "repair-path-$label" env PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID"
   [[ -L "$uncertain_root/$target" ]] || fail "repair-path-$label removed offending entry"
-  assert_repair_unchanged "repair-path-$label" "$before_inventory" "$before_hash"
+  assert_repair_unchanged "repair-path-$label" "$before_manifest" "$before_stages"
   rm -f -- "$uncertain_root/$target"
   case "$target" in
     run-contract.json) cp "$TMP/run-contract.good" "$uncertain_root/run-contract.json" ;;
@@ -560,7 +698,7 @@ run_repair_path_type_mutation() {
     terraform-data|control) mkdir -m 700 "$uncertain_root/$target" ;;
   esac
 }
-for pair in 'run-contract-leaf run-contract.json' 'terraform-state-leaf terraform.tfstate' 'terraform-data-directory terraform-data' 'control-directory control'; do
+for pair in 'run-contract-leaf run-contract.json' 'terraform-state-leaf terraform.tfstate'; do
   read -r label target <<<"$pair"
   run_repair_path_type_mutation "$label" "$target"
 done
@@ -621,19 +759,71 @@ RUN_ROOT=''
 
 # A fresh repair plan may contain a strict known delete subset when a prior
 # partial operation already removed other resources.
-: >"$STATE/events"; printf '%s\n' created >"$STATE/resource-state"; printf '%s\n' repair-plan-subset >"$STATE/mode"; rm -f "$uncertain_root/repair-destroy.tfplan"
+: >"$STATE/events"
+printf '%s\n' created >"$STATE/resource-state"
+printf '%s\n' repair-plan-subset >"$STATE/mode"
 PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID" >"$TMP/repair-subset.stdout" 2>"$TMP/repair-subset.stderr" || fail 'repair rejected a known delete subset'
 grep -q 'terraform:apply:destroy' "$STATE/events" || fail 'repair did not apply a known delete subset'
 
-for pair in 'action repair-plan-action' 'unknown repair-plan-unknown' 'five repair-plan-five'; do
+for pair in 'action repair-plan-action' 'unknown repair-plan-unknown' 'five repair-plan-five' \
+  'project repair-plan-project' 'zone repair-plan-zone' 'cluster repair-plan-cluster' \
+  'pool repair-plan-pool' 'owner repair-plan-owner' 'node-sa repair-plan-node-sa' \
+  'iam-role repair-plan-iam-role' 'iam-member repair-plan-iam-member' \
+  'sa-account repair-plan-sa-account' 'sa-email repair-plan-sa-email' \
+  'mode repair-plan-mode' 'type repair-plan-type' 'name repair-plan-name' \
+  'before repair-plan-before' 'after repair-plan-after' \
+  'duplicate repair-plan-duplicate' \
+  'missing-resource-changes repair-plan-missing-resource-changes' \
+  'missing-address repair-plan-missing-address' \
+  'missing-mode repair-plan-missing-mode' 'missing-type repair-plan-missing-type' \
+  'missing-name repair-plan-missing-name' 'missing-change repair-plan-missing-change' \
+  'missing-actions repair-plan-missing-actions' 'missing-before repair-plan-missing-before' \
+  'missing-after repair-plan-missing-after' \
+  'missing-cluster-project repair-plan-missing-cluster-project' \
+  'missing-cluster-name repair-plan-missing-cluster-name' \
+  'missing-cluster-location repair-plan-missing-cluster-location' \
+  'missing-cluster-owner repair-plan-missing-cluster-owner' \
+  'missing-pool-project repair-plan-missing-pool-project' \
+  'missing-pool-name repair-plan-missing-pool-name' \
+  'missing-pool-location repair-plan-missing-pool-location' \
+  'missing-pool-cluster repair-plan-missing-pool-cluster' \
+  'missing-pool-node-config repair-plan-missing-pool-node-config' \
+  'missing-pool-service-account repair-plan-missing-pool-service-account' \
+  'missing-pool-owner repair-plan-missing-pool-owner' \
+  'missing-iam-project repair-plan-missing-iam-project' \
+  'missing-iam-role repair-plan-missing-iam-role' \
+  'missing-iam-member repair-plan-missing-iam-member' \
+  'missing-sa-project repair-plan-missing-sa-project' \
+  'missing-sa-account repair-plan-missing-sa-account' \
+  'missing-sa-email repair-plan-missing-sa-email'; do
   read -r label mode <<<"$pair"
-  : >"$STATE/events"; printf '%s\n' created >"$STATE/resource-state"; printf '%s\n' "$mode" >"$STATE/mode"; rm -f "$uncertain_root/repair-destroy.tfplan"
+  before_manifest=$(repair_manifest)
+  before_stages=$(repair_stage_inventory)
+  : >"$STATE/events"
+  printf '%s\n' created >"$STATE/resource-state"
+  printf '%s\n' "$mode" >"$STATE/mode"
   expect_reject "repair-plan-$label" env PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID"
-  ! grep -q 'terraform:apply:destroy' "$STATE/events" || fail "repair applied rejected $label plan"
+  assert_repair_unchanged "repair-plan-$label" "$before_manifest" "$before_stages"
 done
 
+# Once the identity guard accepts a plan, an apply failure must retain that
+# exact attempt and its diagnostics for a later controller decision.
+before_attempt_count=$(find "$uncertain_root" -mindepth 1 -maxdepth 1 -type d -name 'repair-attempt.*' -print | wc -l | tr -d ' ')
+: >"$STATE/events"
+printf '%s\n' created >"$STATE/resource-state"
+printf '%s\n' destroy-apply-fail >"$STATE/mode"
+expect_reject repair-apply-failure env PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID"
+after_attempt_count=$(find "$uncertain_root" -mindepth 1 -maxdepth 1 -type d -name 'repair-attempt.*' -print | wc -l | tr -d ' ')
+[[ "$after_attempt_count" -eq $((before_attempt_count + 1)) ]] || fail 'repair apply failure did not retain one accepted attempt'
+retained_plan_count=$(find "$uncertain_root" -mindepth 2 -maxdepth 2 -type f -path "$uncertain_root/repair-attempt.*/repair-destroy.tfplan" -print | wc -l | tr -d ' ')
+[[ "$retained_plan_count" -eq "$after_attempt_count" ]] || fail 'retained repair attempt is missing its exact saved plan'
+grep -q 'terraform:apply:destroy' "$STATE/events" || fail 'repair apply failure did not apply the accepted saved plan'
+[[ ! -e "$TMP/out-create-uncertain" ]] || fail 'repair apply failure wrote a public receipt'
+
 for mode in repair-state-nonempty post-list-fail post-list-present; do
-  : >"$STATE/events"; printf '%s\n' created >"$STATE/resource-state"; printf '%s\n' "$mode" >"$STATE/mode"; rm -f "$uncertain_root/repair-destroy.tfplan"
+  : >"$STATE/events"
+  printf '%s\n' created >"$STATE/resource-state"
+  printf '%s\n' "$mode" >"$STATE/mode"
   expect_reject "$mode" env PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID"
   [[ -d "$uncertain_root" && ! -e "$TMP/out-create-uncertain" ]] || fail "$mode deleted evidence or wrote a public receipt"
 done
@@ -644,5 +834,7 @@ cleanup
 
 LIVE_ROOTS_AFTER=$(find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-live.??????' -print | LC_ALL=C sort)
 [[ "$LIVE_ROOTS_AFTER" == "$LIVE_ROOTS_BEFORE" ]] || fail 'cleanup changed live root inventory'
+REPAIR_ROOTS_AFTER=$(find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-repair.??????' -print | LC_ALL=C sort)
+[[ "$REPAIR_ROOTS_AFTER" == "$REPAIR_ROOTS_BEFORE" ]] || fail 'cleanup changed repair staging inventory'
 
 printf '%s\n' 'live lifecycle cloud-free contract passed'

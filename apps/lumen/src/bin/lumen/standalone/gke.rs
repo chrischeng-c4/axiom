@@ -387,6 +387,9 @@ fn build(c: &Config) -> Result<(Vec<(String, Value)>, Vec<(String, Value)>)> {
     plan.labels
         .insert("lumen.axiom.dev/storage".into(), format!("{}-data", c.name));
     plan.node_selector = Some(json!({"cloud.google.com/gke-nodepool":c.node_pool}));
+    // A Service named `lumen` would otherwise inject `LUMEN_PORT=tcp://...`,
+    // which collides with Lumen's numeric `LUMEN_PORT` serving option.
+    plan.enable_service_links = Some(false);
     let mut rendered = stateful_instance(plan).map_err(|e| anyhow::anyhow!(e.to_string()))?;
     attach_identity(&mut rendered.workload, c);
     let mut pvc = rendered

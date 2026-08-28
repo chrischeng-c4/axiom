@@ -45,6 +45,65 @@ fn has_exact_line(source: &str, expected: &str) -> bool {
     source.lines().any(|line| line.trim() == expected)
 }
 
+fn run_service_link_wait(source: &str, enable_service_links: bool) -> Output {
+    let fixture = tempfile::Builder::new()
+        .prefix("lumen-service-link-oracle-")
+        .tempdir()
+        .expect("service-link fixture");
+    let pod = r#"{
+      "metadata":{"uid":"replacement"},
+      "status":{
+        "conditions":[{"type":"Ready","status":"true"}],
+        "containerStatuses":[{"name":"serving","imageID":"ghcr.io/chrischeng-c4/lumen@sha256:child"}]
+      },
+      "spec":{
+        "enableServiceLinks":SERVICE_LINKS,
+        "containers":[{
+          "name":"serving",
+          "env":[{"name":"LUMEN_AUTH","value":"in-cluster"}],
+          "resources":{"requests":{"cpu":"500m","memory":"512Mi"}}
+        }]
+      }
+    }"#
+    .replace(
+        "SERVICE_LINKS",
+        if enable_service_links { "true" } else { "false" },
+    );
+    let pod_path = fixture.path().join("pod.json");
+    fs::write(&pod_path, pod).expect("service-link pod fixture");
+    let script_path = fixture.path().join("run.sh");
+    let harness = [
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+V2_RUNTIME_NAMESPACE=runtime
+V2_PVC_UID=''
+V2_PV_NAME=''
+V2_CHILD_DIGEST=''
+V2_LAST_POD_UID=''
+die() { exit 2; }
+k() {
+  [[ "$1" == get && "$2" == pod ]] || return 99
+  cat "$POD_FIXTURE"
+}
+v2_expected_child() { printf '%s' 'sha256:child'; }
+v2_wait_pod() {
+"#,
+        function_body(source, "v2_wait_pod"),
+        r#"
+}
+v2_wait_pod '' in-cluster 500m 512Mi
+"#,
+    ]
+    .concat();
+    fs::write(&script_path, harness).expect("service-link harness");
+    Command::new("bash")
+        .arg(&script_path)
+        .env("POD_FIXTURE", pod_path)
+        .env("TMP_ROOT", fixture.path())
+        .output()
+        .expect("run service-link wait harness")
+}
+
 fn appears_before(source: &str, first: &str, second: &str) -> bool {
     match (source.find(first), source.find(second)) {
         (Some(first), Some(second)) => first < second,
@@ -476,6 +535,12 @@ fn findings(source: &str) -> Vec<&'static str> {
         if !has_exact_line(source, required) {
             bad.push("CANDIDATE");
         }
+    }
+    if !has_exact_line(
+        function_body(source, "v2_wait_pod"),
+        ".spec.enableServiceLinks == false and",
+    ) {
+        bad.push("REQUIRED");
     }
     for required in [
         "[[ \"$RECEIPT_SHA256\" == \"$LUMEN_STANDALONE_GKE_EXPECTED_MANIFEST_SHA256\" ]] ||\n    die \"candidate manifest hash differs from the controller-bound expected hash\"",
@@ -1199,6 +1264,41 @@ fn live_gate_has_the_complete_candidate_bound_contract() {
 }
 
 #[test]
+fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
+    let source = live_slice();
+    let disabled = run_service_link_wait(&source, false);
+    assert!(
+        disabled.status.success(),
+        "disabled service links were rejected: {}",
+        String::from_utf8_lossy(&disabled.stderr)
+    );
+    let enabled = run_service_link_wait(&source, true);
+    assert!(
+        !enabled.status.success(),
+        "enabled service links bypassed the executable pod assertion"
+    );
+
+    let prose_bypass = replace_once(
+        &source,
+        "          .spec.enableServiceLinks == false and",
+        "          true and",
+    );
+    let prose_bypass = replace_once(
+        &prose_bypass,
+        "v2_wait_pod() {\n",
+        "v2_wait_pod() {\n  : <<'SERVICE_LINK_PROSE'\n          .spec.enableServiceLinks == false and\nSERVICE_LINK_PROSE\n",
+    );
+    assert!(
+        !findings(&prose_bypass).contains(&"REQUIRED"),
+        "prose fixture must prove why the executable oracle is required"
+    );
+    assert!(
+        run_service_link_wait(&prose_bypass, true).status.success(),
+        "prose fixture did not remove the executable service-link assertion"
+    );
+}
+
+#[test]
 fn negative_mutations_remove_real_gate_obligations() {
     let source = live_slice();
     for (from, to, expected) in [
@@ -1416,6 +1516,21 @@ fn negative_mutations_remove_real_gate_obligations() {
         (
             "k get statefulset lumen --namespace \"$V2_RUNTIME_NAMESPACE\" -o json >\"$live\"",
             "cp \"$V2_APPLY_ROOT/runtime/statefulset.yaml\" \"$live\"",
+            "REQUIRED",
+        ),
+        (
+            ".spec.enableServiceLinks == false",
+            ".spec.enableServiceLinks == true",
+            "REQUIRED",
+        ),
+        (
+            ".spec.enableServiceLinks == false",
+            "true",
+            "REQUIRED",
+        ),
+        (
+            ".spec.enableServiceLinks == false and",
+            "# .spec.enableServiceLinks == false and\n          true and",
             "REQUIRED",
         ),
         (
