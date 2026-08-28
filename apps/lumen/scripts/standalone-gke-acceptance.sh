@@ -11,6 +11,14 @@ set +x
 umask 077
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd -P)"
+KUSTOMIZE_SOURCE_ROOT="$REPO_ROOT/kustomize/lumen-standalone-acceptance"
+KUSTOMIZE_RENDERER_SOURCE="$KUSTOMIZE_SOURCE_ROOT/scripts/render.sh"
+KUSTOMIZE_VALIDATOR_SOURCE="$KUSTOMIZE_SOURCE_ROOT/scripts/validate.rb"
+KUSTOMIZE_RENDERER_SHA256="f83e347b5f66c6cad049595a776230ea559f80efc265129f407032bf5a93dd74"
+KUSTOMIZE_VALIDATOR_SHA256="43355d4a083303c9ffadade98f4add46958d7a7e625100dea97d979a3d1d294e"
+
 die() {
   echo "standalone GKE acceptance: $*" >&2
   exit 2
@@ -87,7 +95,8 @@ for tool in \
   wc \
   rm \
   sleep \
-  curl; do
+  curl \
+  ruby; do
   require_tool "$tool"
 done
 sha256_stdin() {
@@ -100,6 +109,15 @@ sha256_stdin() {
 sha256_file() {
   sha256_stdin < "$1"
 }
+
+[[ -d "$KUSTOMIZE_SOURCE_ROOT" && ! -L "$KUSTOMIZE_SOURCE_ROOT" ]] ||
+  die "shared Kustomize source must be a regular non-symlink directory"
+[[ -f "$KUSTOMIZE_RENDERER_SOURCE" && -x "$KUSTOMIZE_RENDERER_SOURCE" && ! -L "$KUSTOMIZE_RENDERER_SOURCE" ]] ||
+  die "shared Kustomize renderer source must be an executable regular non-symlink file"
+[[ -f "$KUSTOMIZE_VALIDATOR_SOURCE" && -x "$KUSTOMIZE_VALIDATOR_SOURCE" && ! -L "$KUSTOMIZE_VALIDATOR_SOURCE" ]] ||
+  die "shared Kustomize validator source must be an executable regular non-symlink file"
+[[ -z "$(find "$KUSTOMIZE_SOURCE_ROOT" -type l -print -quit)" ]] ||
+  die "shared Kustomize source must not contain symlinks"
 
 [[ -f "$KUBECONFIG" && ! -L "$KUBECONFIG" ]] ||
   die "KUBECONFIG must be an existing regular non-symlink file"
@@ -143,8 +161,6 @@ fi
 [[ "$LUMEN_STANDALONE_GKE_IMAGE" =~ ^ghcr\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$ ]] ||
   die "LUMEN_STANDALONE_GKE_IMAGE must be the exact immutable Lumen digest form"
 APPROVED_CLIENT_IMAGE="docker.io/curlimages/curl@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13"
-APPROVED_CLIENT_UID=100
-APPROVED_CLIENT_GID=101
 [[ "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" == "$APPROVED_CLIENT_IMAGE" ]] ||
   die "LUMEN_STANDALONE_GKE_CLIENT_IMAGE must be the approved immutable client image"
 [[ "$LUMEN_STANDALONE_GKE_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
@@ -192,6 +208,24 @@ trap 'exit 143' TERM
 
 TMP_ROOT="$(mktemp -d /tmp/lumen-standalone-gke.XXXXXX)"
 chmod 700 "$TMP_ROOT"
+KUSTOMIZE_ROOT="$TMP_ROOT/kustomize-harness"
+[[ ! -e "$KUSTOMIZE_ROOT" && ! -L "$KUSTOMIZE_ROOT" ]] ||
+  die "private Kustomize harness path already exists"
+cp -R -- "$KUSTOMIZE_SOURCE_ROOT" "$KUSTOMIZE_ROOT"
+[[ -d "$KUSTOMIZE_ROOT" && ! -L "$KUSTOMIZE_ROOT" ]] ||
+  die "private Kustomize harness was not copied as a regular directory"
+[[ -z "$(find "$KUSTOMIZE_ROOT" -type l -print -quit)" ]] ||
+  die "private Kustomize harness must not contain symlinks"
+KUSTOMIZE_RENDERER="$KUSTOMIZE_ROOT/scripts/render.sh"
+KUSTOMIZE_VALIDATOR="$KUSTOMIZE_ROOT/scripts/validate.rb"
+[[ -f "$KUSTOMIZE_RENDERER" && -x "$KUSTOMIZE_RENDERER" && ! -L "$KUSTOMIZE_RENDERER" ]] ||
+  die "private Kustomize renderer must be an executable regular non-symlink file"
+[[ -f "$KUSTOMIZE_VALIDATOR" && -x "$KUSTOMIZE_VALIDATOR" && ! -L "$KUSTOMIZE_VALIDATOR" ]] ||
+  die "private Kustomize validator must be an executable regular non-symlink file"
+[[ "$(sha256_file "$KUSTOMIZE_RENDERER")" == "$KUSTOMIZE_RENDERER_SHA256" ]] ||
+  die "private Kustomize renderer hash differs from the controller-bound contract"
+[[ "$(sha256_file "$KUSTOMIZE_VALIDATOR")" == "$KUSTOMIZE_VALIDATOR_SHA256" ]] ||
+  die "private Kustomize validator hash differs from the controller-bound contract"
 
 k() {
   kubectl \
@@ -730,16 +764,24 @@ v2_job_name() {
 }
 
 v2_run_client_tooling_job() {
-  local job file log
+  local job render_dir log
   job="$(v2_job_name client-tools)"
-  file="$TMP_ROOT/${job}.json"
-  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --argjson uid "$APPROVED_CLIENT_UID" --argjson gid "$APPROVED_CLIENT_GID" '
-    {apiVersion:"batch/v1",kind:"Job",metadata:{name:$job,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{spec:{
-      automountServiceAccountToken:false,restartPolicy:"Never",securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:"RuntimeDefault"}},
-      volumes:[{name:"memory",emptyDir:{medium:"Memory"}}],containers:[{name:"tools",image:$image,command:["/bin/sh","-ec","set -eu; test -x /bin/sh; command -v curl >/dev/null; command -v base64 >/dev/null; command -v grep >/dev/null; printf '\''row=client-tools status=passed\\n'\''"],securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]}},volumeMounts:[{name:"memory",mountPath:"/run/lumen"}]}]
-    }}}}
-  ' >"$file"
-  k apply -f "$file" >/dev/null
+  render_dir="$TMP_ROOT/${job}-render"
+  [[ ! -e "$render_dir" && ! -L "$render_dir" ]] ||
+    die "shared tooling renderer output directory already exists"
+  "$KUSTOMIZE_RENDERER" tooling \
+    --out-dir "$render_dir" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID" \
+    --job "$job"
+  [[ -f "$render_dir/rendered.yaml" && ! -L "$render_dir/rendered.yaml" ]] ||
+    die "shared tooling renderer output is missing"
+  ruby "$KUSTOMIZE_VALIDATOR" tooling \
+    --file "$render_dir/rendered.yaml" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID" \
+    --job "$job" >/dev/null
+  k apply -f "$render_dir/rendered.yaml" >/dev/null
   k wait --for=condition=complete "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --timeout=150s >/dev/null
   log="$TMP_ROOT/${job}.log"
   k logs "job/$job" --namespace "$V2_CLIENT_NAMESPACE" >"$log"
@@ -749,49 +791,52 @@ v2_run_client_tooling_job() {
 
 v2_run_api_job() {
   local label="$1" account="$2" token_mode="$3" method="$4" path="$5" body="$6" expected="$7" need_id="$8" reject_id="$9"
-  local job file body64 program log
+  local job render_dir request_file log
   job="$(v2_job_name "$label")"
   [[ "${#job}" -le 63 ]] || die "client Job name exceeds 63 characters"
-  body64="$(printf '%s' "$body" | base64 | tr -d '\n')"
-  read -r -d '' program <<'SH' || true
-set -eu
-work=/run/lumen
-case TOKEN_MODE in
-  default) printf 'Authorization: Bearer %s\n' "$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" >"$work/header" ;;
-  projected) printf 'Authorization: Bearer %s\n' "$(cat "$work/projected/token")" >"$work/header" ;;
-  missing) : >"$work/header" ;;
-  bad) printf '%s\n' 'Authorization: Bearer invalid-gke-token' >"$work/header" ;;
-  *) exit 64 ;;
-esac
-printf '%s' BODY64 | base64 -d >"$work/request.json"
-status="$(curl --silent --show-error --output "$work/response.json" --write-out '%{http_code}' --request METHOD --header 'content-type: application/json' --header @"$work/header" --data-binary @"$work/request.json" "http://lumen.RUNTIME.svc.cluster.local:7373PATH")"
-case EXPECTED in
-  2xx) test "$status" -ge 200 && test "$status" -lt 300 ;;
-  *) test "$status" = EXPECTED ;;
-esac
-if [ NEED_ID != none ]; then grep -Eq '"external_id"[[:space:]]*:[[:space:]]*"NEED_ID"' "$work/response.json"; fi
-if [ REJECT_ID != none ]; then ! grep -Eq '"external_id"[[:space:]]*:[[:space:]]*"REJECT_ID"' "$work/response.json"; fi
-printf 'row=LABEL status=EXPECTED\n'
-SH
-  program="${program//TOKEN_MODE/$token_mode}"
-  program="${program//BODY64/$body64}"
-  program="${program//METHOD/$method}"
-  program="${program//RUNTIME/$V2_RUNTIME_NAMESPACE}"
-  program="${program//PATH/$path}"
-  program="${program//EXPECTED/$expected}"
-  program="${program//NEED_ID/$need_id}"
-  program="${program//REJECT_ID/$reject_id}"
-  program="${program//LABEL/$label}"
-  file="$TMP_ROOT/${job}.json"
-  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg account "$account" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --arg program "$program" --arg mode "$token_mode" --argjson uid "$APPROVED_CLIENT_UID" --argjson gid "$APPROVED_CLIENT_GID" '
-    {apiVersion:"batch/v1",kind:"Job",metadata:{name:$job,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{"lumen.axiom.dev/gke-acceptance-job":$job}},spec:{
-      serviceAccountName:$account,automountServiceAccountToken:($mode == "default"),restartPolicy:"Never",
-      securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:"RuntimeDefault"}},
-      volumes:([{name:"memory",emptyDir:{medium:"Memory"}}] + (if $mode == "projected" then [{name:"projected",projected:{sources:[{serviceAccountToken:{path:"token",audience:"lumen.axiom.dev",expirationSeconds:600}}]}}] else [] end)),
-      containers:[{name:"client",image:$image,command:["/bin/sh","-ec",$program],securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]}},volumeMounts:([{name:"memory",mountPath:"/run/lumen"}] + (if $mode == "projected" then [{name:"projected",mountPath:"/run/lumen/projected",readOnly:true}] else [] end))}]
-    }}}}
-  ' >"$file"
-  k apply -f "$file" >/dev/null
+  render_dir="$TMP_ROOT/${job}-render"
+  request_file="$TMP_ROOT/${job}.request.json"
+  [[ ! -e "$render_dir" && ! -L "$render_dir" ]] ||
+    die "shared API renderer output directory already exists"
+  [[ ! -e "$request_file" && ! -L "$request_file" ]] || die "API request file already exists"
+  printf '%s' "$body" >"$request_file"
+  [[ -f "$request_file" && ! -L "$request_file" ]] ||
+    die "API request file was not created as a regular file"
+  "$KUSTOMIZE_RENDERER" api \
+    --out-dir "$render_dir" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --runtime-namespace "$V2_RUNTIME_NAMESPACE" \
+    --service lumen \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID" \
+    --job "$job" \
+    --account "$account" \
+    --token-mode "$token_mode" \
+    --method "$method" \
+    --path "$path" \
+    --request-file "$request_file" \
+    --expected-status "$expected" \
+    --required-id "$need_id" \
+    --rejected-id "$reject_id" \
+    --row-label "$label"
+  [[ -f "$render_dir/rendered.yaml" && ! -L "$render_dir/rendered.yaml" ]] ||
+    die "shared API renderer output is missing"
+  ruby "$KUSTOMIZE_VALIDATOR" api \
+    --file "$render_dir/rendered.yaml" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID" \
+    --job "$job" \
+    --account "$account" \
+    --token-mode "$token_mode" \
+    --runtime-namespace "$V2_RUNTIME_NAMESPACE" \
+    --service lumen \
+    --method "$method" \
+    --path "$path" \
+    --request-file "$request_file" \
+    --expected-status "$expected" \
+    --required-id "$need_id" \
+    --rejected-id "$reject_id" \
+    --row-label "$label" >/dev/null
+  k apply -f "$render_dir/rendered.yaml" >/dev/null
   k wait --for=condition=complete "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --timeout=150s >/dev/null
   log="$TMP_ROOT/${job}.log"
   k logs "job/$job" --namespace "$V2_CLIENT_NAMESPACE" >"$log"
@@ -800,26 +845,30 @@ SH
 }
 
 v2_run_metrics_job() {
-  local label="$1" job file program log
+  local label="$1" job render_dir log
   job="$(v2_job_name "$label")"
-  read -r -d '' program <<'SH' || true
-set -eu
-work=/run/lumen
-status="$(curl --silent --show-error --output "$work/metrics" --write-out '%{http_code}' "http://lumen.RUNTIME.svc.cluster.local:7373/metrics")"
-test "$status" = 200
-printf 'row=LABEL status=200\n'
-cat "$work/metrics"
-SH
-  program="${program//RUNTIME/$V2_RUNTIME_NAMESPACE}"
-  program="${program//LABEL/$label}"
-  file="$TMP_ROOT/${job}.json"
-  jq -n --arg job "$job" --arg ns "$V2_CLIENT_NAMESPACE" --arg image "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" --arg program "$program" --argjson uid "$APPROVED_CLIENT_UID" --argjson gid "$APPROVED_CLIENT_GID" '
-    {apiVersion:"batch/v1",kind:"Job",metadata:{name:$job,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{spec:{
-      automountServiceAccountToken:false,restartPolicy:"Never",securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:"RuntimeDefault"}},
-      volumes:[{name:"memory",emptyDir:{medium:"Memory"}}],containers:[{name:"metrics",image:$image,command:["/bin/sh","-ec",$program],securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]}},volumeMounts:[{name:"memory",mountPath:"/run/lumen"}]}]
-    }}}}
-  ' >"$file"
-  k apply -f "$file" >/dev/null
+  render_dir="$TMP_ROOT/${job}-render"
+  [[ ! -e "$render_dir" && ! -L "$render_dir" ]] ||
+    die "shared metrics renderer output directory already exists"
+  "$KUSTOMIZE_RENDERER" metrics \
+    --out-dir "$render_dir" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --runtime-namespace "$V2_RUNTIME_NAMESPACE" \
+    --service lumen \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID" \
+    --job "$job" \
+    --row-label "$label"
+  [[ -f "$render_dir/rendered.yaml" && ! -L "$render_dir/rendered.yaml" ]] ||
+    die "shared metrics renderer output is missing"
+  ruby "$KUSTOMIZE_VALIDATOR" metrics \
+    --file "$render_dir/rendered.yaml" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID" \
+    --job "$job" \
+    --runtime-namespace "$V2_RUNTIME_NAMESPACE" \
+    --service lumen \
+    --row-label "$label" >/dev/null
+  k apply -f "$render_dir/rendered.yaml" >/dev/null
   k wait --for=condition=complete "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --timeout=150s >/dev/null
   log="$TMP_ROOT/${job}.log"
   k logs "job/$job" --namespace "$V2_CLIENT_NAMESPACE" >"$log"
@@ -894,17 +943,29 @@ v2_stamp_private_ownership() {
 }
 
 v2_write_client_root() {
-  mkdir "$TMP_ROOT/v2-client"
-  jq -n --arg ns "$V2_CLIENT_NAMESPACE" --arg run "$LUMEN_STANDALONE_GKE_RUN_ID" --arg label "$V2_RUN_LABEL" '
-    {apiVersion:"v1",kind:"Namespace",metadata:{name:$ns,labels:{"app.kubernetes.io/managed-by":"lumen-standalone-gke-acceptance",($label):$run,"pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/audit":"restricted","pod-security.kubernetes.io/warn":"restricted"}}}
-  ' >"$TMP_ROOT/v2-client/namespace.json"
-  jq -n --arg ns "$V2_CLIENT_NAMESPACE" '
-    {apiVersion:"v1",kind:"List",items:[
-      {apiVersion:"v1",kind:"ServiceAccount",metadata:{name:"app",namespace:$ns}},
-      {apiVersion:"v1",kind:"ServiceAccount",metadata:{name:"unlisted",namespace:$ns}}
-    ]}
-  ' >"$TMP_ROOT/v2-client/client.json"
-  jq -n '{apiVersion:"kustomize.config.k8s.io/v1beta1",kind:"Kustomization",resources:["namespace.json","client.json"]}' >"$TMP_ROOT/v2-client/kustomization.yaml"
+  local output="$TMP_ROOT/v2-client" validated
+  [[ ! -e "$output" && ! -L "$output" ]] ||
+    die "shared client renderer output directory already exists"
+  "$KUSTOMIZE_RENDERER" client \
+    --out-dir "$output" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID"
+  [[ -f "$output/rendered.yaml" && ! -L "$output/rendered.yaml" ]] ||
+    die "shared client renderer output is missing"
+  validated="$output/validated.json"
+  ruby "$KUSTOMIZE_VALIDATOR" client \
+    --file "$output/rendered.yaml" \
+    --client-namespace "$V2_CLIENT_NAMESPACE" \
+    --run-id "$LUMEN_STANDALONE_GKE_RUN_ID" \
+    --emit-json >"$validated"
+  [[ -f "$validated" && ! -L "$validated" ]] ||
+    die "shared client validator output is missing"
+  jq -e 'map(select(.apiVersion == "v1" and .kind == "Namespace")) | length == 1' "$validated" >/dev/null ||
+    die "shared client render must contain exactly one Namespace"
+  jq -e 'map(select(.apiVersion == "v1" and .kind == "Namespace")) | .[0]' "$validated" >"$output/namespace.json" ||
+    die "shared client Namespace could not be extracted"
+  [[ -f "$output/namespace.json" && ! -L "$output/namespace.json" ]] ||
+    die "shared client Namespace output is missing"
 }
 
 v2_apply() {
@@ -933,7 +994,7 @@ v2_apply() {
     die "runtime apply failed"
   fi
   v2_assert_crb
-  if ! k apply -k "$TMP_ROOT/v2-client" >/dev/null; then die "client apply failed"; fi
+  if ! k apply -f "$TMP_ROOT/v2-client/rendered.yaml" >/dev/null; then die "client apply failed"; fi
   v2_assert_client_namespace
 }
 

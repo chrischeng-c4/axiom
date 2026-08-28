@@ -49,8 +49,178 @@ fn appears_before(source: &str, first: &str, second: &str) -> bool {
     }
 }
 
+fn shared_renderer_findings(source: &str) -> Vec<&'static str> {
+    let mut bad = Vec::new();
+    for (name, component) in [
+        ("v2_run_client_tooling_job", "tooling"),
+        ("v2_run_api_job", "api"),
+        ("v2_run_metrics_job", "metrics"),
+    ] {
+        let body = function_body(source, name);
+        let renderer = format!("\"$KUSTOMIZE_RENDERER\" {component} \\");
+        let validator = format!("ruby \"$KUSTOMIZE_VALIDATOR\" {component} \\");
+        if body.lines().filter(|line| line.trim() == renderer).count() != 1
+            || body.lines().filter(|line| line.trim() == validator).count() != 1
+            || !body.contains("render_dir=\"$TMP_ROOT/${job}-render\"")
+            || body.matches("--file \"$render_dir/rendered.yaml\"").count() != 1
+            || body
+                .matches("k apply -f \"$render_dir/rendered.yaml\" >/dev/null")
+                .count()
+                != 1
+            || !body.contains("[[ ! -e \"$render_dir\" && ! -L \"$render_dir\" ]] ||")
+            || body.contains("if false; then")
+            || body
+                .lines()
+                .any(|line| line.trim_start().starts_with("false &&"))
+        {
+            bad.push("CLIENT");
+        }
+        for forbidden in [
+            "jq -n",
+            "read -r -d",
+            "<<",
+            "program=",
+            "BODY64",
+            "--data-binary",
+            "kind:\"Job\"",
+            "kind:Job",
+        ] {
+            if body.contains(forbidden) {
+                bad.push("CLIENT");
+            }
+        }
+    }
+
+    let tooling = function_body(source, "v2_run_client_tooling_job");
+    for required in [
+        "--out-dir \"$render_dir\"",
+        "--client-namespace \"$V2_CLIENT_NAMESPACE\"",
+        "--run-id \"$LUMEN_STANDALONE_GKE_RUN_ID\"",
+        "--job \"$job\"",
+    ] {
+        if !tooling.contains(required) {
+            bad.push("CLIENT");
+        }
+    }
+
+    let metrics = function_body(source, "v2_run_metrics_job");
+    if !metrics.contains("--out-dir \"$render_dir\"") {
+        bad.push("CLIENT");
+    }
+    for required in [
+        "--client-namespace \"$V2_CLIENT_NAMESPACE\"",
+        "--runtime-namespace \"$V2_RUNTIME_NAMESPACE\"",
+        "--service lumen",
+        "--run-id \"$LUMEN_STANDALONE_GKE_RUN_ID\"",
+        "--job \"$job\"",
+        "--row-label \"$label\"",
+    ] {
+        if metrics.matches(required).count() != 2 {
+            bad.push("CLIENT");
+        }
+    }
+
+    let api = function_body(source, "v2_run_api_job");
+    if api.matches("--out-dir \"$render_dir\"").count() != 1 {
+        bad.push("CLIENT");
+    }
+    for required in [
+        "--client-namespace \"$V2_CLIENT_NAMESPACE\"",
+        "--runtime-namespace \"$V2_RUNTIME_NAMESPACE\"",
+        "--service lumen",
+        "--run-id \"$LUMEN_STANDALONE_GKE_RUN_ID\"",
+        "--job \"$job\"",
+        "--account \"$account\"",
+        "--token-mode \"$token_mode\"",
+        "--method \"$method\"",
+        "--path \"$path\"",
+        "--request-file \"$request_file\"",
+        "--expected-status \"$expected\"",
+        "--required-id \"$need_id\"",
+        "--rejected-id \"$reject_id\"",
+        "--row-label \"$label\"",
+    ] {
+        if api.matches(required).count() != 2 {
+            bad.push("CLIENT");
+        }
+    }
+    for required in [
+        "request_file=\"$TMP_ROOT/${job}.request.json\"",
+        "[[ ! -e \"$render_dir\" && ! -L \"$render_dir\" ]] ||",
+        "[[ ! -e \"$request_file\" && ! -L \"$request_file\" ]] ||",
+        "printf '%s' \"$body\" >\"$request_file\"",
+        "[[ -f \"$request_file\" && ! -L \"$request_file\" ]] ||",
+    ] {
+        if !api.contains(required) {
+            bad.push("CLIENT");
+        }
+    }
+    if api.contains("\n  file=\"$TMP_ROOT/") {
+        bad.push("CLIENT");
+    }
+
+    let client = function_body(source, "v2_write_client_root");
+    let client_renderer = "\"$KUSTOMIZE_RENDERER\" client \\";
+    let client_validator = "ruby \"$KUSTOMIZE_VALIDATOR\" client \\";
+    for required in [
+        "local output=\"$TMP_ROOT/v2-client\" validated",
+        "--out-dir \"$output\"",
+        "--client-namespace \"$V2_CLIENT_NAMESPACE\"",
+        "--run-id \"$LUMEN_STANDALONE_GKE_RUN_ID\"",
+        "validated=\"$output/validated.json\"",
+        "--emit-json",
+        "[[ -f \"$validated\" && ! -L \"$validated\" ]] ||",
+        "jq -e 'map(select(.apiVersion == \"v1\" and .kind == \"Namespace\")) | length == 1' \"$validated\" >/dev/null ||",
+        "jq -e 'map(select(.apiVersion == \"v1\" and .kind == \"Namespace\")) | .[0]' \"$validated\" >\"$output/namespace.json\" ||",
+        "[[ -f \"$output/namespace.json\" && ! -L \"$output/namespace.json\" ]] ||",
+    ] {
+        if !client.contains(required) {
+            bad.push("CLIENT");
+        }
+    }
+    if client
+        .lines()
+        .filter(|line| line.trim() == client_renderer)
+        .count()
+        != 1
+        || client
+            .lines()
+            .filter(|line| line.trim() == client_validator)
+            .count()
+            != 1
+        || !client.contains("[[ ! -e \"$output\" && ! -L \"$output\" ]] ||")
+        || !has_exact_line(
+            source,
+            "if ! k apply -f \"$TMP_ROOT/v2-client/rendered.yaml\" >/dev/null; then die \"client apply failed\"; fi",
+        )
+    {
+        bad.push("CLIENT");
+    }
+    for forbidden in [
+        "jq -n",
+        "read -r -d",
+        "<<",
+        "program=",
+        "kind:\"Job\"",
+        "kind:Job",
+    ] {
+        if client.contains(forbidden) {
+            bad.push("CLIENT");
+        }
+    }
+    if !appears_before(
+        source,
+        "ruby \"$KUSTOMIZE_VALIDATOR\" client \\",
+        "if ! k apply -f \"$TMP_ROOT/v2-client/rendered.yaml\" >/dev/null; then",
+    ) {
+        bad.push("CLIENT");
+    }
+    bad
+}
+
 fn findings(source: &str) -> Vec<&'static str> {
     let mut bad = Vec::new();
+    bad.extend(shared_renderer_findings(source));
     for (code, required) in [
         ("CANDIDATE", "cclab.lumen.candidate-manifest.v3"),
         ("CANDIDATE", "(.jobs|all(.[]; . == \"success\"))"),
@@ -123,7 +293,10 @@ fn findings(source: &str) -> Vec<&'static str> {
         ("MUTATION", "V2_RUN_LABEL=\"lumen.axiom.dev/gke-acceptance-run\""),
         ("MUTATION", "k apply -k \"$V2_APPLY_ROOT/runtime\""),
         ("MUTATION", "k apply -k \"$V2_APPLY_ROOT/storage\""),
-        ("MUTATION", "k apply -k \"$TMP_ROOT/v2-client\""),
+        (
+            "MUTATION",
+            "k apply -f \"$TMP_ROOT/v2-client/rendered.yaml\"",
+        ),
         ("CLEANUP", "k delete clusterrolebinding \"$V2_CRB\""),
         ("CLEANUP", "k delete namespace \"$V2_CLIENT_NAMESPACE\""),
         ("CLEANUP", "k delete namespace \"$V2_RUNTIME_NAMESPACE\""),
@@ -132,37 +305,11 @@ fn findings(source: &str) -> Vec<&'static str> {
             "CLEANUP",
             "if [[ -z \"$V2_PV_NAME\" ]]; then",
         ),
-        ("CLIENT", "emptyDir:{medium:\"Memory\"}"),
-        (
-            "CLIENT",
-            "serviceAccountToken:{path:\"token\",audience:\"lumen.axiom.dev\"",
-        ),
-        ("CLIENT", "--data-binary @\"$work/request.json\""),
-        ("CLIENT", "if [ NEED_ID != none ]"),
-        (
-            "CLIENT",
-            "'{\"fields\":{\"tag\":{\"type\":\"keyword\"}}}' 2xx none none",
-        ),
-        (
-            "CLIENT",
-            "'{\"items\":[{\"external_id\":\"durable-first\",\"field\":\"tag\",\"value\":\"first\"}]}' 2xx none none",
-        ),
-        (
-            "CLIENT",
-            "'{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 2xx durable-first none",
-        ),
         ("CLIENT", "v2_run_api_job unlisted unlisted default"),
         ("CLIENT", "v2_run_api_job missing default missing"),
         ("CLIENT", "v2_run_api_job bad unlisted bad"),
-        (
-            "CLIENT",
-            "automountServiceAccountToken:($mode == \"default\")",
-        ),
         ("CLIENT", "v2_run_client_tooling_job"),
         ("CLIENT", "[[ \"$1\" =~ ^[a-z0-9-]{1,40}$ ]]"),
-        ("CLIENT", "command -v curl >/dev/null"),
-        ("CLIENT", "command -v base64 >/dev/null"),
-        ("CLIENT", "command -v grep >/dev/null"),
         ("METRICS", "metrics-before-incluster"),
         ("METRICS", "delegated_auth_token_reviews_total"),
         ("METRICS", "delegated_auth_access_reviews_total"),
@@ -399,6 +546,7 @@ fn findings(source: &str) -> Vec<&'static str> {
         "v2_recover_created_uids\n  if [[ \"$V2_CRB_ARMED\" == true ]]",
         "v2_assert_runtime_namespace\n  V2_CRB_ARMED=true",
         "k apply -k \"$V2_APPLY_ROOT/storage\" >/dev/null; then die \"storage apply failed\"; fi\n  v2_assert_runtime_namespace",
+        "if ! k apply -f \"$TMP_ROOT/v2-client/rendered.yaml\" >/dev/null; then die \"client apply failed\"; fi",
     ] {
         if !source.contains(required) {
             bad.push("MUTATION");
@@ -474,17 +622,6 @@ fn findings(source: &str) -> Vec<&'static str> {
     }) {
         bad.push("EXECUTION");
     }
-    if source.matches("runAsUser:$uid,runAsGroup:$gid").count() != 3 {
-        bad.push("CLIENT");
-    }
-    if source
-        .matches("--argjson uid \"$APPROVED_CLIENT_UID\" --argjson gid \"$APPROVED_CLIENT_GID\"")
-        .count()
-        != 3
-    {
-        bad.push("CLIENT");
-    }
-
     let expected_tail =
         "run_live_acceptance() {\n  run_live_acceptance_v2\n}\n\nrun_live_acceptance\n\nexit 0\n";
     if !source.ends_with(expected_tail) {
@@ -512,8 +649,85 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
     for (code, required) in [
         ("PREFLIGHT", "set +x"),
         ("PREFLIGHT", "umask 077"),
+        (
+            "PREFLIGHT",
+            "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd -P)\"",
+        ),
+        (
+            "PREFLIGHT",
+            "REPO_ROOT=\"$(cd \"$SCRIPT_DIR/../../..\" && pwd -P)\"",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_SOURCE_ROOT=\"$REPO_ROOT/kustomize/lumen-standalone-acceptance\"",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_RENDERER_SOURCE=\"$KUSTOMIZE_SOURCE_ROOT/scripts/render.sh\"",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_VALIDATOR_SOURCE=\"$KUSTOMIZE_SOURCE_ROOT/scripts/validate.rb\"",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_RENDERER_SHA256=\"f83e347b5f66c6cad049595a776230ea559f80efc265129f407032bf5a93dd74\"",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_VALIDATOR_SHA256=\"43355d4a083303c9ffadade98f4add46958d7a7e625100dea97d979a3d1d294e\"",
+        ),
         ("PREFLIGHT", "LUMEN_STANDALONE_GKE_MUTATION=1"),
         ("PREFLIGHT", "reject_token_env\n\nrequire_tool"),
+        ("PREFLIGHT", "ruby; do"),
+        (
+            "PREFLIGHT",
+            "[[ -d \"$KUSTOMIZE_SOURCE_ROOT\" && ! -L \"$KUSTOMIZE_SOURCE_ROOT\" ]] ||",
+        ),
+        (
+            "PREFLIGHT",
+            "[[ -f \"$KUSTOMIZE_RENDERER_SOURCE\" && -x \"$KUSTOMIZE_RENDERER_SOURCE\" && ! -L \"$KUSTOMIZE_RENDERER_SOURCE\" ]] ||",
+        ),
+        (
+            "PREFLIGHT",
+            "[[ -f \"$KUSTOMIZE_VALIDATOR_SOURCE\" && -x \"$KUSTOMIZE_VALIDATOR_SOURCE\" && ! -L \"$KUSTOMIZE_VALIDATOR_SOURCE\" ]] ||",
+        ),
+        (
+            "PREFLIGHT",
+            "[[ -z \"$(find \"$KUSTOMIZE_SOURCE_ROOT\" -type l -print -quit)\" ]] ||",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
+        ),
+        (
+            "PREFLIGHT",
+            "cp -R -- \"$KUSTOMIZE_SOURCE_ROOT\" \"$KUSTOMIZE_ROOT\"",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_RENDERER=\"$KUSTOMIZE_ROOT/scripts/render.sh\"",
+        ),
+        (
+            "PREFLIGHT",
+            "KUSTOMIZE_VALIDATOR=\"$KUSTOMIZE_ROOT/scripts/validate.rb\"",
+        ),
+        (
+            "PREFLIGHT",
+            "[[ -f \"$KUSTOMIZE_RENDERER\" && -x \"$KUSTOMIZE_RENDERER\" && ! -L \"$KUSTOMIZE_RENDERER\" ]] ||",
+        ),
+        (
+            "PREFLIGHT",
+            "[[ -f \"$KUSTOMIZE_VALIDATOR\" && -x \"$KUSTOMIZE_VALIDATOR\" && ! -L \"$KUSTOMIZE_VALIDATOR\" ]] ||",
+        ),
+        (
+            "PREFLIGHT",
+            "[[ \"$(sha256_file \"$KUSTOMIZE_RENDERER\")\" == \"$KUSTOMIZE_RENDERER_SHA256\" ]] ||",
+        ),
+        (
+            "PREFLIGHT",
+            "[[ \"$(sha256_file \"$KUSTOMIZE_VALIDATOR\")\" == \"$KUSTOMIZE_VALIDATOR_SHA256\" ]] ||",
+        ),
         (
             "PREFLIGHT",
             "KUBECONFIG must be a task-local file below /private/tmp",
@@ -552,8 +766,6 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
             "PREFLIGHT",
             "APPROVED_CLIENT_IMAGE=\"docker.io/curlimages/curl@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13\"",
         ),
-        ("PREFLIGHT", "APPROVED_CLIENT_UID=100"),
-        ("PREFLIGHT", "APPROVED_CLIENT_GID=101"),
         (
             "PREFLIGHT",
             "[[ \"$LUMEN_STANDALONE_GKE_CLIENT_IMAGE\" == \"$APPROVED_CLIENT_IMAGE\" ]]",
@@ -564,6 +776,29 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
         }
     }
     for required in [
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd -P)\"",
+        "REPO_ROOT=\"$(cd \"$SCRIPT_DIR/../../..\" && pwd -P)\"",
+        "KUSTOMIZE_SOURCE_ROOT=\"$REPO_ROOT/kustomize/lumen-standalone-acceptance\"",
+        "KUSTOMIZE_RENDERER_SOURCE=\"$KUSTOMIZE_SOURCE_ROOT/scripts/render.sh\"",
+        "KUSTOMIZE_VALIDATOR_SOURCE=\"$KUSTOMIZE_SOURCE_ROOT/scripts/validate.rb\"",
+        "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
+        "KUSTOMIZE_RENDERER=\"$KUSTOMIZE_ROOT/scripts/render.sh\"",
+        "KUSTOMIZE_VALIDATOR=\"$KUSTOMIZE_ROOT/scripts/validate.rb\"",
+        "KUSTOMIZE_RENDERER_SHA256=\"f83e347b5f66c6cad049595a776230ea559f80efc265129f407032bf5a93dd74\"",
+        "KUSTOMIZE_VALIDATOR_SHA256=\"43355d4a083303c9ffadade98f4add46958d7a7e625100dea97d979a3d1d294e\"",
+        "ruby; do",
+        "[[ -d \"$KUSTOMIZE_SOURCE_ROOT\" && ! -L \"$KUSTOMIZE_SOURCE_ROOT\" ]] ||",
+        "[[ -f \"$KUSTOMIZE_RENDERER_SOURCE\" && -x \"$KUSTOMIZE_RENDERER_SOURCE\" && ! -L \"$KUSTOMIZE_RENDERER_SOURCE\" ]] ||",
+        "[[ -f \"$KUSTOMIZE_VALIDATOR_SOURCE\" && -x \"$KUSTOMIZE_VALIDATOR_SOURCE\" && ! -L \"$KUSTOMIZE_VALIDATOR_SOURCE\" ]] ||",
+        "[[ -z \"$(find \"$KUSTOMIZE_SOURCE_ROOT\" -type l -print -quit)\" ]] ||",
+        "[[ ! -e \"$KUSTOMIZE_ROOT\" && ! -L \"$KUSTOMIZE_ROOT\" ]] ||",
+        "cp -R -- \"$KUSTOMIZE_SOURCE_ROOT\" \"$KUSTOMIZE_ROOT\"",
+        "[[ -d \"$KUSTOMIZE_ROOT\" && ! -L \"$KUSTOMIZE_ROOT\" ]] ||",
+        "[[ -z \"$(find \"$KUSTOMIZE_ROOT\" -type l -print -quit)\" ]] ||",
+        "[[ -f \"$KUSTOMIZE_RENDERER\" && -x \"$KUSTOMIZE_RENDERER\" && ! -L \"$KUSTOMIZE_RENDERER\" ]] ||",
+        "[[ -f \"$KUSTOMIZE_VALIDATOR\" && -x \"$KUSTOMIZE_VALIDATOR\" && ! -L \"$KUSTOMIZE_VALIDATOR\" ]] ||",
+        "[[ \"$(sha256_file \"$KUSTOMIZE_RENDERER\")\" == \"$KUSTOMIZE_RENDERER_SHA256\" ]] ||",
+        "[[ \"$(sha256_file \"$KUSTOMIZE_VALIDATOR\")\" == \"$KUSTOMIZE_VALIDATOR_SHA256\" ]] ||",
         "LUMEN_STANDALONE_GKE_EXPECTED_COMMIT \\",
         "LUMEN_STANDALONE_GKE_EXPECTED_RUN_ID \\",
         "LUMEN_STANDALONE_GKE_EXPECTED_RUN_ATTEMPT \\",
@@ -574,6 +809,25 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
         if !has_exact_line(source, required) {
             bad.push("PREFLIGHT");
         }
+    }
+    if !appears_before(
+        source,
+        "TMP_ROOT=\"$(mktemp -d /tmp/lumen-standalone-gke.XXXXXX)\"",
+        "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
+    ) || !appears_before(
+        source,
+        "cp -R -- \"$KUSTOMIZE_SOURCE_ROOT\" \"$KUSTOMIZE_ROOT\"",
+        "[[ \"$(sha256_file \"$KUSTOMIZE_RENDERER\")\" == \"$KUSTOMIZE_RENDERER_SHA256\" ]] ||",
+    ) || !appears_before(
+        source,
+        "[[ \"$(sha256_file \"$KUSTOMIZE_RENDERER\")\" == \"$KUSTOMIZE_RENDERER_SHA256\" ]] ||",
+        "\"$KUSTOMIZE_RENDERER\" tooling \\",
+    ) || !appears_before(
+        source,
+        "[[ \"$(sha256_file \"$KUSTOMIZE_VALIDATOR\")\" == \"$KUSTOMIZE_VALIDATOR_SHA256\" ]] ||",
+        "ruby \"$KUSTOMIZE_VALIDATOR\" tooling \\",
+    ) {
+        bad.push("PREFLIGHT");
     }
     let before_first_cleanup_trap = source
         .split_once("trap cleanup EXIT")
@@ -632,6 +886,13 @@ fn replace_once(source: &str, from: &str, to: &str) -> String {
         1,
         "mutation anchor is unique: {from}"
     );
+    let changed = source.replacen(from, to, 1);
+    assert_ne!(source, changed, "mutation changes bytes");
+    changed
+}
+
+fn replace_first(source: &str, from: &str, to: &str) -> String {
+    assert!(source.contains(from), "mutation anchor is present: {from}");
     let changed = source.replacen(from, to, 1);
     assert_ne!(source, changed, "mutation changes bytes");
     changed
@@ -783,16 +1044,54 @@ fn negative_mutations_remove_real_gate_obligations() {
             "# V2_CRB_UID=\"$recovered\"",
             "MUTATION",
         ),
-        ("--data-binary @\"$work/request.json\"", "-d BODY", "CLIENT"),
         (
-            "'{\"fields\":{\"tag\":{\"type\":\"keyword\"}}}' 2xx none none",
-            "'{}' 2xx none none",
+            "\"$KUSTOMIZE_RENDERER\" tooling \\",
+            "# \"$KUSTOMIZE_RENDERER\" tooling \\",
             "CLIENT",
         ),
-        ("if [ NEED_ID != none ]", "if [ none != none ]", "CLIENT"),
         (
-            "curl --silent --show-error --output \"$work/response.json\"",
-            "curl http://host --output \"$work/response.json\"",
+            "\"$KUSTOMIZE_RENDERER\" tooling \\",
+            "echo \"$KUSTOMIZE_RENDERER\" tooling \\",
+            "CLIENT",
+        ),
+        (
+            "\"$KUSTOMIZE_RENDERER\" tooling \\",
+            "false && \"$KUSTOMIZE_RENDERER\" tooling \\",
+            "CLIENT",
+        ),
+        (
+            "\"$KUSTOMIZE_RENDERER\" tooling \\",
+            "\"$KUSTOMIZE_RENDERER\" api \\",
+            "CLIENT",
+        ),
+        (
+            "\"$KUSTOMIZE_RENDERER\" tooling \\",
+            "jq -n --arg job \"$job\"",
+            "CLIENT",
+        ),
+        (
+            "\"$KUSTOMIZE_RENDERER\" api \\",
+            "jq -n --arg job \"$job\"",
+            "CLIENT",
+        ),
+        (
+            "\"$KUSTOMIZE_RENDERER\" metrics \\",
+            "read -r -d '' program <<'SH'",
+            "CLIENT",
+        ),
+        (
+            "ruby \"$KUSTOMIZE_VALIDATOR\" tooling \\",
+            "# ruby \"$KUSTOMIZE_VALIDATOR\" tooling \\",
+            "CLIENT",
+        ),
+        (
+            "    --emit-json >\"$validated\"",
+            "",
+            "CLIENT",
+        ),
+        (
+            "if ! k apply -f \"$TMP_ROOT/v2-client/rendered.yaml\" >/dev/null; then die \"client apply failed\"; fi",
+            "if ! k apply -f \"$TMP_ROOT/v2-client/namespace.json\" >/dev/null; then die \"client apply failed\"; fi",
             "CLIENT",
         ),
         (
@@ -824,31 +1123,6 @@ fn negative_mutations_remove_real_gate_obligations() {
             "gateways=\"$(k get gateways.gateway.networking.k8s.io --namespace \"$V2_RUNTIME_NAMESPACE\" -o name)\" || die \"Gateway inventory could not be read\"",
             "gateways=\"$(k get gateways.gateway.networking.k8s.io --namespace \"$V2_RUNTIME_NAMESPACE\" -o name 2>/dev/null || true)\"",
             "NETWORK",
-        ),
-        (
-            "automountServiceAccountToken:($mode == \"default\")",
-            "automountServiceAccountToken:($mode == \"default\" or $mode == \"bad\")",
-            "CLIENT",
-        ),
-        (
-            "securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"tools\"",
-            "securityContext:{runAsNonRoot:true,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"tools\"",
-            "CLIENT",
-        ),
-        (
-            "serviceAccountName:$account,automountServiceAccountToken:($mode == \"default\"),restartPolicy:\"Never\",\n      securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:\"RuntimeDefault\"}}",
-            "serviceAccountName:$account,automountServiceAccountToken:($mode == \"default\"),restartPolicy:\"Never\",\n      securityContext:{runAsNonRoot:true,seccompProfile:{type:\"RuntimeDefault\"}}",
-            "CLIENT",
-        ),
-        (
-            "securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"metrics\"",
-            "securityContext:{runAsNonRoot:true,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"metrics\"",
-            "CLIENT",
-        ),
-        (
-            "command -v base64 >/dev/null",
-            "true # base64 unchecked",
-            "CLIENT",
         ),
         (
             "[[ \"$1\" =~ ^[a-z0-9-]{1,40}$ ]]",
@@ -1024,6 +1298,34 @@ fn negative_mutations_remove_real_gate_obligations() {
         );
     }
 
+    let changed = replace_first(
+        &source,
+        "--token-mode \"$token_mode\" \\",
+        "--token-mode default \\",
+    );
+    assert!(
+        findings(&changed).contains(&"CLIENT"),
+        "wrong API token argument did not fail the shared renderer contract"
+    );
+    let changed = replace_first(
+        &source,
+        "--file \"$render_dir/rendered.yaml\"",
+        "--file \"$render_dir/other.yaml\"",
+    );
+    assert!(
+        findings(&changed).contains(&"CLIENT"),
+        "validator/apply file drift did not fail the shared renderer contract"
+    );
+    let changed = replace_first(
+        &source,
+        "k apply -f \"$render_dir/rendered.yaml\" >/dev/null",
+        "k apply -f \"$file\" >/dev/null",
+    );
+    assert!(
+        findings(&changed).contains(&"CLIENT"),
+        "apply of a different rendered file did not fail the shared renderer contract"
+    );
+
     let full = full_script();
     let changed = replace_once(
         &full,
@@ -1080,28 +1382,69 @@ fn negative_mutations_remove_real_gate_obligations() {
         preflight_findings(&changed).contains(&"PREFLIGHT"),
         "arbitrary client image did not fail preflight"
     );
-    let changed = replace_once(&full, "APPROVED_CLIENT_UID=100", "APPROVED_CLIENT_UID=0");
-    assert!(
-        preflight_findings(&changed).contains(&"PREFLIGHT"),
-        "root client UID did not fail preflight"
-    );
-    let changed = replace_once(&full, "APPROVED_CLIENT_GID=101", "APPROVED_CLIENT_GID=1000");
-    assert!(
-        preflight_findings(&changed).contains(&"PREFLIGHT"),
-        "unexpected client GID did not fail preflight"
-    );
-
     let changed = replace_once(
         &full,
-        "--arg program \"$program\" --arg mode \"$token_mode\" --argjson uid \"$APPROVED_CLIENT_UID\" --argjson gid \"$APPROVED_CLIENT_GID\"",
-        "--arg program \"$program\" --arg mode \"$token_mode\" --argjson uid \"$APPROVED_CLIENT_GID\" --argjson gid \"$APPROVED_CLIENT_GID\"",
+        "KUSTOMIZE_RENDERER=\"$KUSTOMIZE_ROOT/scripts/render.sh\"",
+        "KUSTOMIZE_RENDERER=\"$CUSTOM_RENDERER\"",
     );
-    let (_, changed_live) = changed.split_once("validate_candidate_manifest_v2()").unwrap();
     assert!(
-        findings(changed_live).contains(&"CLIENT"),
-        "changed client UID binding did not fail the client contract"
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "environment-overridable renderer path did not fail preflight"
     );
-
+    let changed = replace_once(
+        &full,
+        "KUSTOMIZE_VALIDATOR=\"$KUSTOMIZE_ROOT/scripts/validate.rb\"",
+        "KUSTOMIZE_VALIDATOR=\"$CUSTOM_VALIDATOR\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "environment-overridable validator path did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
+        "KUSTOMIZE_ROOT=\"$KUSTOMIZE_SOURCE_ROOT\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "repository renderer use did not fail the private-copy contract"
+    );
+    let changed = replace_once(
+        &full,
+        "cp -R -- \"$KUSTOMIZE_SOURCE_ROOT\" \"$KUSTOMIZE_ROOT\"",
+        "true # private harness copy bypassed",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "missing private harness copy did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "[[ \"$(sha256_file \"$KUSTOMIZE_RENDERER\")\" == \"$KUSTOMIZE_RENDERER_SHA256\" ]]",
+        "[[ \"$(sha256_file \"$KUSTOMIZE_RENDERER_SOURCE\")\" == \"$KUSTOMIZE_RENDERER_SHA256\" ]]",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "hashing the mutable source renderer did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "KUSTOMIZE_RENDERER_SHA256=\"f83e347b5f66c6cad049595a776230ea559f80efc265129f407032bf5a93dd74\"",
+        "KUSTOMIZE_RENDERER_SHA256=\"0000000000000000000000000000000000000000000000000000000000000000\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "wrong renderer hash did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "KUSTOMIZE_VALIDATOR_SHA256=\"43355d4a083303c9ffadade98f4add46958d7a7e625100dea97d979a3d1d294e\"",
+        "KUSTOMIZE_VALIDATOR_SHA256=\"0000000000000000000000000000000000000000000000000000000000000000\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "wrong validator hash did not fail preflight"
+    );
     let changed = replace_once(
         &full,
         "cmp -s \"$sidecar\" <(printf",
