@@ -1,6 +1,6 @@
 ---
 name: aw:prepare-goal
-description: Turn a work item — or an intent interviewed out of the human — into a list of copy-pasteable `/goal` conditions, each written so the session's goal evaluator can actually decide it. Given an iid it reads the tracker through `epic.py`/`change.py`; given nothing it interviews through AskUserQuestion. It prepares text and sets no goal itself.
+description: Turn a work item, a project, or an intent interviewed out of the human into a list of copy-pasteable `/goal` conditions, each written so the session's goal evaluator can actually decide it. Given an iid it reads the tracker through `epic.py`/`change.py`, and dispatches its phase by whether the iid is an epic, a change, or one of the two phase skills (`e2e-for-wi`, `impl-for-wi`); given a project it targets `grill-me-to-meta` or `grill-meta-to-wis`; given nothing it interviews through AskUserQuestion. It prepares text and sets no goal itself.
 version: 0.1.0
 user-invocable: true
 ---
@@ -62,9 +62,25 @@ Worked, on the same intent:
 The accepted form is longer for one reason: every clause in it is something the
 evaluator can find in the transcript.
 
-## Route A — you were given an iid
+## Route A — you were given a project or an iid
 
-Do not guess the kind. Ask for its order:
+Four flows, four shapes of end state. Do not guess which one: a project maps
+to one of two META flows, an iid maps to one of two phase flows, and neither
+axis is inferred from the other.
+
+### Which flow
+
+**Given a project** (`apps/<name>` or `libs/<name>`, or a path under one).
+`/aw-grill-me-to-meta` and `/aw-grill-meta-to-wis` both take a bare project,
+so the input alone does not say which run the human wants next. If the
+conversation already says — "write the promise down first", "close the gap",
+a mention of `docs/**` versus a mention of `epic.py`/`change.py` — take that.
+Otherwise ask with **AskUserQuestion**: writing or extending the product
+documents is `grill-me-to-meta`; reconciling the tracker against documents
+already written is `grill-meta-to-wis`. An option this skill invented instead
+of asking is a route it picked on the human's behalf.
+
+**Given an iid.** Ask for its order:
 
 ```
 uv run --python 3.13 --no-project ".claude/aw/scripts/epic.py" order <iid> --open-only
@@ -73,29 +89,79 @@ uv run --python 3.13 --no-project ".claude/aw/scripts/epic.py" order <iid> --ope
 If that path does not exist the plugin is not loaded; the same script is in the
 checkout at `.claude/aw/scripts/epic.py`. On a change work item this refuses
 and names the type it actually found — that message is the answer, not an error
-to route around.
+to route around. This tells you epic-vs-change, the shape of the queue; it does
+not tell you e2e-vs-impl, the phase. Take the phase from what the conversation
+already says it is driving next, or ask.
 
-**An epic.** The printed sequence is the queue: one condition per child, in the
-order printed, each condition naming that child's iid. Emit them in that order
-and say plainly that they are pasted one at a time, because the second one
-cancels the first. When the output carries a `!` or `?` line instead of an
-order, quote it and stop — an epic whose graph does not yield a sequence has no
-queue to prepare, and picking one yourself makes the order yours.
+When the output carries a `!` or `?` line instead of an order, quote it and
+stop — a work item whose graph does not yield a sequence has no queue to
+prepare, and picking one yourself makes the order yours.
 
-**A change.** Read the body:
+**An epic.** The printed sequence is the queue: one condition per child, in
+the order printed, each built from the phase flow below for that child's iid.
+Emit them in that order and say plainly that they are pasted one at a time,
+because the second one cancels the first.
 
-```
-uv run --python 3.13 --no-project ".claude/aw/scripts/change.py" show <iid>
-```
+**A change.** One condition, built from the phase flow below for that iid.
 
-Its `## Acceptance` table already holds the verbatim command, the current
-observation, and the target observation. That is the check and the end state,
-authored and validated before you arrived — take them from there rather than
-composing your own, and take the constraint from `## Never`. A change body is
-the one input to this skill that has already been refused by a validator, so
-inventing around it is discarding the only evidence in the room.
+### grill-me-to-meta \<project\>
 
-## Route B — you were given no iid
+- end state: `metadoc.py check <project>` prints `=> CLEAN` for the project's
+  four-path allowlist (`README.md`, `STATUS.md`, `ROADMAP.md`, `docs/**`).
+- check: `uv run --python 3.13 --no-project ".claude/aw/scripts/metadoc.py" check <project>`,
+  its output pasted, plus `git -c core.fsmonitor=false diff --stat -- <project>/README.md <project>/STATUS.md <project>/ROADMAP.md <project>/docs`
+  for the same run, also pasted — the diff is what tells a reader a promise
+  changed, `=> CLEAN` alone does not.
+- constraint: nothing changes outside those four paths; no heading gains
+  ` (#<iid>)` and no `Tracking:` line gains a link — binding is
+  `grill-meta-to-wis`'s; no STATUS row, ROADMAP outcome, or README capability
+  is invented to make an owner bullet resolve.
+- stop clause: if `metadoc.py check` or `meta.py check` cannot pass without
+  minting an id nobody asked for, name the id and the rule that refused it,
+  and stop instead of adding it.
+
+### grill-meta-to-wis \<project\>
+
+- end state: naming the specific row or rows this run closes (for example
+  `G1` and `G2`) — each reads `0` over a population greater than `0` in
+  `wis.py gap`'s table. A row still printed `? / ?` is UNMEASURED, not closed,
+  and never satisfies this.
+- check: `uv run --python 3.13 --no-project ".claude/aw/scripts/wis.py" gap <project>`,
+  its full table pasted, with the named row(s) read directly from that table.
+- constraint: the only writers are `epic.py create|update` and
+  `change.py create|update`; no document under the project's allowlist and no
+  source file changes.
+- stop clause: if a named row is still `?` UNMEASURED after the run, quote
+  its reason line and stop rather than forcing a number past it.
+
+### e2e-for-wi \<iid\>
+
+- end state: `e2e.py commit` has landed a commit for `<iid>` carrying an
+  `E2E-Red:` trailer.
+- check: `uv run --python 3.13 --no-project ".claude/aw/scripts/e2e.py" commit <iid>`,
+  its output pasted, showing the `E2E-Red:` line.
+- constraint: only `apps/<name>/e2e/` changes (`leg.LEG_ROOTS["e2e"]`); no
+  `src/**` path in the same commit.
+- stop clause: if `e2e.py verify`/`test` cannot be made to fail against the
+  current tree, say that no red case was found and stop instead of writing a
+  case that was already green.
+
+### impl-for-wi \<iid\>
+
+- end state: `impl.py commit` has landed a commit for `<iid>` carrying an
+  `Impl-Red:` trailer.
+- check: `uv run --python 3.13 --no-project ".claude/aw/scripts/impl.py" commit <iid>`,
+  its output pasted, showing the `Impl-Red:` line.
+- constraint: only `apps/<name>/src/` changes (`leg.LEG_ROOTS["impl"]`); the
+  commit touches at least one file `leg.LEG_TEST_FILES["impl"]` names as a
+  test file, so `C0`'s existence gate does not refuse it; `impl.py red`'s
+  record for `<iid>` is not stale against the tree `verify`/`test`/`commit`
+  run against.
+- stop clause: if `impl.py red` refuses because the tree already has no
+  failing test to name, say that and stop instead of writing a test after the
+  implementation.
+
+## Route B — you were given neither
 
 Interview. Use `AskUserQuestion`, one question per part of the shape above, and
 offer only options you can point at in the checkout — a gate this project's
@@ -123,8 +189,9 @@ each a single line, so it survives a copy:
 /goal <condition>
 ```
 
-Above each block, one line naming which work item or which intent it belongs
-to. Below the last one, these two, verbatim, because the human will need them
+Above each block, one line naming which work item, which project and flow, or
+which intent it belongs to. Below the last one, these two, verbatim, because
+the human will need them
 before the queue is done:
 
 ```
@@ -147,15 +214,18 @@ You are the agent running this skill.
 - Never write a condition whose check the evaluator cannot see. "The build is
   clean", "the bug is fixed", and "the migration is done" are all claims about a
   tree, and the evaluator has no tree.
-- Never invent the proving command. On Route A it comes from the change body's
-  `## Acceptance`; on Route B it comes from the human or from a gate the project
-  already declares. A command you composed is a gate nobody agreed to.
+- Never invent the proving command. On Route A the command is fixed by which
+  of the four flows the condition belongs to — `metadoc.py check`,
+  `wis.py gap`, `e2e.py commit`, or `impl.py commit` — take it from there, not
+  from one you composed; on Route B it comes from the human or from a gate the
+  project already declares. A command you composed is a gate nobody agreed to.
 - Never emit the queue as something to paste at once, and never present two
   conditions as simultaneously active. A second goal supersedes the first, so a
   batch silently discards every condition but the last.
-- Never edit a work item, an epic body, or a project's gates to make a condition
-  easier to write. This skill reads the tracker and writes to it never; a body
-  you reshaped is a condition you authored on both sides.
+- Never edit a work item, an epic body, a project's META-docs, or a project's
+  gates to make a condition easier to write. This skill reads the tracker and
+  the META-docs and writes to neither; a body or a section you reshaped is a
+  condition you authored on both sides.
 - Never let the condition describe effort. "Keep trying until it works" has no
   state the evaluator can call met, and the hook it becomes is one that refuses
   every stop.

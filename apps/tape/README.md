@@ -120,7 +120,6 @@ readback oracle for the current acceptance scripts.
 | Serve flags, environment, ports, probes, runbooks | [`docs/deployment-handoff.md`](docs/deployment-handoff.md) |
 | Kubernetes custom resource | `tape k8s crd render`; the operator and instance layers come from `tape k8s operator render` and `tape k8s instance render`. |
 | Backup destinations | `tape backup --help` lists the accepted schemes: `file://`, `s3://` (feature `backup`), and `gs://`. |
-| Decisions that outlive one change | [`docs/technical/adr/`](docs/technical/adr/) |
 
 ## Capabilities
 
@@ -322,7 +321,6 @@ evidence; it does not define the current contract.
 | [Deployment handoff](docs/deployment-handoff.md) | Images, serve flags, environment, HTTP surface, smoke sequence, backup and restore runbooks |
 | [Node drain and PodDisruptionBudget](docs/runbooks/node-drain-and-pdb.md) | Unblocking a drain on the direct-install singleton and verifying recovery |
 | [Benchmark history](docs/benchmarks-scale.md) | The local performance gate and the retired peer-broker calibrations |
-| [Architecture decisions](docs/technical/adr/) | Decisions that outlive one change |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Tape edit rules and required verification commands |
 
 Historical evidence and implementation planning do not define the current

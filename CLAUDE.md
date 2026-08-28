@@ -33,7 +33,7 @@ into the README.
 
 ## `aw` is `.claude/aw` plus `.claude/skills/aw-*`
 
-`aw` is the phase scripts under `.claude/aw/scripts/` and the eleven skills
+`aw` is the phase scripts under `.claude/aw/scripts/` and the six skills
 under `.claude/skills/aw-*/`. There is no CLI behind them — the protocol is their
 stdout and their exit codes.
 
@@ -42,11 +42,17 @@ deleted: the scripts moved to `.claude/aw/scripts/`, the verification suite to
 `.claude/aw/verification/`, and `plugins/aw/skills/`, `plugins/aw/.claude-plugin/plugin.json`
 and `.claude-plugin/marketplace.json` were removed outright, along with the
 `enabledPlugins` entry in `.claude/settings.json`. The skills in
-`.claude/skills/` — eight then, eleven since 2026-08-26, still eleven after
-2026-08-27 swapped the two `grill-*-to-prd` for `grill-me-to-prd` and
-`ask-user` — were already the copy
-every session read, so nothing about what loads changed — what changed is that there is now one copy of each file
-instead of two, and `${CLAUDE_PLUGIN_ROOT}` resolves nowhere.
+`.claude/skills/` — eight originally, eleven from 2026-08-26 — were already
+the copy every session read, so nothing about what loads changed at the
+collapse of the plugin — what changed is that there is now one copy of each
+file instead of two, and `${CLAUDE_PLUGIN_ROOT}` resolves nowhere. The
+2026-08-27 restructure described in "Skills" below folds into that same day:
+it retires nine of those eleven — the one that wrote product-promise prose,
+the one that checked META-docs standalone, the two that wrote technical-design
+sections and ADRs, the one that opened an epic from an unbound promise, the
+one that opened a change from an interview, the one that opened an epic's
+children, and the two that drove the phase ladder — and adds four, landing on
+the six named there.
 
 Launch every one of them through `uv run --python 3.13 --no-project`. They read
 TOML, `tomllib` is 3.11+, and a bare `python3` is 3.9 on at least one machine
@@ -62,13 +68,25 @@ into the script that replaced it.
 
 ## Skills
 
-Twelve entry points. Each is invoked by a human. Lifecycle skills hand off to
-a phase script that can refuse them; the PRD grill writes prose under the
-owning project's `docs/product/` before any work item exists, and hands it to
-`prd.py`, which refuses a run that wrote anywhere else and is the only writer
-of its commit; the two TD grills write under `docs/technical/` and hand off to
-nothing at all; `ask-user` writes nothing; the project-document checker uses
-its own read-only validators and a clean-context reader.
+Seven entry points: the six `aw-*` skills below, plus the non-`aw`
+`/project-readme-check`. Each is invoked by a human. `grill-me-to-meta`
+interviews a human and writes prose under one project's `README.md`,
+`STATUS.md`, `ROADMAP.md` and `docs/**`, and hands the run to `metadoc.py`,
+which refuses a commit that wrote anywhere else and is the only writer of its
+own commit; `grill-meta-to-wis` measures the gap with `wis.py gap` and
+reorganises the tracker to close it through `epic.py`/`change.py`;
+`e2e-for-wi` and `impl-for-wi` hand off to `e2e.py` and `impl.py`, phase
+scripts that can refuse them; `ask-user` writes nothing; the project-document
+checker uses its own read-only validators and a clean-context reader.
+
+There is no technical-design step. Two grills — one per epic, one per change —
+wrote per-subsystem technical-design sections and ADRs beside them, under a
+`technical/` tree nested inside each project's `docs` directory, from
+2026-08-26 until 2026-08-27; both skills and that whole tree are deleted.
+Over that lifetime they produced no section at all and five ADRs, and the rule
+that already governed this — `.claude/rules/authoring/source-carries-its-own-design.md`
+— says the `.rs` file is the authoring surface. A design decision goes in the
+`//!` or `///` block of the module or type that owns it.
 
 They load as project skills out of `.claude/skills/`, not as the `aw` plugin,
 and that copy is what a session actually reads. Each directory is named
@@ -77,7 +95,7 @@ the loader keys off the path and ignores the frontmatter `name:`, measured with
 a probe whose two names disagreed, and the directory won. The frontmatter
 `name:` is `aw:<skill>` and is only the label the skill list shows; since the
 rename on 2026-08-26 no `/aw:<skill>` resolves, and `check_plugin.py` refuses a
-body that still writes one. These eleven are the only copy. A second set lived
+body that still writes one. These six are the only copy. A second set lived
 under
 `plugins/aw/skills/` with `${CLAUDE_PLUGIN_ROOT}` paths where these write
 `.claude/aw/scripts/`, nothing detected drift between them, and that pair was
@@ -85,64 +103,76 @@ collapsed on 2026-08-21 by deleting the plugin.
 
 | Skill | Reach for it when | It does |
 |---|---|---|
-| `/aw-grill-me-to-prd` | a project's product promise is not written down yet, or a section of it is stale, wrong, or no longer wanted | interviews you, then creates, modifies, or deletes one `## <title>` section — or a capability area — under the owning project's `docs/product/`; no work item exists yet and none is opened |
-| `/aw-grill-me-to-epic` | a `docs/product/` section has no epic yet, or an epic's body is thin, stale, or unvalidatable | reads the unbound section, interviews you for the rest, then `epic.py create\|update` writes the body and the section heading gains ` (#<iid>)` |
-| `/aw-grill-epic-to-changes` | before driving an epic, or whenever its child set is suspect | opens what the epic promises but never opened, and resolves duplicates and misfiled children |
-| `/aw-grill-me-to-change` | a change must be opened, or its body is thin, stale, or unvalidatable | interviews you, then `change.py create\|update` writes the body |
-| `/aw-grill-epic-to-td` | an epic has its PRD and its design — premises, change points, interfaces, the e2e case that will judge it — is not yet written down | interviews you, then writes one `## <title> (#<iid>)` section into `docs/technical/<subsystem>.md`, plus an ADR under `docs/technical/adr/` for each decision that outlives the item |
-| `/aw-grill-change-to-td` | the same, for a change | the same |
-| `/aw-go-tdd-for-epic` | an epic's children are ready to implement | asks `epic.py order` for the dependency order and runs `/aw-go-tdd-for-change` on each child; stops when the script prints no order |
-| `/aw-go-tdd-for-change` | one change is ready to implement | drives it through the ladder below |
+| `/aw-grill-me-to-meta` | a project's `README.md`, `STATUS.md`, `ROADMAP.md`, or a `docs/**` section is missing, stale, wrong, or no longer wanted | interviews you, then writes those four paths for one project through the landing sequence `metadoc.py check` → `meta.py check` → `metadoc.py commit`; absorbs the retired standalone meta-checking skill as that sequence's second step |
+| `/aw-grill-meta-to-wis` | a `docs/**` section has no epic yet, an epic's child set is suspect, or a change must be opened, or its body is thin, stale, or unvalidatable | runs `wis.py gap` for the seven-row table, then closes what it shows through `epic.py create\|update` and `change.py create\|update`; binds a section to the epic it opens in the same run — the heading gains ` (#<iid>)`, `Tracking:` gains the link |
+| `/aw-e2e-for-wi` | one work item's black-box contract is ready to write | drives the e2e phase's four verbs on a change, or on each child of an epic in the order `epic.py order --open-only` prints |
+| `/aw-impl-for-wi` | a work item's e2e phase has landed | drives the impl phase's five verbs — `start`, `red`, `verify`, `test`, `commit` — on a change, or on each child of an epic in that same order |
 | `/aw-prepare-goal` | a work item, or a bare intent, has to become a `/goal` the session's evaluator can actually decide | interviews you or reads the tracker through `epic.py`/`change.py`, then prints conditions for you to paste |
-| `/aw-check-meta` | before trusting a `CLAUDE.md`, `README.md` or `CONTRIBUTING.md`, and after editing one | `meta.py check` reports every doc fact whose owner is gone |
 | `/aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
 | `/project-readme-check` | after creating or editing an app or library README, STATUS, ROADMAP, protocol, generated-client, indexing, querying, GKE, client-integration, or migration guide | validates the adopted product-document set and cross-file references, then asks a context-free reader to restate the current, future, and interface contract |
 
-The usual sequence is `grill-me-to-prd` → `grill-me-to-epic` (which binds
-the section to the epic it opens) → `grill-epic-to-changes` →
-`grill-epic-to-td` → `grill-change-to-td` → `go-tdd-for-*`. The first step
-is a hard stop rather than a convention: `grill-me-to-epic` refuses to open
-an epic that no `docs/product/` section promises. The rest of the order is
-convention — nothing in the ladder checks that a TD exists. `prepare-goal`,
-`check-meta` and `ask-user` stand outside the lifecycle entirely.
+The usual sequence is `grill-me-to-meta` → `grill-meta-to-wis` →
+`e2e-for-wi` → `impl-for-wi`. The first step is a hard stop rather than a
+convention: `grill-meta-to-wis` refuses to open an epic that no `docs/**`
+section promises. The rest of the order is convention — nothing downstream
+reads what came before it. `prepare-goal` and `ask-user` stand outside the
+lifecycle entirely.
 
 - A grill never writes product source and never invents an answer you did not
   give. It offers only gates the repository already runs, and it stops asking
   once the body's own sections are answered.
-- On `grill-epic-to-changes`, the label is what makes a child a child. An
+- On `grill-meta-to-wis`, the label is what makes a child a child. An
   unlabelled issue is not one, whatever its body claims.
-- `grill-me-to-prd` writes only under the owning project's `docs/product/`,
-  one `## <title>` section per promise, into a file named for its capability
-  area — never for an issue number, because no issue exists yet. That
-  allowlist is measured rather than asked for: `prd.py check` reads the dirty
-  set against HEAD and refuses every path outside it, along with a section
-  missing one of its own kind's bullets, a STATUS or ROADMAP id that resolves
-  nowhere, and a heading that gained a `(#<iid>)` the epic grill has not
-  bound. `prd.py commit` re-runs all of it, stages the allowlist, and writes
-  the `PRD-Project:` / `PRD-Section:` / `PRD-Unbound:` trailers that make the
-  commit findable; a PRD commit written by hand carries none of them. A
-  section is bound to its epic — the heading gains ` (#<iid>)`, `Tracking:` gains the
-  link — by `grill-me-to-epic`, in the same run that opens the epic, and by
-  nothing else.
-- A `grill-*-to-td` writes only under the owning project's `docs/technical/`,
-  one `## <title> (#<iid>)` section per work item, into a file named for its
-  subsystem. Without a work item there is no section to write.
-- `go-tdd-for-epic` reads the order out of the epic's own `Depends On`
-  column. A line beginning `!` means there is no order to follow: report it and
-  stop. An epic body you edited to make the graph parse is an epic whose
-  dependencies you decided.
+- `grill-me-to-meta` writes only `README.md`, `STATUS.md`, `ROADMAP.md` and
+  `docs/**` for the one project it names, one `## <title>` section per
+  promise — never for an issue number, because a promise can predate the
+  work item that will carry it. That allowlist is measured rather than asked
+  for: `metadoc.py check` reads the dirty set against HEAD and refuses every
+  path outside it, along with a section missing one of its own kind's
+  bullets (a section is exactly one of `Outcome:`-shaped or
+  `Status rows:`-shaped), a STATUS or ROADMAP id that resolves nowhere, and a
+  heading that gained a `(#<iid>)` — binding a section to an epic is
+  `grill-meta-to-wis`'s job, not this one's, and this check refuses a run
+  that did it anyway. `metadoc.py commit` re-runs all of it, stages the
+  allowlist, and writes the `Meta-Project:` / `Meta-Top:` / `Meta-Index:` /
+  `Meta-Section:` / `Meta-Unbound:` trailers that make the commit findable; a
+  META-doc commit written by hand carries none of them. A section is bound to
+  its epic — the heading gains ` (#<iid>)`, `Tracking:` gains the link — by
+  `grill-meta-to-wis`, in the same run that opens the epic, and by nothing
+  else.
+- `wis.py gap` prints seven rows, each with the size of what it read printed
+  beside the count (`3 / 31`), not a bare count: G1 a future promise no epic
+  is opened for, G2 an open work item no promise reaches, G3 a promise bound
+  to an issue that cannot carry it, G4 a ROADMAP outcome no promise claims,
+  G5 a STATUS row no promise claims, G6 an e2e case the crate manifest does
+  not run, G7 a README gate that names no cargo target. A row it could not
+  read — a missing `docs/` area file, an absent `STATUS.md`, `gh` exiting
+  non-zero outside a git directory — prints `?` UNMEASURED with the reason
+  instead of `0`, and is counted separately, so a run that could not reach
+  the tracker never reports `=> ALIGNED`. It writes nothing; every write
+  `grill-meta-to-wis` makes goes through `epic.py` / `change.py`.
+- `e2e-for-wi` and `impl-for-wi` dispatch on a work item's type by running
+  `epic.py order <iid> --open-only` first. On a change it refuses and names
+  the actual type — that message, not the exit code, is the type answer,
+  since "not an epic" and "epic whose graph has no solution" are both exit 1.
+  On an epic, a line beginning `!` or `?` means there is no order to follow:
+  quote it verbatim and stop. An epic body edited to make the graph parse is
+  an epic whose dependencies you decided.
 - `prepare-goal` prints text and sets nothing. `/goal` is a Claude Code
   built-in that nothing here implements, and a goal exists only once the human
   pastes one of the printed lines — which starts a turn on the spot, and
   supersedes whatever goal was already running.
-- `check-meta` reads and never writes. Its baseline was 103 findings over 182
-  documents, nearly all of them markers left behind by the deleted CLI. Those
-  are cleared, and so are the three rules added on 2026-08-20 — `M5` a gate
-  whose test-name filter cargo exits 0 on, `M6` a gate naming a package or
-  target that is not in the checkout, `M7` a self-graded `Status:`/`Maturity:`
-  field — which landed at 151, 5 and 526 findings and reached zero the same day
-  the 60 project READMEs carrying them were rewritten. It reports `=> CLEAN`
-  over 184 tracked META-docs and 64 project READMEs; the count was 185 until
+- `meta.py check` reads and never writes; it is the second step of
+  `grill-me-to-meta`'s landing sequence now, where the standalone skill it
+  came from used to be run by a human who had to remember to. Its baseline
+  was 103 findings over 182 documents, nearly all
+  of them markers left behind by the deleted CLI. Those are cleared, and so
+  are the three rules added on 2026-08-20 — `M5` a gate whose test-name
+  filter cargo exits 0 on, `M6` a gate naming a package or target that is not
+  in the checkout, `M7` a self-graded `Status:`/`Maturity:` field — which
+  landed at 151, 5 and 526 findings and reached zero the same day the 60
+  project READMEs carrying them were rewritten. It reports `=> CLEAN` over
+  184 tracked META-docs and 64 project READMEs; the count was 185 until
   `4a30ca3097` deleted `apps/lumen`'s retired trees.
 - All seven rules are ratcheted to zero by
   `.claude/aw/verification/check_meta_clean.py`, which `run_all.py` runs with a
@@ -204,12 +234,23 @@ beside it, not a second adapter someone might go looking for.
 
 ## Work-item lifecycle
 
-The lifecycle is linear: `wi → e2e → unit → logic`. Each phase runs `start`,
-`verify`, `test`, and `commit`, and each prints the command that follows it.
+The lifecycle is linear: `wi → e2e → impl`. Each phase prints the command
+that follows it. `e2e` runs four verbs — `start`, `verify`, `test`, `commit`;
+`impl` runs five — `start`, `red`, `verify`, `test`, `commit`. The extra verb
+is load-bearing: the retired three-phase ladder proved attribution with two
+commits — its middle phase's own trailer was the record the phase after it
+read back — and a two-phase ladder's second phase has no earlier commit of
+its own kind to read. `red` is where the evidence moves instead — it records the
+named failing tests, the head sha, and a per-test-file sha256 to
+`.aw/impl-red/<iid>.json`, and only passes at the moment the tests are
+written and the implementation is not; write the implementation first and
+`red` finds nothing failing to name, and refuses.
 
 A phase's green must be attributable to a named red measured immediately before
-it in the same tree. That is what the commit trailers `E2E-Red:`, `Unit-Red:`,
-and `Logic-Contract:` carry, and what the next phase's predecessor check reads.
+it in the same tree. That is what the commit trailers `E2E-Red:`, `Impl-Red:`,
+and `Impl-Contract:` carry: `e2e`'s own commit carries `E2E-Red:`; `impl`'s
+`verify`/`test` refuse a tree that has drifted from the `red` record before
+`impl`'s commit ever writes `Impl-Red:`/`Impl-Contract:` back onto it.
 
 ### Work-item terminal states
 
@@ -235,13 +276,15 @@ red first. A phase does not start until its predecessor has landed its commit.
 | Phase | Writes | What lands there |
 |---|---|---|
 | 1 `e2e` | `apps/<name>/e2e/` | The black-box case, written to fail against the current tree |
-| 2 `unit` | `apps/<name>/src/` | Colocated tests plus the skeleton they fail against; at least one test file is required |
-| 3 `logic` | `apps/<name>/src/` | The implementation, which may not touch a test file |
+| 2 `impl` | `apps/<name>/src/` | The skeleton, its colocated tests, and the implementation that turns them green; at least one test file is required |
 
 - This table is not advice. `C0` refuses any dirty path outside the phase's
-  write root against `leg.LEG_ROOTS`, and tells `unit` from `logic` inside their
-  shared root against `leg.LEG_TEST_FILES` — by filename, never by reading a
-  `#[cfg(test)]` span.
+  write root against `leg.LEG_ROOTS`. The retired ladder told `unit` from
+  `logic` inside their shared `src/` root against `leg.LEG_TEST_FILES` — by
+  filename, never by reading a `#[cfg(test)]` span; that boundary gate is
+  gone with those two phases. What `leg.LEG_TEST_FILES` still gates is an
+  existence requirement: an `impl` commit that touches no test file is
+  refused by `C0`.
 - Never open `src/**` first. Reaching implementation before the contract exists
   means nothing can refuse the implementation afterwards.
 - Write the phase-1 case so it **fails against the current tree**, and run it to
@@ -252,17 +295,22 @@ red first. A phase does not start until its predecessor has landed its commit.
   surfaces, and a `// SPEC-MANAGED: <path>#<anchor>` header names a producer that
   no longer exists. The `.rs` file is the authoring surface; editing the markdown
   a header names propagates nowhere.
-- `docs/product/`, `docs/technical/` and `docs/technical/adr/` exist under every
-  `apps/*` and `libs/*` since 2026-08-26. `docs/product/` is where
-  `grill-me-to-prd` writes, before any work item exists, one `## <title>`
-  section per promise; the heading gains its ` (#<iid>)` when
-  `grill-me-to-epic` opens the epic. `docs/technical/` and `adr/` are where the
-  two `grill-*-to-td` skills write, one `(#<iid>)` section at a time. None of
-  them is `tech-design/` under a new name: nothing generates from them, no
-  source header points at them, and they are prose a human was interviewed
-  into. Nor are they ladder write roots — `C0` refuses a dirty `docs/` path
-  like any other path outside a phase's write root, so land a PRD or TD before
-  `e2e.py start`, not during.
+- `docs/product/` exists under every `apps/*` and `libs/*` since 2026-08-26,
+  and as of 2026-08-27 `metadoc.py`'s write allowlist widens past it to four
+  paths per project: `README.md`, `STATUS.md`, `ROADMAP.md`, and everything
+  under `docs/**` — not `docs/product/` alone, because a promise and the
+  STATUS row that measures it are one edit now, not two skills' worth. It is
+  where `grill-me-to-meta` writes, before any work item exists, one
+  `## <title>` section per promise; the heading gains its ` (#<iid>)` when
+  `grill-meta-to-wis` opens the epic. The technical-design tree that landed
+  beside `docs/product/` on the same day, under `docs`'s own `technical/`,
+  is deleted as of 2026-08-27, ADRs included — a design decision lives in the
+  `.rs` file that owns it.
+  `docs/**` is not `tech-design/` under a new name: nothing generates from
+  it, no source header points at it, and it is prose a human was interviewed
+  into. Nor is it a ladder write root — `C0` refuses a dirty `docs/` path
+  like any other path outside a phase's write root, so land a META-doc
+  before `e2e.py start`, not during.
 
 ## Test Layout
 

@@ -69,7 +69,14 @@ SUITE = [
     # Reads the epic snapshot and calls `order_children` as a pure function;
     # nothing is spawned and nothing is written, so it costs about as much as
     # the probes and sits with them rather than with the flow gates below.
-    ("check_epic_order.py", None),
+    #
+    # It carried no control until 2026-08-27, when its two headline corpus rows
+    # stopped being declared counts and became relational -- and a relational
+    # row states an absence, which an instrument that reads nothing satisfies
+    # too. Its control mutates `epic.py`, the same product script
+    # `check_coverage_rule_negative_control.py` mutates, and restores by
+    # captured bytes with an sha256 check.
+    ("check_epic_order.py", "check_epic_order_negative_control.py"),
     ("probe_offtree_root.py", None),
     ("probe_local_verbs.py", None),
     # The META-doc validator. Exempt from the ordering rule above for the same
@@ -97,18 +104,23 @@ SUITE = [
     # its control does mutate real tracked files, but they are two `apps/cube`
     # documents that nothing else in this suite reads or writes.
     ("check_meta_clean.py", "check_meta_clean_negative_control.py"),
-    # The PRD run's allowlist. Exempt from the ordering rule for the same
-    # reason the flow gates below are: every case builds its own `tempfile` git
+    # The META-doc run's allowlist. Exempt from the ordering rule for the same
+    # reason the flow gate below is: every case builds its own `tempfile` git
     # repository with its own `aw.toml`, plants one violation in it, and spawns
-    # `prd.py` against that -- nothing in this checkout is read or written, so
-    # it can neither be disturbed by a control above nor leave residue below.
+    # `metadoc.py` against that -- nothing in this checkout is read or written,
+    # so it can neither be disturbed by a control above nor leave residue below.
     #
     # It carries no separate negative control, and that is not an exemption:
-    # the gate *is* the control. Each of its ten cases starts from a fixture
-    # that produces zero findings and plants exactly one defect, so a rule that
+    # the gate *is* the control. Each refusal case starts from a fixture that
+    # produces zero findings and plants exactly one defect, so a rule that
     # stopped firing shows up as that case reporting `[]`, and a rule that fires
-    # on everything shows up as the baseline case reporting it.
-    ("check_prd_scope.py", None),
+    # on everything shows up as the baseline case reporting it. Since the
+    # allowlist widened from `docs/product/` alone to four paths on 2026-08-27
+    # the admissions carry their own cases too -- three of those four paths were
+    # previously the *near misses* the refusal case planted writes into, and an
+    # inverted control nobody rewrote would go on passing while measuring the
+    # opposite of its own name.
+    ("check_metadoc_scope.py", None),
     # Exempt from the ordering rule above, and last because they are the
     # slowest. They mutate nothing in this checkout: each fixture is a
     # `tempfile` tree with its own `aw.toml` and its own git repository, so it

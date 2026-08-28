@@ -8,9 +8,9 @@ How to change `apps/tape`. What it promises and the work roots it owns live in
 in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 Changes here are authored one phase at a time, red first: `e2e` writes
-`apps/tape/e2e/`, then `unit` and `logic` write `apps/tape/src/`.
-`/aw-go-tdd-for-change` drives the ladder, and every phase refuses a dirty path
-outside its own write root.
+`apps/tape/e2e/`, then `impl` writes `apps/tape/src/`. `/aw-e2e-for-wi` drives
+the e2e phase and `/aw-impl-for-wi` drives the impl phase, and every phase
+refuses a dirty path outside its own write root.
 
 `Cargo.toml` declares `autotests = false` and one `[[test]]` stanza per
 `e2e/*.rs` file. A new case is not run until its stanza exists, so add the

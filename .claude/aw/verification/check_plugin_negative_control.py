@@ -7,14 +7,25 @@ from `.claude/skills/aw-*/` and the scripts from `.claude/aw/scripts/`. The
 variable they broke no longer appears in any body -- and a control with no
 live target is a rule nobody is measuring.
 
+Re-pointed again on 2026-08-27, when the eleven-skill population collapsed to
+six and the `wi -> e2e -> unit -> logic` ladder became `wi -> e2e -> impl`.
+Every mutation below used to target `grill-me-to-epic`, `grill-me-to-change`,
+`grill-epic-to-changes` or `go-tdd-for-change` -- all four deleted this round
+-- or named `logic.py`, also deleted. A control whose target is gone is not a
+control, it is a `FileNotFoundError` waiting for the next run; each mutation
+now targets one of the six skills that actually load
+(`.claude/aw/verification/_paths.py:SKILLS`), chosen for having exactly the
+anchor text the mutation needs and no more.
+
 A checker that has never been seen to fail is a checker nobody has measured.
 Each mutation below is a break that really ships:
 
   script-path    `scripts/` -> `script/` inside the in-repo path a SKILL.md
-                 names. The skill loads cleanly and dies on first use. Both
-                 occurrences in the body are mutated and both are expected to
-                 go red -- the rule fires per named path, so a control that
-                 mutated one would be green off the other's survival.
+                 names. The skill loads cleanly and dies on first use. There is
+                 exactly one backtick-quoted `.claude/aw/...` path across the
+                 six bodies now -- `prepare-goal`'s reference to `epic.py` --
+                 so this mutation carries one occurrence, not two: the prior
+                 two-occurrence shape belonged to a body that no longer exists.
   skill-name     a cross-reference to a skill that does not exist. This is the
                  defect that actually shipped: with the directories named
                  `aw-epic-*`, every plugin-qualified `wi-epic-*` reference in
@@ -33,12 +44,18 @@ Each mutation below is a break that really ships:
                  declaration is an exemption from verb coverage, so it has to
                  expire the moment it stops being true -- otherwise it is a
                  permanent hole shaped like whatever was once out of scope.
-  gh-write       reconcile opens a child with the tracker's own CLI again. This
-                 one is a restoration, not an invention: the block below is the
-                 one the skill carried until child creation moved to the change
-                 grill, and it is how a body no validator has ever seen gets
-                 filed -- the issue exists, the labels are right, and nothing
-                 ever ran `change.py validate` against what is inside it.
+                 Targets `epic.py adopt`, appended beside the `epic.py create`
+                 fence `grill-meta-to-wis` already carries -- the same
+                 exemption `change.py adopt` used to exercise, now folded into
+                 the one skill that drives both facades.
+  gh-write       the epic/change grill opens a child with the tracker's own
+                 CLI directly. This one is a restoration, not an invention:
+                 the block below is the shape `grill-epic-to-changes` carried
+                 before child creation was a script verb, and it is how a body
+                 no validator has ever seen gets filed -- the issue exists,
+                 the labels are right, and nothing ever ran `change.py
+                 validate` against what is inside it. `grill-meta-to-wis`
+                 inherited that responsibility, so it inherits this control.
   scripts-copy   a skill grows its own `scripts/` directory. Not a load error:
                  a second copy of a schema works perfectly right up until the
                  two readings drift, which is the failure the shared location
@@ -49,19 +66,27 @@ Each mutation below is a break that really ships:
   no-ask         an interviewing skill loses every AskUserQuestion. The body
                  still reads like an interview; it just stops holding one, and
                  the answers come from the agent instead of the human.
-  unpinned       the change ladder invokes `logic.py` with a bare `python3`. It
+  unpinned       `grill-meta-to-wis` invokes `wis.py` with a bare `python3`. It
                  reads as the shorter, more normal form of the same line, and it
                  is a ModuleNotFoundError on any interpreter below 3.11. The
-                 body carries one pinned `logic.py` launcher, so one red is
-                 expected; the rule fires per invocation, and the declared
-                 count is what keeps a second launcher from hiding behind it.
+                 body carries exactly one pinned `wis.py` launcher (a second
+                 lives in `prepare-goal`, untouched by this mutation), so one
+                 red is expected; the rule fires per invocation, and the
+                 declared count is what keeps a second launcher from hiding
+                 behind it.
 
-                 The target is `logic.py` on purpose. It imports no TOML itself
-                 -- it reaches `tomllib` only through the `unit.py` it loads --
-                 so under a direct-import-only pin population it would not be in
+                 The target is `wis.py` on purpose. It imports no TOML itself
+                 -- it reaches `tomllib` only through the `import e2e` at its
+                 top, and `e2e.py` is what imports `tomllib` directly -- so
+                 under a direct-import-only pin population it would not be in
                  the set at all, this mutation would produce no reds, and the
                  control would fail. That is the point: it is what holds the
-                 transitive half of that derivation in place.
+                 transitive half of that derivation in place. The prior
+                 version made the same argument about `logic.py`, which
+                 reached `tomllib` only through the `unit.py` it loaded with
+                 `leg.sibling`; that edge is `SIBLING_EDGE` in `check_plugin.py`,
+                 while `wis.py`'s is `IMPORT_EDGE` -- a different edge shape,
+                 same argument.
   unclassified   a skill drops out of the interviewing/procedural partition.
                  Nothing fails to load and no body changes -- the skill simply
                  stops having any per-skill rule applied to it, which is the
@@ -92,104 +117,98 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from _paths import HERE, skill_dir  # noqa: E402
 
 CHECK = HERE / "check_plugin.py"
-GRILL = skill_dir("grill-me-to-epic") / "SKILL.md"
-CHANGE_GRILL = skill_dir("grill-me-to-change") / "SKILL.md"
-RECONCILE = skill_dir("grill-epic-to-changes") / "SKILL.md"
-# The `ask-in-gate` and `unpinned` mutations have been re-pointed three times
-# now: from `wi-ec-commit`/`wi-ec-start` to `codex-review` when the leg
-# wrappers were retired, to `codex-code-review` when that was split in two and
-# the `ec -> td -> cb` scripts were deleted outright, and to `go-tdd-for-change`
-# when the semantic review left the ladder on 2026-08-26. A control whose
-# target disappears has to be re-pointed rather than dropped -- a rule with no
-# live target is a rule nobody is measuring, and it reads identically to a rule
-# that passes.
-TDD_CHANGE = skill_dir("go-tdd-for-change") / "SKILL.md"
+PREPARE_GOAL = skill_dir("prepare-goal") / "SKILL.md"
+E2E_FOR_WI = skill_dir("e2e-for-wi") / "SKILL.md"
+IMPL_FOR_WI = skill_dir("impl-for-wi") / "SKILL.md"
+GRILL_META = skill_dir("grill-me-to-meta") / "SKILL.md"
+GRILL_WIS = skill_dir("grill-meta-to-wis") / "SKILL.md"
+ASK_USER = skill_dir("ask-user") / "SKILL.md"
 PATHS = HERE / "_paths.py"
-COPY_DIR = skill_dir("grill-epic-to-changes") / "scripts"
+COPY_DIR = skill_dir("impl-for-wi") / "scripts"
 
 # (label, target, anchor, mutant, expected reds, occurrences)
 MUTATIONS = [
     (
         "script-path",
-        GRILL,
-        ".claude/aw/scripts/epic.py",
-        ".claude/aw/script/epic.py",
-        ["FAIL grill-me-to-epic: script path .claude/aw/script/epic.py exists"],
-        2,
+        PREPARE_GOAL,
+        "`.claude/aw/scripts/epic.py`",
+        "`.claude/aw/script/epic.py`",
+        ["FAIL prepare-goal: script path .claude/aw/script/epic.py exists"],
     ),
     (
         "skill-name",
-        GRILL,
-        "`/aw-grill-epic-to-changes`",
-        "`/aw-grill-epic-to-change`",
-        ["FAIL grill-me-to-epic: every /aw-<skill> reference resolves to a real skill"],
+        PREPARE_GOAL,
+        "`/aw-grill-meta-to-wis`",
+        "`/aw-grill-meta-to-wi`",
+        ["FAIL prepare-goal: every /aw-<skill> reference resolves to a real skill"],
     ),
     (
         "frontmatter-label",
-        GRILL,
-        "name: aw:grill-me-to-epic",
-        "name: aw-grill-me-to-epic",
-        ["FAIL grill-me-to-epic: frontmatter name is the listed label"],
+        PREPARE_GOAL,
+        "name: aw:prepare-goal",
+        "name: aw-prepare-goal",
+        ["FAIL prepare-goal: frontmatter name is the listed label"],
     ),
     (
         "h1-colon",
-        GRILL,
-        "# /aw-grill-me-to-epic",
-        "# /aw:grill-me-to-epic",
-        ["FAIL grill-me-to-epic: the body's H1 is the real invocation",
-         "FAIL grill-me-to-epic: names no colon-form /aw: invocation"],
+        PREPARE_GOAL,
+        "# /aw-prepare-goal",
+        "# /aw:prepare-goal",
+        ["FAIL prepare-goal: the body's H1 is the real invocation",
+         "FAIL prepare-goal: names no colon-form /aw: invocation"],
     ),
     (
         "unused-verb",
-        CHANGE_GRILL,
-        "change.py bodydir        # -> <repo>/.aw/workitems/changes, created if missing",
-        "change.py bodydir        # -> <repo>/.aw/workitems/changes, created if missing\n"
-        "change.py adopt <path> <iid>   # rename a staged body",
-        ["FAIL change.py: `adopt` is declared unused, and the declaration holds"],
+        GRILL_WIS,
+        'epic.py create --title "<title>" --project <project> '
+        "--priority <p0|p1|p2|p3> --body-file <path>",
+        'epic.py create --title "<title>" --project <project> '
+        "--priority <p0|p1|p2|p3> --body-file <path>\n"
+        "epic.py adopt <path> <iid>   # rename a staged body",
+        ["FAIL epic.py: `adopt` is declared unused, and the declaration holds"],
     ),
     (
         "gh-write",
-        RECONCILE,
-        "should exist; the grill decides what each one says.",
-        "should exist; the grill decides what each one says.\n"
+        GRILL_WIS,
+        "interrupted run should leave whole children behind, never fragments.",
+        "interrupted run should leave whole children behind, never fragments.\n"
         "\n"
         "```\n"
         'gh issue create --repo <repo> --title "<title>" '
         "--body-file <bodydir>/<slug>.md \\\n"
         "  --label type:change --label epic:<iid>\n"
         "```",
-        ["FAIL grill-epic-to-changes: names no gh issue/pr write command"],
+        ["FAIL grill-meta-to-wis: names no gh issue/pr write command"],
     ),
     (
         "ask-in-gate",
-        TDD_CHANGE,
-        "Twelve commands, in this order, and each one prints the next:",
-        "Twelve commands, in this order, and each one prints the next:\n"
+        E2E_FOR_WI,
+        "different reasons and name different remediations.",
+        "different reasons and name different remediations.\n"
         "\n"
-        "If a phase refuses, use AskUserQuestion to ask the human whether to "
-        "record the phase as passed anyway.",
-        ["FAIL go-tdd-for-change: names no AskUserQuestion, because a gate "
-         "has nothing to ask"],
+        "If `verify` refuses, use AskUserQuestion to ask the human whether to "
+        "treat it as passed anyway.",
+        ["FAIL e2e-for-wi: names no AskUserQuestion, because a gate has nothing to ask"],
     ),
     (
         "no-ask",
-        CHANGE_GRILL,
+        ASK_USER,
         "AskUserQuestion",
         "consult the human",
-        ["FAIL grill-me-to-change: names AskUserQuestion, so it reaches the human"],
+        ["FAIL ask-user: names AskUserQuestion, so it reaches the human"],
         3,
     ),
     (
         "unpinned",
-        TDD_CHANGE,
-        'uv run --python 3.13 --no-project ".claude/aw/scripts/logic.py"',
-        'python3 ".claude/aw/scripts/logic.py"',
-        ["FAIL go-tdd-for-change: `logic.py` is invoked through the pinned interpreter"],
+        GRILL_WIS,
+        'uv run --python 3.13 --no-project ".claude/aw/scripts/wis.py"',
+        'python3 ".claude/aw/scripts/wis.py"',
+        ["FAIL grill-meta-to-wis: `wis.py` is invoked through the pinned interpreter"],
     ),
     (
         "unclassified",
         PATHS,
-        'PROCEDURAL = ("check-meta", "go-tdd-for-change", "go-tdd-for-epic")',
+        'PROCEDURAL = ("e2e-for-wi", "impl-for-wi")',
         "PROCEDURAL = ()",
         ["FAIL every skill is classified exactly once"],
     ),
@@ -207,6 +226,13 @@ def reds_of(out):
 
 baseline_code, baseline_out = checker()
 print(f"== baseline == {baseline_out.strip().splitlines()[-1]} (exit={baseline_code})")
+baseline_reds = set(reds_of(baseline_out))
+if baseline_reds:
+    print(f"   baseline already carries {len(baseline_reds)} FAIL row(s) not caused by "
+          "this control -- isolation below is judged against reds *new* since baseline, "
+          "not against an empty set:")
+    for line in sorted(baseline_reds):
+        print(f"   PRE  {line}")
 
 failures = []
 for label, target, anchor, mutant, expected, *rest in MUTATIONS:
@@ -222,15 +248,17 @@ for label, target, anchor, mutant, expected, *rest in MUTATIONS:
     target.write_text(text.replace(anchor, mutant), encoding="utf-8")
     code, out = checker()
     reds = reds_of(out)
+    new_reds = [r for r in reds if r not in baseline_reds]
 
     target.write_bytes(original)
     after = hashlib.sha256(target.read_bytes()).hexdigest()
 
-    isolated = reds == expected
+    isolated = new_reds == expected
     print(f"\n== {label} == exit={code}")
     for line in reds:
-        print(f"   RED  {line}")
-    print(f"   isolation: {'exactly the expected assertion' if isolated else f'UNEXPECTED: {reds}'}")
+        flag = "RED " if line not in baseline_reds else "PRE "
+        print(f"   {flag} {line}")
+    print(f"   isolation: {'exactly the expected assertion, on top of baseline' if isolated else f'UNEXPECTED new reds: {new_reds}'}")
     print(f"   restore:   {'byte-identical' if before == after else 'FAILED'} ({before[:16]}...)")
 
     if not isolated or before != after or code == 0:
@@ -238,24 +266,26 @@ for label, target, anchor, mutant, expected, *rest in MUTATIONS:
 
 # -- the directory mutation ------------------------------------------------
 label = "scripts-copy"
-expected = ["FAIL grill-epic-to-changes: carries no scripts/ copy of its own"]
+expected = ["FAIL impl-for-wi: carries no scripts/ copy of its own"]
 if COPY_DIR.exists():
     failures.append(f"{label}: {COPY_DIR} already exists, so the mutation proves nothing")
     print(f"\n== {label} == PRECONDITION FAILED: {COPY_DIR} already exists")
 else:
     COPY_DIR.mkdir(parents=True)
-    (COPY_DIR / "epic.py").write_text("# a second reading of the schema\n", encoding="utf-8")
+    (COPY_DIR / "impl.py").write_text("# a second reading of the schema\n", encoding="utf-8")
     code, out = checker()
     reds = reds_of(out)
+    new_reds = [r for r in reds if r not in baseline_reds]
 
     shutil.rmtree(COPY_DIR)
     restored = not COPY_DIR.exists()
 
-    isolated = reds == expected
+    isolated = new_reds == expected
     print(f"\n== {label} == exit={code}")
     for line in reds:
-        print(f"   RED  {line}")
-    print(f"   isolation: {'exactly the expected assertion' if isolated else f'UNEXPECTED: {reds}'}")
+        flag = "RED " if line not in baseline_reds else "PRE "
+        print(f"   {flag} {line}")
+    print(f"   isolation: {'exactly the expected assertion, on top of baseline' if isolated else f'UNEXPECTED new reds: {new_reds}'}")
     print(f"   restore:   {'directory removed' if restored else 'FAILED -- still present'}")
 
     if not isolated or not restored or code == 0:
@@ -263,7 +293,8 @@ else:
 
 restored_code, restored_out = checker()
 print(f"\n== restored == {restored_out.strip().splitlines()[-1]} (exit={restored_code})")
+restored_reds = set(reds_of(restored_out))
 
-ok = not failures and restored_code == 0 and baseline_code == 0
-print("=> " + ("GREEN" if ok else f"RED ({failures or 'checker not green after restore'})"))
+ok = not failures and restored_code == baseline_code and restored_reds == baseline_reds
+print("=> " + ("GREEN" if ok else f"RED ({failures or 'checker not back to baseline after restore'})"))
 sys.exit(0 if ok else 1)

@@ -22,7 +22,7 @@ and it is expensive by construction — a control mutates the thing under test
 once per declared defect and re-runs the whole checker for each mutation.
 `check_plugin_negative_control.py` is eleven such rounds, ~23s of the ~39s the
 flag adds. The other big number is in the default run and is cargo:
-`check_tdd_flow.py` builds and tests a synthetic crate through all three phases,
+`check_tdd_flow.py` builds and tests a synthetic crate through both phases,
 ~29s of the ~38s there.
 
 Run the full suite whenever a gate itself changes, and before reporting any
@@ -30,6 +30,11 @@ claim of the form "this is verified". The default mode is not allowed to sound
 like the full one: it names the controls it did not run and prints
 `CHECKERS GREEN`, never `ALL GREEN`, because the second string is the one that
 gets pasted as evidence.
+
+Nothing in this repository calls `run_all.py` — no CI workflow, no git hook, no
+phase script. It is a ratchet a human runs, not a gate anything here enforces
+on its own; a finding in a file you touched is still the signal, whether or not
+anyone runs this suite over it.
 
 Each gate resolves the checkout through `_paths.py`, which walks up to the
 outermost `aw.toml` — the same rule the scripts use, so a gate and the script it
@@ -43,13 +48,14 @@ The shape under test:
 ```
 .claude/aw/
   scripts/        epic.py, change.py — the type-bound facades — and workitem.py, the engine
-                  leg.py, and the three phases it is shared by: e2e.py, unit.py, logic.py
+                  leg.py, and the two phases it is shared by: e2e.py, impl.py
+                  meta.py    — read-only META-doc check (M1..M7), not on the ladder
+                  metadoc.py — the allowlisted README/STATUS/ROADMAP/docs write + commit
+                  wis.py     — read-only work-item/promise gap reader (G1..G7)
   verification/   this directory
 .claude/skills/
-  aw-ask-user/             aw-check-meta/          aw-go-tdd-for-change/
-  aw-go-tdd-for-epic/      aw-grill-change-to-td/  aw-grill-epic-to-changes/
-  aw-grill-epic-to-td/     aw-grill-me-to-change/  aw-grill-me-to-epic/
-  aw-grill-me-to-prd/      aw-prepare-goal/
+  aw-ask-user/            aw-e2e-for-wi/          aw-grill-me-to-meta/
+  aw-grill-meta-to-wis/   aw-impl-for-wi/         aw-prepare-goal/
 ```
 
 This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why
@@ -67,17 +73,40 @@ since the rename it means the directory `aw-<skill>` *is* the command
 `/aw-<skill>`, and the frontmatter `name: aw:<skill>` is only the label the
 skill list shows.
 
-The eight scripts cannot be split across the eleven skill directories, and that
-is not a preference: `e2e.py`, `unit.py` and `logic.py` each load `leg.py` by
+The nine scripts cannot be split across the six skill directories, and that
+is not a preference: `e2e.py` and `impl.py` each load `leg.py` by
 `Path(__file__).parent / "leg.py"`, and `leg.change_module()` loads `change.py`
 the same way. One directory is load-bearing.
 
 `ec.py`, `td.py`, `cb.py`, their three gates, and the twelve `wi-{ec,td,cb}-*`
-wrappers were **deleted**, not archived. An archive of instructions for scripts
-that no longer exist is not history: it is a set of commands that fail with "no
-such file" for a reader who cannot tell that from a broken checkout. What each
-one was for survives where it is load-bearing — in the docstrings of the phases
-that replaced them, and in `run_all.py`'s note on why three rows left the suite.
+wrappers were **deleted**, not archived — the `ec → td → cb` ladder this
+plugin replaced. `unit.py` and `logic.py` went the same way on 2026-08-27,
+merged into the single `impl.py` above: in Rust a colocated test and the code
+under it are the same tree and are edited together, so the boundary a second
+commit used to draw between them cost an honest TDD loop more than it bought.
+What the boundary used to buy — a named red measured before anything could
+satisfy it — did not go with it; it moved onto `impl.py`'s `red` verb (see
+"The ladder" below). An archive of instructions for scripts that no longer
+exist is not history: it is a set of commands that fail with "no such file"
+for a reader who cannot tell that from a broken checkout. What each retired
+script was for survives where it is load-bearing — in the docstrings of the
+phases that replaced them, and in `run_all.py`'s note on why rows left the
+suite.
+
+`docs/technical/` and the two `aw-grill-{change,epic}-to-td` skills that wrote
+into it are deleted too, along with `prd.py`, renamed to `metadoc.py` and
+widened from one write root (`docs/product/`) to four
+(`README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**`) in the same change. There is
+no technical-design step: a design decision lives in the `//!` or `///` block
+of the module or type that owns it
+(`.claude/rules/authoring/source-carries-its-own-design.md`). The three grills
+that used to open and shape work items — `grill-me-to-epic`, `grill-me-to-change`
+and `grill-epic-to-changes` — are folded into the single `grill-meta-to-wis`,
+which runs `wis.py gap <project>` for the seven `G1..G7` rows of what a
+project's META-docs promise and its work-item set disagree about, then closes
+the gap through `epic.py create|update` and `change.py create|update`.
+`check-meta` folded into `grill-me-to-meta`'s three-step landing sequence
+instead of surviving as its own skill.
 
 The scripts sit beside the skills rather than inside one. They lived under
 `skills/wi-epic-grill/scripts/` while that was the only skill running them,
@@ -89,8 +118,6 @@ directory for a file none of them owns.
 
 | Script | What it refuses |
 |---|---|
-| `check_manifests_cli.py` | a manifest Claude Code's own validator rejects — or merely warns about |
-| `check_manifests_cli_negative_control.py` | a manifest gate that reads only the exit code |
 | `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
 | `check_plugin.py` | a manifest, bundled path, or skill cross-reference that does not resolve — a skill that has grown its own copy of a shared script, or one that reaches past its facade to `aw` or `gh` |
@@ -107,16 +134,18 @@ directory for a file none of them owns.
 | `check_meta_flow.py` | a META-doc rule that fires on nothing, or on everything — a marker whose producer is gone, a command for a binary that is gone, a link to a file that is gone, a project README missing the section a reader goes there for |
 | `check_meta_clean.py` | a META-doc in *this* checkout that has rotted — and a certification issued over a population that was never read |
 | `check_meta_clean_negative_control.py` | a ratchet that reports zero because a rule stopped running |
-| `check_tdd_flow.py` | an `e2e → unit → logic` phase whose green is not attributable to a red the phase before it named |
+| `check_metadoc_scope.py` | a `metadoc.py` run that wrote outside its four-path allowlist, or a rule that fires on everything or nothing |
+| `check_tdd_flow.py` | an `e2e → impl` phase whose green is not attributable to a named red measured before it |
 
-`check_manifests_cli.py` is the only gate here whose oracle this repository does
-not own: it shells out to `claude plugin validate`, so it stays correct when
-Claude Code's schema moves without telling us. Its warning assertion is the
-load-bearing one — measured against v2.1.227, a plugin named `aw:epic` **passes**
-validation with exit 0 and warns only that the Claude.ai marketplace sync
-requires kebab-case. The negative control prints that exit code under the
-mutation, so "the exit code cannot see this" is a number in the output rather
-than a claim in a comment.
+`check_manifests_cli.py` and its control are historical: they shelled out to
+`claude plugin validate`, the only oracle here this repository did not own, and
+were deleted with the plugin on 2026-08-21 along with `plugin.json` and
+`marketplace.json`. What they measured — v2.1.227 passes a plugin named
+`aw:epic` with exit 0 and warns only that the marketplace sync requires
+kebab-case, a warning the exit code alone cannot see — is kept below under
+"Five of these encode defects that actually shipped", the same way "Registration
+is the directory name" and "The installed copy is a copy" are kept: as a
+measurement of Claude Code, not as an active gate.
 
 The last one carries its negative controls inside itself rather than in a
 sibling file. Each of its rows *is* a declared mutation: the gate stages a
@@ -173,37 +202,59 @@ Five of these encode defects that actually shipped and were caught late:
 
 ## The ladder, and what makes a phase's green mean anything
 
-`e2e → unit → logic` replaces `ec → td → cb`. The rule the three phases exist to
-enforce is that a green is only evidence when a **named** red was measured
-immediately before it, in the same tree, by the phase that had reason to
-predict it. `check_tdd_flow.py` is 22 declared mutations against that rule.
+`e2e → impl` replaces `e2e → unit → logic`, which replaced `ec → td → cb`. The
+rule the ladder exists to enforce is unchanged across both collapses: a green
+is only evidence when a **named** red was measured immediately before it, in
+the same tree, by the phase that had reason to predict it. `check_tdd_flow.py`
+is 22 declared mutations against that rule, run against `e2e.py` and `impl.py`
+directly.
 
-Four things it refuses that a simpler reading lets through:
+Three-phase ladder had two commits to prove that with — the `unit` commit's
+`Unit-Red:` trailer was the evidence `logic` read back. `impl` is one phase, so
+there is no earlier commit inside it to read; the evidence moved to a
+mid-phase record instead. `impl.py red` runs `[impl] build` then `[impl] test`,
+writes the names that fail in the tree and did not fail at HEAD to
+`.aw/impl-red/<iid>.json` together with the HEAD sha and a sha256 of every test
+file it measured, and `C2` refuses `verify`/`test`/`commit` when the tree has
+drifted from that record — a test file edited after `red` measured it, or HEAD
+having moved. The record is scratch, gitignored, and cleared on `commit`; the
+names travel from there onto the `Impl-Red:` trailer, which is where the
+measurement becomes history.
+
+Four things the ladder refuses that a simpler reading lets through:
 
 - **A build failure is not a red.** `cargo test` exits non-zero both when
-  nothing compiles and when an assertion fails, so `unit` declares `[unit]
-  build` and `[unit] test` as separate commands and requires the first to pass
-  before the second can count.
+  nothing compiles and when an assertion fails, so a project's `aw.toml`
+  declares `[impl] build` and `[impl] test` as separate commands and requires
+  the first to pass before the second can count.
 - **An exit code is not a measurement.** A selector matching nothing exits 0
-  with 0 tests. `unit` records failing test *names*, and set-subtracts what was
+  with 0 tests. `red` records failing test *names*, and set-subtracts what was
   already failing at HEAD, so a pre-existing red cannot be claimed as the one
-  this phase produced.
-- **A deleted test and a passing test look alike.** `logic` requires each
-  recorded test to be *present* as well as passing, and separately requires the
+  this phase produced — and an implementation written before `red` ever ran
+  leaves nothing failing to record, which `red` refuses rather than reporting
+  an empty red.
+- **A deleted test and a passing test look alike.** `test` requires each
+  recorded name to be *present* as well as passing, and separately requires the
   rest of the suite to be whole — nothing else newly red, and nothing else
   silently unwired.
 - **A row that vanished reads like a row that passed.** Every unrun row prints
   `PENDING`.
 
-The `unit`/`logic` boundary is drawn by **filename**: colocated tests live in
-`src/**/tests.rs`, and the `todo!()` skeleton `unit` writes goes outside it so
-`logic` is free to replace it. Drawing the line by parsing `#[cfg(test)]` spans
-instead has been got wrong here twice — item-level `#[cfg(test)] fn` and `use`
-read as production, and a brace scanner that does not strip `r#"…"#` counts
-fixture text as code. A filename cannot be got wrong that way.
+The old `unit`/`logic` **boundary** is gone along with the second commit it
+needed to draw a line across. What survives is an **existence** rule drawn by
+the same means — filename, not a `#[cfg(test)]` span reader: colocated tests
+live in `src/**/tests.rs`, and `C0` refuses an `impl` phase whose dirty set
+touches none of them, because a phase that wrote no test file wrote nothing for
+`red` to measure. Parsing `#[cfg(test)]` spans instead has been got wrong here
+twice — item-level `#[cfg(test)] fn` and `use` read as production, and a brace
+scanner that does not strip `r#"…"#` counts fixture text as code. A filename
+cannot be got wrong that way, and what the retrofit the boundary used to refuse
+outright — editing a test into agreement with the implementation after the
+fact — now goes through `C2`'s byte comparison instead.
 
-Evidence lives in commit trailers, not a state file: `E2E-Red`, `Unit-Red`,
-`Logic-Contract`, each beside a `*-Change-Digest`. HEAD comparisons use
+Evidence lives in commit trailers, not only in the scratch record: `e2e`
+writes `E2E-Red` and `E2E-Change-Digest`; `impl` writes `Impl-Red`,
+`Impl-Contract` and `Impl-Change-Digest`. HEAD comparisons use
 `git worktree add --detach`, never a stash — a stash mutates the tree it is
 supposed to be measuring against.
 

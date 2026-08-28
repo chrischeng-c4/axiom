@@ -17,9 +17,9 @@ only gate that measures the first half.
 The staging directory sits under the home Claude dir on purpose: outside every
 checkout, and somewhere a real tool would plausibly put it.
 
-The *whole script directory* is staged, not one file. The eight scripts import
-each other by `Path(__file__).parent` -- `e2e.py`, `unit.py` and `logic.py` all
-load `leg.py` that way, and `leg.change_module()` loads `change.py` -- so
+The *whole script directory* is staged, not one file. The nine scripts import
+each other by `Path(__file__).parent` -- `e2e.py` and `impl.py` both load
+`leg.py` that way, and `leg.change_module()` loads `change.py` -- so
 staging a lone file turns "the script imports a sibling" into a probe failure
 that reads like a repository defect.
 """
@@ -88,6 +88,58 @@ check("and the refusal names both paths it searched",
 # The in-repo copy must keep working unchanged.
 code, out, err = run(REPO, "skeleton")
 check("in-repo invocation still works", code == 0 and "## Requirements" in out, f"exit={code}")
+
+# ------------------------------------------------------------------------
+# A checkout nested inside another checkout.
+#
+# Outermost-marker resolution is right within one tree and wrong across two,
+# and until 2026-08-28 nothing here measured the second case. Claude Code
+# creates its worktrees under `.claude/worktrees/<name>/`, so an agent session
+# stands in a checkout whose enclosing directory is *also* a checkout with its
+# own root `aw.toml`. The unbounded walk returned the outer one, which meant a
+# phase script run from an agent worktree read -- and would have written to --
+# the other tree, and disagreed with `meta.py`, which resolves the root by
+# asking git.
+#
+# The shape is reproduced rather than borrowed: two `git init`s, one inside the
+# other, each with an `aw.toml`. `rev-parse --show-toplevel` answers the inner
+# one for both a linked worktree and a nested repository, which is the only
+# property the boundary rule reads.
+NEST = STAGE / "nested"
+OUTER, INNER = NEST / "outer", NEST / "outer" / "inner"
+INNER.mkdir(parents=True, exist_ok=True)
+for tree in (OUTER, INNER):
+    (tree / "aw.toml").write_text("[agentic_workflow]\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(tree)], check=True,
+                   capture_output=True)
+
+# Positive controls. Without both of these the case below passes for the wrong
+# reason: if the outer marker were absent there would be nothing to wrongly
+# prefer, and if git did not call the inner tree its own checkout there would
+# be no boundary to stop at.
+check("positive control: the enclosing checkout carries its own `aw.toml`",
+      (OUTER / "aw.toml").is_file() and OUTER in INNER.parents,
+      f"outer={OUTER}")
+inner_top = subprocess.run(
+    ["git", "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"],
+    cwd=INNER, capture_output=True, text=True)
+check("positive control: git calls the nested tree its own checkout",
+      inner_top.returncode == 0
+      and pathlib.Path(inner_top.stdout.strip()).resolve() == INNER.resolve(),
+      f"got={inner_top.stdout.strip()!r}")
+
+code, out, err = run(INNER, "bodydir")
+check("a checkout nested in another checkout resolves to itself",
+      code == 0 and out == str(INNER.resolve() / ".aw/workitems/epics"),
+      f"exit={code} got={out!r}")
+
+# And the outer tree still resolves to itself -- the boundary must not have
+# turned into "always take the nearest marker", which is the failure the
+# outermost rule exists to prevent.
+code, out, err = run(OUTER, "bodydir")
+check("the enclosing checkout still resolves to itself",
+      code == 0 and out == str(OUTER.resolve() / ".aw/workitems/epics"),
+      f"exit={code} got={out!r}")
 
 shutil.rmtree(STAGE)
 print("\n=> " + ("GREEN" if not fails else "RED: " + ", ".join(fails)))

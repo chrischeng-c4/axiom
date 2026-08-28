@@ -34,5 +34,5 @@ HTTP/1.1 + h2c API.
 - `README.md`: product brief, workflow, capabilities, and gates.
 - `STATUS.md`, `ROADMAP.md`: support matrix and outcomes.
 - `docs/deployment-handoff.md`: serve flags, environment, probes, runbooks.
-- `docs/technical/adr/`: decisions that outlive one change.
+- `docs/product/`: promises, one `## <title>` section per capability area.
 - `build.sh`, `install.sh`: local build and install entrypoints.

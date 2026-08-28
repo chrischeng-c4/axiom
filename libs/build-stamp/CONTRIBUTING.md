@@ -8,7 +8,7 @@ rules live in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 There is no phase ladder here. `leg.leg_root` resolves `apps/<project>` and
 nothing else, so a change to this crate is authored and committed directly
-rather than driven through `e2e -> unit -> logic`.
+rather than driven through `e2e -> impl`.
 
 ## Verification
 

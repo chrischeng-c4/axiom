@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Epic work-item surface, prototyped in Python over the `gh` CLI.
 
-This is the surface `/aw-grill-me-to-epic` and `/aw-grill-epic-to-changes`
-drive. It exists so the epic type axis can be proven -- section schema,
-terminal-state rule, reconciliation findings -- before any of it is spent on a
-Rust verb axis. It deliberately does not call `aw`: the tracker is GitHub, and
-`gh` reaches it directly.
+This is the surface `/aw-grill-meta-to-wis` drives. It exists so the epic
+type axis can be proven -- section schema, terminal-state rule, reconciliation
+findings -- before any of it is spent on a Rust verb axis. It deliberately
+does not call `aw`: the tracker is GitHub, and `gh` reaches it directly.
 
 Everything that does not know it is serving an epic lives in `workitem.py`
 beside this file. What stays here is the epic itself: its sections, its
@@ -225,7 +224,7 @@ def _inventory_requirement_cells(text: str) -> list[str]:
         line = line.strip()
         if not line.startswith("|"):
             continue
-        first = line.strip("|").split("|")[0].strip()
+        first = workitem.row_cells(line)[0]
         if not first or set(first) <= set("-: ") or first.lower() == "requirement":
             continue
         cells.append(first)
@@ -244,7 +243,7 @@ def _table_rows(text: str) -> list[list[str]]:
         line = line.strip()
         if not line.startswith("|"):
             continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        cells = workitem.row_cells(line)
         if all(not cell or set(cell) <= set("-: ") for cell in cells):
             continue
         rows.append(cells)

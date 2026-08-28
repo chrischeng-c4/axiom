@@ -36,32 +36,80 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _checkout_boundary(start: Path) -> Path | None:
+    """The git checkout `start` stands in, or `None` if it stands in none.
+
+    Asked of git rather than inferred from the directory layout, because a
+    linked worktree's root carries a `.git` *file* and a submodule's carries
+    one too; only git knows which tree a path belongs to.
+    """
+    proc = subprocess.run(
+        ("git", "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"),
+        capture_output=True, text=True,
+        cwd=start if start.is_dir() else start.parent,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return Path(proc.stdout.strip()).resolve()
+
+
+def outermost_aw_toml(start: Path) -> Path | None:
+    """The outermost `aw.toml` at or above `start`, without leaving its checkout.
+
+    Two rules, and each one exists because the other alone was wrong.
+
+    *Outermost*, not nearest: this checkout carries 37 `aw.toml` files -- one
+    per project under `apps/` and `libs/` -- and exactly one, the repository
+    root's, holds the `[agentic_workflow.issue_platform]` section
+    `default_repo()` reads. Stopping at the nearest marker means running from
+    `apps/<name>/` resolves to a project `aw.toml` with no tracker in it, and
+    stages bodies under `apps/<name>/.aw/` besides.
+
+    *Without leaving its checkout*, which the unbounded walk did not do. A git
+    worktree may sit inside another checkout -- Claude Code puts its own under
+    `.claude/worktrees/<name>/`, which is where an agent session stands -- and
+    both trees carry a root `aw.toml`. The unbounded walk took the enclosing
+    checkout's, so every phase script run from an agent worktree measured, and
+    would have written to, the *other* tree: `metadoc.py check` read a dirty
+    set belonging to a different session, and `meta.py`, which resolves the
+    root with `git rev-parse --show-toplevel`, disagreed with it inside a
+    single landing sequence.
+
+    The boundary is dropped when git reports a root that is not on the walk --
+    an unreachable git, a path reached through a symlink -- because a boundary
+    that is not an ancestor cannot truncate the chain, and guessing there is
+    how this resolves to nothing at all.
+    """
+    start = start.resolve()
+    chain = [start, *start.parents]
+    boundary = _checkout_boundary(start)
+    if boundary is not None and boundary in chain:
+        chain = chain[: chain.index(boundary) + 1]
+    found = [c for c in chain if (c / "aw.toml").is_file()]
+    return found[-1] if found else None
+
+
 def _repo_root() -> Path:
     """Find the checkout that owns `aw.toml`, searching cwd before `__file__`.
 
     The marker file identifies the checkout; a fixed parent count would break
     the moment the script is relocated or mirrored to another tree.
 
-    cwd is searched first because this script is distributed as a Claude Code
-    plugin, and a plugin is installed under `~/.claude/plugins/`, outside
-    every checkout -- walking up from `__file__` alone finds no `aw.toml` at
-    all and the script dies before doing anything. The `__file__` leg stays as
-    the fallback for a copy that does live inside a checkout, and it stays
-    second on purpose: when both resolve, the tree the caller is standing in
-    is the one they meant.
+    cwd is searched first because this script has been distributed outside
+    every checkout -- it was a Claude Code plugin under `~/.claude/plugins/`
+    until 2026-08-21 -- and walking up from `__file__` alone finds no
+    `aw.toml` at all there, so the script dies before doing anything. The
+    `__file__` leg stays as the fallback for a copy that does live inside a
+    checkout, and it stays second on purpose: when both resolve, the tree the
+    caller is standing in is the one they meant.
 
-    The *outermost* `aw.toml` wins, not the nearest. This checkout carries 37
-    of them -- one per project under `apps/` and `libs/` -- and exactly one,
-    the repository root's, holds the `[agentic_workflow.issue_platform]`
-    section `default_repo()` reads. Taking the nearest marker means that
-    running from `apps/<name>/` resolves to a project `aw.toml` with no
-    tracker in it, and stages bodies under `apps/<name>/.aw/` besides.
+    `outermost_aw_toml()` carries the two rules the walk itself obeys.
     """
     starts = (Path.cwd().resolve(), Path(__file__).resolve().parent)
     for start in starts:
-        found = [c for c in (start, *start.parents) if (c / "aw.toml").is_file()]
-        if found:
-            return found[-1]
+        found = outermost_aw_toml(start)
+        if found is not None:
+            return found
     raise SystemExit(
         f"error: no `aw.toml` found above the working directory ({starts[0]}) "
         f"or the script ({starts[1]}); run this from inside an axiom checkout"
@@ -162,6 +210,18 @@ class WorkItemType:
 # --------------------------------------------------------------------------
 # Body parsing and validation
 # --------------------------------------------------------------------------
+
+
+def row_cells(line: str) -> list[str]:
+    """One pipe row's cells, honouring markdown's `\\|` escape.
+
+    A gate command inside a table cell spells its shell pipe `\\|`; a naive
+    `split("|")` breaks that cell in two and every column after it reads its
+    neighbour's value. Split on unescaped pipes only, then unescape, so the
+    cell comes back carrying the `|` the author wrote.
+    """
+    stripped = line.strip().strip("|")
+    return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", stripped)]
 
 
 def split_sections(body: str) -> dict[str, str]:
@@ -459,7 +519,7 @@ def cmd_adopt(args) -> int:
 
     `create` does this for itself. This verb exists for work items opened
     through `gh issue create` directly rather than through this script -- the
-    child work items `/aw-grill-epic-to-changes` opens -- where nothing else is
+    child work items `/aw-grill-meta-to-wis` opens -- where nothing else is
     positioned to complete the rename.
     """
     path = Path(args.path)
@@ -615,11 +675,11 @@ LIFECYCLE_NOTE = ("*Written by `aw` as each leg lands. Not authored content, and
 # The ladder whose legs may appear as rows, in the order they are rendered.
 #
 # This read `("ec", "td", "cb")` for one commit past the changeover that deleted
-# those three scripts, which made every phase's closing step unreachable:
-# `e2e.py`, `unit.py` and `logic.py` all end by printing `change.py lifecycle
-# ... --leg <PHASE>`, and `change.py` takes its `--leg` choices from here, so all
-# three printed a command this parser exits 2 on. Eighteen gates were green over
-# it, because no gate compared a printed command with the parser receiving it.
+# those three scripts, which made every phase's closing step unreachable: every
+# phase script ends by printing `change.py lifecycle ... --leg <PHASE>`, and
+# `change.py` takes its `--leg` choices from here, so each printed a command
+# this parser exits 2 on. Eighteen gates were green over it, because no gate
+# compared a printed command with the parser receiving it.
 # `check_next_command.py` is now that comparison.
 #
 # The retired names are dropped rather than kept alongside. Keeping them would
@@ -627,7 +687,14 @@ LIFECYCLE_NOTE = ("*Written by `aw` as each leg lands. Not authored content, and
 # those was measured before deciding: zero issues on the tracker carry the
 # lifecycle marker at all, because the verb that writes it has never once
 # succeeded. There is no history here to lose.
-LEGS = ("e2e", "unit", "logic")
+#
+# `unit` and `logic` were folded into one `impl` leg on 2026-08-27, for the same
+# reason and with the same measurement: nothing on the tracker carried either
+# row. The two were one phase in Rust -- a colocated test and the code under it
+# are the same tree, edited together -- and what the split bought (a named red
+# measured before the green) is bought instead by `impl.py`'s `red` verb, which
+# records the failing names mid-phase.
+LEGS = ("e2e", "impl")
 
 
 def lifecycle_rows(body: str) -> dict:
@@ -638,7 +705,7 @@ def lifecycle_rows(body: str) -> dict:
         return {}
     rows = {}
     for line in body[start:end].splitlines():
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = row_cells(line)
         if len(cells) == 3 and cells[0] in LEGS:
             rows[cells[0]] = cells
     return rows
