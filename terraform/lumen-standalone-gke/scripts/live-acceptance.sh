@@ -132,7 +132,9 @@ validate_inputs() {
   [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'invalid candidate manifest hash'
   case "$CLI_TARGET" in aarch64-apple-darwin|x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|x86_64-unknown-linux-musl|aarch64-unknown-linux-musl) ;; *) die 'invalid CLI target' ;; esac
   safe_private_dir "$CANDIDATE_RECEIPT_DIR" || die 'candidate receipt directory is unsafe'
-  safe_private_file "$LUMEN_CLI" && [[ -x "$LUMEN_CLI" ]] || die 'Lumen CLI path is unsafe'
+  if ! safe_private_file "$LUMEN_CLI" || [[ ! -x "$LUMEN_CLI" ]]; then
+    die 'Lumen CLI path is unsafe'
+  fi
   safe_new_private_path "$RECEIPT_OUT_DIR" || die 'receipt output path is unsafe'
   CLUSTER=$(cluster_name "$RUN_ID")
   NODE_POOL=$(pool_name "$RUN_ID")
