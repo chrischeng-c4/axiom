@@ -51,8 +51,22 @@ cheap, and every step that needs a human runs where a human can answer.
 
 ## Verification
 
-- `grep -l 'aw-go-tdd-for-change' .claude/agents/*-planner.md .claude/agents/*-dev.md | wc -l`
-  returns 44 (22 planners + 22 devs);
+- The ladder fleet is the 22 planners and the 22 plain `<app>-dev` agents. The
+  `*-dev.md` glob also matches the 88 codex-mirrored `*-sr-dev.md` /
+  `*-jr-dev.md` agents added on 2026-08-27, which run no ladder phase, so the
+  set has to exclude them by name — `*[!r]-dev.md` does not work, because it
+  also drops `courier-dev.md` and `meter-dev.md`, whose own names end in `r`.
+  Both numbers below must read 44; comparing the two is the point, because a
+  count of matches alone cannot tell a complete fleet from a larger fleet with
+  holes in it.
+
+  ```
+  set=$(ls .claude/agents/*-planner.md .claude/agents/*-dev.md \
+        | grep -vE -- '-(sr|jr)-dev\.md$')
+  echo "$set" | wc -l                                        # 44 in the fleet
+  echo "$set" | xargs grep -l 'aw-go-tdd-for-change' | wc -l  # 44 carry it
+  ```
+
   `grep -l 'aw-check-meta' .claude/agents/*-research.md | wc -l` returns 22.
 - Before dispatching a ladder phase, run
   `git -c core.fsmonitor=false status --short` and confirm no other writer's
