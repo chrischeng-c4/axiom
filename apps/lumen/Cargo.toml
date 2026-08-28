@@ -263,6 +263,10 @@ name = "admission_e2e"
 path = "e2e/admission_e2e.rs"
 
 [[test]]
+name = "aof_replay_version_lww"
+path = "e2e/aof_replay_version_lww.rs"
+
+[[test]]
 name = "api_e2e"
 path = "e2e/api_e2e.rs"
 
@@ -346,6 +350,10 @@ path = "e2e/cli_credential_paths_retired.rs"
 [[test]]
 name = "collapse_nested"
 path = "e2e/collapse_nested.rs"
+
+[[test]]
+name = "collection_delete_recreate"
+path = "e2e/collection_delete_recreate.rs"
 
 [[test]]
 name = "control_plane_identity_e2e"
@@ -523,6 +531,10 @@ required-features = ["operator"]
 [[test]]
 name = "search_all_e2e"
 path = "e2e/search_all_e2e.rs"
+
+[[test]]
+name = "segment_checkpoint_vector_sidecar"
+path = "e2e/segment_checkpoint_vector_sidecar.rs"
 
 [[test]]
 name = "serving_tls_rotation"
