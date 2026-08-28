@@ -429,6 +429,32 @@ jobs:
         with:
           version: 0.12.1
           enable-cache: false
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.207.0
+        with:
+          ruby-version: '3.3.6'
+          bundler: none
+      - name: Install verified Terraform 1.9.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://releases.hashicorp.com/terraform/1.9.4/terraform_1.9.4_linux_amd64.zip -o /tmp/terraform.zip
+          echo '6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c  /tmp/terraform.zip' | sha256sum -c -
+          unzip -oq /tmp/terraform.zip -d /tmp/terraform-bin
+          sudo install -m 0755 /tmp/terraform-bin/terraform /usr/local/bin/terraform
+      - name: Install verified kubectl v1.37.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl -o /tmp/kubectl
+          echo '6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f  /tmp/kubectl' | sha256sum -c -
+          chmod +x /tmp/kubectl
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+      - name: Run cloud-free Terraform acceptance gate
+        shell: bash
+        run: bash terraform/lumen-standalone-gke/scripts/check.sh
+      - name: Run cloud-free Kustomize acceptance gate
+        shell: bash
+        run: bash kustomize/lumen-standalone-acceptance/tests/contract.sh
       - name: Run required Lumen product gates without GKE
         shell: bash
         run: |
