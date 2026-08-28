@@ -474,6 +474,16 @@ fn findings(source: &str) -> Vec<&'static str> {
     }) {
         bad.push("EXECUTION");
     }
+    if source.matches("runAsUser:$uid,runAsGroup:$gid").count() != 3 {
+        bad.push("CLIENT");
+    }
+    if source
+        .matches("--argjson uid \"$APPROVED_CLIENT_UID\" --argjson gid \"$APPROVED_CLIENT_GID\"")
+        .count()
+        != 3
+    {
+        bad.push("CLIENT");
+    }
 
     let expected_tail =
         "run_live_acceptance() {\n  run_live_acceptance_v2\n}\n\nrun_live_acceptance\n\nexit 0\n";
@@ -542,6 +552,8 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
             "PREFLIGHT",
             "APPROVED_CLIENT_IMAGE=\"docker.io/curlimages/curl@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13\"",
         ),
+        ("PREFLIGHT", "APPROVED_CLIENT_UID=100"),
+        ("PREFLIGHT", "APPROVED_CLIENT_GID=101"),
         (
             "PREFLIGHT",
             "[[ \"$LUMEN_STANDALONE_GKE_CLIENT_IMAGE\" == \"$APPROVED_CLIENT_IMAGE\" ]]",
@@ -819,6 +831,21 @@ fn negative_mutations_remove_real_gate_obligations() {
             "CLIENT",
         ),
         (
+            "securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"tools\"",
+            "securityContext:{runAsNonRoot:true,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"tools\"",
+            "CLIENT",
+        ),
+        (
+            "serviceAccountName:$account,automountServiceAccountToken:($mode == \"default\"),restartPolicy:\"Never\",\n      securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:\"RuntimeDefault\"}}",
+            "serviceAccountName:$account,automountServiceAccountToken:($mode == \"default\"),restartPolicy:\"Never\",\n      securityContext:{runAsNonRoot:true,seccompProfile:{type:\"RuntimeDefault\"}}",
+            "CLIENT",
+        ),
+        (
+            "securityContext:{runAsNonRoot:true,runAsUser:$uid,runAsGroup:$gid,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"metrics\"",
+            "securityContext:{runAsNonRoot:true,seccompProfile:{type:\"RuntimeDefault\"}},\n      volumes:[{name:\"memory\",emptyDir:{medium:\"Memory\"}}],containers:[{name:\"metrics\"",
+            "CLIENT",
+        ),
+        (
             "command -v base64 >/dev/null",
             "true # base64 unchecked",
             "CLIENT",
@@ -1052,6 +1079,27 @@ fn negative_mutations_remove_real_gate_obligations() {
     assert!(
         preflight_findings(&changed).contains(&"PREFLIGHT"),
         "arbitrary client image did not fail preflight"
+    );
+    let changed = replace_once(&full, "APPROVED_CLIENT_UID=100", "APPROVED_CLIENT_UID=0");
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "root client UID did not fail preflight"
+    );
+    let changed = replace_once(&full, "APPROVED_CLIENT_GID=101", "APPROVED_CLIENT_GID=1000");
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "unexpected client GID did not fail preflight"
+    );
+
+    let changed = replace_once(
+        &full,
+        "--arg program \"$program\" --arg mode \"$token_mode\" --argjson uid \"$APPROVED_CLIENT_UID\" --argjson gid \"$APPROVED_CLIENT_GID\"",
+        "--arg program \"$program\" --arg mode \"$token_mode\" --argjson uid \"$APPROVED_CLIENT_GID\" --argjson gid \"$APPROVED_CLIENT_GID\"",
+    );
+    let (_, changed_live) = changed.split_once("validate_candidate_manifest_v2()").unwrap();
+    assert!(
+        findings(changed_live).contains(&"CLIENT"),
+        "changed client UID binding did not fail the client contract"
     );
 
     let changed = replace_once(
