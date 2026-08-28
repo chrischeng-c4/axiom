@@ -13,25 +13,36 @@
 //! the shared service kit (`raft-core` + `raft-runtime` + `transport-h2c` + `service-http` +
 //! `service-backup` + `cli-std` + this).
 
+#[cfg(feature = "certificate")]
 pub mod certificate;
+#[cfg(feature = "controller")]
 pub mod controller;
 pub mod crd;
+#[cfg(feature = "controller")]
 pub mod lease;
 pub mod lifecycle;
+#[cfg(feature = "controller")]
 pub mod llm;
+#[cfg(feature = "controller")]
 pub mod metrics;
 pub mod render;
+#[cfg(feature = "controller")]
 pub mod resize;
 pub mod service;
 pub mod stateful;
 
+#[cfg(feature = "certificate")]
 pub use certificate::{
     CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler,
 };
+#[cfg(feature = "controller")]
 pub use controller::{run, Error};
+#[cfg(feature = "controller")]
 pub use lease::Election;
 pub use lifecycle::{LifecyclePolicy, LifecyclePolicyError, ProbeTiming, TerminationBudget};
+#[cfg(feature = "controller")]
 pub use metrics::ControllerMetrics;
+#[cfg(feature = "controller")]
 pub use service::{
     ClusterSpec, Condition, ConditionFact, ConditionStatus, ManagedService, ReadinessTarget,
     ReadyFacts, ResourceSpec,

@@ -18,6 +18,11 @@ For example, `--host 0.0.0.0` overrides `LUMEN_HOST`. Without either value, the
 bare binary listens on `127.0.0.1`. Without `LUMEN_AUTH`, Standalone auth is
 off.
 
+The public Standalone GKE `lumen.yaml` fields are exactly `name`, `namespace`,
+`nodePool`, `cpu`, `memory`, `storageSize`, `storageClass`, and
+`allowedServiceAccounts`. It has no image field; the renderer fixes the
+published Lumen version.
+
 Use `lumen serve --help` for the maintained flag and environment mapping. The
 main groups are:
 

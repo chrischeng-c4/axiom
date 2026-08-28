@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.28"
+version = "0.4.29"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -23,6 +23,14 @@ path = "src/bin/lumen.rs"
 [[bin]]
 name = "lumen-bench"
 path = "src/bin/lumen-bench.rs"
+
+[[test]]
+name = "standalone_gke_render"
+path = "e2e/standalone_gke_render.rs"
+
+[[test]]
+name = "standalone_gke_acceptance_contract"
+path = "e2e/standalone_gke_acceptance_contract.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -97,7 +105,7 @@ k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 schemars = { version = "0.8", optional = true }
 # Shared operator scaffolding (reconcile loop + leader-election lease); lumen
 # supplies the `Lumen` CRD + render and composes the rest (epic #580).
-service-k8s = { path = "../../libs/service-k8s", optional = true }
+service-k8s = { path = "../../libs/service-k8s", default-features = false, features = ["render-only"] }
 serde_yaml.workspace = true
 lz4_flex = "0.11"
 memmap2 = "0.9"
@@ -160,7 +168,7 @@ issue = ["cli-std/online"]
 # that have not yet renamed their feature set. The CLI command itself is
 # `lumen issue`, not `lumen report-issue`.
 report-issue = ["issue"]
-operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s", "backup"]
+operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "service-k8s/full", "backup"]
 # delegated-auth — the live TokenReview/SubjectAccessReview transport for
 # `LUMEN_AUTH=required` (#2869). Separate from `operator` on purpose: serving
 # auth is not a control-plane concern, and a serving binary should not have to
@@ -404,6 +412,10 @@ name = "http_body_limit_e2e"
 path = "e2e/http_body_limit_e2e.rs"
 
 [[test]]
+name = "indexing_durable_oracle"
+path = "e2e/indexing_durable_oracle.rs"
+
+[[test]]
 name = "hybrid_rrf"
 path = "e2e/hybrid_rrf.rs"
 
@@ -567,6 +579,15 @@ path = "e2e/stability_lumen_long_running_stability_resource_leak.rs"
 [[test]]
 name = "standalone_container_contract"
 path = "e2e/standalone_container_contract.rs"
+
+[[test]]
+name = "standalone_compose_patch"
+path = "e2e/standalone_compose_patch.rs"
+
+[[test]]
+name = "standalone_backup_restore_cli"
+path = "e2e/standalone_backup_restore_cli.rs"
+required-features = []
 
 [[test]]
 name = "stats_metadata_e2e"

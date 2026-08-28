@@ -441,11 +441,10 @@ enum TokPostings<'a> {
     /// over the shared streams with NO re-decode and NO per-call vector copy (the
     /// `filtered_search` 25x disk fix). Only built when a segment is attached.
     Segment(std::sync::Arc<(Vec<u32>, Vec<u32>)>),
-    /// Owned, tombstone-filtered segment posting — the RARE delete-after-seal path
-    /// where the cached `Arc` (RAW immutable, includes deleted base docids) must
-    /// have the tombstone subtracted into a private copy. Only built when a delete
-    /// is pending, so the common warm query never allocates.
-    SegmentFiltered {
+    /// The active posting when a sealed base and live overlay both contribute
+    /// to a token.  The two streams are merged in doc-id order, with the live
+    /// overlay winning for a reused base id.
+    Combined {
         docids: Vec<u32>,
         tfs: Vec<u32>,
     },
@@ -457,7 +456,7 @@ impl<'a> TokPostings<'a> {
         match self {
             TokPostings::Live(p) => &p.docids,
             TokPostings::Segment(p) => &p.0,
-            TokPostings::SegmentFiltered { docids, .. } => docids,
+            TokPostings::Combined { docids, .. } => docids,
         }
     }
     #[inline]
@@ -465,7 +464,7 @@ impl<'a> TokPostings<'a> {
         match self {
             TokPostings::Live(p) => &p.tfs,
             TokPostings::Segment(p) => &p.1,
-            TokPostings::SegmentFiltered { tfs, .. } => tfs,
+            TokPostings::Combined { tfs, .. } => tfs,
         }
     }
     #[inline]
@@ -479,7 +478,7 @@ impl<'a> TokPostings<'a> {
         match self {
             TokPostings::Live(p) => p.tf(id),
             TokPostings::Segment(p) => p.0.binary_search(&id).ok().map(|pos| p.1[pos]),
-            TokPostings::SegmentFiltered { docids, tfs } => {
+            TokPostings::Combined { docids, tfs } => {
                 docids.binary_search(&id).ok().map(|pos| tfs[pos])
             }
         }
@@ -490,8 +489,9 @@ impl<'a> TokPostings<'a> {
 struct TextIndex {
     /// token → flat docid-sorted postings (docid + tf).
     tokens: FastHashMap<String, Postings>,
-    /// dense doc-len indexed by doc-id (0 = no value for this field). Replaces a
-    /// per-doc `forward` HashMap probe with a sequential Vec read on the hot loop.
+    /// Dense doc-len indexed by doc-id (zero may be an explicit empty value).
+    /// Replaces a per-doc `forward` HashMap probe with a sequential Vec read on
+    /// the hot loop.
     lens: Vec<u32>,
     /// dense doc-id → distinct tokens emitted. Used ONLY by `drop_eid` /
     /// snapshots / coverage, so new writes avoid a per-doc HashMap insert.
@@ -504,12 +504,11 @@ struct TextIndex {
     /// parallel per-token STORED posting block (text tf is NOT rebuildable, so
     /// the inverted postings live on disk) + a fixed `u32[n_docs]` DocLen column
     /// + the BM25 corpus scalars in the header. When present, the BM25 scan
-    /// (`eval_match` / `match_doc_score`) and `estimate_selectivity` read
-    /// entirely from the segment (this slice seals the whole field with no live
-    /// tail; segment+live composition is Phase 2f). The `distinct` map is
-    /// rebuilt eagerly on seal so `drop_eid` is unaffected. DEFAULTS to `None`;
-    /// while it is `None` (nothing sealed) every read path is byte-for-byte the
-    /// in-RAM path. Purely additive.
+    /// (`eval_match` / `match_doc_score`) and `estimate_selectivity` read from
+    /// the composed sealed-base plus live-overlay state. The `distinct` map
+    /// retains explicit live overlays and is otherwise dropped with the sealed
+    /// base. DEFAULTS to `None`; while it is `None` (nothing sealed) every read
+    /// path is byte-for-byte the in-RAM path. Purely additive.
     segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
     /// Hot BM25 rankings, sorted by score desc then external_id asc. Used for
     /// unique-doc match shapes (single token, multi-token AND) and cleared on any
@@ -541,7 +540,16 @@ impl TextIndex {
     }
 
     fn doc_len(&self, id: u32) -> u32 {
+        // `distinct` is also the presence marker for a live overlay.  Check it
+        // before the sealed base so a replacement of a base id uses its new
+        // length, including an explicit empty value (Some(empty)).
+        if self.distinct.get(id as usize).is_some_and(Option::is_some) {
+            return self.lens.get(id as usize).copied().unwrap_or(0);
+        }
         if let Some(seg) = &self.segment {
+            if id < seg.n_docs() && self.tombstones.contains(id) {
+                return 0;
+            }
             return seg.text_doc_len(id);
         }
         self.lens.get(id as usize).copied().unwrap_or(0)
@@ -567,6 +575,36 @@ impl TextIndex {
             .and_then(|tokens| tokens.take())
     }
 
+    /// Remove a current live overlay, if present. The presence marker is the
+    /// `Some(TokenSet)` entry, so an explicit empty text value is removed here
+    /// too. This must run before sealed-base tombstone handling for reused ids.
+    fn drop_live_overlay(&mut self, id: u32, eid: &str) -> Option<u64> {
+        let overlay_len = self
+            .distinct
+            .get(id as usize)
+            .and_then(|tokens| tokens.as_ref())
+            .map(|_| self.lens.get(id as usize).copied().unwrap_or(0));
+        let tokens = self.take_distinct(id)?;
+        let doc_len = overlay_len.unwrap_or_else(|| self.doc_len(id));
+        let mut freed = 0u64;
+        for tok in tokens.iter() {
+            if let Some(p) = self.tokens.get_mut(tok) {
+                if p.remove(id) {
+                    freed += (tok.len() + eid.len()) as u64;
+                }
+                if p.docids.is_empty() {
+                    self.tokens.remove(tok);
+                }
+            }
+        }
+        self.set_doc_len(id, 0);
+        self.doc_count = self.doc_count.saturating_sub(1);
+        self.total_doc_len = self.total_doc_len.saturating_sub(doc_len as u64);
+        self.bytes = self.bytes.saturating_sub(freed);
+        Some(freed)
+    }
+
+    #[cfg(test)]
     fn distinct_is_empty(&self) -> bool {
         self.distinct.iter().all(Option::is_none)
     }
@@ -599,17 +637,16 @@ impl TextIndex {
         (self.doc_count, self.total_doc_len)
     }
 
-    /// A token's postings for BM25 scoring: from the attached segment when
-    /// sealed (text tf is STORED — Phase 2e-B), else the live in-RAM `tokens`
-    /// map. `None` if the token has no LIVE postings on the active source. Both
-    /// sources return identical `(docids, tfs)`, so the score is bit-identical.
+    /// A token's active postings for BM25 scoring: sealed base postings minus
+    /// tombstones, union live overlays (including tail-only tokens). A live
+    /// posting wins when it reuses a base id. `None` means no active postings.
     ///
     /// TOMBSTONE SUBTRACTION (Phase 2h-4 FIX, the crux): on the segment path the
     /// decoded base posting still holds any base docid deleted SINCE the last seal
     /// (the on-disk block is immutable; `drop_eid` only recorded the id in
     /// `tombstones`). Those ids are filtered OUT here — BEFORE the `TokPostings` is
     /// handed to the BM25 scan. Because EVERY downstream read (`df()`, `docids()`,
-    /// `tfs()`, `tf(id)`) goes through this single filtered posting, the effect is
+    /// `tfs()`, `tf(id)`) goes through this single composed posting, the effect is
     /// uniform across `eval_match` (Or + And) and `match_doc_score`:
     ///   • `df' = |posting − tombstones|` ⇒ the `idf` uses the live document
     ///     frequency, so it equals an in-RAM oracle's `idf`;
@@ -631,29 +668,65 @@ impl TextIndex {
             // `filtered_search` 25x disk fix). The cached posting is the RAW
             // immutable stream; results are byte-identical because the RARE
             // tombstone branch below subtracts the deleted base docids.
-            let cached = seg.text_postings_arc(tok)?;
-            if self.tombstones.is_empty() {
+            let cached = seg.text_postings_arc(tok);
+            let live = self.tokens.get(tok);
+            if cached.is_none() {
+                return live.map(TokPostings::Live);
+            }
+            let cached = cached.unwrap();
+            if self.tombstones.is_empty() && live.is_none() {
                 return Some(TokPostings::Segment(cached));
             }
-            // Deletes pending: subtract the tombstone into a private owned copy
-            // (the immutable cached `Arc` must not be mutated, and the result must
-            // exclude deleted base docids — matching the in-RAM `tok_postings`).
             let (docids_all, tfs_all) = cached.as_ref();
-            let mut keep_ids = Vec::with_capacity(docids_all.len());
-            let mut keep_tfs = Vec::with_capacity(tfs_all.len());
-            for (&id, &tf) in docids_all.iter().zip(tfs_all.iter()) {
-                if !self.tombstones.contains(id) {
-                    keep_ids.push(id);
-                    keep_tfs.push(tf);
+            let live = live.map(|p| (&p.docids[..], &p.tfs[..]));
+            let live_len = live.map_or(0, |(ids, _)| ids.len());
+            let mut docids = Vec::with_capacity(docids_all.len() + live_len);
+            let mut tfs = Vec::with_capacity(tfs_all.len() + live_len);
+            let mut base_pos = 0;
+            let mut live_pos = 0;
+            while base_pos < docids_all.len() || live_pos < live_len {
+                let base_id = docids_all.get(base_pos).copied();
+                let live_id = live.and_then(|(ids, _)| ids.get(live_pos).copied());
+                match (base_id, live_id) {
+                    (Some(base_id), Some(live_id)) if base_id < live_id => {
+                        if !self.tombstones.contains(base_id) {
+                            docids.push(base_id);
+                            tfs.push(tfs_all[base_pos]);
+                        }
+                        base_pos += 1;
+                    }
+                    (Some(base_id), Some(live_id)) if live_id < base_id => {
+                        docids.push(live_id);
+                        tfs.push(live.unwrap().1[live_pos]);
+                        live_pos += 1;
+                    }
+                    (Some(base_id), Some(_)) => {
+                        // A live posting overrides a reused base id, even when
+                        // the base id is also tombstoned.
+                        docids.push(base_id);
+                        tfs.push(live.unwrap().1[live_pos]);
+                        base_pos += 1;
+                        live_pos += 1;
+                    }
+                    (Some(base_id), None) => {
+                        if !self.tombstones.contains(base_id) {
+                            docids.push(base_id);
+                            tfs.push(tfs_all[base_pos]);
+                        }
+                        base_pos += 1;
+                    }
+                    (None, Some(live_id)) => {
+                        docids.push(live_id);
+                        tfs.push(live.unwrap().1[live_pos]);
+                        live_pos += 1;
+                    }
+                    (None, None) => break,
                 }
             }
-            if keep_ids.is_empty() {
+            if docids.is_empty() {
                 return None;
             }
-            return Some(TokPostings::SegmentFiltered {
-                docids: keep_ids,
-                tfs: keep_tfs,
-            });
+            return Some(TokPostings::Combined { docids, tfs });
         }
         self.tokens.get(tok).map(TokPostings::Live)
     }
@@ -662,20 +735,20 @@ impl TextIndex {
     /// (Phase 2f-2 re-seal). On a FIRST seal (no segment) this is just a clone of
     /// the live `tokens`. On a RE-SEAL (a prior seal dropped `tokens` and put the
     /// base postings on the segment, while any docs indexed SINCE landed in the
-    /// live `tokens` tail), the base postings are decoded back out of the segment
-    /// (text tf is STORED, so this round-trips bit-identically) and MERGED with the
-    /// live tail. Base and tail docids are disjoint (the tail's ids are all
-    /// `>= the sealed n_docs`), so the per-token merge is a concatenation kept in
-    /// ascending-docid order. The result covers EVERY current docid, so a re-seal
-    /// after a seal+drop+tail re-materializes the whole field correctly.
+    /// live `tokens` overlays), the base postings are decoded back out of the
+    /// segment (text tf is STORED, so this round-trips bit-identically) and MERGED
+    /// with the overlays. The merge keeps docids sorted and lets a live reused id
+    /// override its sealed base posting. The result covers EVERY current docid,
+    /// so a re-seal after a seal+drop+tail re-materializes the whole field.
     ///
     /// TOMBSTONE GC (Phase 2g-A): the prior-SEGMENT postings still hold a deleted
     /// base doc (the segment is immutable; `drop_eid` only touched the live
     /// `tokens`/`distinct`). `live(id)` is dropped-doc-aware (`false` for a base
     /// doc deleted from this field since the prior seal), so the merged base
     /// postings omit it. Empty postings (every docid of a token deleted) are
-    /// dropped so the new segment never carries a zero-df token. The live tail's
-    /// `tokens` already exclude deletes, so they are merged unconditionally.
+    /// dropped so the new segment never carries a zero-df token. The live
+    /// overlays' `tokens` already exclude deletes, so they are merged after the
+    /// tombstoned base has been filtered.
     fn tokens_for_seal(&self, live: &dyn Fn(u32) -> bool) -> BTreeMap<String, Postings> {
         let Some(seg) = &self.segment else {
             return self
@@ -692,7 +765,7 @@ impl TextIndex {
                 let mut kept_ids = Vec::with_capacity(docids.len());
                 let mut kept_tfs = Vec::with_capacity(tfs.len());
                 for (&id, &tf) in docids.iter().zip(tfs.iter()) {
-                    if live(id) {
+                    if live(id) && !self.tombstones.contains(id) {
                         kept_ids.push(id);
                         kept_tfs.push(tf);
                     }
@@ -745,7 +818,7 @@ impl TextIndex {
     /// (`set_doc_len(id, 0)`). The prior segment still carries the deleted doc's
     /// ORIGINAL nonzero length, so without the `live(id)` gate it would resurrect:
     /// (a) the new segment's DocLen column would re-introduce the deleted doc, and
-    /// (b) `record_field_coverage` (which now reads `text_doc_len > 0` for presence)
+    /// (b) `record_field_coverage` (which reads the segment presence bitset)
     /// would mark it as having written the field. Zeroing it keeps the new segment
     /// consistent with `tokens_for_seal` (postings GC'd) and `corpus_for_seal`
     /// (scalars decremented).
@@ -753,7 +826,13 @@ impl TextIndex {
         match &self.segment {
             Some(seg) => (0..n_docs)
                 .map(|id| {
-                    if !live(id) {
+                    if self
+                        .distinct
+                        .get(id as usize)
+                        .is_some_and(|tokens| tokens.is_some())
+                    {
+                        self.lens.get(id as usize).copied().unwrap_or(0)
+                    } else if !live(id) {
                         0
                     } else if id < seg.n_docs() {
                         seg.text_doc_len(id)
@@ -764,7 +843,13 @@ impl TextIndex {
                 .collect(),
             None => (0..n_docs)
                 .map(|id| {
-                    if live(id) {
+                    if self
+                        .distinct
+                        .get(id as usize)
+                        .is_some_and(|tokens| tokens.is_some())
+                    {
+                        self.lens.get(id as usize).copied().unwrap_or(0)
+                    } else if live(id) {
                         self.lens.get(id as usize).copied().unwrap_or(0)
                     } else {
                         0
@@ -772,6 +857,24 @@ impl TextIndex {
                 })
                 .collect(),
         }
+    }
+
+    /// The explicit text-field presence bits to seal. Presence is separate from
+    /// token length so an explicit empty value remains covered after reopen.
+    fn present_for_seal(&self, n_docs: u32, live: &dyn Fn(u32) -> bool) -> Vec<bool> {
+        (0..n_docs)
+            .map(|id| {
+                if !live(id) {
+                    return false;
+                }
+                if self.distinct.get(id as usize).is_some_and(Option::is_some) {
+                    return true;
+                }
+                self.segment
+                    .as_ref()
+                    .is_some_and(|seg| seg.text_is_present(id))
+            })
+            .collect()
     }
 
     /// A token's LIVE document frequency (`df`) on the active source — the
@@ -791,10 +894,14 @@ impl TextIndex {
     fn tok_df(&self, tok: &str) -> Option<usize> {
         if let Some(seg) = &self.segment {
             if self.tombstones.is_empty() {
-                let df = seg.text_token_df(tok);
-                return if df == 0 { None } else { Some(df) };
+                // With no tombstones, live writes are post-seal tail ids and
+                // cannot overlap the sealed base. Keep this path cheap by
+                // combining the segment count with this token's live count.
+                let df = seg.text_token_df(tok) + self.tokens.get(tok).map_or(0, Postings::df);
+                return (df > 0).then_some(df);
             }
-            // Deletes pending: subtract the tombstone via the filtered posting.
+            // Compose the sealed base and every live overlay, including tail-only
+            // tokens and reused base ids.
             return self.tok_postings(tok).map(|p| p.df());
         }
         self.tokens.get(tok).map(|p| p.df())
@@ -2417,6 +2524,12 @@ impl FieldIndex {
         match self {
             FieldIndex::Text { idx, .. } => {
                 idx.clear_match_rank_cache();
+                // A live overlay is the current value for this field. Remove it
+                // before looking at the sealed base, so a reused base id does not
+                // create a new tombstone or remove the base twice.
+                if let Some(freed) = idx.drop_live_overlay(id, eid) {
+                    return freed;
+                }
                 // QUERY-TIME TOMBSTONE (Phase 2h-4): when the field is SEALED and
                 // `id` is a base docid `< seg.n_docs`, its postings live on the
                 // IMMUTABLE on-disk blocks (the RAM `tokens` AND the corpus-deriving
@@ -2428,48 +2541,26 @@ impl FieldIndex {
                 // `total_doc_len`, and therefore `avgdl` track an in-RAM oracle that
                 // physically removed the doc. The re-seal bakes the delete in
                 // (`tokens_for_seal`'s `live(id)` gather) and clears the set.
-                // Live-tail ids (`>= seg.n_docs`) fall through to the in-RAM
-                // `distinct`/`tokens` path below.
+                // Live overlays were removed above. Only an id with no current
+                // overlay may reach this sealed-base tombstone path.
                 if let Some(seg) = &idx.segment {
                     if id < seg.n_docs() {
-                        // Idempotency / double-delete guard: an id already
-                        // tombstoned is no longer live, so do not re-decrement.
-                        if idx.tombstones.contains(id) {
-                            return 0;
-                        }
-                        let doc_len = seg.text_doc_len(id);
-                        idx.tombstones.insert(id);
-                        idx.doc_count = idx.doc_count.saturating_sub(1);
-                        idx.total_doc_len = idx.total_doc_len.saturating_sub(doc_len as u64);
-                        // The on-disk posting bytes don't shrink; report the same
-                        // per-doc byte estimate the in-RAM removal would free
-                        // (doc_len token postings) so `bytes` stays consistent with
-                        // the live-path accounting.
-                        let freed = (doc_len as usize * (1 + eid.len())) as u64;
-                        idx.bytes = idx.bytes.saturating_sub(freed);
-                        return freed;
-                    }
-                }
-                let Some(tokens) = idx.take_distinct(id) else {
-                    return 0;
-                };
-                let doc_len = idx.doc_len(id);
-                let mut freed = 0u64;
-                for tok in tokens.iter() {
-                    if let Some(p) = idx.tokens.get_mut(tok) {
-                        if p.remove(id) {
-                            freed += (tok.len() + eid.len()) as u64;
-                        }
-                        if p.docids.is_empty() {
-                            idx.tokens.remove(tok);
+                        // Tombstone and decrement the immutable base once. A
+                        // current live overlay already returned above.
+                        if !idx.tombstones.contains(id) {
+                            let doc_len = seg.text_doc_len(id);
+                            idx.tombstones.insert(id);
+                            idx.doc_count = idx.doc_count.saturating_sub(1);
+                            idx.total_doc_len = idx.total_doc_len.saturating_sub(doc_len as u64);
+                            // The on-disk posting bytes don't shrink; report the
+                            // same per-doc estimate as the in-RAM removal.
+                            let freed = (doc_len as usize * (1 + eid.len())) as u64;
+                            idx.bytes = idx.bytes.saturating_sub(freed);
+                            return freed;
                         }
                     }
                 }
-                idx.set_doc_len(id, 0);
-                idx.doc_count = idx.doc_count.saturating_sub(1);
-                idx.total_doc_len = idx.total_doc_len.saturating_sub(doc_len as u64);
-                idx.bytes = idx.bytes.saturating_sub(freed);
-                freed
+                0
             }
             FieldIndex::Keyword(k) => {
                 // After a seal-and-drop the forward payload lives on the
@@ -2739,10 +2830,6 @@ impl TokenSet {
 
     fn iter(&self) -> impl Iterator<Item = &String> {
         self.tokens.iter()
-    }
-
-    fn to_btree_set(&self) -> BTreeSet<String> {
-        self.tokens.iter().cloned().collect()
     }
 
     fn from_btree_set(set: BTreeSet<String>) -> Self {
@@ -4562,6 +4649,35 @@ impl Engine {
         Ok(())
     }
 
+    /// Atomically replace all active collection state with a fully prepared
+    /// disposable engine.
+    ///
+    /// Durable restore builds and checkpoint-validates `replacement` before
+    /// the on-disk commit point. This method acquires every fallible live-state
+    /// lock before the swap, then moves the complete map in one step. An empty
+    /// replacement therefore removes every old collection. Old reshard-prune
+    /// accumulators are also cleared because they name the replaced dataset.
+    pub fn activate_replacement(&self, replacement: Engine) -> Result<()> {
+        let Engine {
+            state: replacement_state,
+            ..
+        } = replacement;
+        let replacement_state = replacement_state
+            .into_inner()
+            .map_err(|_| anyhow!("replacement state poisoned"))?;
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut prune_accumulator = self
+            .prune_accumulator
+            .lock()
+            .map_err(|_| anyhow!("prune accumulator poisoned"))?;
+
+        *state = replacement_state;
+        prune_accumulator.clear();
+        self.prune_accum_tick.store(0, Ordering::Release);
+        self.publish_storage_bytes(&state);
+        Ok(())
+    }
+
     // -- Reshard admin verbs (#1380) -----------------------------------------
 
     /// `POST /admin/reshard:apply`: additively merge one `ReshardBatch`'s
@@ -6075,6 +6191,13 @@ fn bm25_contrib_cached(
 
 #[inline]
 fn text_doc_len_at(idx: &TextIndex, segment_doc_lens: Option<&[u32]>, id: u32) -> u32 {
+    if idx
+        .distinct
+        .get(id as usize)
+        .is_some_and(|tokens| tokens.is_some())
+    {
+        return idx.lens.get(id as usize).copied().unwrap_or(0);
+    }
     segment_doc_lens
         .and_then(|lens| lens.get(id as usize).copied())
         .unwrap_or_else(|| idx.doc_len(id))
@@ -9312,7 +9435,12 @@ impl Collection {
     fn to_snapshot(&self) -> Result<CollectionSnapshot> {
         let mut fields: BTreeMap<String, FieldIndexSnapshot> = BTreeMap::new();
         for (name, fi) in &self.fields {
-            fields.insert(name.clone(), fi.to_snapshot(&self.interner)?);
+            let field_live = |id: u32| {
+                self.eid_fields
+                    .get(&id)
+                    .is_some_and(|fields| fields.contains(name))
+            };
+            fields.insert(name.clone(), fi.to_snapshot(&self.interner, &field_live)?);
         }
         // The on-disk snapshot is String-keyed: resolve the dense doc-ids out
         // so the format is interner-independent and the e2e round-trips.
@@ -9331,78 +9459,81 @@ impl Collection {
 }
 
 impl FieldIndex {
-    fn to_snapshot(&self, interner: &Interner) -> Result<FieldIndexSnapshot> {
+    fn to_snapshot(
+        &self,
+        interner: &Interner,
+        field_live: &dyn Fn(u32) -> bool,
+    ) -> Result<FieldIndexSnapshot> {
         let eid = |id: u32| interner.resolve(id).to_string();
         Ok(match self {
-            FieldIndex::Text { analyzer, idx } => FieldIndexSnapshot::Text {
-                analyzer: *analyzer,
-                // After a Phase 2f-1 seal-and-drop the bulky `tokens` postings
-                // live on the segment, not in RAM. A CBOR snapshot taken in that
-                // state rebuilds them from the stored postings so the wire format
-                // is unchanged; with no segment this is exactly the live `tokens`.
-                tokens: {
-                    let pairs: Vec<(String, Vec<u32>, Vec<u32>)> =
-                        if idx.tokens.is_empty() && idx.segment.is_some() {
-                            idx.segment
-                                .as_ref()
-                                .and_then(|s| s.text_tokens_all())
-                                .ok_or_else(|| anyhow!("text segment postings torn on snapshot"))?
-                        } else {
-                            idx.tokens
-                                .iter()
-                                .map(|(tok, p)| (tok.clone(), p.docids.clone(), p.tfs.clone()))
-                                .collect()
-                        };
-                    pairs
-                        .into_iter()
-                        .map(|(tok, docids, tfs)| {
-                            (
-                                tok,
-                                docids
-                                    .iter()
-                                    .zip(&tfs)
-                                    .map(|(id, tf)| (eid(*id), *tf))
-                                    .collect(),
-                            )
-                        })
-                        .collect()
-                },
-                // Wire forward = (distinct tokens, doc_len) per live doc. After a
-                // Phase 2h-4 seal-and-drop `distinct`/`lens` live on the segment, not
-                // in RAM; reconstruct each doc's distinct-token set by inverting the
-                // stored postings (minus tombstoned base docids) and pair it with the
-                // segment DocLen column, so the CBOR wire format is unchanged. With no
-                // segment (live, pre-seal) this is exactly the live `distinct`/`lens`.
-                forward: {
-                    let map: HashMap<String, (BTreeSet<String>, u32)> =
-                        if idx.distinct_is_empty() && idx.segment.is_some() {
-                            let seg = idx.segment.as_ref().unwrap();
-                            let entries = seg
-                                .text_tokens_all()
-                                .ok_or_else(|| anyhow!("text segment postings torn on snapshot"))?;
-                            let mut rebuilt: HashMap<u32, BTreeSet<String>> = HashMap::new();
-                            for (tok, docids, _tfs) in entries {
-                                for &id in &docids {
-                                    if !idx.tombstones.contains(id) {
-                                        rebuilt.entry(id).or_default().insert(tok.clone());
-                                    }
-                                }
+            FieldIndex::Text { analyzer, idx } => {
+                // Snapshot the same composed source used by queries: sealed
+                // base postings minus tombstones, union live overlays.
+                let mut token_names = BTreeSet::new();
+                if let Some(seg) = &idx.segment {
+                    let entries = seg
+                        .text_tokens_all()
+                        .ok_or_else(|| anyhow!("text segment postings torn on snapshot"))?;
+                    token_names.extend(entries.into_iter().map(|(tok, _, _)| tok));
+                }
+                token_names.extend(idx.tokens.keys().cloned());
+                let active: BTreeMap<String, (Vec<u32>, Vec<u32>)> = token_names
+                    .into_iter()
+                    .filter_map(|tok| {
+                        let postings = idx.tok_postings(&tok)?;
+                        let mut docids = Vec::new();
+                        let mut tfs = Vec::new();
+                        for (&id, &tf) in postings.docids().iter().zip(postings.tfs()) {
+                            if field_live(id) {
+                                docids.push(id);
+                                tfs.push(tf);
                             }
-                            rebuilt
-                                .into_iter()
-                                .map(|(id, set)| (eid(id), (set, idx.doc_len(id))))
-                                .collect()
-                        } else {
-                            idx.distinct_iter()
-                                .map(|(id, set)| (eid(id), (set.to_btree_set(), idx.doc_len(id))))
-                                .collect()
-                        };
-                    map
-                },
-                doc_count: idx.doc_count,
-                total_doc_len: idx.total_doc_len,
-                bytes: idx.bytes,
-            },
+                        }
+                        (!docids.is_empty()).then_some((tok, (docids, tfs)))
+                    })
+                    .collect();
+                let tokens = active
+                    .iter()
+                    .map(|(tok, (docids, tfs))| {
+                        (
+                            tok.clone(),
+                            docids
+                                .iter()
+                                .zip(tfs)
+                                .map(|(id, tf)| (eid(*id), *tf))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                let mut forward: HashMap<String, (BTreeSet<String>, u32)> = HashMap::new();
+                for (tok, (docids, _)) in &active {
+                    for &id in docids {
+                        forward
+                            .entry(eid(id))
+                            .or_insert_with(|| (BTreeSet::new(), idx.doc_len(id)))
+                            .0
+                            .insert(tok.clone());
+                    }
+                }
+                // Preserve explicit empty values. The collection coverage map is
+                // the authority for field presence when a sealed DocLen is zero.
+                for id in 0..interner.to_eid.len() as u32 {
+                    if field_live(id) {
+                        forward
+                            .entry(eid(id))
+                            .or_insert_with(|| (BTreeSet::new(), idx.doc_len(id)))
+                            .1 = idx.doc_len(id);
+                    }
+                }
+                FieldIndexSnapshot::Text {
+                    analyzer: *analyzer,
+                    tokens,
+                    forward,
+                    doc_count: idx.doc_count,
+                    total_doc_len: idx.total_doc_len,
+                    bytes: idx.bytes,
+                }
+            }
             FieldIndex::Keyword(k) => FieldIndexSnapshot::Keyword {
                 terms: k
                     .terms
@@ -9859,6 +9990,7 @@ impl FieldIndex {
                 // corpus scalars (`corpus_for_seal`) and live `lens` (`lens_for_seal`)
                 // already exclude the deleted doc, so they need no further filtering.
                 let lens: Vec<u32> = idx.lens_for_seal(n_docs, live);
+                let present = idx.present_for_seal(n_docs, live);
                 let tokens = idx.tokens_for_seal(live);
                 let (doc_count, total_doc_len) = idx.corpus_for_seal();
                 crate::segment::write_text_segment(
@@ -9866,6 +9998,7 @@ impl FieldIndex {
                     applied_seq,
                     &tokens,
                     &lens,
+                    &present,
                     doc_count,
                     total_doc_len,
                 )?;
@@ -9874,11 +10007,11 @@ impl FieldIndex {
                 // disk — neither is rebuilt. `drop_eid` no longer consumes
                 // `distinct` for a sealed base id (it records the id in
                 // `tombstones` instead — the base postings are immutable on disk),
-                // so the eager `distinct` invert is gone (it made post-seal RAM
-                // O(corpus); this is the same RAM bound a reopen now holds). `lens`
-                // is dropped too — `doc_len()` reads the segment DocLen column for a
-                // sealed id. A re-seal CLEARS `tombstones` (the new segment baked
-                // the deletes in via `tokens_for_seal`'s `live(id)` gather).
+                // so the eager sealed-base `distinct` invert is gone (post-seal
+                // RAM stays bounded while explicit live overlays remain). `lens`
+                // is dropped too — `doc_len()` reads an overlay first and then the
+                // segment DocLen column for a base id. A re-seal CLEARS
+                // `tombstones` after baking deletes via `tokens_for_seal`.
                 idx.segment = Some(std::sync::Arc::new(reader));
                 idx.tokens = FastHashMap::default(); // bulky postings now on disk
                 idx.distinct = Vec::new(); // drop_eid uses tombstones for base ids
@@ -9992,11 +10125,11 @@ impl FieldIndex {
                 // Phase 2h-4: the inverted `tokens` postings (text tf is STORED on
                 // disk — the ROLE_TEXT_POSTINGS blocks) and the corpus-deriving
                 // `distinct` map stay EMPTY on reopen — NO RAM rebuild. The old loop
-                // decoded EVERY posting to re-materialize `tokens`/`distinct`, making
+                // decoded EVERY posting to re-materialize the sealed base, making
                 // RAM O(total tokens); it is deleted. The BM25 scan / term lookup
-                // drive entirely from the mmap via `tok_postings` (decodes a single
-                // token's posting block on demand) + `doc_len` (segment DocLen
-                // column), so RAM after reopen is O(live tail), not O(corpus).
+                // drive from the mmap via `tok_postings` (decodes a single token's
+                // base posting on demand) plus live overlays and `doc_len`, so RAM
+                // after reopen is O(live tail), not O(corpus).
                 //
                 // `lens` stays EMPTY too: `doc_len()` prefers the segment DocLen
                 // column for a sealed id, and any post-reopen tail doc extends `lens`
@@ -10201,19 +10334,18 @@ fn record_field_coverage(
             }
         }
         FieldIndex::Text { idx, .. } => {
-            // A doc "wrote" a text field iff it emitted ≥1 token. After Phase 2h-4
-            // reopen `distinct` is EMPTY (no RAM rebuild), so drive coverage from
-            // the segment: a base id is present iff its DocLen column entry is > 0
-            // (doc_len == tokens emitted; the old reopen rebuilt `distinct` from the
-            // posting docids, which is exactly the set of ids with doc_len > 0).
-            // This is a transient O(n_docs) read of the demand-paged DocLen column —
+            // A doc "wrote" a text field iff its explicit presence bit is set.
+            // This includes an explicit empty value. After Phase 2h-4 reopen
+            // `distinct` is EMPTY (no RAM rebuild), so drive base coverage from
+            // the segment presence column without materializing postings.
+            // This is a transient O(n_docs) read of the demand-paged presence column —
             // it does NOT re-materialize `tokens`/`distinct` in RAM. Any live-tail
             // doc indexed after reopen is folded in from `distinct_ids()` (empty
             // until then). Without a segment (live, pre-seal) this falls back to the
             // in-RAM `distinct` ids — byte-identical to the old behavior.
             if let Some(seg) = &idx.segment {
                 for id in 0..seg.n_docs() {
-                    if seg.text_doc_len(id) > 0 {
+                    if seg.text_is_present(id) {
                         eid_fields.entry(id).or_default().insert(name.to_string());
                     }
                 }
@@ -10618,18 +10750,19 @@ impl Engine {
     /// TEST SEAM (Stage 2 Phase 2e-B): seal a Text field's WHOLE in-RAM inverted
     /// index into a columnar mmap segment under `dir`, then attach it so the
     /// BM25 scan (`eval_match` / `match_doc_score`) and `estimate_selectivity`
-    /// read entirely from the segment. Text term-frequency is NOT rebuildable,
+    /// read from the sealed base plus any live overlays. Text term-frequency is
+    /// NOT rebuildable,
     /// so unlike the Keyword/Set seams the inverted postings ARE stored: a sorted
     /// token DICT + a parallel per-token STORED posting block + a fixed
     /// `u32[n_docs]` DocLen column + the BM25 corpus scalars in the header (see
     /// [`crate::segment::write_text_segment`]).
     ///
-    /// This slice seals the whole field for ids `[0..n_docs)` with no live tail
-    /// (segment+live composition is Phase 2f). Phase 2h-4: after attaching, the
-    /// bulky `tokens` postings AND `distinct` AND `lens` are DROPPED (no RAM
-    /// rebuild) — `drop_eid` tombstones a sealed base id and `doc_len()` reads the
-    /// segment DocLen column. Mirrors PRODUCTION `seal_to_segment`. Returns the
-    /// sealed doc count.
+    /// This slice seals the whole field for ids `[0..n_docs)`. Phase 2h-4: after
+    /// attaching, the bulky sealed-base `tokens` postings AND `distinct` AND
+    /// `lens` are DROPPED (no RAM rebuild); later writes stay as live overlays,
+    /// and `drop_eid` tombstones a sealed base id. `doc_len()` reads the explicit
+    /// overlay before the segment DocLen column. Mirrors PRODUCTION
+    /// `seal_to_segment`. Returns the sealed doc count.
     pub(crate) fn __seal_text_field_to_segment(
         &self,
         collection_id: &str,
@@ -10652,6 +10785,7 @@ impl Engine {
         // DocLen column in dense docid order `[0..n_docs)`: each id's stored
         // length (0 for an absent doc), reproducing `TextIndex::doc_len`.
         let lens: Vec<u32> = (0..n_docs as u32).map(|id| idx.doc_len(id)).collect();
+        let present = idx.present_for_seal(n_docs as u32, &|_| true);
         let tokens = idx.tokens_for_seal(&|_| true);
 
         let path = dir.join(format!("{field}.lseg"));
@@ -10660,6 +10794,7 @@ impl Engine {
             n_docs as u64,
             &tokens,
             &lens,
+            &present,
             idx.doc_count,
             idx.total_doc_len,
         )?;
@@ -14254,6 +14389,471 @@ mod segment_text_diff_tests {
             "unique_terms diverged after re-seal"
         );
     }
+
+    #[test]
+    fn sealed_text_unions_tail_and_reused_overlay_postings() {
+        let oracle = Arc::new(Engine::new());
+        let subject = Arc::new(Engine::new());
+        oracle.create_collection("c", schema()).unwrap();
+        subject.create_collection("c", schema()).unwrap();
+        index_doc(
+            &oracle,
+            "d0",
+            &body_from(&[("shared", 2), ("base", 1)]),
+            Some(1.0),
+        );
+        index_doc(
+            &subject,
+            "d0",
+            &body_from(&[("shared", 2), ("base", 1)]),
+            Some(1.0),
+        );
+        index_doc(&oracle, "d1", &body_from(&[("base", 1)]), Some(2.0));
+        index_doc(&subject, "d1", &body_from(&[("base", 1)]), Some(2.0));
+        let dir = tempfile::tempdir().unwrap();
+        subject
+            .__seal_text_field_to_segment("c", "body", dir.path())
+            .unwrap();
+
+        // d0 reuses a sealed id, while d2 is a pure live tail. Both must be
+        // visible through the same active posting accessor.
+        index_doc(
+            &oracle,
+            "d0",
+            &body_from(&[("shared", 1), ("overlay", 2)]),
+            Some(3.0),
+        );
+        index_doc(
+            &subject,
+            "d0",
+            &body_from(&[("shared", 1), ("overlay", 2)]),
+            Some(3.0),
+        );
+        index_doc(
+            &oracle,
+            "d2",
+            &body_from(&[("shared", 1), ("tailonly", 1)]),
+            Some(4.0),
+        );
+        index_doc(
+            &subject,
+            "d2",
+            &body_from(&[("shared", 1), ("tailonly", 1)]),
+            Some(4.0),
+        );
+
+        for token in ["shared", "base", "overlay", "tailonly"] {
+            let query = bm25_single(token);
+            assert_eq!(
+                set_of(&run(&subject, query.clone())),
+                set_of(&run(&oracle, query.clone()))
+            );
+            assert_eq!(
+                scores_of(&run(&subject, query.clone())),
+                scores_of(&run(&oracle, query))
+            );
+        }
+        for query in [text_and("shared", "overlay"), filtered("shared", 3.0, 3.0)] {
+            assert_eq!(
+                set_of(&run(&subject, query.clone())),
+                set_of(&run(&oracle, query.clone()))
+            );
+            assert_eq!(
+                scores_of(&run(&subject, query.clone())),
+                scores_of(&run(&oracle, query))
+            );
+        }
+        assert_eq!(
+            set_of(&run(&subject, bm25_single("shared"))),
+            ["d0", "d2"].into_iter().map(String::from).collect()
+        );
+
+        // Snapshot restore must preserve both the appended tail and the
+        // replacement overlay on the reused base id.
+        let restored = Arc::new(Engine::new());
+        restored.restore(subject.snapshot().unwrap()).unwrap();
+        for token in ["shared", "overlay", "tailonly"] {
+            let query = bm25_single(token);
+            assert_eq!(
+                set_of(&run(&restored, query.clone())),
+                set_of(&run(&subject, query.clone()))
+            );
+            assert_eq!(
+                scores_of(&run(&restored, query.clone())),
+                scores_of(&run(&subject, query))
+            );
+        }
+
+        let state = subject.state.read().unwrap();
+        let coll = state.collections.get("c").unwrap();
+        let FieldIndex::Text { idx, .. } = coll.fields.get("body").unwrap() else {
+            panic!("body must be text");
+        };
+        assert_eq!(idx.tok_df("shared"), Some(2));
+        assert_eq!(idx.tok_df("tailonly"), Some(1));
+        assert_eq!(idx.tok_df("base"), Some(1));
+        let posting = idx.tok_postings("shared").unwrap();
+        assert_eq!(posting.docids(), &[0, 2]);
+        assert_eq!(posting.tfs(), &[1, 1]);
+    }
+
+    #[test]
+    fn sealed_text_replacement_twice_keeps_latest_overlay_and_snapshot_state() {
+        let oracle = Arc::new(Engine::new());
+        let subject = Arc::new(Engine::new());
+        oracle.create_collection("c", schema()).unwrap();
+        subject.create_collection("c", schema()).unwrap();
+        index_doc(&oracle, "d0", "old", Some(1.0));
+        index_doc(&subject, "d0", "old", Some(1.0));
+        let dir = tempfile::tempdir().unwrap();
+        subject
+            .__seal_text_field_to_segment("c", "body", dir.path())
+            .unwrap();
+
+        for engine in [&oracle, &subject] {
+            index_doc(engine, "d0", "new", Some(2.0));
+            index_doc(engine, "d0", "latest", Some(3.0));
+        }
+        assert_eq!(
+            scores_of(&run(&subject, bm25_single("old"))),
+            scores_of(&run(&oracle, bm25_single("old")))
+        );
+        assert!(run(&subject, bm25_single("new")).is_empty());
+        assert_eq!(
+            set_of(&run(&subject, bm25_single("latest"))),
+            ["d0"].into_iter().map(String::from).collect()
+        );
+        {
+            let state = subject.state.read().unwrap();
+            let coll = state.collections.get("c").unwrap();
+            let FieldIndex::Text { idx, .. } = coll.fields.get("body").unwrap() else {
+                panic!("body must be text");
+            };
+            assert!(idx.tok_postings("new").is_none());
+            assert_eq!(idx.tok_df("latest"), Some(1));
+            assert_eq!(idx.bm25_corpus(), (1, 1));
+            assert!(idx.distinct.get(0).is_some_and(|tokens| {
+                tokens
+                    .as_ref()
+                    .is_some_and(|tokens| tokens.iter().next().is_some())
+            }));
+            assert_eq!(idx.doc_len(0), 1);
+            assert!(idx.tombstones.contains(0));
+        }
+
+        // Snapshot must retain the latest live overlay and restore the same
+        // query state without a segment.
+        let restored = Arc::new(Engine::new());
+        restored.restore(subject.snapshot().unwrap()).unwrap();
+        assert_eq!(
+            run(&restored, bm25_single("latest")),
+            run(&subject, bm25_single("latest"))
+        );
+        let state = restored.state.read().unwrap();
+        let coll = state.collections.get("c").unwrap();
+        let FieldIndex::Text { idx, .. } = coll.fields.get("body").unwrap() else {
+            panic!("body must be text");
+        };
+        assert!(idx.distinct.get(0).is_some_and(|tokens| {
+            tokens
+                .as_ref()
+                .is_some_and(|tokens| tokens.iter().next().is_some())
+        }));
+        assert_eq!(idx.doc_len(0), 1);
+    }
+
+    #[test]
+    fn sealed_text_absent_base_replacement_does_not_tombstone_overlay() {
+        fn index_body(e: &Engine, eid: &str, body: &str) {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![crate::types::IndexItem {
+                        external_id: eid.into(),
+                        field: "body".into(),
+                        value: FieldValue::String(body.into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        fn index_price(e: &Engine, eid: &str, price: f64) {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![crate::types::IndexItem {
+                        external_id: eid.into(),
+                        field: "price".into(),
+                        value: FieldValue::Number(price),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let oracle = Arc::new(Engine::new());
+        let subject = Arc::new(Engine::new());
+        oracle.create_collection("c", schema()).unwrap();
+        subject.create_collection("c", schema()).unwrap();
+        for engine in [&oracle, &subject] {
+            index_price(engine, "d0", 1.0);
+            index_body(engine, "d1", "seed");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        subject
+            .__seal_collection_to_segments("c", dir.path(), 1)
+            .unwrap();
+
+        // d0 had no body at the seal. Its first post-seal body write creates a
+        // live overlay without a base tombstone; the second write must remove
+        // that overlay before applying the latest value.
+        for engine in [&oracle, &subject] {
+            index_body(engine, "d0", "old");
+            index_body(engine, "d0", "new");
+        }
+        let old = bm25_single("old");
+        let new = bm25_single("new");
+        assert!(run(&subject, old.clone()).is_empty());
+        assert_eq!(
+            set_of(&run(&subject, new.clone())),
+            ["d0"].into_iter().map(String::from).collect()
+        );
+        assert_eq!(
+            scores_of(&run(&subject, new.clone())),
+            scores_of(&run(&oracle, new.clone()))
+        );
+        {
+            let state = subject.state.read().unwrap();
+            let coll = state.collections.get("c").unwrap();
+            let FieldIndex::Text { idx, .. } = coll.fields.get("body").unwrap() else {
+                panic!("body must be text");
+            };
+            assert!(idx.tombstones.is_empty());
+            assert_eq!(idx.bm25_corpus(), (2, 2));
+            let posting = idx.tok_postings("new").unwrap();
+            assert_eq!(posting.docids(), &[0]);
+            assert_eq!(posting.tfs(), &[1]);
+        }
+
+        let restored = Arc::new(Engine::new());
+        restored.restore(subject.snapshot().unwrap()).unwrap();
+        assert_eq!(
+            scores_of(&run(&restored, new.clone())),
+            scores_of(&run(&subject, new.clone()))
+        );
+        assert!(run(&restored, old.clone()).is_empty());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        subject
+            .__seal_collection_to_segments("c", dir2.path(), 2)
+            .unwrap();
+        let schema = subject.__collection_schema("c").unwrap();
+        let reopened =
+            Engine::__open_collection_from_segments("c", dir2.path(), schema, 2).unwrap();
+        assert_eq!(
+            scores_of(&run(&reopened, new)),
+            scores_of(&run(&oracle, bm25_single("new")))
+        );
+        assert!(run(&reopened, old).is_empty());
+    }
+
+    #[test]
+    fn sealed_text_reseal_and_cold_reopen_match_ram_scores() {
+        let oracle = Arc::new(Engine::new());
+        let subject = Arc::new(Engine::new());
+        oracle.create_collection("c", schema()).unwrap();
+        subject.create_collection("c", schema()).unwrap();
+        for (eid, body, price) in [("d0", "shared base", 1.0), ("d1", "base", 2.0)] {
+            index_doc(&oracle, eid, body, Some(price));
+            index_doc(&subject, eid, body, Some(price));
+        }
+        let dir = tempfile::tempdir().unwrap();
+        subject
+            .__seal_collection_to_segments("c", dir.path(), 1)
+            .unwrap();
+        for (eid, body, price) in [
+            ("d0", "shared overlay", 3.0),
+            ("d2", "shared tailonly", 4.0),
+        ] {
+            index_doc(&oracle, eid, body, Some(price));
+            index_doc(&subject, eid, body, Some(price));
+        }
+        let dir2 = tempfile::tempdir().unwrap();
+        subject
+            .__seal_collection_to_segments("c", dir2.path(), 2)
+            .unwrap();
+        let schema = subject.__collection_schema("c").unwrap();
+        let reopened =
+            Engine::__open_collection_from_segments("c", dir2.path(), schema, 2).unwrap();
+        for token in ["shared", "overlay", "tailonly"] {
+            let query = bm25_single(token);
+            assert_eq!(
+                set_of(&run(&reopened, query.clone())),
+                set_of(&run(&oracle, query.clone()))
+            );
+            assert_eq!(
+                scores_of(&run(&reopened, query.clone())),
+                scores_of(&run(&oracle, query))
+            );
+        }
+        assert_eq!(run(&reopened, bm25_single("shared")).len(), 2);
+    }
+
+    #[test]
+    fn sealed_empty_text_presence_survives_reseal_snapshot_and_delete() {
+        fn index_body(e: &Engine, eid: &str, body: &str) {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![crate::types::IndexItem {
+                        external_id: eid.into(),
+                        field: "body".into(),
+                        value: FieldValue::String(body.into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        fn index_price(e: &Engine, eid: &str, price: f64) {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![crate::types::IndexItem {
+                        external_id: eid.into(),
+                        field: "price".into(),
+                        value: FieldValue::Number(price),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        fn build(e: &Engine) {
+            e.create_collection("c", schema()).unwrap();
+            index_body(e, "d0", "");
+            index_price(e, "d0", 1.0);
+            index_body(e, "d1", "control");
+            index_price(e, "d1", 2.0);
+        }
+        fn body_corpus(e: &Engine) -> (u64, u64) {
+            let state = e.state.read().unwrap();
+            let coll = state.collections.get("c").unwrap();
+            let FieldIndex::Text { idx, .. } = coll.fields.get("body").unwrap() else {
+                panic!("body must be text");
+            };
+            idx.bm25_corpus()
+        }
+        fn body_is_covered(e: &Engine, eid: &str) -> bool {
+            let state = e.state.read().unwrap();
+            let coll = state.collections.get("c").unwrap();
+            let id = coll.interner.id(eid).unwrap();
+            coll.eid_fields
+                .get(&id)
+                .is_some_and(|fields| fields.contains("body"))
+        }
+
+        let oracle = Arc::new(Engine::new());
+        build(&oracle);
+
+        let subject = Arc::new(Engine::new());
+        build(&subject);
+        let dir1 = tempfile::tempdir().unwrap();
+        subject
+            .__seal_collection_to_segments("c", dir1.path(), 1)
+            .unwrap();
+        let schema1 = subject.__collection_schema("c").unwrap();
+        let cold = Engine::__open_collection_from_segments("c", dir1.path(), schema1, 1).unwrap();
+        assert!(
+            body_is_covered(&cold, "d0"),
+            "empty body coverage after cold reopen"
+        );
+        assert!(body_is_covered(&cold, "d1"));
+        assert_eq!(body_corpus(&cold), body_corpus(&oracle));
+
+        // A re-seal must carry the explicit empty presence bit forward, even
+        // though d0's DocLen and posting list are both empty.
+        let dir2 = tempfile::tempdir().unwrap();
+        cold.__seal_collection_to_segments("c", dir2.path(), 2)
+            .unwrap();
+        let schema2 = cold.__collection_schema("c").unwrap();
+        let cold2 = Engine::__open_collection_from_segments("c", dir2.path(), schema2, 2).unwrap();
+        assert!(
+            body_is_covered(&cold2, "d0"),
+            "empty body coverage after re-seal"
+        );
+        assert_eq!(body_corpus(&cold2), body_corpus(&oracle));
+        let cold_snapshot = cold2.snapshot().unwrap();
+
+        // The cold segment-backed path must recognize the empty base value as
+        // covered. Updating d0 must tombstone that base once before adding the
+        // replacement posting.
+        index_body(&oracle, "d0", "updated");
+        index_body(&cold2, "d0", "updated");
+        assert_eq!(body_corpus(&cold2), body_corpus(&oracle));
+        let updated = bm25_single("updated");
+        assert_eq!(
+            set_of(&run(&cold2, updated.clone())),
+            set_of(&run(&oracle, updated.clone()))
+        );
+        assert_eq!(
+            scores_of(&run(&cold2, updated.clone())),
+            scores_of(&run(&oracle, updated.clone()))
+        );
+        let control = bm25_single("control");
+        assert_eq!(
+            set_of(&run(&cold2, control.clone())),
+            set_of(&run(&oracle, control.clone()))
+        );
+        assert_eq!(
+            scores_of(&run(&cold2, control.clone())),
+            scores_of(&run(&oracle, control.clone()))
+        );
+
+        // Delete the formerly empty doc's field and compare exact corpus, IDs,
+        // and score bits with the pure-RAM path.
+        oracle.delete("c", "d0", Some("body")).unwrap();
+        cold2.delete("c", "d0", Some("body")).unwrap();
+        assert_eq!(body_corpus(&cold2), body_corpus(&oracle));
+        assert!(run(&cold2, updated.clone()).is_empty());
+        assert_eq!(
+            set_of(&run(&cold2, control.clone())),
+            set_of(&run(&oracle, control.clone()))
+        );
+        assert_eq!(
+            scores_of(&run(&cold2, control.clone())),
+            scores_of(&run(&oracle, control.clone()))
+        );
+
+        // A snapshot taken after the cold reopen must retain empty-field
+        // coverage and permit a later replacement through the RAM path.
+        let restored = Arc::new(Engine::new());
+        restored.restore(cold_snapshot).unwrap();
+        assert!(
+            body_is_covered(&restored, "d0"),
+            "snapshot lost empty coverage"
+        );
+        let snapshot_oracle = Arc::new(Engine::new());
+        build(&snapshot_oracle);
+        index_body(&restored, "d0", "snapshot-updated");
+        index_body(&snapshot_oracle, "d0", "snapshot-updated");
+        assert_eq!(body_corpus(&restored), body_corpus(&snapshot_oracle));
+        let snapshot_updated = bm25_single("snapshot-updated");
+        assert_eq!(
+            set_of(&run(&restored, snapshot_updated.clone())),
+            set_of(&run(&snapshot_oracle, snapshot_updated.clone()))
+        );
+        assert_eq!(
+            scores_of(&run(&restored, snapshot_updated.clone())),
+            scores_of(&run(&snapshot_oracle, snapshot_updated))
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -17219,6 +17819,29 @@ mod tests {
             0,
             "soft-deleted collections must stop contributing to live capacity"
         );
+    }
+
+    #[test]
+    fn activate_replacement_swaps_the_complete_collection_set() {
+        let active = Engine::new();
+        active.create_collection("old", kw_only_schema()).unwrap();
+        index_kw(&active, "old", "old-doc");
+
+        let replacement = Engine::new();
+        replacement
+            .create_collection("new", kw_only_schema())
+            .unwrap();
+        index_kw(&replacement, "new", "new-doc");
+        let expected_bytes = collection_live_bytes(&replacement, "new");
+
+        active.activate_replacement(replacement).unwrap();
+
+        assert!(
+            active.stats("old").is_err(),
+            "collections absent from the replacement must be removed"
+        );
+        assert_eq!(active.stats("new").unwrap().documents_indexed, 1);
+        assert_eq!(active.metrics().storage_bytes.get(), expected_bytes);
     }
 
     /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte

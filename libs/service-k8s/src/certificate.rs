@@ -43,7 +43,7 @@ pub mod reconcile;
 pub mod state;
 pub mod status;
 
-#[cfg(feature = "gcp-cas")]
+#[cfg(feature = "gcp-cas-client")]
 pub mod cas;
 
 pub use ephemeral::EphemeralIssuer;
@@ -65,7 +65,7 @@ pub use state::{
 };
 pub use status::{redact, CertificateFacts, READY_CONDITION, ROTATING_CONDITION};
 
-#[cfg(feature = "gcp-cas")]
+#[cfg(feature = "gcp-cas-client")]
 pub use cas::{
     AccessTokenSource, CaPool, CasIssuer, GkeMetadataTokenSource, WorkloadIdentityTokenSource,
 };

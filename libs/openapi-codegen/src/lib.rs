@@ -26,6 +26,7 @@
 //! is the filesystem-writing CLI entry.
 
 use anyhow::Result;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub mod emit;
@@ -86,6 +87,94 @@ pub struct GenOptions {
     pub emit_types: bool,
     pub emit_client: bool,
     pub emit_hooks: bool,
+}
+
+/// A URL scheme that may use a generated file-backed bearer token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FileBearerScheme {
+    /// Plain HTTP.
+    Http,
+    /// HTTP over TLS.
+    Https,
+}
+
+impl FileBearerScheme {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
+}
+
+/// A validated, generation-time opt-in bearer-token provider.
+///
+/// This is deliberately a generic file provider. It does not encode an
+/// application or platform identity policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileBearerAuth {
+    token_path: PathBuf,
+    hostname_suffix: String,
+    schemes: BTreeSet<FileBearerScheme>,
+}
+
+impl FileBearerAuth {
+    pub fn new(
+        token_path: impl Into<PathBuf>,
+        hostname_suffix: impl Into<String>,
+        schemes: impl IntoIterator<Item = FileBearerScheme>,
+    ) -> Result<Self> {
+        let token_path = token_path.into();
+        if token_path.as_os_str().is_empty() {
+            anyhow::bail!("bearer token path must not be empty");
+        }
+        if token_path.to_str().is_none() {
+            anyhow::bail!("bearer token path must be valid UTF-8");
+        }
+
+        let hostname_suffix = hostname_suffix.into();
+        let dns = hostname_suffix
+            .strip_prefix('.')
+            .filter(|suffix| !suffix.is_empty() && !suffix.ends_with('.'))
+            .ok_or_else(|| anyhow::anyhow!("bearer hostname suffix must start with one dot"))?;
+        if !dns.split('.').all(valid_dns_label) {
+            anyhow::bail!("bearer hostname suffix must be lowercase DNS labels");
+        }
+
+        let schemes: BTreeSet<_> = schemes.into_iter().collect();
+        if schemes.is_empty() {
+            anyhow::bail!("bearer auth needs at least one HTTP scheme");
+        }
+
+        Ok(Self {
+            token_path,
+            hostname_suffix,
+            schemes,
+        })
+    }
+
+    pub(crate) fn token_path(&self) -> &Path {
+        &self.token_path
+    }
+
+    pub(crate) fn hostname_suffix(&self) -> &str {
+        &self.hostname_suffix
+    }
+
+    pub(crate) fn schemes(&self) -> impl Iterator<Item = FileBearerScheme> + '_ {
+        self.schemes.iter().copied()
+    }
+}
+
+fn valid_dns_label(label: &str) -> bool {
+    let bytes = label.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 63
+        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
 /// A single generated file, relative to the output directory.
@@ -225,6 +314,24 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     }
 }
 
+/// Generate a client that rereads one file-backed bearer token before each
+/// eligible request. Calling this separate entry point is the opt-in; the
+/// legacy [`generate`] output remains byte-for-byte unchanged.
+pub fn generate_with_file_bearer_auth(
+    spec_json: &str,
+    opts: &GenOptions,
+    auth: &FileBearerAuth,
+) -> Result<GeneratedOutput> {
+    match opts.target {
+        Some(target) => generate_for_target_with_file_bearer_auth(spec_json, opts, target, auth),
+        None => match opts.lang {
+            Lang::Ts => emit::ts::generate_with_file_bearer_auth(spec_json, opts, auth),
+            Lang::Py => emit::py::generate_with_file_bearer_auth(spec_json, opts, auth),
+            Lang::Rust => emit::rust::generate_with_file_bearer_auth(spec_json, opts, auth),
+        },
+    }
+}
+
 /// Pure core with an explicit versioned target profile. The profile must match
 /// [`GenOptions::lang`], so an invalid cross-language request fails before any
 /// language-specific parsing or generation occurs.
@@ -233,6 +340,15 @@ pub fn generate_for_target(
     opts: &GenOptions,
     target: TargetProfile,
 ) -> Result<GeneratedOutput> {
+    validate_target(opts, target)?;
+    match target {
+        TargetProfile::TypeScript(target) => emit::ts::generate_for_target(spec_json, opts, target),
+        TargetProfile::Python(target) => emit::py::generate_for_target(spec_json, opts, target),
+        TargetProfile::Rust(target) => emit::rust::generate_for_target(spec_json, opts, target),
+    }
+}
+
+fn validate_target(opts: &GenOptions, target: TargetProfile) -> Result<()> {
     if opts.lang != target.lang() {
         anyhow::bail!(
             "target profile {} is for {:?}, not requested language {:?}",
@@ -250,10 +366,28 @@ pub fn generate_for_target(
             );
         }
     }
+    Ok(())
+}
+
+/// Targeted variant of [`generate_with_file_bearer_auth`]. It preserves the
+/// normal target validation and generation manifest.
+pub fn generate_for_target_with_file_bearer_auth(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: TargetProfile,
+    auth: &FileBearerAuth,
+) -> Result<GeneratedOutput> {
+    validate_target(opts, target)?;
     match target {
-        TargetProfile::TypeScript(target) => emit::ts::generate_for_target(spec_json, opts, target),
-        TargetProfile::Python(target) => emit::py::generate_for_target(spec_json, opts, target),
-        TargetProfile::Rust(target) => emit::rust::generate_for_target(spec_json, opts, target),
+        TargetProfile::TypeScript(target) => {
+            emit::ts::generate_for_target_with_file_bearer_auth(spec_json, opts, target, auth)
+        }
+        TargetProfile::Python(target) => {
+            emit::py::generate_for_target_with_file_bearer_auth(spec_json, opts, target, auth)
+        }
+        TargetProfile::Rust(target) => {
+            emit::rust::generate_for_target_with_file_bearer_auth(spec_json, opts, target, auth)
+        }
     }
 }
 
@@ -568,6 +702,100 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("python-3.11"));
+    }
+
+    #[test]
+    fn file_bearer_auth_is_generic_and_validated_at_generation_time() {
+        let auth = FileBearerAuth::new(
+            "/private/tmp/service-token",
+            ".example.internal",
+            [FileBearerScheme::Https, FileBearerScheme::Http],
+        )
+        .unwrap();
+        assert_eq!(auth.hostname_suffix(), ".example.internal");
+        assert_eq!(
+            auth.schemes().collect::<Vec<_>>(),
+            vec![FileBearerScheme::Http, FileBearerScheme::Https]
+        );
+
+        for suffix in [
+            "",
+            "example.internal",
+            ".example.internal.",
+            ".Example.internal",
+            ".bad..internal",
+            ".-bad.internal",
+        ] {
+            assert!(
+                FileBearerAuth::new(
+                    "/private/tmp/service-token",
+                    suffix,
+                    [FileBearerScheme::Https]
+                )
+                .is_err(),
+                "accepted invalid suffix {suffix:?}"
+            );
+        }
+        assert!(FileBearerAuth::new("", ".example.internal", [FileBearerScheme::Https]).is_err());
+        assert!(
+            FileBearerAuth::new("/private/tmp/service-token", ".example.internal", []).is_err()
+        );
+    }
+
+    #[test]
+    fn legacy_generation_stays_opted_out_and_targeted_auth_keeps_manifest() {
+        let token_path = "/private/tmp/file-bearer-opt-in-canary";
+        let auth = FileBearerAuth::new(
+            token_path,
+            ".example.internal",
+            [FileBearerScheme::Http, FileBearerScheme::Https],
+        )
+        .unwrap();
+
+        for (lang, target, auth_file) in [
+            (
+                Lang::Ts,
+                TargetProfile::TypeScript(TypeScriptTarget::Ts50),
+                "runtime.ts",
+            ),
+            (
+                Lang::Py,
+                TargetProfile::Python(PythonTarget::Py311),
+                "client.py",
+            ),
+            (
+                Lang::Rust,
+                TargetProfile::Rust(RustTarget::Rust2021),
+                "client.rs",
+            ),
+        ] {
+            let mut opts = full_opts();
+            opts.lang = lang;
+            opts.target = Some(target);
+            opts.emit_hooks = matches!(lang, Lang::Ts);
+
+            let legacy = generate(MINIMAL, &opts).unwrap();
+            assert!(legacy
+                .files
+                .iter()
+                .all(|file| !file.contents.contains(token_path)));
+
+            let extended =
+                generate_for_target_with_file_bearer_auth(MINIMAL, &opts, target, &auth).unwrap();
+            assert_eq!(extended.target, Some(target));
+            assert!(extended.manifest().is_some());
+            assert!(content(&extended, auth_file).contains(token_path));
+            for (before, after) in legacy.files.iter().zip(&extended.files) {
+                if before.rel_path != auth_file {
+                    assert_eq!(before.rel_path, after.rel_path);
+                    assert_eq!(
+                        before.contents, after.contents,
+                        "{} changed outside auth runtime",
+                        before.rel_path
+                    );
+                }
+            }
+        }
     }
 
     #[test]

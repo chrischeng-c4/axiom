@@ -45,12 +45,14 @@
 //!
 //! Env (read by [`AuthConfig::from_env`]):
 //!
-//! - `LUMEN_AUTH=off|disabled|required` — default `off`. `off`/`disabled`
-//!   serve without authentication and make **no** Kubernetes call at all.
+//! - `LUMEN_AUTH=off|disabled|required|in-cluster` — default `off`.
+//!   `off`/`disabled` serve without authentication and make **no** Kubernetes
+//!   call at all. `required` keeps Managed's private `lumen.axiom.dev`
+//!   audience. `in-cluster` accepts the default KSA token Kubernetes mounts.
 //! - `LUMEN_AUTH_NAMESPACE` — the namespace every `SubjectAccessReview` is
 //!   scoped to. Defaults to `POD_NAMESPACE`, then to the in-cluster
-//!   ServiceAccount namespace file. `required` refuses to start without one:
-//!   an unscoped check asks a different question than the intended one.
+//!   ServiceAccount namespace file. Both required profiles refuse to start
+//!   without one: an unscoped check asks a different question than intended.
 //!
 //! ## Role precedence
 //!
@@ -78,13 +80,13 @@ pub use service_auth::Role;
 
 use crate::types::ApiError;
 
-/// The audience every accepted token must be bound to, and the only audience
-/// Lumen's `TokenReview` requests.
+/// The audience every Managed token must be bound to, and the only audience
+/// Managed Lumen requests in `TokenReview`.
 ///
 /// A token minted for the apiserver's own audience — which is what every pod's
-/// default ServiceAccount token is — must not open Lumen. Requesting this
-/// audience explicitly is what makes that difference the apiserver's decision
-/// rather than something Lumen has to detect after the fact.
+/// default ServiceAccount token is — must not open Managed Lumen. Requesting
+/// this audience explicitly is what keeps Managed separate. Standalone's
+/// explicit `in-cluster` profile uses Kubernetes' default audience instead.
 pub const AUDIENCE: &str = "lumen.axiom.dev";
 
 /// The API group every authorization check is asked under.
@@ -175,6 +177,28 @@ pub fn verb(role: Role) -> &'static str {
     }
 }
 
+/// The credential profile selected by `LUMEN_AUTH`.
+///
+/// Managed and Standalone are separate on purpose. A default pod token must
+/// open only a Standalone instance that explicitly chose `in-cluster`; it
+/// must never become an alternate credential for Managed's private audience.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthProfile {
+    Off,
+    ManagedAudience,
+    KubernetesDefault,
+}
+
+impl AuthProfile {
+    pub fn env_value(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::ManagedAudience => "required",
+            Self::KubernetesDefault => "in-cluster",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     /// Whether a caller must present a verifiable identity. `false` makes no
@@ -183,6 +207,7 @@ pub struct AuthConfig {
     /// The namespace every `SubjectAccessReview` is scoped to — the serving
     /// instance's own. Empty is only valid when `required` is `false`.
     pub namespace: String,
+    profile: AuthProfile,
 }
 
 impl Default for AuthConfig {
@@ -196,6 +221,7 @@ impl AuthConfig {
         Self {
             required: false,
             namespace: String::new(),
+            profile: AuthProfile::Off,
         }
     }
 
@@ -206,21 +232,39 @@ impl AuthConfig {
         Self {
             required: true,
             namespace: namespace.into(),
+            profile: AuthProfile::ManagedAudience,
         }
     }
 
+    /// Standalone's explicit default-KSA profile.
+    pub fn in_cluster(namespace: impl Into<String>) -> Self {
+        Self {
+            required: true,
+            namespace: namespace.into(),
+            profile: AuthProfile::KubernetesDefault,
+        }
+    }
+
+    pub fn profile(&self) -> AuthProfile {
+        self.profile
+    }
+
     pub fn from_env() -> Result<Self> {
-        let required = match std::env::var("LUMEN_AUTH") {
+        let profile = match std::env::var("LUMEN_AUTH") {
             Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
-                "required" => true,
-                "off" | "disabled" => false,
+                "required" => AuthProfile::ManagedAudience,
+                "in-cluster" => AuthProfile::KubernetesDefault,
+                "off" | "disabled" => AuthProfile::Off,
                 other => {
-                    bail!("LUMEN_AUTH must be `off`, `disabled`, or `required`; got `{other}`")
+                    bail!(
+                        "LUMEN_AUTH must be `off`, `disabled`, `required`, or `in-cluster`; got `{other}`"
+                    )
                 }
             },
-            Err(std::env::VarError::NotPresent) => false,
+            Err(std::env::VarError::NotPresent) => AuthProfile::Off,
             Err(e) => bail!("LUMEN_AUTH must be valid UTF-8: {e}"),
         };
+        let required = profile != AuthProfile::Off;
 
         let namespace = namespace_from_env();
 
@@ -229,17 +273,29 @@ impl AuthConfig {
             // different resource than the one the request touched, and the
             // safest wrong answer is still a wrong answer.
             bail!(
-                "LUMEN_AUTH=required needs the serving namespace to scope every \
+                "LUMEN_AUTH={} needs the serving namespace to scope every \
                  SubjectAccessReview to, and neither LUMEN_AUTH_NAMESPACE nor POD_NAMESPACE is \
                  set and {SERVICE_ACCOUNT_NAMESPACE_FILE} is unreadable. Refusing to start \
-                 rather than authorize against an unscoped resource."
+                 rather than authorize against an unscoped resource.",
+                profile.env_value()
             );
         }
 
         Ok(Self {
             required,
             namespace,
+            profile,
         })
+    }
+
+    #[cfg(feature = "delegated-auth")]
+    fn delegated_config(&self) -> Result<DelegatedAuthConfig> {
+        match self.profile {
+            AuthProfile::ManagedAudience => DelegatedAuthConfig::new(vec![AUDIENCE.to_string()])
+                .map_err(|e| anyhow::anyhow!("lumen's delegated-auth audience is missing: {e}")),
+            AuthProfile::KubernetesDefault => Ok(DelegatedAuthConfig::kubernetes_default()),
+            AuthProfile::Off => bail!("auth=off has no delegated token profile"),
+        }
     }
 }
 
@@ -304,10 +360,27 @@ impl LumenVerifier {
     pub fn delegated(namespace: &str, backend: Arc<dyn ReviewBackend>) -> Result<Self> {
         let config = DelegatedAuthConfig::new(vec![AUDIENCE.to_string()])
             .map_err(|e| anyhow::anyhow!("lumen's delegated-auth audience is missing: {e}"))?;
-        Ok(Self::with_authenticator(
+        Ok(Self::delegated_with_config(namespace, backend, config))
+    }
+
+    /// Standalone's verifier for Kubernetes default ServiceAccount tokens.
+    pub fn delegated_in_cluster(namespace: &str, backend: Arc<dyn ReviewBackend>) -> Result<Self> {
+        Ok(Self::delegated_with_config(
+            namespace,
+            backend,
+            DelegatedAuthConfig::kubernetes_default(),
+        ))
+    }
+
+    fn delegated_with_config(
+        namespace: &str,
+        backend: Arc<dyn ReviewBackend>,
+        config: DelegatedAuthConfig,
+    ) -> Self {
+        Self::with_authenticator(
             namespace,
             Arc::new(DelegatedAuthenticator::new(backend, config)),
-        ))
+        )
     }
 
     /// Delegate to an already-built authenticator — the seam a deterministic
@@ -331,25 +404,34 @@ impl LumenVerifier {
         use service_auth::k8s::KubeReviewBackend;
 
         let backend = KubeReviewBackend::in_cluster().await.map_err(|e| {
-            anyhow::anyhow!("LUMEN_AUTH=required could not reach kube-apiserver: {e}")
+            anyhow::anyhow!(
+                "LUMEN_AUTH={} could not reach kube-apiserver: {e}",
+                cfg.profile.env_value()
+            )
         })?;
+        let delegated = cfg.delegated_config()?;
         // A rejected probe is a successful probe: what is under test is
         // whether the apiserver will answer these two questions at all.
         backend
             .probe_delegation(
-                &[AUDIENCE.to_string()],
+                delegated.audiences(),
                 &AuthTarget::Admin.attributes(&cfg.namespace, Role::Read),
             )
             .await
             .map_err(|e| {
                 anyhow::anyhow!(
-                    "LUMEN_AUTH=required but this instance's ServiceAccount cannot create \
+                    "LUMEN_AUTH={} but this instance's ServiceAccount cannot create \
                      TokenReview/SubjectAccessReview for namespace `{}` ({e}). Bind it to \
                      `system:auth-delegator`. Refusing to start.",
+                    cfg.profile.env_value(),
                     cfg.namespace
                 )
             })?;
-        Self::delegated(&cfg.namespace, Arc::new(backend))
+        Ok(Self::delegated_with_config(
+            &cfg.namespace,
+            Arc::new(backend),
+            delegated,
+        ))
     }
 
     /// The delegated counters in Prometheus text format — empty when auth is
@@ -639,6 +721,7 @@ mod tests {
         audiences: Vec<String>,
         grants: Vec<(String, String, Option<String>, String)>,
         reachable: Reachable,
+        token_calls: Mutex<Vec<Vec<String>>>,
         asked: Mutex<Vec<ResourceAttributes>>,
     }
 
@@ -649,6 +732,7 @@ mod tests {
                 audiences: vec![AUDIENCE.to_string()],
                 grants: Vec::new(),
                 reachable: Reachable::Both,
+                token_calls: Mutex::new(Vec::new()),
                 asked: Mutex::new(Vec::new()),
             }
         }
@@ -681,6 +765,10 @@ mod tests {
         fn asked(&self) -> Vec<ResourceAttributes> {
             self.asked.lock().unwrap().clone()
         }
+
+        fn token_calls(&self) -> Vec<Vec<String>> {
+            self.token_calls.lock().unwrap().clone()
+        }
     }
 
     #[async_trait]
@@ -688,8 +776,9 @@ mod tests {
         async fn review_token(
             &self,
             _token: &str,
-            _audiences: &[String],
+            audiences: &[String],
         ) -> Result<TokenReviewOutcome, ReviewError> {
+            self.token_calls.lock().unwrap().push(audiences.to_vec());
             if self.reachable == Reachable::Neither {
                 return Err(ReviewError::Transport("apiserver unreachable".into()));
             }
@@ -735,6 +824,12 @@ mod tests {
         (cluster, verifier)
     }
 
+    fn in_cluster_verifier(cluster: Cluster) -> (Arc<Cluster>, LumenVerifier) {
+        let cluster = Arc::new(cluster);
+        let verifier = LumenVerifier::delegated_in_cluster("serving", cluster.clone()).unwrap();
+        (cluster, verifier)
+    }
+
     fn bearer(token: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -747,6 +842,15 @@ mod tests {
     async fn context(cluster: Cluster) -> (Arc<Cluster>, AuthContext) {
         let (cluster, verifier) = verifier(cluster);
         let ctx = verifier.authenticate_async(&bearer("t")).await.unwrap();
+        (cluster, ctx)
+    }
+
+    async fn in_cluster_context(cluster: Cluster) -> (Arc<Cluster>, AuthContext) {
+        let (cluster, verifier) = in_cluster_verifier(cluster);
+        let ctx = verifier
+            .authenticate_async(&bearer("default-ksa"))
+            .await
+            .unwrap();
         (cluster, ctx)
     }
 
@@ -856,6 +960,98 @@ mod tests {
             ServiceAuthError::Unauthenticated
         ));
         assert!(cluster.asked().is_empty());
+    }
+
+    #[tokio::test]
+    async fn managed_and_standalone_request_distinct_tokenreview_audiences() {
+        let (managed_cluster, managed) = verifier(Cluster::with_ksa("clients", "reader"));
+        managed
+            .authenticate_async(&bearer("managed"))
+            .await
+            .unwrap();
+        assert_eq!(
+            managed_cluster.token_calls(),
+            vec![vec![AUDIENCE.to_string()]],
+            "Managed must keep its private audience"
+        );
+
+        let (standalone_cluster, standalone) =
+            in_cluster_verifier(Cluster::with_ksa("clients", "reader").with_audiences(&[]));
+        standalone
+            .authenticate_async(&bearer("default-ksa"))
+            .await
+            .unwrap();
+        assert_eq!(
+            standalone_cluster.token_calls(),
+            vec![Vec::<String>::new()],
+            "Standalone must intentionally use TokenReview's Kubernetes-default audiences"
+        );
+    }
+
+    #[tokio::test]
+    async fn standalone_default_ksa_can_use_collections_but_not_lumenadmin() {
+        let (cluster, ctx) = in_cluster_context(
+            Cluster::with_ksa("apps", "api")
+                .with_audiences(&[])
+                .granting(COLLECTIONS_RESOURCE, Some("orders"), "get")
+                .granting(COLLECTIONS_RESOURCE, Some("orders"), "update")
+                .granting(COLLECTIONS_RESOURCE, Some("orders"), "delete"),
+        )
+        .await;
+        for role in [Role::Read, Role::Write, Role::Admin] {
+            ctx.ensure("orders", role).await.unwrap();
+        }
+        let error = ctx.ensure_admin(Role::Admin).await.unwrap_err();
+        assert_eq!(error.wire().0, StatusCode::FORBIDDEN);
+        assert_eq!(cluster.token_calls(), vec![Vec::<String>::new()]);
+    }
+
+    #[tokio::test]
+    async fn standalone_default_profile_preserves_401_and_503_failure_classes() {
+        let (_, missing) =
+            in_cluster_verifier(Cluster::with_ksa("apps", "api").with_audiences(&[]));
+        assert!(matches!(
+            missing
+                .authenticate_async(&HeaderMap::new())
+                .await
+                .unwrap_err(),
+            ServiceAuthError::Unauthenticated
+        ));
+
+        let (_, wrong_identity) = in_cluster_verifier(
+            Cluster::with_ksa("apps", "api")
+                .with_audiences(&[])
+                .as_user("alice@example.com"),
+        );
+        assert!(matches!(
+            wrong_identity
+                .authenticate_async(&bearer("bad-identity"))
+                .await
+                .unwrap_err(),
+            ServiceAuthError::Unauthenticated
+        ));
+
+        let (_, unavailable) = in_cluster_verifier(
+            Cluster::with_ksa("apps", "api")
+                .with_audiences(&[])
+                .reachable(Reachable::Neither),
+        );
+        assert!(matches!(
+            unavailable
+                .authenticate_async(&bearer("default-ksa"))
+                .await
+                .unwrap_err(),
+            ServiceAuthError::Unavailable(_)
+        ));
+
+        let (_, ctx) = in_cluster_context(
+            Cluster::with_ksa("apps", "api")
+                .with_audiences(&[])
+                .reachable(Reachable::AuthenticationOnly),
+        )
+        .await;
+        let error = ctx.ensure("orders", Role::Read).await.unwrap_err();
+        assert_eq!(error.wire().0, StatusCode::SERVICE_UNAVAILABLE);
     }
 
     // ---- authorization --------------------------------------------------
@@ -1066,7 +1262,9 @@ mod tests {
 
     #[test]
     fn auth_config_open_is_not_required() {
-        assert!(!AuthConfig::open().required);
+        let config = AuthConfig::open();
+        assert!(!config.required);
+        assert_eq!(config.profile(), AuthProfile::Off);
     }
 
     #[test]
@@ -1103,6 +1301,7 @@ mod tests {
         }
         let cfg = AuthConfig::from_env().unwrap();
         assert!(cfg.required);
+        assert_eq!(cfg.profile(), AuthProfile::ManagedAudience);
         assert_eq!(cfg.namespace, "serving");
 
         // The explicit override wins over the downward-API value.
@@ -1110,6 +1309,29 @@ mod tests {
             std::env::set_var("LUMEN_AUTH_NAMESPACE", "override");
         }
         assert_eq!(AuthConfig::from_env().unwrap().namespace, "override");
+        clear_auth_env();
+    }
+
+    #[test]
+    fn auth_config_in_cluster_selects_only_the_kubernetes_default_profile() {
+        let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_auth_env();
+        unsafe {
+            std::env::set_var("LUMEN_AUTH", " in-cluster ");
+            std::env::set_var("POD_NAMESPACE", "lumen");
+        }
+        let config = AuthConfig::from_env().unwrap();
+        assert!(config.required);
+        assert_eq!(config.namespace, "lumen");
+        assert_eq!(config.profile(), AuthProfile::KubernetesDefault);
+        assert_eq!(
+            AuthConfig::required_in("lumen").profile(),
+            AuthProfile::ManagedAudience
+        );
+        assert_eq!(
+            AuthConfig::in_cluster("lumen").profile(),
+            AuthProfile::KubernetesDefault
+        );
         clear_auth_env();
     }
 
@@ -1134,6 +1356,25 @@ mod tests {
         }
         let message = format!("{:#}", result.unwrap_err());
         assert!(message.contains("LUMEN_AUTH=required"), "{message}");
+        assert!(message.contains("SubjectAccessReview"), "{message}");
+        assert!(message.contains("Refusing to start"), "{message}");
+    }
+
+    #[test]
+    fn auth_config_in_cluster_fails_closed_without_a_serving_namespace() {
+        let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_auth_env();
+        unsafe {
+            std::env::set_var("LUMEN_AUTH", "in-cluster");
+        }
+        let result = AuthConfig::from_env();
+        clear_auth_env();
+        if std::path::Path::new(SERVICE_ACCOUNT_NAMESPACE_FILE).exists() {
+            assert_eq!(result.unwrap().profile(), AuthProfile::KubernetesDefault);
+            return;
+        }
+        let message = format!("{:#}", result.unwrap_err());
+        assert!(message.contains("LUMEN_AUTH=in-cluster"), "{message}");
         assert!(message.contains("SubjectAccessReview"), "{message}");
         assert!(message.contains("Refusing to start"), "{message}");
     }

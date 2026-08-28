@@ -41,6 +41,7 @@ pub mod common;
 pub mod deployment;
 pub mod projected_token;
 pub mod rbac;
+pub mod stateful_instance;
 
 /// Per-service render identity, threaded through the helpers.
 pub struct RenderCtx<'a> {
@@ -451,32 +452,6 @@ pub fn cron_job(p: CronJob) -> Value {
     })
 }
 
-fn merge_labels(target: &mut Value, labels: &Value) {
-    if !target.is_object() {
-        *target = json!({});
-    }
-    let target = target.as_object_mut().expect("labels object");
-    for (key, value) in labels.as_object().expect("labels object") {
-        target.entry(key.clone()).or_insert_with(|| value.clone());
-    }
-}
-
-fn ensure_named_template_metadata(mut template: Value, name: &str, labels: &Value) -> Value {
-    if !template.is_object() {
-        template = json!({});
-    }
-    let template_obj = template.as_object_mut().expect("template object");
-    let metadata = template_obj.entry("metadata").or_insert_with(|| json!({}));
-    if !metadata.is_object() {
-        *metadata = json!({});
-    }
-    let metadata_obj = metadata.as_object_mut().expect("metadata object");
-    metadata_obj.insert("name".into(), json!(name));
-    let labels_value = metadata_obj.entry("labels").or_insert_with(|| json!({}));
-    merge_labels(labels_value, labels);
-    template
-}
-
 /// Parameters for [`service_statefulset`].
 pub struct ServiceStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,
@@ -567,162 +542,7 @@ impl ServiceStatefulSet<'_> {
 /// service supply its own probes, security hardening, storage path, extra
 /// volumes, and rollout details.
 pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
-    let ServiceStatefulSet {
-        cx,
-        name,
-        component,
-        image,
-        image_pull_policy,
-        command,
-        args,
-        ports,
-        headless_service,
-        shard_count,
-        replicas_per_shard,
-        voter_count,
-        headless_env_key,
-        service_account_name,
-        env: extra_env,
-        env_from,
-        resources,
-        pod_annotations,
-        pod_security_context,
-        container_security_context,
-        termination_grace_period_seconds,
-        readiness_probe,
-        liveness_probe,
-        startup_probe,
-        lifecycle,
-        volumes,
-        volume_mounts,
-        affinity,
-        node_selector,
-        tolerations,
-        topology_spread_constraints,
-        revision_history_limit,
-        update_strategy,
-        volume_claim,
-    } = p;
-
-    let mut env = vec![
-        json!({ "name": ENV_POD_NAME, "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
-        json!({ "name": ENV_POD_NAMESPACE, "valueFrom": { "fieldRef": { "fieldPath": "metadata.namespace" } } }),
-        json!({ "name": ENV_SHARD_COUNT, "value": shard_count.to_string() }),
-        json!({ "name": ENV_REPLICAS_PER_SHARD, "value": replicas_per_shard.to_string() }),
-        json!({ "name": ENV_VOTER_COUNT, "value": voter_count.to_string() }),
-        json!({ "name": headless_env_key, "value": headless_service }),
-    ];
-    env.extend(extra_env);
-
-    let mut container = json!({
-        "name": component,
-        "image": image,
-        "imagePullPolicy": image_pull_policy,
-        "command": command,
-        "ports": ports,
-        "env": env,
-        "resources": resources,
-    });
-    if !args.is_empty() {
-        container["args"] = json!(args);
-    }
-    if !env_from.is_empty() {
-        container["envFrom"] = json!(env_from);
-    }
-    if let Some(readiness_probe) = readiness_probe {
-        container["readinessProbe"] = readiness_probe;
-    }
-    if let Some(liveness_probe) = liveness_probe {
-        container["livenessProbe"] = liveness_probe;
-    }
-    if let Some(startup_probe) = startup_probe {
-        container["startupProbe"] = startup_probe;
-    }
-    if let Some(lifecycle) = lifecycle {
-        container["lifecycle"] = lifecycle;
-    }
-    if let Some(container_security_context) = container_security_context {
-        container["securityContext"] = container_security_context;
-    }
-
-    let mut mounts = volume_mounts;
-    let mut claim_templates = Vec::new();
-    if let Some(claim) = volume_claim {
-        let claim_name = claim.name;
-        mounts.push(json!({
-            "name": claim_name.clone(),
-            "mountPath": claim.mount_path,
-            "readOnly": claim.read_only,
-        }));
-        claim_templates.push(ensure_named_template_metadata(
-            claim.template,
-            &claim_name,
-            &cx.labels(component),
-        ));
-    }
-    if !mounts.is_empty() {
-        container["volumeMounts"] = json!(mounts);
-    }
-
-    let mut pod_metadata = json!({ "labels": cx.labels(component) });
-    if let Some(pod_annotations) = pod_annotations {
-        pod_metadata["annotations"] = pod_annotations;
-    }
-
-    let mut pod_spec = json!({
-        "containers": [container],
-    });
-    if let Some(service_account_name) = service_account_name {
-        pod_spec["serviceAccountName"] = json!(service_account_name);
-    }
-    if let Some(termination_grace_period_seconds) = termination_grace_period_seconds {
-        pod_spec["terminationGracePeriodSeconds"] = json!(termination_grace_period_seconds);
-    }
-    if let Some(pod_security_context) = pod_security_context {
-        pod_spec["securityContext"] = pod_security_context;
-    }
-    if !volumes.is_empty() {
-        pod_spec["volumes"] = json!(volumes);
-    }
-    if let Some(affinity) = affinity {
-        pod_spec["affinity"] = affinity;
-    }
-    if let Some(node_selector) = node_selector {
-        pod_spec["nodeSelector"] = node_selector;
-    }
-    if !tolerations.is_empty() {
-        pod_spec["tolerations"] = json!(tolerations);
-    }
-    if !topology_spread_constraints.is_empty() {
-        pod_spec["topologySpreadConstraints"] = json!(topology_spread_constraints);
-    }
-
-    let mut spec = json!({
-        "replicas": shard_count * replicas_per_shard,
-        "serviceName": headless_service,
-        "podManagementPolicy": "Parallel",
-        "selector": { "matchLabels": cx.selector(component) },
-        "template": {
-            "metadata": pod_metadata,
-            "spec": pod_spec,
-        },
-    });
-    if let Some(revision_history_limit) = revision_history_limit {
-        spec["revisionHistoryLimit"] = json!(revision_history_limit);
-    }
-    if let Some(update_strategy) = update_strategy {
-        spec["updateStrategy"] = update_strategy;
-    }
-    if !claim_templates.is_empty() {
-        spec["volumeClaimTemplates"] = json!(claim_templates);
-    }
-
-    json!({
-        "apiVersion": "apps/v1",
-        "kind": "StatefulSet",
-        "metadata": cx.meta(name, component),
-        "spec": spec,
-    })
+    crate::render::stateful_instance::render_compat_service_statefulset(p)
 }
 
 /// Parameters for [`sharded_statefulset`].

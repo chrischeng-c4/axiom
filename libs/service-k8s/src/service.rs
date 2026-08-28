@@ -1,17 +1,24 @@
 // CODEGEN-BEGIN
 //! The [`ManagedService`] trait a service implements + the shared CRD fragments.
 
+#[cfg(feature = "controller")]
 use std::collections::HashMap;
+#[cfg(feature = "controller")]
 use std::fmt::Debug;
+#[cfg(feature = "controller")]
 use std::future::Future;
 
+#[cfg(feature = "controller")]
 use kube::core::NamespaceResourceScope;
+#[cfg(feature = "controller")]
 use kube::{Client, CustomResourceExt, Resource};
 use schemars::JsonSchema;
+#[cfg(feature = "controller")]
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// A workload to poll for `.status.readyReplicas` during reconcile.
+#[cfg(feature = "controller")]
 pub struct ReadinessTarget {
     pub kind: &'static str,
     pub name: String,
@@ -19,10 +26,12 @@ pub struct ReadinessTarget {
 
 /// Observed readiness handed to [`ManagedService::status_patch`]
 /// (workload name → `readyReplicas`).
+#[cfg(feature = "controller")]
 pub struct ReadyFacts {
     pub ready: HashMap<String, i64>,
 }
 
+#[cfg(feature = "controller")]
 impl ReadyFacts {
     /// Ready replicas for `name`, or 0 if the workload was absent.
     pub fn get(&self, name: &str) -> i64 {
@@ -34,6 +43,7 @@ impl ReadyFacts {
 /// One service-specific planning result consumed by the shared controller.
 /// `context` is opaque to service-k8s and is handed back to the same service
 /// only after children have been applied and readiness has been observed.
+#[cfg(feature = "controller")]
 pub struct ReconcilePlan {
     pub children: Vec<serde_json::Value>,
     pub context: serde_json::Value,
@@ -42,6 +52,7 @@ pub struct ReconcilePlan {
 /// One service's contribution to the shared operator. Implemented on the CRD
 /// root type (e.g. lumen's `Lumen`). The [`crate::controller`] is generic over
 /// `S`, so the watch/apply/lease loop is written once.
+#[cfg(feature = "controller")]
 pub trait ManagedService:
     Resource<DynamicType = (), Scope = NamespaceResourceScope>
     + CustomResourceExt
@@ -144,13 +155,14 @@ pub trait ManagedService:
 /// Namespace is not a field: the controller prunes in the CR's own namespace,
 /// which is the only place [`ManagedService::render`] can place children.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(feature = "controller")]
 pub struct PruneTarget {
     pub api_version: &'static str,
     pub kind: &'static str,
     pub name: String,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "controller"))]
 mod tests {
     use super::*;
     use http::{Request, Response};

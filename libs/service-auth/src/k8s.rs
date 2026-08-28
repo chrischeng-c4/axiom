@@ -3,8 +3,9 @@
 //!
 //! A service that runs in Kubernetes and is called by workloads in Kubernetes
 //! does not need an identity system. Its callers already have one: a
-//! short-lived, audience-bound ServiceAccount token. This module turns that
-//! into a complete request-auth story with no local credential store —
+//! short-lived ServiceAccount token. A service explicitly selects either its
+//! own audience or Kubernetes' default audiences. This module turns that into
+//! a complete request-auth story with no local credential store —
 //! `TokenReview` says who the caller is, `SubjectAccessReview` says what they
 //! may do, and `RoleBinding`s in the cluster are the only place policy lives.
 //!
@@ -13,7 +14,7 @@
 //!            |
 //!            v
 //!   DelegatedAuthenticator::authenticate  -- TokenReview -->  apiserver
-//!            |                                 (audience checked, then
+//!            |                                 (selected profile checked, then
 //!            |                                  system:serviceaccount:<ns>:<name>
 //!            v                                  strictly parsed)
 //!   ServiceAccountPrincipal

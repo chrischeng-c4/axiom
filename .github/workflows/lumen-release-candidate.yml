@@ -442,7 +442,9 @@ jobs:
           cargo test -p lumen --features "operator delegated-auth"
           cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture
           cargo test -p lumen --locked --features release --test release_feature_set
+          cargo clean
           bash apps/lumen/scripts/standalone-container-smoke.sh bind
+          LUMEN_STANDALONE_DURABLE_IMAGE="${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}" bash apps/lumen/scripts/standalone-container-smoke.sh durable
       - name: Verify full run-scoped candidate supply chain
         env:
           GH_TOKEN: ${{ github.token }}
@@ -480,6 +482,8 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p service-k8s
+          cargo test -p storage-durable
+          cargo test -p service-backup --features http-client
           bash scripts/raft-implementor-build.sh
           cargo test -p raft-runtime
           python3 scripts/meta/test_readme_contract.py

@@ -21,12 +21,20 @@ pub mod runtime_emit;
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
 use crate::ir::operations;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput, PythonTarget};
+use crate::{FileBearerAuth, GenOptions, GeneratedFile, GeneratedOutput, PythonTarget};
 use anyhow::{Context, Result};
 
 /// Pure Python generation: spec JSON text → in-memory files. No filesystem access.
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
-    generate_impl(spec_json, opts, None)
+    generate_impl(spec_json, opts, None, None)
+}
+
+pub fn generate_with_file_bearer_auth(
+    spec_json: &str,
+    opts: &GenOptions,
+    auth: &FileBearerAuth,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, None, Some(auth))
 }
 
 /// Profile-aware Python generation used by the public target-profile API.
@@ -35,13 +43,23 @@ pub fn generate_for_target(
     opts: &GenOptions,
     target: PythonTarget,
 ) -> Result<GeneratedOutput> {
-    generate_impl(spec_json, opts, Some(target))
+    generate_impl(spec_json, opts, Some(target), None)
+}
+
+pub fn generate_for_target_with_file_bearer_auth(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: PythonTarget,
+    auth: &FileBearerAuth,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, Some(target), Some(auth))
 }
 
 fn generate_impl(
     spec_json: &str,
     opts: &GenOptions,
     target: Option<PythonTarget>,
+    auth: Option<&FileBearerAuth>,
 ) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
@@ -61,7 +79,7 @@ fn generate_impl(
         });
         files.push(GeneratedFile {
             rel_path: "client.py".to_string(),
-            contents: client_emit::emit(&ops, &tm, target),
+            contents: client_emit::emit(&ops, &tm, target, auth),
         });
     }
     files.push(GeneratedFile {

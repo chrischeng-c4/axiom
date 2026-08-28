@@ -30,8 +30,10 @@ use serde_json::json;
 
 use lumen::api::{router, AppState};
 use lumen::auth::AuthConfig;
+use lumen::coordinator::WriteCoordinator;
 use lumen::routing::VirtualBucketShardMap;
 use lumen::storage::Engine;
+use lumen::wal::MemWal;
 
 const VIRTUAL_BUCKET_COUNT: u32 = 4;
 
@@ -49,6 +51,15 @@ fn auth_server() -> TestServer {
     let cfg = AuthConfig::required_in("serving");
     let app = router(AppState::new(engine, Arc::new(cfg)));
     TestServer::new(app).expect("test server")
+}
+
+fn restart_required_server() -> TestServer {
+    let engine = Arc::new(Engine::new());
+    let coordinator = WriteCoordinator::start(Arc::new(MemWal::new()), engine.clone());
+    let state =
+        AppState::with_components(engine, Arc::new(AuthConfig::open()), coordinator.clone());
+    coordinator.require_restart();
+    TestServer::new(router(state)).expect("test server")
 }
 
 /// Bucket for `external_id` under the 2-shard balanced map used across this
@@ -625,6 +636,59 @@ async fn admin_checkpoint_without_durable_store_is_vacuously_satisfied() {
     resp.assert_status_ok();
     let body: serde_json::Value = resp.json();
     assert_eq!(body["persisted"], json!(false));
+}
+
+#[tokio::test]
+async fn restart_required_rejects_direct_engine_mutations_and_checkpoint() {
+    let s = restart_required_server();
+    let requests = [
+        ("/admin/restore", json!({ "version": 1, "collections": {} })),
+        (
+            "/admin/reshard:apply",
+            json!({
+                "from_map_version": 0,
+                "to_map_version": 1,
+                "bucket": 0,
+                "from_shard": 0,
+                "to_shard": 1,
+                "external_ids": {},
+                "snapshot": { "version": 1, "collections": {} }
+            }),
+        ),
+        (
+            "/admin/reshard:prune",
+            json!({
+                "to_map_version": 1,
+                "bucket": 0,
+                "virtual_bucket_count": 4,
+                "collection_id": "u",
+                "chunk_index": 0,
+                "total_chunks": 1,
+                "keep_ids": []
+            }),
+        ),
+        (
+            "/admin/reshard:evict",
+            json!({
+                "shard": 0,
+                "map_version": 1,
+                "assignments": [0, 1, 0, 1],
+                "physical_shard_count": 2
+            }),
+        ),
+    ];
+
+    for (path, body) in requests {
+        let response = s.post(path).json(&body).await;
+        response.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        let error: serde_json::Value = response.json();
+        assert_eq!(error["error"], "restart_required", "path {path}: {error}");
+    }
+
+    let response = s.post("/admin/checkpoint").await;
+    response.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let error: serde_json::Value = response.json();
+    assert_eq!(error["error"], "restart_required", "{error}");
 }
 
 // ---- #1396 R2/AC2: POST /admin/reshard:fence write pause -----------------

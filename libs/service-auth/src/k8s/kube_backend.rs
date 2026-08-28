@@ -109,15 +109,10 @@ impl ReviewBackend for KubeReviewBackend {
         token: &str,
         audiences: &[String],
     ) -> Result<TokenReviewOutcome, ReviewError> {
-        if audiences.is_empty() {
-            return Err(ReviewError::NotDelegated(
-                "refusing a TokenReview with no requested audience".into(),
-            ));
-        }
         let review = TokenReview {
             spec: TokenReviewSpec {
                 token: Some(token.to_string()),
-                audiences: Some(audiences.to_vec()),
+                audiences: (!audiences.is_empty()).then(|| audiences.to_vec()),
             },
             ..Default::default()
         };
@@ -190,6 +185,84 @@ impl ReviewBackend for KubeReviewBackend {
             reason: status.reason,
             evaluation_error: status.evaluation_error,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use http_body_util::BodyExt;
+    use serde_json::{json, Value};
+    use tower::service_fn;
+
+    use super::*;
+
+    fn token_review_response() -> Value {
+        json!({
+            "apiVersion": "authentication.k8s.io/v1",
+            "kind": "TokenReview",
+            "metadata": {},
+            "spec": {},
+            "status": {
+                "authenticated": true,
+                "user": {
+                    "username": "system:serviceaccount:apps:api",
+                    "uid": "uid-1",
+                    "groups": ["system:serviceaccounts"],
+                },
+                "audiences": [],
+            },
+        })
+    }
+
+    fn recording_backend() -> (KubeReviewBackend, Arc<Mutex<Vec<Value>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let requests = Arc::clone(&seen);
+        let service = service_fn(move |request: axum::http::Request<kube::client::Body>| {
+            let requests = Arc::clone(&requests);
+            async move {
+                let body = request.into_body().collect().await.unwrap().to_bytes();
+                requests
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_slice(&body).unwrap());
+                Ok::<_, std::convert::Infallible>(
+                    axum::http::Response::builder()
+                        .status(201)
+                        .header("content-type", "application/json")
+                        .body(kube::client::Body::from(
+                            serde_json::to_vec(&token_review_response()).unwrap(),
+                        ))
+                        .unwrap(),
+                )
+            }
+        });
+        (
+            KubeReviewBackend::from_client(Client::new(service, "default")),
+            seen,
+        )
+    }
+
+    #[tokio::test]
+    async fn token_review_omits_only_the_explicit_kubernetes_default_audience() {
+        let (backend, seen) = recording_backend();
+        backend.review_token("default-token", &[]).await.unwrap();
+        backend
+            .review_token("managed-token", &["lumen.axiom.dev".into()])
+            .await
+            .unwrap();
+
+        let requests = seen.lock().unwrap();
+        assert!(
+            requests[0]["spec"].get("audiences").is_none(),
+            "the Kubernetes-default profile must omit spec.audiences"
+        );
+        assert_eq!(
+            requests[1]["spec"]["audiences"],
+            json!(["lumen.axiom.dev"]),
+            "Managed auth must keep its exact explicit audience"
+        );
     }
 }
 // HANDWRITE-END

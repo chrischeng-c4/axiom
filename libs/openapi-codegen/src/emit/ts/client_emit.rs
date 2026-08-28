@@ -5,19 +5,139 @@
 use crate::emit::ts::plan::OperationPlan;
 use crate::emit::ts::types_emit::HEADER;
 use crate::ir::names::{self, is_ident};
-use crate::{GenOptions, HttpClient};
+use crate::{FileBearerAuth, GenOptions, HttpClient};
 use std::collections::BTreeSet;
 
 /// Static request runtime shared by every generated client. The body depends
 /// only on the chosen [`HttpClient`] backend — the `ClientConfig`/`request`
 /// contract is the same, so `client.ts` and `hooks.ts` never change.
 ///
-pub fn emit_runtime(http_client: HttpClient) -> String {
+pub fn emit_runtime(http_client: HttpClient, auth: Option<&FileBearerAuth>) -> String {
     let body = match http_client {
         HttpClient::Fetch => FETCH_RUNTIME,
         HttpClient::Axios => AXIOS_RUNTIME,
     };
+    let body = match auth {
+        Some(auth) => emit_file_bearer_runtime(body, auth, http_client),
+        None => body.to_string(),
+    };
     format!("{HEADER}{body}")
+}
+
+fn emit_file_bearer_runtime(body: &str, auth: &FileBearerAuth, http_client: HttpClient) -> String {
+    let token_path = serde_json::to_string(
+        auth.token_path()
+            .to_str()
+            .expect("FileBearerAuth validates UTF-8 paths"),
+    )
+    .expect("serialize generated TypeScript token path");
+    let suffix = serde_json::to_string(auth.hostname_suffix())
+        .expect("serialize generated TypeScript hostname suffix");
+    let schemes = auth
+        .schemes()
+        .map(|scheme| {
+            serde_json::to_string(scheme.as_str()).expect("serialize generated TypeScript scheme")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let helper = format!(
+        r##"const FILE_BEARER_TOKEN_PATH = {token_path};
+const FILE_BEARER_HOSTNAME_SUFFIX = {suffix};
+const FILE_BEARER_SCHEMES = new Set([{schemes}]);
+
+function hasAuthorization(headers: Record<string, string>): boolean {{
+  return Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
+}}
+
+function isDnsHostname(host: string): boolean {{
+  if (!host || host.length > 253 || host.endsWith(".")) return false;
+  const labels = host.split(".");
+  if (labels.length === 4 && labels.every((label) => /^\d{{1,3}}$/.test(label) && Number(label) <= 255)) return false;
+  return labels.every((label) =>
+    label.length >= 1 && label.length <= 63 &&
+    /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+  );
+}}
+
+function fileBearerTargetIsEligible(baseUrl: string): boolean {{
+  let url: URL;
+  try {{
+    url = new URL(baseUrl);
+  }} catch {{
+    return false;
+  }}
+  if (!FILE_BEARER_SCHEMES.has(url.protocol.slice(0, -1))) return false;
+  if (url.username || url.password || baseUrl.includes("?") || baseUrl.includes("#")) return false;
+  if (url.pathname !== "" && url.pathname !== "/") return false;
+  const host = url.hostname;
+  if (!isDnsHostname(host) || !host.endsWith(FILE_BEARER_HOSTNAME_SUFFIX)) return false;
+  const prefix = host.slice(0, -FILE_BEARER_HOSTNAME_SUFFIX.length);
+  return prefix.length > 0 && !prefix.endsWith(".");
+}}
+
+async function attachFileBearer(
+  baseUrl: string,
+  headers: Record<string, string>,
+): Promise<Record<string, string>> {{
+  if (hasAuthorization(headers) || !fileBearerTargetIsEligible(baseUrl)) return headers;
+  const nodeProcess = (globalThis as any).process;
+  if (!nodeProcess?.versions?.node) {{
+    throw new Error("request authentication token is unavailable in this runtime");
+  }}
+  const fsModule = "node:fs/promises";
+  let raw: string;
+  try {{
+    const {{ readFile }} = (await import(fsModule)) as any;
+    raw = await readFile(FILE_BEARER_TOKEN_PATH, "utf8");
+  }} catch {{
+    throw new Error("request authentication token is unavailable or invalid");
+  }}
+  const token = raw.trim();
+  const value = `Bearer ${{token}}`;
+  if (!token || /[^\x21-\x7e]/.test(token)) {{
+    throw new Error("request authentication token is unavailable or invalid");
+  }}
+  return {{ ...headers, Authorization: value }};
+}}
+
+"##
+    );
+    let anchor = "/**\n * A private trust anchor is only meaningful";
+    let body = body
+        .replacen(anchor, &format!("{helper}{anchor}"), 1)
+        // Keep the opt-in runtime executable by Node's built-in type stripper.
+        // Parameter properties need a TypeScript transform, while this exact
+        // equivalent only needs type removal.
+        .replacen(
+            "  constructor(private readonly maxInFlight: number) {}",
+            "  private readonly maxInFlight: number;\n  constructor(maxInFlight: number) { this.maxInFlight = maxInFlight; }",
+            1,
+        );
+
+    match http_client {
+        HttpClient::Fetch => body
+            .replacen(
+                "  const release = await acquireAdmission(config, url);\n",
+                "  const headers = await attachFileBearer(config.baseUrl, { \"Content-Type\": \"application/json\", ...config.headers, ...args.headers });\n  const release = await acquireAdmission(config, url);\n",
+                1,
+            )
+            .replacen(
+                "      headers: { \"Content-Type\": \"application/json\", ...config.headers, ...args.headers },",
+                "      headers,",
+                1,
+            ),
+        HttpClient::Axios => body
+            .replacen(
+                "  const release = await acquireAdmission(config, url);\n",
+                "  const headers = await attachFileBearer(config.baseUrl, { \"Content-Type\": \"application/json\", ...config.headers, ...args.headers });\n  const release = await acquireAdmission(config, url);\n",
+                1,
+            )
+            .replacen(
+                "      headers: { \"Content-Type\": \"application/json\", ...config.headers, ...args.headers },",
+                "      headers,",
+                1,
+            ),
+    }
 }
 
 const FETCH_RUNTIME: &str = r##"export interface ClientConfig {
@@ -598,7 +718,7 @@ mod tests {
     use super::*;
     use crate::emit::ts::plan;
     use crate::ir::openapi::Spec;
-    use crate::{build_type_map, GenOptions};
+    use crate::{build_type_map, FileBearerScheme, GenOptions};
     use std::path::PathBuf;
 
     fn opts() -> GenOptions {
@@ -702,15 +822,18 @@ mod tests {
 
     #[test]
     fn client_config_declares_use_post_fallback_flag() {
-        let fetch = emit_runtime(HttpClient::Fetch);
+        let fetch = emit_runtime(HttpClient::Fetch, None);
         assert!(fetch.contains("usePostFallback?: boolean;"));
-        let axios = emit_runtime(HttpClient::Axios);
+        let axios = emit_runtime(HttpClient::Axios, None);
         assert!(axios.contains("usePostFallback?: boolean;"));
     }
 
     #[test]
     fn both_runtimes_take_a_private_ca_and_verify_the_name_they_address() {
-        for runtime in [emit_runtime(HttpClient::Fetch), emit_runtime(HttpClient::Axios)] {
+        for runtime in [
+            emit_runtime(HttpClient::Fetch, None),
+            emit_runtime(HttpClient::Axios, None),
+        ] {
             assert!(runtime.contains("export interface PrivateTrust {"));
             assert!(runtime.contains("trust?: PrivateTrust;"));
             assert!(runtime.contains("if (addressed !== trust.serverName) {"));
@@ -718,15 +841,18 @@ mod tests {
             // believes they pinned it. Both runtimes refuse that combination.
             assert!(runtime.contains("assertTrustIsHonoured(config,"));
         }
-        assert!(emit_runtime(HttpClient::Fetch)
+        assert!(emit_runtime(HttpClient::Fetch, None)
             .contains("export async function privateCaFetch(trust: PrivateTrust)"));
-        assert!(emit_runtime(HttpClient::Axios)
+        assert!(emit_runtime(HttpClient::Axios, None)
             .contains("export async function privateCaAxios(trust: PrivateTrust)"));
     }
 
     #[test]
     fn no_generated_runtime_offers_to_skip_verification() {
-        for runtime in [emit_runtime(HttpClient::Fetch), emit_runtime(HttpClient::Axios)] {
+        for runtime in [
+            emit_runtime(HttpClient::Fetch, None),
+            emit_runtime(HttpClient::Axios, None),
+        ] {
             for weakening in [
                 "rejectUnauthorized: false",
                 "NODE_TLS_REJECT_UNAUTHORIZED",
@@ -742,8 +868,31 @@ mod tests {
     }
 
     #[test]
+    fn both_node_runtimes_resolve_file_bearer_before_admission() {
+        let auth = FileBearerAuth::new(
+            "/private/tmp/token",
+            ".example.internal",
+            [FileBearerScheme::Http, FileBearerScheme::Https],
+        )
+        .unwrap();
+        for runtime in [
+            emit_runtime(HttpClient::Fetch, Some(&auth)),
+            emit_runtime(HttpClient::Axios, Some(&auth)),
+        ] {
+            assert!(runtime.contains("node:fs/promises"));
+            assert!(runtime.contains("hasAuthorization(headers)"));
+            assert!(runtime.contains("const headers = await attachFileBearer"));
+            assert!(runtime.contains("      headers,"));
+            assert!(
+                runtime.find("await attachFileBearer").unwrap()
+                    < runtime.find("await acquireAdmission").unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn runtime_fetch_and_axios() {
-        let fetch = emit_runtime(HttpClient::Fetch);
+        let fetch = emit_runtime(HttpClient::Fetch, None);
         assert!(fetch.contains("export interface TransportPolicy"));
         assert!(fetch.contains("const DEFAULT_MAX_CONNECTIONS = 128;"));
         assert!(fetch.contains("const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;"));
@@ -753,7 +902,7 @@ mod tests {
         assert!(fetch.contains("const release = await acquireAdmission(config, url);"));
         assert!(fetch.contains("args.expectBody === false || response.status === 204"));
         assert!(!fetch.contains("axios"));
-        let axios = emit_runtime(HttpClient::Axios);
+        let axios = emit_runtime(HttpClient::Axios, None);
         assert!(axios.contains("export interface TransportPolicy"));
         assert!(axios.contains("const DEFAULT_MAX_CONNECTIONS = 128;"));
         assert!(axios.contains("const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;"));

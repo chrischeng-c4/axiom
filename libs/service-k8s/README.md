@@ -95,6 +95,10 @@ contribution.
 | Stateful planning and PVC growth | `stateful-planning-pvc-growth` | Plan shard or replica changes and grow eligible PVC objects without hiding unsupported shrink. | `libs/service-k8s`, `external:kubernetes` |
 | Certificate lifecycle | `certificate-lifecycle` | Reconcile scoped certificate material, rotation, projection, and status through an injected issuer. | `libs/service-k8s`, `external:kubernetes`, `external:certificate-authority` |
 
+The shared stateful-instance render adapter preserves service-owned identity,
+image, storage, and lifecycle. The library does not adopt a runtime or choose
+the service's persistence policy.
+
 ### Managed reconciliation
 
 - ID: `managed-reconciliation`

@@ -130,6 +130,25 @@ impl TokenRequestTarget {
         })
     }
 
+    /// A target that asks kube-apiserver to use its configured default
+    /// audiences. The empty `spec.audiences` array is meaningful here and is
+    /// distinct from an explicit audience, which [`Self::new`] still requires.
+    pub fn kubernetes_default(
+        namespace: impl Into<String>,
+        service_account: impl Into<String>,
+    ) -> Result<Self, TokenRequestError> {
+        let namespace = namespace.into();
+        let service_account = service_account.into();
+        check_object_name("namespace", &namespace)?;
+        check_object_name("client service account", &service_account)?;
+        Ok(Self {
+            namespace,
+            service_account,
+            audience: String::new(),
+            expiration_seconds: DEFAULT_EXPIRATION_SECONDS,
+        })
+    }
+
     /// Ask for a different lifetime. The apiserver may still issue a shorter
     /// one, and [`MintedToken`] carries what it actually issued.
     pub fn with_expiration_seconds(mut self, seconds: i64) -> Result<Self, TokenRequestError> {
@@ -186,11 +205,16 @@ impl TokenRequestTarget {
     /// duration a test asserts here are the audience and duration that go on
     /// the wire.
     pub fn request_body(&self) -> serde_json::Value {
+        let audiences = if self.audience.is_empty() {
+            json!([])
+        } else {
+            json!([self.audience])
+        };
         json!({
             "apiVersion": "authentication.k8s.io/v1",
             "kind": "TokenRequest",
             "spec": {
-                "audiences": [self.audience],
+                "audiences": audiences,
                 "expirationSeconds": self.expiration_seconds,
             }
         })
@@ -715,6 +739,67 @@ mod tests {
             target.subresource_path(),
             "/api/v1/namespaces/ops/serviceaccounts/app-client/token"
         );
+    }
+
+    #[test]
+    fn the_kubernetes_default_request_uses_empty_audiences_and_default_lifetime() {
+        let target = TokenRequestTarget::kubernetes_default("ops", "app-client")
+            .expect("valid Kubernetes target");
+        assert_eq!(target.expiration_seconds(), DEFAULT_EXPIRATION_SECONDS);
+        assert_eq!(
+            target.subresource_path(),
+            "/api/v1/namespaces/ops/serviceaccounts/app-client/token"
+        );
+        assert_eq!(
+            target.request_body(),
+            json!({
+                "apiVersion": "authentication.k8s.io/v1",
+                "kind": "TokenRequest",
+                "spec": {
+                    "audiences": [],
+                    "expirationSeconds": 600,
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn the_kubernetes_default_constructor_rejects_invalid_names() {
+        for (namespace, account) in [
+            ("ops", "../../secrets/registry"),
+            ("ops", "app-client/../lumen-operator"),
+            ("ops/../kube-system", "app-client"),
+            ("ops", ""),
+            ("", "app-client"),
+            ("ops", "App-Client"),
+            ("ops", "-app-client"),
+        ] {
+            let err = TokenRequestTarget::kubernetes_default(namespace, account)
+                .expect_err("invalid name must be rejected");
+            assert!(
+                matches!(err, TokenRequestError::InvalidTarget { .. }),
+                "{namespace}/{account}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_managed_and_custom_audiences_keep_their_wire_body() {
+        for audience in ["managed.example.com", "custom.example.com"] {
+            let target = TokenRequestTarget::new("ops", "app-client", audience)
+                .expect("valid explicit audience");
+            assert_eq!(
+                target.request_body(),
+                json!({
+                    "apiVersion": "authentication.k8s.io/v1",
+                    "kind": "TokenRequest",
+                    "spec": {
+                        "audiences": [audience],
+                        "expirationSeconds": 600,
+                    }
+                })
+            );
+        }
     }
 
     /// The path string above is only worth asserting if it is the path `kube`

@@ -86,8 +86,8 @@ const ROLE_SET_PACKED: u8 = 7;
 /// the Keyword/Set inverted indexes the postings ARE stored on disk.
 const ROLE_TEXT_POSTINGS: u8 = 8;
 /// Text per-doc length column (`u32[n_docs]`). Phase 2e-B. FIXED width. Doc
-/// `i`'s BM25 length is `doclen[i]` (0 == no value for this field). Read
-/// zero-copy; reproduces `TextIndex::doc_len(id)` (which is `lens[id]`, else 0).
+/// `i`'s BM25 length is `doclen[i]` (zero may be an explicit empty value).
+/// Read zero-copy; the separate present bitset distinguishes empty from absent.
 const ROLE_TEXT_DOCLEN: u8 = 9;
 /// Collection-level external-id DICTIONARY-by-position column (var-width,
 /// LZ4-blocked). Phase 2f-1. UNLIKE [`ROLE_DICT`] (which is the SORTED distinct
@@ -1284,8 +1284,8 @@ fn append_var_blob_column(
 ///   (see [`encode_posting_block`]). Term frequency is NOT rebuildable, so the
 ///   postings are stored;
 /// - a FIXED `u32[n_docs]` DocLen column ([`ROLE_TEXT_DOCLEN`]) = `lens` (0 for
-///   a doc with no value), read zero-copy to reproduce `TextIndex::doc_len`;
-/// - a present bitset (doc present == `lens[i] > 0`);
+///   a doc's length, including zero for an explicit empty value, read zero-copy;
+/// - a present bitset (doc present == the explicit `present[i]` value);
 /// - the BM25 corpus scalars `doc_count` / `total_doc_len` in the header, so
 ///   the reader derives the identical `n` / `avgdl`.
 ///
@@ -1298,9 +1298,17 @@ pub fn write_text_segment(
     applied_seq: u64,
     tokens: &std::collections::BTreeMap<String, crate::storage::Postings>,
     lens: &[u32],
+    present: &[bool],
     doc_count: u64,
     total_doc_len: u64,
 ) -> Result<()> {
+    if present.len() != lens.len() {
+        bail!(
+            "text segment present/doclen length mismatch: {} != {}",
+            present.len(),
+            lens.len()
+        );
+    }
     let n_docs: u32 = lens
         .len()
         .try_into()
@@ -1318,16 +1326,14 @@ pub fn write_text_segment(
     let mut buf = header_block(applied_seq, n_docs, doc_count, total_doc_len);
 
     // --- FIXED REGION ---
-    // DocLen forward column: u32[n_docs] = lens (0 for an absent doc).
+    // DocLen forward column: u32[n_docs] = lens (zero may be explicit empty).
     let doclen_start = page_align(buf.len());
     buf.resize(doclen_start, 0);
     let (doclen_off, doclen_len) = append_u32_column(&mut buf, lens)?;
 
-    // Present bitset: bit i set == doc i has a value (len > 0). The text read
-    // paths do not gate on this (doc_len is read directly), but it keeps the
-    // layout uniform with every other segment role.
-    let present: Vec<bool> = lens.iter().map(|&l| l > 0).collect();
-    let (present_off, present_len, n_words) = append_present_bitset(&mut buf, &present)?;
+    // Present bitset: bit i set == doc i has an explicit value. This is
+    // independent from DocLen so an explicit empty value remains covered.
+    let (present_off, present_len, n_words) = append_present_bitset(&mut buf, present)?;
 
     // --- VAR REGION (after the page-padded fixed region) ---
     let region_end = page_align(buf.len());
@@ -2368,6 +2374,12 @@ impl SegmentReader {
             return 0;
         };
         doclen.get(id as usize).copied().unwrap_or(0)
+    }
+
+    /// Whether text doc `id` has an explicit value according to the segment's
+    /// presence bitset. Torn or out-of-range columns return false.
+    pub fn text_is_present(&self, id: u32) -> bool {
+        self.is_present(id)
     }
 
     /// Borrow the whole text doc-length column. Hot BM25 paths use this to avoid
@@ -3438,11 +3450,21 @@ mod tests {
             Postings::from_sorted(vec![1, 3], vec![5, 1]),
         );
         tokens.insert("cherry".into(), Postings::from_sorted(vec![0], vec![1]));
-        let lens: Vec<u32> = vec![4, 5, 1, 3]; // doc lengths; doc with len 0 = absent
+        let lens: Vec<u32> = vec![4, 5, 1, 3]; // doc lengths
+        let present = vec![true; lens.len()];
         let doc_count: u64 = 4;
         let total_doc_len: u64 = 4 + 5 + 1 + 3;
 
-        write_text_segment(&path, 42, &tokens, &lens, doc_count, total_doc_len).unwrap();
+        write_text_segment(
+            &path,
+            42,
+            &tokens,
+            &lens,
+            &present,
+            doc_count,
+            total_doc_len,
+        )
+        .unwrap();
         let r = SegmentReader::open(&path).unwrap();
 
         assert_eq!(r.applied_seq(), 42);
@@ -3468,10 +3490,42 @@ mod tests {
         // DocLen column read zero-copy.
         for (id, &l) in lens.iter().enumerate() {
             assert_eq!(r.text_doc_len(id as u32), l, "doclen id {id}");
+            assert!(r.text_is_present(id as u32), "present id {id}");
         }
         assert_eq!(r.text_doc_len(99), 0); // out of range -> 0
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn text_segment_presence_is_independent_from_doclen() {
+        use crate::storage::Postings;
+        let tokens: std::collections::BTreeMap<String, Postings> =
+            std::collections::BTreeMap::new();
+        let lens = vec![0, 0, 1];
+        let present = vec![false, true, true];
+        let path = tmp_path("text-presence");
+        write_text_segment(&path, 1, &tokens, &lens, &present, 2, 1).unwrap();
+        let reader = SegmentReader::open(&path).unwrap();
+        assert!(!reader.text_is_present(0));
+        assert!(reader.text_is_present(1));
+        assert!(reader.text_is_present(2));
+        assert!(!reader.text_is_present(3));
+        std::fs::remove_file(&path).ok();
+
+        let legacy_present: Vec<bool> = lens.iter().map(|&len| len > 0).collect();
+        let legacy_path = tmp_path("text-presence-legacy");
+        write_text_segment(&legacy_path, 1, &tokens, &lens, &legacy_present, 1, 1).unwrap();
+        let legacy = SegmentReader::open(&legacy_path).unwrap();
+        assert!(!legacy.text_is_present(1));
+        assert!(legacy.text_is_present(2));
+        std::fs::remove_file(&legacy_path).ok();
+
+        let mismatch_path = tmp_path("text-presence-mismatch");
+        assert!(
+            write_text_segment(&mismatch_path, 1, &tokens, &lens, &[true, false], 2, 1).is_err()
+        );
+        assert!(!mismatch_path.exists());
     }
 
     // -----------------------------------------------------------------------
@@ -3560,11 +3614,13 @@ mod tests {
             );
         }
         let lens: Vec<u32> = (0..n_docs).map(|d| (d % 9) + 1).collect();
+        let present = vec![true; n_docs as usize];
         write_text_segment(
             &path,
             1,
             &tokens,
             &lens,
+            &present,
             n_docs as u64,
             lens.iter().map(|&l| l as u64).sum(),
         )

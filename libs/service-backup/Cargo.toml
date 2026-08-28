@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-http-client = []
+http-client = ["dep:tokio"]
 s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:tokio"]
 
 [dependencies]

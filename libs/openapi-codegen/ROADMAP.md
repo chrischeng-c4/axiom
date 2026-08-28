@@ -87,6 +87,12 @@ Stable IDs here let current limits point to one destination.
   modes, token-file semantics, and server authentication decisions.
 - Tracking: [#3799](https://github.com/chrischeng-c4/axiom/issues/3799) (`lumen@0.4.36`).
 
+The generic file-bearer provider is now available as a generation-time opt-in.
+Legacy generation remains default-off and does not read credentials. This is
+only the bounded file-provider form. The general injected provider and its
+cancellation contract remain in this outcome. The strict execution gate is a
+separate outcome. Package publication remains a non-goal.
+
 ### Operation-aware retry hooks
 
 - ID: `operation-aware-retry-hooks`
