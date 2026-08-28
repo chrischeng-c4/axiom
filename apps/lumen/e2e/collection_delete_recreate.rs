@@ -1,4 +1,3 @@
-// CODEGEN-BEGIN
 //! Black-box oracle for issue #3953.
 //!
 //! `Engine::create_collection` treats an EXISTING entry in `state.collections`

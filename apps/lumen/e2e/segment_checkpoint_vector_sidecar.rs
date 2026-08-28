@@ -1,4 +1,3 @@
-// CODEGEN-BEGIN
 //! Black-box oracle for issue #3951.
 //!
 //! `Engine::flush_to_segments` seals every field of a checkpointed collection,

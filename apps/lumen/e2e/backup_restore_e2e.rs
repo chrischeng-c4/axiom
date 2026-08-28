@@ -73,7 +73,13 @@ async fn snapshot_then_restore_into_fresh_engine() {
     let dump = src.get("/admin/backup").await;
     dump.assert_status_ok();
     let snap: Value = dump.json();
-    assert_eq!(snap["version"], 1);
+    // The snapshot format this build WRITES. It became 2 when the document
+    // stopped shipping the `terms`/`elements` maps that the reader rebuilds
+    // from `forward`: a 1-era reader must REFUSE such a document rather than
+    // restore a `set` field empty from a map that is no longer there, so the
+    // number is load-bearing and pinned here on purpose. Readers still accept
+    // `1..=SNAPSHOT_VERSION`; `restore_rejects_wrong_version` covers that side.
+    assert_eq!(snap["version"], 2);
     assert!(snap["collections"]["u"].is_object());
 
     // Boot a fresh engine and restore.
@@ -169,7 +175,13 @@ async fn http_snapshot_helpers_export_then_import() {
         .await
         .expect("export snapshot bytes");
     let snap: Value = serde_json::from_slice(&payload).expect("snapshot json");
-    assert_eq!(snap["version"], 1);
+    // The snapshot format this build WRITES. It became 2 when the document
+    // stopped shipping the `terms`/`elements` maps that the reader rebuilds
+    // from `forward`: a 1-era reader must REFUSE such a document rather than
+    // restore a `set` field empty from a map that is no longer there, so the
+    // number is load-bearing and pinned here on purpose. Readers still accept
+    // `1..=SNAPSHOT_VERSION`; `restore_rejects_wrong_version` covers that side.
+    assert_eq!(snap["version"], 2);
 
     let file = tempfile::NamedTempFile::new().expect("snapshot file");
     std::fs::write(file.path(), &payload).expect("write snapshot");

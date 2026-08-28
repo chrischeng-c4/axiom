@@ -106,3 +106,18 @@ path = "e2e/stateful_adapter_equivalence.rs"
 name = "prune_unserved_api_is_scoped"
 path = "e2e/prune_unserved_api_is_scoped.rs"
 required-features = ["controller"]
+
+[[test]]
+name = "status_conditions_survive_the_recovery_pass"
+path = "e2e/status_conditions_survive_the_recovery_pass.rs"
+required-features = ["controller"]
+
+[[test]]
+name = "reconcile_once_does_not_assume_leadership"
+path = "e2e/reconcile_once_does_not_assume_leadership.rs"
+required-features = ["controller"]
+
+[[test]]
+name = "certificate_rbac_least_privilege"
+path = "e2e/certificate_rbac_least_privilege.rs"
+required-features = ["certificate"]

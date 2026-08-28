@@ -1,4 +1,3 @@
-// CODEGEN-BEGIN
 //! Black-box oracle for issue #3952.
 //!
 //! `Engine::index_collection` enforces external-version last-write-wins

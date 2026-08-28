@@ -378,7 +378,9 @@ async fn s7_admin_backup_local_writes_snapshot_to_disk() {
     );
     let bytes = std::fs::read(&written).unwrap();
     let parsed: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(parsed["version"], 1);
+    // The snapshot format this build writes; see the same pin in
+    // `backup_restore_e2e.rs` for why the number matters.
+    assert_eq!(parsed["version"], 2);
     assert!(parsed["collections"]["u"].is_object());
     let _ = std::fs::remove_dir_all(&dir);
 }

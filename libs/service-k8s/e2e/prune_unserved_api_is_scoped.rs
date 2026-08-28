@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use service_k8s::controller::reconcile_once;
+use service_k8s::Election;
 use service_k8s::service::{ManagedService, PruneTarget, ReadinessTarget, ReadyFacts};
 
 const NAMESPACE: &str = "acme";
@@ -137,6 +138,17 @@ fn subject() -> Arc<PruningService> {
     Arc::new(obj)
 }
 
+/// An election that holds the lease. These cases measure what a pass *does*
+/// against the apiserver, so they have to be a leader's passes; leadership is
+/// `reconcile_once`'s parameter, stated here rather than assumed by it.
+fn leader() -> Arc<Election> {
+    let election = Election::new("e2e".to_string());
+    election
+        .is_leader
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    election
+}
+
 /// The CR body the status write is answered with, so `patch_status` has
 /// something of the right type to deserialize.
 fn cr_response() -> Value {
@@ -227,7 +239,7 @@ async fn an_unserved_prune_api_still_reaches_the_status_write() {
     // this case is about is the writes the pass issued, and asserting the
     // result first would report "the reconcile returned an error" for a
     // regression whose actual symptom is a CR left with no status at all.
-    let action = reconcile_once(client, subject()).await;
+    let action = reconcile_once(client, subject(), leader()).await;
 
     let seen = methods_and_paths(&log);
 
@@ -298,7 +310,7 @@ async fn a_served_prune_api_writes_no_block() {
         _ => (500, json!({ "kind": "Status", "status": "Failure", "code": 500 })),
     });
 
-    reconcile_once(client, subject())
+    reconcile_once(client, subject(), leader())
         .await
         .expect("an absent object at a served API is the converged steady state");
 

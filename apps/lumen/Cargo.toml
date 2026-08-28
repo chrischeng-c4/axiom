@@ -356,6 +356,14 @@ name = "collection_delete_recreate"
 path = "e2e/collection_delete_recreate.rs"
 
 [[test]]
+name = "snapshot_ships_only_the_forward_column"
+path = "e2e/snapshot_ships_only_the_forward_column.rs"
+
+[[test]]
+name = "collection_version_never_moves_backwards"
+path = "e2e/collection_version_never_moves_backwards.rs"
+
+[[test]]
 name = "control_plane_identity_e2e"
 path = "e2e/control_plane_identity_e2e.rs"
 
@@ -495,6 +503,10 @@ name = "release_artifacts"
 path = "e2e/release_artifacts.rs"
 
 [[test]]
+name = "reopen_names_the_fields_that_need_reindexing"
+path = "e2e/reopen_names_the_fields_that_need_reindexing.rs"
+
+[[test]]
 name = "release_promotion"
 path = "e2e/release_promotion.rs"
 
@@ -620,6 +632,14 @@ path = "e2e/vector_e2e.rs"
 [[test]]
 name = "vector_filtered_recall_after_replace"
 path = "e2e/vector_filtered_recall_after_replace.rs"
+
+[[test]]
+name = "vector_field_keeps_its_backend_across_reopen"
+path = "e2e/vector_field_keeps_its_backend_across_reopen.rs"
+
+[[test]]
+name = "wal_fast_record_stays_downgradable"
+path = "e2e/wal_fast_record_stays_downgradable.rs"
 
 [[test]]
 name = "wal_nats_e2e"

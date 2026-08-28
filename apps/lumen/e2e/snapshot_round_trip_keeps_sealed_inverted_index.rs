@@ -1,4 +1,3 @@
-// CODEGEN-BEGIN
 //! Black-box oracle for issue #3957.
 //!
 //! A checkpoint SEALS every field of the LIVE collection in place
