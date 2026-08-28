@@ -28,7 +28,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "aa64a94dfbc22ba99dec404ae303792102171306566acfb82c731396d560a034";
+    "9f339673e2171e9a708f70d9a04ac4257ee0f353ef4bb47afe1b725f697e10ab";
 const RELEASE_PERF_GATE: &str =
     "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
@@ -893,6 +893,7 @@ fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), 
                 "cargo test -p lumen --features \"operator delegated-auth\"",
                 RELEASE_PERF_GATE,
                 "cargo test -p lumen --locked --features release --test release_feature_set",
+                "cargo clean",
                 "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
                 "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
             ],
@@ -1135,6 +1136,7 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
         "cargo test -p lumen --test release_candidate", "cargo test -p lumen",
         "cargo test -p lumen --features \"operator delegated-auth\"",
         "cargo test -p lumen --locked --features release --test release_feature_set",
+        "cargo clean",
         "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
         "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
         RELEASE_PERF_GATE,
