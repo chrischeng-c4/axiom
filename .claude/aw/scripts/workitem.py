@@ -36,32 +36,80 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _checkout_boundary(start: Path) -> Path | None:
+    """The git checkout `start` stands in, or `None` if it stands in none.
+
+    Asked of git rather than inferred from the directory layout, because a
+    linked worktree's root carries a `.git` *file* and a submodule's carries
+    one too; only git knows which tree a path belongs to.
+    """
+    proc = subprocess.run(
+        ("git", "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"),
+        capture_output=True, text=True,
+        cwd=start if start.is_dir() else start.parent,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return Path(proc.stdout.strip()).resolve()
+
+
+def outermost_aw_toml(start: Path) -> Path | None:
+    """The outermost `aw.toml` at or above `start`, without leaving its checkout.
+
+    Two rules, and each one exists because the other alone was wrong.
+
+    *Outermost*, not nearest: this checkout carries 37 `aw.toml` files -- one
+    per project under `apps/` and `libs/` -- and exactly one, the repository
+    root's, holds the `[agentic_workflow.issue_platform]` section
+    `default_repo()` reads. Stopping at the nearest marker means running from
+    `apps/<name>/` resolves to a project `aw.toml` with no tracker in it, and
+    stages bodies under `apps/<name>/.aw/` besides.
+
+    *Without leaving its checkout*, which the unbounded walk did not do. A git
+    worktree may sit inside another checkout -- Claude Code puts its own under
+    `.claude/worktrees/<name>/`, which is where an agent session stands -- and
+    both trees carry a root `aw.toml`. The unbounded walk took the enclosing
+    checkout's, so every phase script run from an agent worktree measured, and
+    would have written to, the *other* tree: `metadoc.py check` read a dirty
+    set belonging to a different session, and `meta.py`, which resolves the
+    root with `git rev-parse --show-toplevel`, disagreed with it inside a
+    single landing sequence.
+
+    The boundary is dropped when git reports a root that is not on the walk --
+    an unreachable git, a path reached through a symlink -- because a boundary
+    that is not an ancestor cannot truncate the chain, and guessing there is
+    how this resolves to nothing at all.
+    """
+    start = start.resolve()
+    chain = [start, *start.parents]
+    boundary = _checkout_boundary(start)
+    if boundary is not None and boundary in chain:
+        chain = chain[: chain.index(boundary) + 1]
+    found = [c for c in chain if (c / "aw.toml").is_file()]
+    return found[-1] if found else None
+
+
 def _repo_root() -> Path:
     """Find the checkout that owns `aw.toml`, searching cwd before `__file__`.
 
     The marker file identifies the checkout; a fixed parent count would break
     the moment the script is relocated or mirrored to another tree.
 
-    cwd is searched first because this script is distributed as a Claude Code
-    plugin, and a plugin is installed under `~/.claude/plugins/`, outside
-    every checkout -- walking up from `__file__` alone finds no `aw.toml` at
-    all and the script dies before doing anything. The `__file__` leg stays as
-    the fallback for a copy that does live inside a checkout, and it stays
-    second on purpose: when both resolve, the tree the caller is standing in
-    is the one they meant.
+    cwd is searched first because this script has been distributed outside
+    every checkout -- it was a Claude Code plugin under `~/.claude/plugins/`
+    until 2026-08-21 -- and walking up from `__file__` alone finds no
+    `aw.toml` at all there, so the script dies before doing anything. The
+    `__file__` leg stays as the fallback for a copy that does live inside a
+    checkout, and it stays second on purpose: when both resolve, the tree the
+    caller is standing in is the one they meant.
 
-    The *outermost* `aw.toml` wins, not the nearest. This checkout carries 37
-    of them -- one per project under `apps/` and `libs/` -- and exactly one,
-    the repository root's, holds the `[agentic_workflow.issue_platform]`
-    section `default_repo()` reads. Taking the nearest marker means that
-    running from `apps/<name>/` resolves to a project `aw.toml` with no
-    tracker in it, and stages bodies under `apps/<name>/.aw/` besides.
+    `outermost_aw_toml()` carries the two rules the walk itself obeys.
     """
     starts = (Path.cwd().resolve(), Path(__file__).resolve().parent)
     for start in starts:
-        found = [c for c in (start, *start.parents) if (c / "aw.toml").is_file()]
-        if found:
-            return found[-1]
+        found = outermost_aw_toml(start)
+        if found is not None:
+            return found
     raise SystemExit(
         f"error: no `aw.toml` found above the working directory ({starts[0]}) "
         f"or the script ({starts[1]}); run this from inside an axiom checkout"
