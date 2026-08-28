@@ -30,13 +30,14 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+fail() { echo "kustomize contract: $*" >&2; exit 1; }
 
 command -v jq >/dev/null
 command -v ruby >/dev/null
 command -v kubectl >/dev/null
+command -v diff >/dev/null
 [[ -x "$renderer" && -x "$validator" ]] || { echo 'acceptance tools are not executable' >&2; exit 1; }
 [[ -f "$fixture_source" && ! -L "$fixture_source" ]] || { echo "missing checked-in fixture: $fixture_source" >&2; exit 1; }
-
 sha256() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
@@ -44,6 +45,24 @@ sha256() {
     sha256sum "$1" | awk '{print $1}'
   fi
 }
+
+# Exercise the renderer from the same canonical repository depth used by the
+# GKE harness.  Outputs remain siblings outside this private checkout.
+private_repository="$tmp/repository"
+private_kustomize="$private_repository/kustomize/lumen-standalone-acceptance"
+owned_dirs+=("$private_kustomize" "$private_repository/kustomize" "$private_repository")
+mkdir -m 700 "$private_repository" "$private_repository/kustomize"
+cp -R -- "$root" "$private_kustomize"
+[[ -d "$private_kustomize" && ! -L "$private_kustomize" ]] || fail 'private repository copy is unsafe'
+[[ -z "$(find "$private_repository" -type l -print -quit)" ]] || fail 'private repository copy contains symlinks'
+[[ ! -e "$root/.contract-forbidden-output" && ! -L "$root/.contract-forbidden-output" ]] || fail 'source root contains forbidden output before copy'
+while IFS= read -r -d '' copied_file; do owned_files+=("$copied_file"); done < <(find "$private_repository" -type f -print0)
+while IFS= read -r -d '' copied_dir; do owned_dirs+=("$copied_dir"); done < <(find "$private_repository" -mindepth 1 -type d -print0)
+renderer="$private_kustomize/scripts/render.sh"
+validator="$private_kustomize/scripts/validate.rb"
+[[ "$(sha256 "$renderer")" == f83e347b5f66c6cad049595a776230ea559f80efc265129f407032bf5a93dd74 ]] || fail 'private renderer copy changed'
+[[ "$(sha256 "$validator")" == 43355d4a083303c9ffadade98f4add46958d7a7e625100dea97d979a3d1d294e ]] || fail 'private validator copy changed'
+diff -qr -- "$root" "$private_kustomize" >/dev/null || fail 'private repository copy bytes differ'
 base_files=(
   "$root/client/kustomization.yaml" "$root/client/namespace.yaml" "$root/client/serviceaccounts.yaml"
   "$root/jobs/tooling/kustomization.yaml" "$root/jobs/tooling/job.yaml"
@@ -65,7 +84,6 @@ owned_files+=("$fixture")
   exit 1
 }
 
-fail() { echo "kustomize contract: $*" >&2; exit 1; }
 expect_reject() {
   local description=$1
   shift
@@ -239,7 +257,7 @@ jq '.[-2].value.projected.sources[0].serviceAccountToken.audience = "wrong"' "$v
 changed "$valid_projected_patch" "$patch" bad-projected-literal
 expect_reject bad-projected-literal validate_patch api projected "$patch"
 
-repo_output="$root/.contract-forbidden-output"
+repo_output="$private_repository/.contract-forbidden-output"
 [[ ! -e "$repo_output" && ! -L "$repo_output" ]] || fail 'repo output negative path already exists'
 expect_reject repo-output "$renderer" client --out-dir "$repo_output" --client-namespace x --run-id x
 [[ ! -e "$repo_output" && ! -L "$repo_output" ]] || fail 'renderer created forbidden repo output'
@@ -255,4 +273,6 @@ expect_reject forbidden-token-account "$renderer" api --out-dir "$tmp/forbidden-
 for index in "${!base_files[@]}"; do [[ "$(sha256 "${base_files[$index]}")" == "${before[$index]}" ]] || fail 'checked-in base changed'; done
 [[ "$(sha256 "$fixture_source")" == "$fixture_source_before" ]] || fail 'checked-in request fixture changed'
 [[ "$(sha256 "$fixture")" == f430728441dec341edc81c69dbd199da7795a994695ddc194e34dd80ece94ea0 ]] || fail 'runtime request fixture changed'
+diff -qr -- "$root" "$private_kustomize" >/dev/null || fail 'renderer changed private repository copy'
+[[ ! -e "$root/.contract-forbidden-output" && ! -L "$root/.contract-forbidden-output" ]] || fail 'renderer changed source root'
 echo 'kustomize standalone acceptance contract: passed'

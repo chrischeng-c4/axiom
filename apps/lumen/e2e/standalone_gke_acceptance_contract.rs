@@ -4,8 +4,11 @@
 //! executable live slice and rejects mutations that make a green static test
 //! look plausible while removing a live security or durability assertion.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::PathBuf;
+use std::os::unix::fs::{symlink, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -47,6 +50,29 @@ fn appears_before(source: &str, first: &str, second: &str) -> bool {
         (Some(first), Some(second)) => first < second,
         _ => false,
     }
+}
+
+fn kubectl_line_inventory_is_complete(source: &str) -> bool {
+    let mut actual = source
+        .lines()
+        .filter(|line| line.contains("kubectl"))
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    let mut expected = vec![
+        "kubectl \\",
+        "KUBECTL_CACHE_DIR=\"$TMP_ROOT/kubectl-cache\"",
+        "[[ ! -e \"$KUBECTL_CACHE_DIR\" && ! -L \"$KUBECTL_CACHE_DIR\" ]] || die 'kubectl cache path already exists'",
+        "[[ -d \"$KUBECTL_CACHE_DIR\" && ! -L \"$KUBECTL_CACHE_DIR\" && \"$(cd \"$KUBECTL_CACHE_DIR\" && pwd -P)\" == \"$KUBECTL_CACHE_DIR\" ]] || die 'kubectl cache path is not canonical'",
+        "[[ \"${KUBECTL_CACHE_DIR%/*}\" == \"$TMP_ROOT\" && \"${KUBECTL_CACHE_DIR##*/}\" == kubectl-cache ]] || die 'kubectl cache path identity is unsafe'",
+        "[[ \"$(private_mode \"$KUBECTL_CACHE_DIR\")\" == 700 ]] || die 'kubectl cache path mode is not 0700'",
+        "kubectl \\",
+        "die \"kubectl wrapper did not select the requested context\"",
+        "current_context=\"$(kubectl --kubeconfig \"$KUBECONFIG\" --cache-dir \"$KUBECTL_CACHE_DIR\" config current-context 2>\"$TMP_ROOT/current-context.err\")\" ||",
+        "[[ \"$(kubectl --kubeconfig \"$KUBECONFIG\" --cache-dir \"$KUBECTL_CACHE_DIR\" config get-contexts -o name | awk 'NF {count++; name=$0} END {if (count == 1) print name}')\" == \"$LUMEN_STANDALONE_GKE_CONTEXT\" ]] ||",
+    ];
+    actual.sort_unstable();
+    expected.sort_unstable();
+    actual == expected
 }
 
 fn shared_renderer_findings(source: &str) -> Vec<&'static str> {
@@ -698,7 +724,7 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
         ),
         (
             "PREFLIGHT",
-            "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
+            "KUSTOMIZE_ROOT=\"$PRIVATE_REPOSITORY_ROOT/kustomize/lumen-standalone-acceptance\"",
         ),
         (
             "PREFLIGHT",
@@ -730,7 +756,7 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
         ),
         (
             "PREFLIGHT",
-            "KUBECONFIG must be a task-local file below /private/tmp",
+            "safe_private_file \"$KUBECONFIG\" ||",
         ),
         ("PREFLIGHT", "config current-context"),
         (
@@ -776,12 +802,38 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
         }
     }
     for required in [
+        "CDPATH=",
+        "PRIVATE_TMP_ROOT=\"$(cd -P /tmp && pwd -P)\"",
+        "case \"$PRIVATE_TMP_ROOT\" in /tmp|/private/tmp) ;; *) die 'unsupported private temp root' ;; esac",
+        "safe_private_dir() {",
+        "[[ \"$path\" == \"$PRIVATE_TMP_ROOT\"/* && \"$path\" != */ && \"$path\" != *'/../'* && \"$path\" != */.. && \"$path\" != *'/./'* && -d \"$path\" && ! -L \"$path\" ]] || return 1",
+        "[[ \"$(cd \"$path\" && pwd -P)\" == \"$path\" ]]",
+        "safe_private_file() {",
+        "[[ \"$path\" == \"$PRIVATE_TMP_ROOT\"/* && \"$path\" != *'/../'* && \"$path\" != */.. && \"$path\" != *'/./'* && -f \"$path\" && ! -L \"$path\" ]] || return 1",
+        "parent=${path%/*}; safe_private_dir \"$parent\"",
+        "private_mode() {",
+        "safe_private_file \"$KUBECONFIG\" ||",
+        "safe_private_dir \"$LUMEN_STANDALONE_GKE_EVIDENCE_DIR\" ||",
+        "TMP_ROOT=\"$(mktemp -d \"$PRIVATE_TMP_ROOT/lumen-standalone-gke.XXXXXX\")\"",
+        "[[ \"$(private_mode \"$TMP_ROOT\")\" == 700 ]] || die 'private temporary root mode is not 0700'",
+        "KUBECTL_CACHE_DIR=\"$TMP_ROOT/kubectl-cache\"",
+        "[[ ! -e \"$KUBECTL_CACHE_DIR\" && ! -L \"$KUBECTL_CACHE_DIR\" ]] || die 'kubectl cache path already exists'",
+        "mkdir -m 700 \"$KUBECTL_CACHE_DIR\"",
+        "[[ -d \"$KUBECTL_CACHE_DIR\" && ! -L \"$KUBECTL_CACHE_DIR\" && \"$(cd \"$KUBECTL_CACHE_DIR\" && pwd -P)\" == \"$KUBECTL_CACHE_DIR\" ]] || die 'kubectl cache path is not canonical'",
+        "[[ \"${KUBECTL_CACHE_DIR%/*}\" == \"$TMP_ROOT\" && \"${KUBECTL_CACHE_DIR##*/}\" == kubectl-cache ]] || die 'kubectl cache path identity is unsafe'",
+        "[[ \"$(private_mode \"$KUBECTL_CACHE_DIR\")\" == 700 ]] || die 'kubectl cache path mode is not 0700'",
         "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd -P)\"",
         "REPO_ROOT=\"$(cd \"$SCRIPT_DIR/../../..\" && pwd -P)\"",
         "KUSTOMIZE_SOURCE_ROOT=\"$REPO_ROOT/kustomize/lumen-standalone-acceptance\"",
         "KUSTOMIZE_RENDERER_SOURCE=\"$KUSTOMIZE_SOURCE_ROOT/scripts/render.sh\"",
         "KUSTOMIZE_VALIDATOR_SOURCE=\"$KUSTOMIZE_SOURCE_ROOT/scripts/validate.rb\"",
-        "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
+        "PRIVATE_REPOSITORY_ROOT=\"$TMP_ROOT/repository\"",
+        "[[ ! -e \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" ]] ||",
+        "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT\"",
+        "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT/kustomize\"",
+        "[[ -d \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" && -d \"$PRIVATE_REPOSITORY_ROOT/kustomize\" && ! -L \"$PRIVATE_REPOSITORY_ROOT/kustomize\" ]] ||",
+        "PRIVATE_REPOSITORY_ROOT=\"$(cd \"$PRIVATE_REPOSITORY_ROOT\" && pwd -P)\" || die \"private repository root cannot be canonicalized\"",
+        "KUSTOMIZE_ROOT=\"$PRIVATE_REPOSITORY_ROOT/kustomize/lumen-standalone-acceptance\"",
         "KUSTOMIZE_RENDERER=\"$KUSTOMIZE_ROOT/scripts/render.sh\"",
         "KUSTOMIZE_VALIDATOR=\"$KUSTOMIZE_ROOT/scripts/validate.rb\"",
         "KUSTOMIZE_RENDERER_SHA256=\"f83e347b5f66c6cad049595a776230ea559f80efc265129f407032bf5a93dd74\"",
@@ -812,8 +864,36 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
     }
     if !appears_before(
         source,
-        "TMP_ROOT=\"$(mktemp -d /tmp/lumen-standalone-gke.XXXXXX)\"",
-        "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
+        "TMP_ROOT=\"$(mktemp -d \"$PRIVATE_TMP_ROOT/lumen-standalone-gke.XXXXXX\")\"",
+        "PRIVATE_REPOSITORY_ROOT=\"$TMP_ROOT/repository\"",
+    ) || !appears_before(
+        source,
+        "PRIVATE_REPOSITORY_ROOT=\"$TMP_ROOT/repository\"",
+        "[[ ! -e \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" ]] ||",
+    ) || !appears_before(
+        source,
+        "[[ ! -e \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" ]] ||",
+        "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT\"",
+    ) || !appears_before(
+        source,
+        "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT\"",
+        "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT/kustomize\"",
+    ) || !appears_before(
+        source,
+        "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT/kustomize\"",
+        "[[ -d \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" && -d \"$PRIVATE_REPOSITORY_ROOT/kustomize\" && ! -L \"$PRIVATE_REPOSITORY_ROOT/kustomize\" ]] ||",
+    ) || !appears_before(
+        source,
+        "[[ -d \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" && -d \"$PRIVATE_REPOSITORY_ROOT/kustomize\" && ! -L \"$PRIVATE_REPOSITORY_ROOT/kustomize\" ]] ||",
+        "PRIVATE_REPOSITORY_ROOT=\"$(cd \"$PRIVATE_REPOSITORY_ROOT\" && pwd -P)\" || die \"private repository root cannot be canonicalized\"",
+    ) || !appears_before(
+        source,
+        "PRIVATE_REPOSITORY_ROOT=\"$(cd \"$PRIVATE_REPOSITORY_ROOT\" && pwd -P)\" || die \"private repository root cannot be canonicalized\"",
+        "KUSTOMIZE_ROOT=\"$PRIVATE_REPOSITORY_ROOT/kustomize/lumen-standalone-acceptance\"",
+    ) || !appears_before(
+        source,
+        "KUSTOMIZE_ROOT=\"$PRIVATE_REPOSITORY_ROOT/kustomize/lumen-standalone-acceptance\"",
+        "cp -R -- \"$KUSTOMIZE_SOURCE_ROOT\" \"$KUSTOMIZE_ROOT\"",
     ) || !appears_before(
         source,
         "cp -R -- \"$KUSTOMIZE_SOURCE_ROOT\" \"$KUSTOMIZE_ROOT\"",
@@ -838,6 +918,33 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
         || before_first_cleanup_trap.contains("v2_cleanup")
     {
         bad.push("PREFLIGHT");
+    }
+    for call in [
+        "safe_private_file \"$KUBECONFIG\" ||",
+        "safe_private_dir \"$LUMEN_STANDALONE_GKE_EVIDENCE_DIR\" ||",
+    ] {
+        if !appears_before(
+            source,
+            call,
+            "TMP_ROOT=\"$(mktemp -d \"$PRIVATE_TMP_ROOT/lumen-standalone-gke.XXXXXX\")\"",
+        ) {
+            bad.push("PREFLIGHT");
+        }
+    }
+    if !kubectl_line_inventory_is_complete(source)
+        || source.matches("--cache-dir \"$KUBECTL_CACHE_DIR\"").count() != 3
+        || !appears_before(
+            source,
+            "[[ \"$(private_mode \"$KUBECTL_CACHE_DIR\")\" == 700 ]] || die 'kubectl cache path mode is not 0700'",
+            "if ! context_name=\"$(k config get-contexts",
+        )
+    {
+        bad.push("PREFLIGHT");
+    }
+    for variable in ["HOME=", "XDG_CACHE_HOME=", "XDG_CONFIG_HOME=", "CLOUDSDK_CONFIG="] {
+        if source.lines().any(|line| line.contains(variable)) {
+            bad.push("PREFLIGHT");
+        }
     }
     bad
 }
@@ -878,6 +985,168 @@ fn integrity_findings(source: &str) -> Vec<&'static str> {
         bad.push("INTEGRITY");
     }
     bad
+}
+
+fn collect_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn walk(base: &Path, current: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        let mut entries = fs::read_dir(current)
+            .expect("read fixture directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read fixture entries");
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let relative = path.strip_prefix(base).expect("fixture relative path");
+            if entry.file_type().expect("fixture entry type").is_dir() {
+                walk(base, &path, files);
+            } else {
+                files.insert(relative.to_owned(), fs::read(path).expect("read fixture file"));
+            }
+        }
+    }
+
+    let mut files = BTreeMap::new();
+    walk(root, root, &mut files);
+    files
+}
+
+fn physical_temp_children(root: &Path) -> BTreeSet<PathBuf> {
+    fs::read_dir(root)
+        .expect("read physical temporary root")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("lumen-standalone-gke.")
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
+struct GkeOracleFixture {
+    _root: tempfile::TempDir,
+    physical_root: PathBuf,
+    kubeconfig: PathBuf,
+    evidence: PathBuf,
+    candidate: PathBuf,
+    cli: PathBuf,
+    fake_bin: PathBuf,
+    cwd: PathBuf,
+    kubectl_marker: PathBuf,
+    kubectl_calls: PathBuf,
+    gcloud_marker: PathBuf,
+}
+
+fn executable(path: &Path) {
+    let mut permissions = fs::metadata(path).expect("executable metadata").permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(path, permissions).expect("make executable");
+}
+
+fn install_fake(path: &Path, body: &str) {
+    fs::write(path, body).expect("write fake executable");
+    executable(path);
+}
+
+fn make_gke_oracle_fixture() -> GkeOracleFixture {
+    let physical_root = fs::canonicalize("/tmp").expect("canonical physical /tmp");
+    assert!(matches!(physical_root.to_str(), Some("/tmp" | "/private/tmp")));
+    let root = tempfile::Builder::new()
+        .prefix("lumen-gke-physical-oracle-")
+        .tempdir_in(&physical_root)
+        .expect("physical temporary fixture");
+    let kubeconfig = root.path().join("kubeconfig");
+    let evidence = root.path().join("evidence");
+    let candidate = root.path().join("candidate");
+    let fake_bin = root.path().join("fake-bin");
+    let cwd = root.path().join("cwd");
+    fs::create_dir(&evidence).expect("evidence directory");
+    fs::create_dir(&fake_bin).expect("fake bin directory");
+    fs::create_dir(&cwd).expect("isolated current directory");
+    fs::write(&kubeconfig, b"not parsed by the fake kubectl\n").expect("kubeconfig");
+    let kubectl_marker = root.path().join("kubectl.marker");
+    let kubectl_calls = root.path().join("kubectl.calls");
+    let gcloud_marker = root.path().join("gcloud.marker");
+    install_fake(
+        &fake_bin.join("kubectl"),
+        "#!/bin/sh\nset -eu\ncache=\ncount=0\nprevious=\nfor arg in \"$@\"; do\n  if [ \"$previous\" = --cache-dir ]; then cache=$arg; count=$((count + 1)); fi\n  previous=$arg\ndone\n[ \"$count\" -eq 1 ] || exit 18\ncache=$(cd \"$cache\" && pwd -P) || exit 19\ncase \"$cache\" in\n  /tmp/lumen-standalone-gke.??????/kubectl-cache|/private/tmp/lumen-standalone-gke.??????/kubectl-cache) ;;\n  *) exit 20 ;;\nesac\nprintf '%s\\n' \"$cache\" >>\"$FAKE_KUBECTL_CALLS\"\nmkdir -p \"$cache/discovery\" \"$cache/http\"\n: >\"$cache/discovery/response\"\n: >\"$cache/http/response\"\nif [ \"$(wc -l <\"$FAKE_KUBECTL_CALLS\" | tr -d ' ')\" -eq 1 ]; then\n  { find \"$FAKE_PHYSICAL_ROOT\" -maxdepth 1 -name 'lumen-standalone-gke.*' -print; printf '%s\\n' --tmpdir; find \"$TMPDIR\" -maxdepth 1 -name 'lumen-standalone-gke.*' -print; } >\"$FAKE_KUBECTL_MARKER\"\nfi\nprintf '%s\\n' oracle-context\n",
+    );
+    install_fake(
+        &fake_bin.join("gcloud"),
+        "#!/bin/sh\nif [ \"${HOME+x}\" = x ]; then printf '%s\\n' home-set >\"$FAKE_GCLOUD_MARKER\"; else printf '%s\\n' home-unset >\"$FAKE_GCLOUD_MARKER\"; fi\nexit 17\n",
+    );
+    fs::create_dir(&candidate).expect("empty candidate receipt directory");
+    let fake_cli = fake_bin.join("lumen");
+    install_fake(&fake_cli, "#!/bin/sh\nexit 17\n");
+    GkeOracleFixture {
+        _root: root,
+        physical_root,
+        kubeconfig,
+        evidence,
+        candidate,
+        cli: fake_cli,
+        fake_bin,
+        cwd,
+        kubectl_marker,
+        kubectl_calls,
+        gcloud_marker,
+    }
+}
+
+fn run_gke_oracle(fixture: &GkeOracleFixture, kubeconfig: &Path, evidence: &Path) -> Output {
+    let ambient_path = std::env::var_os("PATH").expect("ambient PATH");
+    let path = format!(
+        "{}:{}",
+        fixture.fake_bin.display(),
+        PathBuf::from(ambient_path).display()
+    );
+    let unrelated_tmp = fixture._root.path().join("unrelated-tmp");
+    fs::create_dir_all(&unrelated_tmp).expect("unrelated TMPDIR");
+    let mut command = Command::new("bash");
+    command
+        .current_dir(&fixture.cwd)
+        .env_clear()
+        .env("PATH", path)
+        .env("TMPDIR", &unrelated_tmp)
+        .env("KUBECONFIG", kubeconfig)
+        .env("LUMEN_STANDALONE_GKE_CONTEXT", "oracle-context")
+        .env("LUMEN_STANDALONE_GKE_PROJECT_ID", "oracle-project")
+        .env("LUMEN_STANDALONE_GKE_LOCATION", "oracle-location")
+        .env("LUMEN_STANDALONE_GKE_CLUSTER", "oracle-cluster")
+        .env("LUMEN_STANDALONE_GKE_CLI", &fixture.cli)
+        .env(
+            "LUMEN_STANDALONE_GKE_IMAGE",
+            format!("ghcr.io/chrischeng-c4/lumen@sha256:{}", "0".repeat(64)),
+        )
+        .env(
+            "LUMEN_STANDALONE_GKE_CLIENT_IMAGE",
+            "docker.io/curlimages/curl@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13",
+        )
+        .env("LUMEN_STANDALONE_GKE_CLI_TARGET", "aarch64-apple-darwin")
+        .env("LUMEN_STANDALONE_GKE_STORAGE_CLASS", "premium-rwo")
+        .env("LUMEN_STANDALONE_GKE_NODE_POOL", "oracle-pool")
+        .env("LUMEN_STANDALONE_GKE_RUN_ID", "424242")
+        .env(
+            "LUMEN_STANDALONE_GKE_EXPECTED_COMMIT",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .env("LUMEN_STANDALONE_GKE_EXPECTED_RUN_ID", "424242")
+        .env("LUMEN_STANDALONE_GKE_EXPECTED_RUN_ATTEMPT", "1")
+        .env("LUMEN_STANDALONE_GKE_EXPECTED_MANIFEST_SHA256", "0".repeat(64))
+        .env("LUMEN_STANDALONE_GKE_EVIDENCE_DIR", evidence)
+        .env(
+            "LUMEN_STANDALONE_GKE_CANDIDATE_RECEIPT_DIR",
+            &fixture.candidate,
+        )
+        .env("LUMEN_STANDALONE_GKE_MUTATION", "1")
+        .env("FAKE_KUBECTL_MARKER", &fixture.kubectl_marker)
+        .env("FAKE_KUBECTL_CALLS", &fixture.kubectl_calls)
+        .env("FAKE_GCLOUD_MARKER", &fixture.gcloud_marker)
+        .env("FAKE_PHYSICAL_ROOT", &fixture.physical_root)
+        .arg(root().join("apps/lumen/scripts/standalone-gke-acceptance.sh"))
+        .args(["--mode", "gke"]);
+    command.output().expect("run GKE acceptance oracle")
 }
 
 fn replace_once(source: &str, from: &str, to: &str) -> String {
@@ -1402,8 +1671,8 @@ fn negative_mutations_remove_real_gate_obligations() {
     );
     let changed = replace_once(
         &full,
+        "KUSTOMIZE_ROOT=\"$PRIVATE_REPOSITORY_ROOT/kustomize/lumen-standalone-acceptance\"",
         "KUSTOMIZE_ROOT=\"$TMP_ROOT/kustomize-harness\"",
-        "KUSTOMIZE_ROOT=\"$KUSTOMIZE_SOURCE_ROOT\"",
     );
     assert!(
         preflight_findings(&changed).contains(&"PREFLIGHT"),
@@ -1418,6 +1687,36 @@ fn negative_mutations_remove_real_gate_obligations() {
         preflight_findings(&changed).contains(&"PREFLIGHT"),
         "missing private harness copy did not fail preflight"
     );
+    for (anchor, replacement, message) in [
+        (
+            "[[ ! -e \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" ]] ||",
+            "true # repository existence check bypassed",
+            "repository existence check bypass did not fail preflight",
+        ),
+        (
+            "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT\"",
+            "true # repository mkdir bypassed",
+            "repository mkdir bypass did not fail preflight",
+        ),
+        (
+            "mkdir -m 700 \"$PRIVATE_REPOSITORY_ROOT/kustomize\"",
+            "true # kustomize mkdir bypassed",
+            "kustomize mkdir bypass did not fail preflight",
+        ),
+        (
+            "PRIVATE_REPOSITORY_ROOT=\"$(cd \"$PRIVATE_REPOSITORY_ROOT\" && pwd -P)\" || die \"private repository root cannot be canonicalized\"",
+            "true # canonicalization bypassed",
+            "canonicalization bypass did not fail preflight",
+        ),
+        (
+            "[[ -d \"$PRIVATE_REPOSITORY_ROOT\" && ! -L \"$PRIVATE_REPOSITORY_ROOT\" && -d \"$PRIVATE_REPOSITORY_ROOT/kustomize\" && ! -L \"$PRIVATE_REPOSITORY_ROOT/kustomize\" ]] ||",
+            "true # parent safety bypassed",
+            "parent safety bypass did not fail preflight",
+        ),
+    ] {
+        let changed = replace_once(&full, anchor, replacement);
+        assert!(preflight_findings(&changed).contains(&"PREFLIGHT"), "{message}");
+    }
     let changed = replace_once(
         &full,
         "[[ \"$(sha256_file \"$KUSTOMIZE_RENDERER\")\" == \"$KUSTOMIZE_RENDERER_SHA256\" ]]",
@@ -1483,4 +1782,282 @@ fn negative_mutations_remove_real_gate_obligations() {
         integrity_findings(&reordered).contains(&"INTEGRITY"),
         "render-before-validation did not fail the integrity contract"
     );
+}
+
+#[test]
+fn physical_temp_root_and_path_validation_are_executable_contracts() {
+    let fixture = make_gke_oracle_fixture();
+    let harness = root().join("kustomize/lumen-standalone-acceptance");
+    let harness_before = collect_files(&harness);
+
+    let before_children = physical_temp_children(&fixture.physical_root);
+    let output = run_gke_oracle(&fixture, &fixture.kubeconfig, &fixture.evidence);
+    assert!(!output.status.success(), "fake gcloud unexpectedly passed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("standalone GKE acceptance: could not describe the requested GKE cluster"),
+        "positive canonical path did not reach the expected gcloud error: {stderr}"
+    );
+    assert!(fixture.kubectl_marker.exists(), "fake kubectl was not reached");
+    let calls = fs::read_to_string(&fixture.kubectl_calls).expect("read kubectl calls");
+    let call_paths: Vec<_> = calls.lines().collect();
+    assert_eq!(call_paths.len(), 4, "expected four config kubectl calls: {calls}");
+    assert!(call_paths.windows(2).all(|pair| pair[0] == pair[1]));
+    let cache = Path::new(call_paths[0]);
+    assert!(cache.ends_with("kubectl-cache"));
+    let run_root = cache.parent().expect("cache run root");
+    assert_eq!(run_root.parent(), Some(fixture.physical_root.as_path()));
+    assert!(!run_root.exists(), "cleanup did not remove the acceptance run root");
+    let marker = fs::read_to_string(&fixture.kubectl_marker).expect("read fake kubectl marker");
+    let mut observed_children = BTreeSet::new();
+    let mut in_tmpdir_section = false;
+    for line in marker.lines() {
+        if line == "--tmpdir" {
+            in_tmpdir_section = true;
+        } else if !in_tmpdir_section {
+            observed_children.insert(PathBuf::from(line));
+        } else {
+            panic!("TMPDIR was used for the private acceptance root: {marker}");
+        }
+    }
+    let added_children: Vec<_> = observed_children
+        .difference(&before_children)
+        .collect();
+    assert_eq!(added_children.len(), 1, "fake kubectl saw the wrong physical temp set: {marker}");
+    let added_name = added_children[0]
+        .file_name()
+        .expect("physical temp child name")
+        .to_string_lossy();
+    assert!(added_name.starts_with("lumen-standalone-gke."));
+    assert_eq!(added_name.len(), "lumen-standalone-gke.".len() + 6);
+    assert!(
+        in_tmpdir_section,
+        "fake kubectl did not inspect the unrelated TMPDIR: {marker}"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture.gcloud_marker).expect("read gcloud marker"),
+        "home-unset\n"
+    );
+    assert_eq!(
+        physical_temp_children(&fixture.physical_root),
+        before_children,
+        "acceptance left a physical temporary child"
+    );
+    assert_eq!(collect_files(&harness), harness_before, "checked-in harness changed");
+    assert!(
+        !fixture.cwd.join(".kube").exists(),
+        "kubectl wrote its default cache below the isolated current directory"
+    );
+
+    let kubeconfig_dot = fixture
+        .kubeconfig
+        .parent()
+        .unwrap()
+        .join(".")
+        .join(fixture.kubeconfig.file_name().unwrap());
+    let cases = [
+        (
+            "kubeconfig-dot",
+            kubeconfig_dot,
+            fixture.evidence.clone(),
+            "KUBECONFIG must be an existing regular non-symlink file",
+        ),
+        (
+            "evidence-dot",
+            fixture.kubeconfig.clone(),
+            fixture.evidence.parent().unwrap().join("./evidence"),
+            "LUMEN_STANDALONE_GKE_EVIDENCE_DIR must be an existing non-symlink directory",
+        ),
+    ];
+    for (label, kubeconfig, evidence, expected_error) in cases {
+        let _ = fs::remove_file(&fixture.kubectl_marker);
+        let _ = fs::remove_file(&fixture.kubectl_calls);
+        let _ = fs::remove_file(&fixture.gcloud_marker);
+        let children = physical_temp_children(&fixture.physical_root);
+        let output = run_gke_oracle(&fixture, &kubeconfig, &evidence);
+        assert!(!output.status.success(), "{label} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected_error),
+            "{label} returned the wrong error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!fixture.kubectl_marker.exists(), "{label} reached fake kubectl");
+        assert!(!fixture.kubectl_calls.exists(), "{label} reached fake kubectl");
+        assert!(!fixture.gcloud_marker.exists(), "{label} reached fake gcloud");
+        assert_eq!(physical_temp_children(&fixture.physical_root), children, "{label} created a temporary child");
+        assert_eq!(collect_files(&harness), harness_before, "{label} changed checked-in harness");
+        assert!(!fixture.cwd.join(".kube").exists(), "{label} wrote a default kubectl cache");
+    }
+
+    let real_parent = fixture._root.path().join("real-parent");
+    let symlink_parent = fixture._root.path().join("symlink-parent");
+    fs::create_dir(&real_parent).expect("real kubeconfig parent");
+    symlink(&real_parent, &symlink_parent).expect("kubeconfig parent symlink");
+    let symlink_kubeconfig = symlink_parent.join("kubeconfig");
+    fs::write(real_parent.join("kubeconfig"), b"not parsed\n").expect("symlink kubeconfig");
+
+    let evidence_target = fixture._root.path().join("evidence-target");
+    let evidence_link = fixture._root.path().join("evidence-link");
+    fs::create_dir(&evidence_target).expect("evidence target");
+    symlink(&evidence_target, &evidence_link).expect("evidence symlink");
+    let nonempty = fixture._root.path().join("evidence-nonempty");
+    fs::create_dir(&nonempty).expect("non-empty evidence");
+    fs::write(nonempty.join("unexpected"), b"x").expect("non-empty evidence marker");
+
+    for (label, kubeconfig, evidence, expected_error) in [
+        (
+            "kubeconfig-parent-symlink",
+            symlink_kubeconfig,
+            fixture.evidence.clone(),
+            "KUBECONFIG must be an existing regular non-symlink file",
+        ),
+        (
+            "evidence-symlink",
+            fixture.kubeconfig.clone(),
+            evidence_link,
+            "LUMEN_STANDALONE_GKE_EVIDENCE_DIR must be an existing non-symlink directory",
+        ),
+        (
+            "evidence-nonempty",
+            fixture.kubeconfig.clone(),
+            nonempty,
+            "LUMEN_STANDALONE_GKE_EVIDENCE_DIR must be empty",
+        ),
+    ] {
+        let _ = fs::remove_file(&fixture.kubectl_marker);
+        let _ = fs::remove_file(&fixture.kubectl_calls);
+        let _ = fs::remove_file(&fixture.gcloud_marker);
+        let children = physical_temp_children(&fixture.physical_root);
+        let output = run_gke_oracle(&fixture, &kubeconfig, &evidence);
+        assert!(!output.status.success(), "{label} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected_error),
+            "{label} returned the wrong error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!fixture.kubectl_marker.exists(), "{label} reached fake kubectl");
+        assert!(!fixture.kubectl_calls.exists(), "{label} reached fake kubectl");
+        assert!(!fixture.gcloud_marker.exists(), "{label} reached fake gcloud");
+        assert_eq!(physical_temp_children(&fixture.physical_root), children, "{label} created a temporary child");
+        assert_eq!(collect_files(&harness), harness_before, "{label} changed checked-in harness");
+        assert!(!fixture.cwd.join(".kube").exists(), "{label} wrote a default kubectl cache");
+    }
+}
+
+#[test]
+fn physical_temp_root_mutations_fail_closed() {
+    let full = full_script();
+    let changed = replace_once(
+        &full,
+        "PRIVATE_TMP_ROOT=\"$(cd -P /tmp && pwd -P)\"",
+        "PRIVATE_TMP_ROOT=\"$(cd /tmp && pwd -P)\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "removing physical path resolution did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "PRIVATE_TMP_ROOT=\"$(cd -P /tmp && pwd -P)\"",
+        "PRIVATE_TMP_ROOT=\"$(cd -P \"$TMPDIR\" && pwd -P)\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "TMPDIR-derived private root did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "TMP_ROOT=\"$(mktemp -d \"$PRIVATE_TMP_ROOT/lumen-standalone-gke.XXXXXX\")\"",
+        "TMP_ROOT=\"$(mktemp -d /tmp/lumen-standalone-gke.XXXXXX)\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "raw /tmp mktemp did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "TMP_ROOT=\"$(mktemp -d \"$PRIVATE_TMP_ROOT/lumen-standalone-gke.XXXXXX\")\"",
+        "TMP_ROOT=\"$(mktemp -d \"$TMPDIR/lumen-standalone-gke.XXXXXX\")\"",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "TMPDIR-derived mktemp did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "safe_private_file \"$KUBECONFIG\" ||",
+        "true ||",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "kubeconfig safe_private_file bypass did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "safe_private_dir \"$LUMEN_STANDALONE_GKE_EVIDENCE_DIR\" ||",
+        "true ||",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "evidence safe_private_dir bypass did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "[[ \"$path\" == \"$PRIVATE_TMP_ROOT\"/* && \"$path\" != */ && \"$path\" != *'/../'* && \"$path\" != */.. && \"$path\" != *'/./'* && -d \"$path\" && ! -L \"$path\" ]] || return 1",
+        "[[ \"$path\" == /tmp/* || \"$path\" == /private/tmp/* ]] || return 1",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "broad /tmp or /private/tmp input prefix did not fail preflight"
+    );
+    let changed = replace_once(
+        &full,
+        "[[ \"$path\" == \"$PRIVATE_TMP_ROOT\"/* && \"$path\" != *'/../'* && \"$path\" != */.. && \"$path\" != *'/./'* && -f \"$path\" && ! -L \"$path\" ]] || return 1",
+        "[[ \"$path\" == /tmp/* || \"$path\" == /private/tmp/* ]] || return 1",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "broad /tmp or /private/tmp file prefix did not fail preflight"
+    );
+    for (anchor, replacement, message) in [
+        (
+            "[[ \"${KUBECTL_CACHE_DIR%/*}\" == \"$TMP_ROOT\" && \"${KUBECTL_CACHE_DIR##*/}\" == kubectl-cache ]] || die 'kubectl cache path identity is unsafe'",
+            "true # kubectl cache identity bypassed",
+            "kubectl cache identity bypass did not fail preflight",
+        ),
+        (
+            "    --context \"$LUMEN_STANDALONE_GKE_CONTEXT\" \\\n    --cache-dir \"$KUBECTL_CACHE_DIR\" \\",
+            "    --context \"$LUMEN_STANDALONE_GKE_CONTEXT\" \\",
+            "wrapper cache flag removal did not fail preflight",
+        ),
+        (
+            "kubectl --kubeconfig \"$KUBECONFIG\" --cache-dir \"$KUBECTL_CACHE_DIR\" config current-context",
+            "kubectl --kubeconfig \"$KUBECONFIG\" config current-context",
+            "current-context cache flag removal did not fail preflight",
+        ),
+        (
+            "kubectl --kubeconfig \"$KUBECONFIG\" --cache-dir \"$KUBECTL_CACHE_DIR\" config get-contexts",
+            "kubectl --kubeconfig \"$KUBECONFIG\" config get-contexts",
+            "raw get-contexts cache flag removal did not fail preflight",
+        ),
+    ] {
+        let changed = replace_once(&full, anchor, replacement);
+        assert!(preflight_findings(&changed).contains(&"PREFLIGHT"), "{message}");
+    }
+    let changed = replace_once(
+        &full,
+        "validate_candidate_manifest_v2\n",
+        "kubectl --kubeconfig \"$KUBECONFIG\" get pods >/dev/null\nvalidate_candidate_manifest_v2\n",
+    );
+    assert!(
+        preflight_findings(&changed).contains(&"PREFLIGHT"),
+        "a later uncached raw kubectl invocation did not fail preflight"
+    );
+    for variable in ["HOME=", "XDG_CACHE_HOME=", "XDG_CONFIG_HOME=", "CLOUDSDK_CONFIG="] {
+        let changed = replace_once(&full, "CDPATH=", &format!("CDPATH=\n{variable}/tmp"));
+        assert!(
+            preflight_findings(&changed).contains(&"PREFLIGHT"),
+            "{variable} assignment did not fail preflight"
+        );
+    }
 }
