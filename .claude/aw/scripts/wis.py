@@ -220,7 +220,7 @@ def status_ids(repo: Path, project: str) -> list[str]:
             continue
         if not inside or not line.startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = workitem.row_cells(line)
         if len(cells) <= STATUS_ID_COLUMN:
             continue
         found = metadoc.BACKTICKED.findall(cells[STATUS_ID_COLUMN])

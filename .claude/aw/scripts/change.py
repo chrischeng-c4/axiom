@@ -668,7 +668,7 @@ def table_rows(content: str) -> list[list[str]]:
             if seen_separator and rows:
                 break
             continue
-        cells = [cell.strip() for cell in trimmed.strip("|").split("|")]
+        cells = workitem.row_cells(trimmed)
         if all(cell and all(c in "-:" for c in cell) for cell in cells):
             seen_separator = True
             continue
