@@ -23,7 +23,7 @@ require_repair_tools() {
 }
 
 repair_usage() {
-  printf '%s\n' 'usage: repair-destroy.sh --state-dir /private/tmp/lumen-standalone-gke-live.XXXXXX --confirm-destroy CLUSTER' >&2
+  printf 'usage: repair-destroy.sh --state-dir %s/lumen-standalone-gke-live.XXXXXX --confirm-destroy CLUSTER\n' "$PRIVATE_TMP_ROOT" >&2
   exit 2
 }
 
@@ -47,11 +47,12 @@ validate_contract_shape() {
     (keys | sort) == [
       "candidate_receipt_dir","cli_target","cluster_name","confirm_create","confirm_destroy",
       "expected_commit","expected_manifest_sha256","expected_run_attempt","expected_run_id",
-      "gke_zone","image","lumen_cli","node_pool_name","node_service_account_id","project_id",
-      "receipt_out_dir","region","run_id","schema","state_dir","storage_class_name"
+      "gke_zone","image","lumen_cli","node_pool_name","node_service_account_id","private_temp_root",
+      "project_id","receipt_out_dir","region","run_id","schema","state_dir","storage_class_name"
     ] and
     all(.[]; type == "string") and
-    .schema == "lumen.standalone-gke-live/v1" and
+    .schema == "lumen.standalone-gke-live/v2" and
+    (.private_temp_root == "/tmp" or .private_temp_root == "/private/tmp") and
     (.project_id | test("^[a-z][a-z0-9-]{4,28}[a-z0-9]$")) and
     (.region | test("^[a-z]+-[a-z0-9]+[0-9]$")) and
     (.gke_zone | test("^[a-z]+-[a-z0-9]+[0-9]-[a-z]$")) and
@@ -69,6 +70,12 @@ load_contract() {
   local contract="$STATE_DIR/run-contract.json"
   [[ -f "$contract" && ! -L "$contract" ]] || die 'repair contract is missing or unsafe'
   validate_contract_shape "$contract" || die 'repair contract shape is invalid'
+
+  [[ "$(jq -er '.private_temp_root' "$contract")" == "$PRIVATE_TMP_ROOT" ]] || die 'repair contract uses another private temp root'
+  [[ "$STATE_DIR" == "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live."* ]] || die 'repair state directory is outside the private temp root'
+  [[ "${STATE_DIR%/*}" == "$PRIVATE_TMP_ROOT" ]] || die 'repair state directory parent is unsafe'
+  [[ -d "$STATE_DIR" && ! -L "$STATE_DIR" && "$(cd "$STATE_DIR" && pwd -P)" == "$STATE_DIR" ]] || die 'repair state directory is unsafe'
+  [[ -f "$contract" && ! -L "$contract" ]] || die 'repair contract path is unsafe'
 
   PROJECT_ID=$(jq -er '.project_id' "$contract")
   REGION=$(jq -er '.region' "$contract")
@@ -118,14 +125,17 @@ prepare_repair_plan() {
 main_repair() {
   local state_output
   parse_repair_args "$@"
-  [[ "$STATE_DIR" =~ ^/private/tmp/lumen-standalone-gke-live\.[A-Za-z0-9]{6}$ ]] || die 'repair state directory name is unsafe'
+  [[ "$STATE_DIR" == "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live."* ]] || die 'repair state directory is outside the private temp root'
+  [[ "${STATE_DIR%/*}" == "$PRIVATE_TMP_ROOT" ]] || die 'repair state directory parent is unsafe'
+  [[ "${STATE_DIR##*/}" =~ ^lumen-standalone-gke-live\.[A-Za-z0-9]{6}$ ]] || die 'repair state directory name is unsafe'
   safe_private_dir "$STATE_DIR" || die 'repair state directory is unsafe'
   load_contract
   require_repair_tools
   [[ -f "$STATE_DIR/terraform.tfstate" && ! -L "$STATE_DIR/terraform.tfstate" ]] || die 'repair state file is missing or unsafe'
   [[ -d "$STATE_DIR/terraform-data" && ! -L "$STATE_DIR/terraform-data" ]] || die 'repair Terraform data directory is missing or unsafe'
+  [[ "$(cd "$STATE_DIR/terraform-data" && pwd -P)" == "$STATE_DIR/terraform-data" ]] || die 'repair Terraform data directory is unsafe'
   if [[ -e "$STATE_DIR/control" || -L "$STATE_DIR/control" ]]; then
-    [[ -d "$STATE_DIR/control" && ! -L "$STATE_DIR/control" ]] || die 'repair control directory is unsafe'
+    [[ -d "$STATE_DIR/control" && ! -L "$STATE_DIR/control" && "$(cd "$STATE_DIR/control" && pwd -P)" == "$STATE_DIR/control" ]] || die 'repair control directory is unsafe'
   else
     mkdir -m 700 "$STATE_DIR/control"
   fi
