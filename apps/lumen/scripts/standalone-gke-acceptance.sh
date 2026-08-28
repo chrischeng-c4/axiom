@@ -415,6 +415,34 @@ assert_statefulset() {
     ' "$document" >/dev/null || die "canonical StatefulSet contract failed"
 }
 
+patch_statefulset_image() {
+  local statefulset="$1"
+  local label="$2"
+  local canonical="$TMP_ROOT/${label}-image-patch-input.json"
+  local patched="$TMP_ROOT/${label}-image-patch-output.json"
+
+  yaml_json "$statefulset" "$canonical"
+  jq -e '
+    (.spec.template.spec.containers | length == 1)
+    and .spec.template.spec.containers[0].name == "serving"
+    and .spec.template.spec.containers[0].image == "ghcr.io/chrischeng-c4/lumen:0.4.29"
+  ' "$canonical" >/dev/null || die "runtime image patch precondition failed"
+  jq --arg image "$LUMEN_STANDALONE_GKE_IMAGE" '
+    if (.spec.template.spec.containers | length) != 1
+       or .spec.template.spec.containers[0].name != "serving"
+       or .spec.template.spec.containers[0].image != "ghcr.io/chrischeng-c4/lumen:0.4.29"
+    then error("runtime image patch precondition failed")
+    else .spec.template.spec.containers[0].image = $image
+    end
+  ' "$canonical" >"$patched" || die "runtime image patch failed"
+  jq -e --arg image "$LUMEN_STANDALONE_GKE_IMAGE" '
+    (.spec.template.spec.containers | length == 1)
+    and .spec.template.spec.containers[0].name == "serving"
+    and .spec.template.spec.containers[0].image == $image
+  ' "$patched" >/dev/null || die "runtime image patch postcondition failed"
+  mv -f -- "$patched" "$statefulset"
+}
+
 ORIGINAL_STATEFULSET="$TMP_ROOT/original-statefulset.yaml"
 ORIGINAL_JSON="$TMP_ROOT/original-statefulset.json"
 cp "$RENDERED/runtime/statefulset.yaml" "$ORIGINAL_STATEFULSET"
@@ -432,18 +460,12 @@ prepare_runtime_copy() {
   local original_init="$TMP_ROOT/${label}-original.init.json"
   local patched_init="$TMP_ROOT/${label}-patched.init.json"
   local statefulset="$destination_runtime/statefulset.yaml"
-  local next="$destination_runtime/statefulset.next.yaml"
 
   [[ ! -e "$destination_runtime" && ! -L "$destination_runtime" ]] ||
     die "runtime copy destination already exists: $destination_runtime"
   cp -R "$source_runtime" "$destination_runtime"
   cp "$destination_runtime/statefulset.yaml" "$TMP_ROOT/${label}-unpatched.yaml"
-  if ! k set image -f "$statefulset" \
-    serving="$LUMEN_STANDALONE_GKE_IMAGE" \
-    --local -o yaml >"$next" 2>"$TMP_ROOT/${label}-set-image.err"; then
-    die "kubectl set image could not patch the private runtime copy"
-  fi
-  mv "$next" "$statefulset"
+  patch_statefulset_image "$statefulset" "$label"
 
   yaml_json "$TMP_ROOT/${label}-unpatched.yaml" "$original_json"
   yaml_json "$statefulset" "$patched_json"
@@ -849,8 +871,7 @@ v2_wait_pod() {
 v2_prepare_private_apply() {
   V2_APPLY_ROOT="$TMP_ROOT/v2-apply"
   cp -R "$RENDERED" "$V2_APPLY_ROOT"
-  k set image -f "$V2_APPLY_ROOT/runtime/statefulset.yaml" serving="$LUMEN_STANDALONE_GKE_IMAGE" --local -o yaml >"$TMP_ROOT/v2-statefulset.yaml"
-  mv "$TMP_ROOT/v2-statefulset.yaml" "$V2_APPLY_ROOT/runtime/statefulset.yaml"
+  patch_statefulset_image "$V2_APPLY_ROOT/runtime/statefulset.yaml" v2
   k create --dry-run=client --validate=false -f "$RENDERED/runtime/statefulset.yaml" -o json >"$TMP_ROOT/v2-public.json"
   k create --dry-run=client --validate=false -f "$V2_APPLY_ROOT/runtime/statefulset.yaml" -o json >"$TMP_ROOT/v2-private.json"
   jq -e '.spec.template.spec.containers | length == 1 and .[0].name == "serving" and .[0].image == "ghcr.io/chrischeng-c4/lumen:0.4.29"' "$TMP_ROOT/v2-public.json" >/dev/null || die "public runtime is not the fixed 0.4.29 serving image"
