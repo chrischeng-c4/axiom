@@ -386,15 +386,20 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     // forward from the watched object rather than left to the API server:
     // `Patch::Merge` replaces the array wholesale, so nothing survives
     // server-side unless it is re-sent.
-    let mut facts = obj.conditions(&ready, &plan.context);
+    let facts = obj.conditions(&ready, &plan.context);
 
     // 3c. One condition the *controller* authors rather than the service
     // (#3079). No service can report this one: the prune GET is the
     // controller's own call and a service has no way to learn that it failed.
     // Without it, a CR whose enforcement object is still up because its API
     // vanished reports a perfectly healthy status and nobody is told.
-    if !unavailable.is_empty() {
-        facts.push(service::ConditionFact::new(
+    //
+    // Kept separate from the service's `facts` rather than pushed onto them:
+    // "did the service declare anything this pass" is a question the write
+    // below has to answer, and folding the controller's own condition into the
+    // same vector makes it unanswerable.
+    let blocked = (!unavailable.is_empty()).then(|| {
+        service::ConditionFact::new(
             PRUNE_BLOCKED,
             service::ConditionStatus::True,
             "ApiNotServed",
@@ -403,8 +408,8 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
                  on each reconcile and completes once the API appears",
                 unavailable.join(", ")
             ),
-        ));
-    }
+        )
+    });
 
     let prior = obj.observed_conditions();
     // The gate reads `facts` after the controller has added its own, so a
@@ -418,7 +423,7 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     // reporting a block against an API that has since come back, permanently.
     // A service with no conditions and nothing blocked still takes neither
     // branch, and writes exactly the status shape it wrote before #3079.
-    if !facts.is_empty() || prior.iter().any(|c| c.type_ == PRUNE_BLOCKED) {
+    if !facts.is_empty() || blocked.is_some() || prior.iter().any(|c| c.type_ == PRUNE_BLOCKED) {
         let generation = obj.meta().generation.unwrap_or(0);
 
         // Tell the CR's owner, once, that their edit was picked up (#2620).
@@ -446,12 +451,33 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
             .await;
         }
 
-        let projected = service::project(
-            &prior,
-            facts,
-            generation,
-            &service::now_rfc3339(),
-        );
+        let now = service::now_rfc3339();
+        // The service's half. A service declares its whole condition set every
+        // pass, so a declared set replaces the array wholesale — that is what
+        // `project` is for, and a condition the service stopped declaring is
+        // meant to disappear.
+        //
+        // A pass where it declared *nothing* is not that. It is a pass with no
+        // opinion — readiness the pass could not observe, most often the same
+        // cluster hiccup that made an API stop being served — and the only
+        // reason control reached here is the controller's own condition. The
+        // controller authors exactly one condition and so may remove exactly
+        // one: everything else in the array is carried forward as found,
+        // transition times and observed generations included. Replacing it with
+        // the empty projection would delete the service's status on the pass
+        // that was supposed to withdraw the controller's.
+        let mut projected = if facts.is_empty() {
+            prior
+                .iter()
+                .filter(|c| c.type_ != PRUNE_BLOCKED)
+                .cloned()
+                .collect()
+        } else {
+            service::project(&prior, facts, generation, &now)
+        };
+        if let Some(fact) = blocked {
+            projected.extend(service::project(&prior, vec![fact], generation, &now));
+        }
         status
             .as_object_mut()
             .ok_or(Error::Missing("status patch root object"))?
@@ -471,7 +497,7 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
 }
 // </HANDWRITE>
 
-/// Run exactly one reconcile pass for `obj` against `client`, as the leader.
+/// Run exactly one reconcile pass for `obj` against `client`, under `election`.
 ///
 /// [`run`] builds its own `Client` from the ambient kubeconfig and never
 /// returns, so the convergence sequence it drives — apply the planned children,
@@ -481,18 +507,23 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
 /// what a service in the kit delegates here, and nothing outside the module
 /// could watch it end to end.
 ///
-/// This is that one pass, against a `Client` the caller supplies. Leadership is
-/// assumed rather than elected — there is no Lease worth holding for a single
-/// pass — and the metric set is private to the call, so counting here cannot
-/// disturb a running operator's exposition. It runs through the same
-/// instrumented entry point [`run`] does, so a pass observed here is the pass
-/// the operator performs.
+/// This is that one pass, against a `Client` and an [`Election`] the caller
+/// supplies. Leadership is a parameter rather than something this function
+/// decides: the leader gate in `reconcile_entry` is what makes `replicas > 1`
+/// safe, and a public entry point that stored `is_leader = true` into an
+/// election of its own making was a second, unguarded way past it. A caller
+/// that wants a leader's pass says so in one visible line at its own call site.
+///
+/// The metric set is private to the call, so counting here cannot disturb a
+/// running operator's exposition. It runs through the same instrumented entry
+/// point [`run`] does, so a pass observed here is the pass the operator
+/// performs — the leader gate included, which is why a follower's election
+/// yields a requeue and no cluster write at all.
 pub async fn reconcile_once<S: ManagedService>(
     client: Client,
     obj: Arc<S>,
+    election: Arc<Election>,
 ) -> Result<Action, Error> {
-    let election = Election::new(identity(S::MANAGER));
-    election.is_leader.store(true, Ordering::Relaxed);
     let recorder = Recorder::new(
         client.clone(),
         Reporter {
@@ -1038,6 +1069,15 @@ mod tests {
         Arc::new(obj)
     }
 
+    /// An election that holds the lease. Leadership is `reconcile_once`'s
+    /// parameter now, so a unit test that wants a leader's pass says so here
+    /// rather than relying on the function to elect itself.
+    fn leader() -> Arc<Election> {
+        let election = Election::new("unit-test".to_string());
+        election.is_leader.store(true, Ordering::Relaxed);
+        election
+    }
+
     #[allow(clippy::type_complexity)]
     fn requests(log: &Arc<Mutex<Vec<(String, String, Value)>>>) -> Vec<String> {
         log.lock()
@@ -1177,7 +1217,7 @@ mod tests {
         // The result is checked after the writes, deliberately: the symptom of
         // the regression this pins is a CR left with no status subresource at
         // all, and asserting the result first would report the error instead.
-        let action = reconcile_once(client, pruning_obj(Vec::new())).await;
+        let action = reconcile_once(client, pruning_obj(Vec::new()), leader()).await;
 
         let status = status_write(&log);
         let conditions = status["status"]["conditions"]
@@ -1218,7 +1258,7 @@ mod tests {
         };
         let (client, log) = recording_apiserver(pruning_routes(not_found()));
 
-        reconcile_once(client, pruning_obj(vec![blocked]))
+        reconcile_once(client, pruning_obj(vec![blocked]), leader())
             .await
             .expect("the API is served again and the object is already gone");
 
@@ -1237,7 +1277,7 @@ mod tests {
     async fn nothing_blocked_leaves_the_conditions_array_absent() {
         let (client, log) = recording_apiserver(pruning_routes(not_found()));
 
-        reconcile_once(client, pruning_obj(Vec::new()))
+        reconcile_once(client, pruning_obj(Vec::new()), leader())
             .await
             .expect("an absent object at a served API is the converged state");
 

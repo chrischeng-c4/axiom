@@ -48,8 +48,18 @@ const WAL_FAST_MAGIC: &[u8; 4] = b"LWAL";
 /// actually put on the wire at the time.
 const WAL_FAST_INDEX: u8 = 1;
 /// #3952: fast-Index tag carrying each item's optional external LWW
-/// `version` (#184) on the wire. `encode_fast_index` emits this tag for every
-/// new record; `WAL_FAST_INDEX` (above) is decode-only from here on.
+/// `version` (#184) on the wire.
+///
+/// Emitted ONLY when at least one item in the record actually carries a
+/// `version`. A record with nothing to say beyond the legacy layout is still
+/// written with [`WAL_FAST_INDEX`], byte-for-byte as before #3952, and that
+/// asymmetry is deliberate: [`WAL_FORMAT_VERSION`] is still 1, so a pre-#3952
+/// binary's version check waves every record through and then fails on the
+/// tag. Emitting tag 2 unconditionally therefore made a single appended
+/// `Index` record — even one from a deployment that never sets `version` —
+/// enough to break replay on a rollback. Choosing the tag by content keeps the
+/// downgrade path open for exactly the records an older binary could have
+/// read correctly, and closes it, loudly, for the ones it could not.
 const WAL_FAST_INDEX_VERSIONED: u8 = 2;
 const WAL_VALUE_STRING: u8 = 1;
 const WAL_VALUE_NUMBER: u8 = 2;
@@ -108,10 +118,19 @@ impl WalRecord {
         let RaftLogEntry::Index { collection_id, req } = &self.entry else {
             return None;
         };
-        let mut bytes = Vec::with_capacity(estimate_fast_index_len(collection_id, req));
+        // Choose the tag by CONTENT, not unconditionally: a record none of
+        // whose items carries a `version` is expressible on the legacy wire,
+        // and writing it there is what keeps a rollback to a pre-#3952 binary
+        // readable (see `WAL_FAST_INDEX_VERSIONED`).
+        let versioned = req.items.iter().any(|item| item.version.is_some());
+        let mut bytes = Vec::with_capacity(estimate_fast_index_len(collection_id, req, versioned));
         bytes.extend_from_slice(WAL_FAST_MAGIC);
         bytes.push(self.version);
-        bytes.push(WAL_FAST_INDEX_VERSIONED);
+        bytes.push(if versioned {
+            WAL_FAST_INDEX_VERSIONED
+        } else {
+            WAL_FAST_INDEX
+        });
         put_str(&mut bytes, collection_id)?;
         match &req.request_id {
             Some(request_id) => {
@@ -126,13 +145,17 @@ impl WalRecord {
             put_str(&mut bytes, &item.field)?;
             // #3952: carry the external LWW version (#184) on the wire so
             // replay reconstructs the same `cell_versions` ceiling the live
-            // apply path enforced.
-            match item.version {
-                Some(v) => {
-                    bytes.push(1);
-                    bytes.extend_from_slice(&v.to_le_bytes());
+            // apply path enforced. Present only under the versioned tag — the
+            // legacy layout has no per-item version byte at all, and writing
+            // one under tag 1 would desynchronize every reader, old and new.
+            if versioned {
+                match item.version {
+                    Some(v) => {
+                        bytes.push(1);
+                        bytes.extend_from_slice(&v.to_le_bytes());
+                    }
+                    None => bytes.push(0),
                 }
-                None => bytes.push(0),
             }
             match &item.value {
                 FieldValue::String(s) => {
@@ -163,14 +186,20 @@ impl WalRecord {
     }
 }
 
-fn estimate_fast_index_len(collection_id: &str, req: &IndexRequest) -> usize {
+/// `versioned` must be the same predicate `encode_fast_index` used to pick the
+/// tag — under the legacy tag there is no per-item version byte to reserve, and
+/// over-reserving one byte per item is a silent per-record allocation tax on
+/// every write in a deployment that never sets `version`.
+fn estimate_fast_index_len(collection_id: &str, req: &IndexRequest, versioned: bool) -> usize {
     let mut len = WAL_FAST_MAGIC.len() + 2 + 4 + collection_id.len() + 1 + 4;
     if let Some(request_id) = &req.request_id {
         len += 4 + request_id.len();
     }
     for item in &req.items {
         len += 4 + item.external_id.len() + 4 + item.field.len() + 1;
-        len += if item.version.is_some() { 9 } else { 1 };
+        if versioned {
+            len += if item.version.is_some() { 9 } else { 1 };
+        }
         match &item.value {
             FieldValue::String(s) => len += 4 + s.len(),
             FieldValue::Number(_) => len += 8,

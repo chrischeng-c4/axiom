@@ -22,9 +22,18 @@ use super::status::redact;
 /// Field manager name used for Server-Side Apply of certificate secrets.
 pub const FIELD_MANAGER: &str = "service-k8s-certificate";
 
-/// Required RBAC verbs for KubernetesSecretStore.
-/// Only `get` and `patch` are required and used.
-pub const REQUIRED_RBAC_VERBS: &[&str] = &["get", "patch"];
+/// Required RBAC verbs for KubernetesSecretStore (#3221).
+///
+/// Three, and all three have a call site. `get` is the read before the apply;
+/// `patch` is the apply itself, which SSA sends as an HTTP `PATCH`.
+///
+/// `create` is the one the wire shape hides. The apiserver authorizes by what
+/// the request *does*, not by its method: an apply whose target does not exist
+/// yet is a create, and is checked against the `create` verb. Every certificate
+/// this store projects is absent exactly once — the first time — so a grant of
+/// `get,patch` alone serves every renewal and refuses every bootstrap, with a
+/// 403 that reads like a broken cluster rather than like this list.
+pub const REQUIRED_RBAC_VERBS: &[&str] = &["create", "get", "patch"];
 pub const RBAC_VERBS: &[&str] = REQUIRED_RBAC_VERBS;
 
 /// Lifecycle-owned Secret data keys.

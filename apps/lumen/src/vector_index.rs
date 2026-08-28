@@ -107,17 +107,37 @@ pub trait VectorIndex: Send + Sync {
         Ok(None)
     }
 
-    /// PRODUCTION seal (Stage 2 Phase 2f-1): seal the exact-CPU flat corpus into
-    /// a columnar mmap vector segment at `path`, attach it, and DROP the in-RAM
-    /// `data` buffer so the field's vectors leave RAM (the scan reads each row
-    /// zero-copy off the mmap). Returns `Ok(Some(row_eids))` — the eid of each
-    /// sealed vector row in segment-row order — for a [`FlatCpuIndex`], so the
-    /// caller can persist that row→eid mapping (the vector segment stores only
-    /// f32 rows) and rebuild the index on reopen. `Ok(None)` for any other
-    /// backend (HNSW is out of scope) — the default trait impl no-ops, so a
-    /// non-`FlatCpuIndex` backend simply returns `Ok(None)`.
+    /// PRODUCTION seal (Stage 2 Phase 2f-1): seal this backend's corpus into a
+    /// columnar mmap vector segment at `path` — decoded `f32` rows in row
+    /// order — and return `Ok(Some(row_eids))`, the eid of each sealed row in
+    /// segment-row order, so the caller can persist that row→eid mapping (the
+    /// segment stores only the f32 rows) and rebuild the index on reopen.
+    ///
+    /// Every backend that can be checkpointed implements this: reopen requires
+    /// the `<field>.eids.lseg` sidecar unconditionally for any `Vector` field,
+    /// so a backend returning `Ok(None)` here cannot be checkpointed at all
+    /// (issue #3951). What backends differ on is whether sealing also FREES the
+    /// in-RAM copy — see [`VectorIndex::seal_releases_ram`], which is what the
+    /// caller asks instead of inspecting the declared backend. The default impl
+    /// no-ops for a backend with no segment format yet.
     fn seal_to_segment_prod(&self, _path: &std::path::Path) -> Result<Option<Vec<String>>> {
         Ok(None)
+    }
+
+    /// Whether a successful [`VectorIndex::seal_to_segment_prod`] left this
+    /// index holding NO in-RAM copy of the sealed vectors, so the caller should
+    /// zero the field's reported byte footprint.
+    ///
+    /// This is a property of what the seal implementation actually did, not of
+    /// the backend the schema declares, and only the index can answer it: a
+    /// flat index hands the mmap its whole `data` buffer and keeps nothing,
+    /// while an HNSW index keeps its graph and raw vectors resident so the live
+    /// process goes on serving approximate kNN off the graph. A caller that
+    /// decided this by matching on `VectorSpec::backend` would have to be
+    /// edited again for every backend added, and would silently report the
+    /// wrong footprint until someone remembered to.
+    fn seal_releases_ram(&self) -> bool {
+        false
     }
 }
 
@@ -509,6 +529,39 @@ impl HnswCpuIndex {
         Ok(idx)
     }
 
+    /// Reopen an HNSW index from a sealed vector segment plus its row→eid
+    /// mapping, with NO snapshot — the segment counterpart of
+    /// [`HnswCpuIndex::restore`], and the reason a field declared `hnsw-cpu`
+    /// is still HNSW-backed after a restart.
+    ///
+    /// Row `i`'s vector is `seg.vector_at(i, dim)` (read once off the mmap) and
+    /// its external id is `row_eids[i]`; each is re-inserted into a fresh
+    /// graph. Unlike [`FlatCpuIndex::open_from_segment`], the vectors DO come
+    /// back into RAM — a graph cannot be traversed against a demand-paged
+    /// column it has no edges for — which is the cost the declared backend
+    /// asks for and what [`VectorIndex::seal_releases_ram`] reports as `false`.
+    /// The segment is consumed and dropped: once the rows are re-inserted the
+    /// store owns them.
+    pub fn open_from_segment(
+        spec: VectorSpec,
+        seg: std::sync::Arc<crate::segment::SegmentReader>,
+        row_eids: Vec<String>,
+    ) -> Result<Self> {
+        let dim = spec.dim as usize;
+        let idx = Self::new(spec);
+        for (row, eid) in row_eids.iter().enumerate() {
+            let vector = seg.vector_at(row as u32, dim).ok_or_else(|| {
+                anyhow!(
+                    "vector segment is missing row {row} of {} (eid `{eid}`)",
+                    row_eids.len()
+                )
+            })?;
+            idx.add(eid, vector)?;
+        }
+        debug_assert_eq!(idx.len(), row_eids.len());
+        Ok(idx)
+    }
+
     /// Override the search-time `ef` (beam width). Used by tuning/bench
     /// harnesses to sweep recall/latency on an already-built graph; production
     /// uses the [`hnsw_search_ef`] default set at construction.
@@ -693,21 +746,19 @@ impl VectorIndex for HnswCpuIndex {
     /// writes — decoded `f32` rows in row order, plus the row→eid mapping the
     /// caller persists as the `<field>.eids.lseg` sidecar.
     ///
-    /// This is not optional, and the graph itself is deliberately NOT what
-    /// gets persisted: `Collection::open_from_segments` (the segment reopen
-    /// path) reconstructs EVERY `FieldType::Vector` field via
-    /// `FlatCpuIndex::open_from_segment` regardless of the field's declared
-    /// backend — a segment-backed vector field always answers kNN with an
-    /// exact flat scan off the mmap after a cold reopen; only the CBOR
-    /// snapshot restore path (`FieldIndexSnapshot::Vector`, a different,
-    /// non-segment route) rebuilds an actual HNSW graph. So without this
-    /// override, the previously-inherited no-op default left every
-    /// default-backend vector field with no `<field>.lseg` segment and no
-    /// `<field>.eids.lseg` sidecar, and `open_from_segments` requires that
-    /// sidecar unconditionally for any `Vector` field — which is exactly why
-    /// `SegmentRdbStore::save_inner`'s pre-commit verification reopen (and,
-    /// unpatched, every later real restart) failed for any collection with a
-    /// default-backend (HNSW) vector field.
+    /// This is not optional: `Collection::open_from_segments` requires the
+    /// `<field>.eids.lseg` sidecar unconditionally for any `Vector` field, so
+    /// with the inherited no-op default a default-backend vector field wrote
+    /// neither file, and `SegmentRdbStore::save_inner`'s pre-commit
+    /// verification reopen (and, unpatched, every later real restart) failed
+    /// for any collection that had one.
+    ///
+    /// The GRAPH is deliberately not what gets persisted — only the vectors
+    /// are. `HnswCpuIndex::open_from_segment` reads them back off the mmap and
+    /// re-inserts them, paying the build cost once at reopen, so the field
+    /// answers kNN with the backend its schema declares on both sides of a
+    /// restart. Persisting the graph itself would pin this index's internal
+    /// layout into the on-disk format for no behavioural gain.
     ///
     /// No scalar quantization on the wire, matching the flat seal contract:
     /// the segment stores decoded `f32`, so recovery reads plain rows.
@@ -720,11 +771,24 @@ impl VectorIndex for HnswCpuIndex {
         let rows: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
         drop(inner);
         let n = rows.len();
-        let row_eids: Vec<String> = rows.iter().map(|(eid, _)| eid.clone()).collect();
-        let vectors: Vec<Option<&[f32]>> = rows.iter().map(|(_, v)| Some(v.as_slice())).collect();
+        // Split the pairs into the two shapes the writer and the caller each
+        // need, without cloning the eids: the vectors are borrowed for the
+        // duration of the write and the Strings are moved straight out.
+        let mut row_eids: Vec<String> = Vec::with_capacity(n);
+        let mut row_vecs: Vec<Vec<f32>> = Vec::with_capacity(n);
+        for (eid, v) in rows {
+            row_eids.push(eid);
+            row_vecs.push(v);
+        }
+        let vectors: Vec<Option<&[f32]>> = row_vecs.iter().map(|v| Some(v.as_slice())).collect();
         crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
-        let reader = crate::segment::SegmentReader::open(path)?;
-        debug_assert_eq!(reader.n_docs() as usize, n);
+        // Read the segment back only where the assertion it feeds is compiled
+        // in. In release the open is pure I/O whose result is discarded.
+        #[cfg(debug_assertions)]
+        {
+            let reader = crate::segment::SegmentReader::open(path)?;
+            debug_assert_eq!(reader.n_docs() as usize, n);
+        }
         Ok(Some(row_eids))
     }
 }
@@ -1206,6 +1270,13 @@ impl VectorIndex for FlatCpuIndex {
 
     fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
         FlatCpuIndex::seal_to_segment_prod(self, path)
+    }
+
+    /// The flat seal hands `data` to the mmap and keeps nothing: after it, the
+    /// segment is the field's only copy of the vectors, so the field's reported
+    /// resident footprint is zero.
+    fn seal_releases_ram(&self) -> bool {
+        true
     }
 
     #[cfg(test)]

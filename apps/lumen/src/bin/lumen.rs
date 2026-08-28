@@ -99,6 +99,14 @@ enum Command {
     /// Import a SnapshotV1 JSON document from `--file` or stdin into a running
     /// node by replacing all engine state through `/admin/restore`.
     Import(SnapshotImportArgs),
+    /// Audit a SnapshotV1 JSON document offline — no server, nothing written —
+    /// and report which collection/field pairs would come back empty despite
+    /// the document's own census saying documents carry them. Those fields
+    /// cannot be repaired by restoring: their contents are not in the document,
+    /// and re-indexing is the only fix. Run this on a backup BEFORE importing
+    /// it, when the backup may have been taken by a build that sealed `set`
+    /// fields empty.
+    Inspect(InspectArgs),
     /// Self-update this binary from a published GitHub release. Resolves the
     /// running target + version, downloads the matching `lumen-<target>.tar.gz`,
     /// verifies its sha256, and atomically replaces the running executable.
@@ -865,6 +873,30 @@ struct SnapshotImportArgs {
     file: Option<PathBuf>,
 }
 
+/// `lumen inspect` flags: the offline half of the re-index audit
+/// (`Engine::reindex_needed`, which the serving node runs on every reopen and
+/// logs). Reads a document, restores it into a throwaway in-process engine,
+/// and prints what that engine could not restore. Nothing is written and no
+/// node is contacted.
+#[derive(clap::Args)]
+struct InspectArgs {
+    /// Read SnapshotV1 JSON bytes from this path. Omit to read stdin.
+    #[arg(long)]
+    file: Option<PathBuf>,
+    /// `text` (default) for an operator-readable report, `json` for the same
+    /// facts as a machine-readable document on stdout.
+    #[arg(long, value_enum, default_value_t = InspectFormat::Text)]
+    format: InspectFormat,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum InspectFormat {
+    /// Operator-readable lines plus a trailing `next:` command.
+    Text,
+    /// A single JSON document: `reindex_needed`, `documents_scanned`.
+    Json,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
     /// Typed task map for agent context selection (default).
@@ -1206,6 +1238,7 @@ async fn main() -> Result<()> {
         Command::Backup(args) => dispatch_backup(args).await,
         Command::Dump(args) | Command::Export(args) => dispatch_snapshot_export(args).await,
         Command::Load(args) | Command::Import(args) => dispatch_snapshot_import(args).await,
+        Command::Inspect(args) => dispatch_snapshot_inspect(args),
         Command::Connect(args) => connect(args).await,
         Command::Query(args) => dispatch_query(args).await,
     }
@@ -1674,6 +1707,84 @@ async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
          `--features backup` (or `operator`, which pulls it in — the published \
          image includes both)"
     )
+}
+
+/// `lumen inspect`: ask a snapshot document, offline, which of its fields will
+/// not come back.
+///
+/// This is the same audit `Engine::reindex_needed` runs — and the serving node
+/// logs — at the end of every `restore` and every segment reopen. It is
+/// duplicated here rather than queried from a node because the audience is an
+/// operator holding a backup file, deciding whether to import it at all: by
+/// the time a node can answer, the decision has already been made.
+///
+/// Deliberately not behind the `backup` feature. Reading a local file and
+/// restoring it into an in-process engine needs no HTTP client, and an operator
+/// diagnosing a suspect backup should not first have to work out which build
+/// of the binary they are holding.
+fn dispatch_snapshot_inspect(args: InspectArgs) -> Result<()> {
+    let payload = match &args.file {
+        Some(path) => std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
+        None => {
+            let mut buf = Vec::new();
+            let mut stdin = std::io::stdin();
+            std::io::Read::read_to_end(&mut stdin, &mut buf)?;
+            buf
+        }
+    };
+    let snapshot: lumen::storage::SnapshotV1 = serde_json::from_slice(&payload).context(
+        "decode SnapshotV1 JSON — this reads the document `lumen export` writes, \
+         not an on-disk segment directory",
+    )?;
+
+    // A throwaway engine, so the audit runs against exactly what a real restore
+    // would have produced rather than against a re-reading of the bytes.
+    let engine = Engine::new();
+    engine
+        .restore(snapshot)
+        .context("restore the document into a throwaway in-process engine")?;
+
+    let needed = engine.reindex_needed()?;
+    let mut documents_scanned: std::collections::BTreeMap<String, u64> = Default::default();
+    for id in engine.list_collections()? {
+        let indexed = engine.stats(&id)?.documents_indexed;
+        documents_scanned.insert(id, indexed);
+    }
+
+    match args.format {
+        InspectFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "reindex_needed": needed,
+                "documents_scanned": documents_scanned,
+            }))?
+        ),
+        InspectFormat::Text => {
+            // The census travels with the verdict in both formats: "nothing is
+            // damaged" and "nothing was read" print differently.
+            for (id, indexed) in &documents_scanned {
+                println!("scanned {id}: {indexed} documents");
+            }
+            if needed.is_empty() {
+                println!("no field needs re-indexing");
+                println!("next: done");
+            } else {
+                for row in &needed {
+                    println!(
+                        "REINDEX {}.{}: the census covers {} documents, the restored index holds \
+                         a value for none of them",
+                        row.collection, row.field, row.documents_covered
+                    );
+                }
+                println!(
+                    "next: re-index the {} field(s) above from their source of record — their \
+                     contents are not in this document",
+                    needed.len()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(feature = "backup")]

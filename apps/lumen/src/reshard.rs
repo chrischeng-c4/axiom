@@ -631,21 +631,22 @@ fn merge_field_index_delta(base: &mut FieldIndexSnapshot, delta: FieldIndexSnaps
             *total_doc_len = forward.values().map(|(_, len)| u64::from(*len)).sum();
             *bytes = bytes.saturating_add(delta_bytes);
         }
+        // Keyword and Set carry only their forward column, so the merge is
+        // `extend` and nothing else. The inverted maps used to be unioned here
+        // as well, and that union could not be right: `forward` resolves an id
+        // present in both shards last-writer-wins, while a union keeps BOTH
+        // shards' postings, so a doc whose keyword differed between them left a
+        // posting its own forward entry no longer backed. It restored into an
+        // index answering a term query with a document that does not hold the
+        // term — except that `from_snapshot` rebuilds from `forward` and threw
+        // the union away, so the bug was latent rather than live.
         (
+            FieldIndexSnapshot::Keyword { forward, bytes },
             FieldIndexSnapshot::Keyword {
-                terms,
-                forward,
-                bytes,
-            },
-            FieldIndexSnapshot::Keyword {
-                terms: delta_terms,
                 forward: delta_forward,
                 bytes: delta_bytes,
             },
         ) => {
-            for (term, ids) in delta_terms {
-                terms.entry(term).or_default().extend(ids);
-            }
             forward.extend(delta_forward);
             *bytes = bytes.saturating_add(delta_bytes);
         }
@@ -660,20 +661,12 @@ fn merge_field_index_delta(base: &mut FieldIndexSnapshot, delta: FieldIndexSnaps
             *bytes = bytes.saturating_add(delta_bytes);
         }
         (
+            FieldIndexSnapshot::Set { forward, bytes },
             FieldIndexSnapshot::Set {
-                elements,
-                forward,
-                bytes,
-            },
-            FieldIndexSnapshot::Set {
-                elements: delta_elements,
                 forward: delta_forward,
                 bytes: delta_bytes,
             },
         ) => {
-            for (element, ids) in delta_elements {
-                elements.entry(element).or_default().extend(ids);
-            }
             forward.extend(delta_forward);
             *bytes = bytes.saturating_add(delta_bytes);
         }
@@ -756,33 +749,14 @@ fn field_index_subset(index: &FieldIndexSnapshot, wanted: &BTreeSet<String>) -> 
                 bytes: *bytes,
             }
         }
-        FieldIndexSnapshot::Keyword {
-            terms,
-            forward,
-            bytes,
-        } => {
-            let forward = forward
+        FieldIndexSnapshot::Keyword { forward, bytes } => FieldIndexSnapshot::Keyword {
+            forward: forward
                 .iter()
                 .filter(|(external_id, _)| wanted.contains(*external_id))
                 .map(|(external_id, value)| (external_id.clone(), value.clone()))
-                .collect();
-            let terms = terms
-                .iter()
-                .filter_map(|(term, ids)| {
-                    let ids: BTreeSet<String> = ids
-                        .iter()
-                        .filter(|external_id| wanted.contains(*external_id))
-                        .cloned()
-                        .collect();
-                    (!ids.is_empty()).then(|| (term.clone(), ids))
-                })
-                .collect();
-            FieldIndexSnapshot::Keyword {
-                terms,
-                forward,
-                bytes: *bytes,
-            }
-        }
+                .collect(),
+            bytes: *bytes,
+        },
         FieldIndexSnapshot::Number { forward, bytes } => FieldIndexSnapshot::Number {
             forward: forward
                 .iter()
@@ -791,33 +765,14 @@ fn field_index_subset(index: &FieldIndexSnapshot, wanted: &BTreeSet<String>) -> 
                 .collect(),
             bytes: *bytes,
         },
-        FieldIndexSnapshot::Set {
-            elements,
-            forward,
-            bytes,
-        } => {
-            let forward = forward
+        FieldIndexSnapshot::Set { forward, bytes } => FieldIndexSnapshot::Set {
+            forward: forward
                 .iter()
                 .filter(|(external_id, _)| wanted.contains(*external_id))
                 .map(|(external_id, value)| (external_id.clone(), value.clone()))
-                .collect();
-            let elements = elements
-                .iter()
-                .filter_map(|(element, ids)| {
-                    let ids: BTreeSet<String> = ids
-                        .iter()
-                        .filter(|external_id| wanted.contains(*external_id))
-                        .cloned()
-                        .collect();
-                    (!ids.is_empty()).then(|| (element.clone(), ids))
-                })
-                .collect();
-            FieldIndexSnapshot::Set {
-                elements,
-                forward,
-                bytes: *bytes,
-            }
-        }
+                .collect(),
+            bytes: *bytes,
+        },
         FieldIndexSnapshot::Vector {
             spec,
             vectors,
