@@ -10,6 +10,7 @@
 set +x
 umask 077
 set -euo pipefail
+CDPATH=
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd -P)"
@@ -22,6 +23,28 @@ KUSTOMIZE_VALIDATOR_SHA256="43355d4a083303c9ffadade98f4add46958d7a7e625100dea97d
 die() {
   echo "standalone GKE acceptance: $*" >&2
   exit 2
+}
+
+PRIVATE_TMP_ROOT="$(cd -P /tmp && pwd -P)"
+case "$PRIVATE_TMP_ROOT" in /tmp|/private/tmp) ;; *) die 'unsupported private temp root' ;; esac
+
+safe_private_dir() {
+  local path=$1
+  [[ "$path" == "$PRIVATE_TMP_ROOT"/* && "$path" != */ && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && -d "$path" && ! -L "$path" ]] || return 1
+  [[ "$(cd "$path" && pwd -P)" == "$path" ]]
+}
+safe_private_file() {
+  local path=$1 parent
+  [[ "$path" == "$PRIVATE_TMP_ROOT"/* && "$path" != *'/../'* && "$path" != */.. && "$path" != *'/./'* && -f "$path" && ! -L "$path" ]] || return 1
+  parent=${path%/*}; safe_private_dir "$parent"
+}
+private_mode() {
+  local path=$1 mode status
+  mode=$(stat -c %a "$path" 2>/dev/null); status=$?
+  if [[ "$status" -eq 0 ]]; then [[ "$mode" == 700 ]] || return 1; printf '%s\n' "$mode"; return 0; fi
+  [[ -z "$mode" ]] || return 1
+  mode=$(stat -f %Lp "$path" 2>/dev/null) || return 1
+  [[ "$mode" == 700 ]] || return 1; printf '%s\n' "$mode"
 }
 
 if [[ "$#" -ne 2 || "$1" != "--mode" || "$2" != "gke" ]]; then
@@ -119,16 +142,12 @@ sha256_file() {
 [[ -z "$(find "$KUSTOMIZE_SOURCE_ROOT" -type l -print -quit)" ]] ||
   die "shared Kustomize source must not contain symlinks"
 
-[[ -f "$KUBECONFIG" && ! -L "$KUBECONFIG" ]] ||
+safe_private_file "$KUBECONFIG" ||
   die "KUBECONFIG must be an existing regular non-symlink file"
-[[ "$KUBECONFIG" == /private/tmp/* ]] ||
-  die "KUBECONFIG must be a task-local file below /private/tmp"
 [[ -f "$LUMEN_STANDALONE_GKE_CLI" && -x "$LUMEN_STANDALONE_GKE_CLI" && ! -L "$LUMEN_STANDALONE_GKE_CLI" ]] ||
   die "LUMEN_STANDALONE_GKE_CLI must be an executable regular non-symlink file"
-[[ -d "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR" && ! -L "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR" ]] ||
+safe_private_dir "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR" ||
   die "LUMEN_STANDALONE_GKE_EVIDENCE_DIR must be an existing non-symlink directory"
-[[ "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR" == /private/tmp/* ]] ||
-  die "LUMEN_STANDALONE_GKE_EVIDENCE_DIR must be below /private/tmp"
 [[ -z "$(find "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR" -mindepth 1 -print -quit)" ]] ||
   die "LUMEN_STANDALONE_GKE_EVIDENCE_DIR must be empty"
 [[ -d "$LUMEN_STANDALONE_GKE_CANDIDATE_RECEIPT_DIR" && ! -L "$LUMEN_STANDALONE_GKE_CANDIDATE_RECEIPT_DIR" ]] ||
@@ -206,9 +225,26 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-TMP_ROOT="$(mktemp -d /tmp/lumen-standalone-gke.XXXXXX)"
+TMP_ROOT="$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-standalone-gke.XXXXXX")"
 chmod 700 "$TMP_ROOT"
-KUSTOMIZE_ROOT="$TMP_ROOT/kustomize-harness"
+[[ -d "$TMP_ROOT" && ! -L "$TMP_ROOT" && "$(cd "$TMP_ROOT" && pwd -P)" == "$TMP_ROOT" ]] || die 'private temporary root is not canonical'
+[[ "${TMP_ROOT%/*}" == "$PRIVATE_TMP_ROOT" && "${TMP_ROOT##*/}" =~ ^lumen-standalone-gke\.[A-Za-z0-9]{6}$ ]] || die 'private temporary root identity is unsafe'
+[[ "$(private_mode "$TMP_ROOT")" == 700 ]] || die 'private temporary root mode is not 0700'
+KUBECTL_CACHE_DIR="$TMP_ROOT/kubectl-cache"
+[[ ! -e "$KUBECTL_CACHE_DIR" && ! -L "$KUBECTL_CACHE_DIR" ]] || die 'kubectl cache path already exists'
+mkdir -m 700 "$KUBECTL_CACHE_DIR"
+[[ -d "$KUBECTL_CACHE_DIR" && ! -L "$KUBECTL_CACHE_DIR" && "$(cd "$KUBECTL_CACHE_DIR" && pwd -P)" == "$KUBECTL_CACHE_DIR" ]] || die 'kubectl cache path is not canonical'
+[[ "${KUBECTL_CACHE_DIR%/*}" == "$TMP_ROOT" && "${KUBECTL_CACHE_DIR##*/}" == kubectl-cache ]] || die 'kubectl cache path identity is unsafe'
+[[ "$(private_mode "$KUBECTL_CACHE_DIR")" == 700 ]] || die 'kubectl cache path mode is not 0700'
+PRIVATE_REPOSITORY_ROOT="$TMP_ROOT/repository"
+[[ ! -e "$PRIVATE_REPOSITORY_ROOT" && ! -L "$PRIVATE_REPOSITORY_ROOT" ]] ||
+  die "private repository root already exists"
+mkdir -m 700 "$PRIVATE_REPOSITORY_ROOT"
+mkdir -m 700 "$PRIVATE_REPOSITORY_ROOT/kustomize"
+[[ -d "$PRIVATE_REPOSITORY_ROOT" && ! -L "$PRIVATE_REPOSITORY_ROOT" && -d "$PRIVATE_REPOSITORY_ROOT/kustomize" && ! -L "$PRIVATE_REPOSITORY_ROOT/kustomize" ]] ||
+  die "private repository parent is unsafe"
+PRIVATE_REPOSITORY_ROOT="$(cd "$PRIVATE_REPOSITORY_ROOT" && pwd -P)" || die "private repository root cannot be canonicalized"
+KUSTOMIZE_ROOT="$PRIVATE_REPOSITORY_ROOT/kustomize/lumen-standalone-acceptance"
 [[ ! -e "$KUSTOMIZE_ROOT" && ! -L "$KUSTOMIZE_ROOT" ]] ||
   die "private Kustomize harness path already exists"
 cp -R -- "$KUSTOMIZE_SOURCE_ROOT" "$KUSTOMIZE_ROOT"
@@ -231,6 +267,7 @@ k() {
   kubectl \
     --kubeconfig "$KUBECONFIG" \
     --context "$LUMEN_STANDALONE_GKE_CONTEXT" \
+    --cache-dir "$KUBECTL_CACHE_DIR" \
     "$@"
 }
 
@@ -244,11 +281,11 @@ if ! selected_context="$(k config view --minify -o jsonpath='{.contexts[0].name}
 fi
 [[ "$selected_context" == "$LUMEN_STANDALONE_GKE_CONTEXT" ]] ||
   die "kubectl wrapper did not select the requested context"
-current_context="$(kubectl --kubeconfig "$KUBECONFIG" config current-context 2>"$TMP_ROOT/current-context.err")" ||
+current_context="$(kubectl --kubeconfig "$KUBECONFIG" --cache-dir "$KUBECTL_CACHE_DIR" config current-context 2>"$TMP_ROOT/current-context.err")" ||
   die "task-local kubeconfig has no current context"
 [[ "$current_context" == "$LUMEN_STANDALONE_GKE_CONTEXT" ]] ||
   die "task-local kubeconfig current context must equal LUMEN_STANDALONE_GKE_CONTEXT for backup and restore"
-[[ "$(kubectl --kubeconfig "$KUBECONFIG" config get-contexts -o name | awk 'NF {count++; name=$0} END {if (count == 1) print name}')" == "$LUMEN_STANDALONE_GKE_CONTEXT" ]] ||
+[[ "$(kubectl --kubeconfig "$KUBECONFIG" --cache-dir "$KUBECTL_CACHE_DIR" config get-contexts -o name | awk 'NF {count++; name=$0} END {if (count == 1) print name}')" == "$LUMEN_STANDALONE_GKE_CONTEXT" ]] ||
   die "task-local kubeconfig must contain exactly the requested context"
 
 if ! gcloud container clusters describe "$LUMEN_STANDALONE_GKE_CLUSTER" \
