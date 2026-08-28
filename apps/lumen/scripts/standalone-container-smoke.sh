@@ -106,7 +106,7 @@ if [[ "$MODE" == "durable" ]]; then
     jq -e --arg id "durable-${value}" '.total == 1 and (.hits | length) == 1 and .hits[0].external_id == $id' "$response" >/dev/null
   }
   CREATED_OLD="$OLD_CONTAINER"
-  docker run -d --name "$OLD_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1 \
+  docker run -d --name "$OLD_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_DATA_DIR=/var/lib/lumen/data -e LUMEN_PERSISTENCE=segment -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1 \
     -p 127.0.0.1::7373 "$OLD_IMAGE" >/dev/null
   OLD_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$OLD_CONTAINER")"
   wait_ready "$OLD_CONTAINER" "$OLD_PORT"

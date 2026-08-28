@@ -63,7 +63,7 @@ fn insert_after_first_from(source: &str, instruction: &str) -> String {
 const DURABLE_BEGIN: &str = "  # DURABLE-CONTRACT-BEGIN\n";
 const DURABLE_END: &str = "  # DURABLE-CONTRACT-END\n";
 const DURABLE_BLOCK_SHA256: &str =
-    "1e14c631716089051ba574d85bbcd42dd2105b472966c1a0595e4fab81d0b33e";
+    "b10b42e8a3fd48ad2d4799806d3c497a890b05a794fa638a11ba3233f3e37845";
 const CANDIDATE_ROOT_REGEX: &str = "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$";
 const OLD_IMAGE: &str =
     "ghcr.io/chrischeng-c4/lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
@@ -71,7 +71,7 @@ const DATA_MOUNT: &str = "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/d
 const OLD_RUN: &str = concat!(
     "docker run -d --name \"$OLD_CONTAINER\" ",
     "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
-    "-e LUMEN_AUTH=off -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1 ",
+    "-e LUMEN_AUTH=off -e LUMEN_DATA_DIR=/var/lib/lumen/data -e LUMEN_PERSISTENCE=segment -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1 ",
     "-p 127.0.0.1::7373 \"$OLD_IMAGE\" >/dev/null"
 );
 const CANDIDATE_RUN: &str = concat!(
@@ -671,6 +671,25 @@ fn test_durable_script_contract_and_negative_mutations() {
             "ghcr.io/chrischeng-c4/lumen@sha256:0000000000000000000000000000000000000000000000000000000000000000",
         ),
     );
+    for (label, replacement) in [
+        (
+            "old image data directory flag removed",
+            "-e LUMEN_AUTH=off -e LUMEN_PERSISTENCE=segment -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1",
+        ),
+        (
+            "old image persistence flag removed",
+            "-e LUMEN_AUTH=off -e LUMEN_DATA_DIR=/var/lib/lumen/data -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1",
+        ),
+    ] {
+        assert_durable_rejected(
+            label,
+            replace_exact(
+                &source,
+                "-e LUMEN_AUTH=off -e LUMEN_DATA_DIR=/var/lib/lumen/data -e LUMEN_PERSISTENCE=segment -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1",
+                replacement,
+            ),
+        );
+    }
     assert_durable_rejected(
         "replacement image differs",
         replace_exact(
