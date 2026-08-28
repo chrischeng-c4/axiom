@@ -687,6 +687,46 @@ impl VectorIndex for HnswCpuIndex {
         let vectors: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
         Ok((vectors, inner.store.codebook))
     }
+
+    /// PRODUCTION seal (issue #3951): persist the HNSW corpus into the SAME
+    /// columnar vector-segment format [`FlatCpuIndex::seal_to_segment_prod`]
+    /// writes — decoded `f32` rows in row order, plus the row→eid mapping the
+    /// caller persists as the `<field>.eids.lseg` sidecar.
+    ///
+    /// This is not optional, and the graph itself is deliberately NOT what
+    /// gets persisted: `Collection::open_from_segments` (the segment reopen
+    /// path) reconstructs EVERY `FieldType::Vector` field via
+    /// `FlatCpuIndex::open_from_segment` regardless of the field's declared
+    /// backend — a segment-backed vector field always answers kNN with an
+    /// exact flat scan off the mmap after a cold reopen; only the CBOR
+    /// snapshot restore path (`FieldIndexSnapshot::Vector`, a different,
+    /// non-segment route) rebuilds an actual HNSW graph. So without this
+    /// override, the previously-inherited no-op default left every
+    /// default-backend vector field with no `<field>.lseg` segment and no
+    /// `<field>.eids.lseg` sidecar, and `open_from_segments` requires that
+    /// sidecar unconditionally for any `Vector` field — which is exactly why
+    /// `SegmentRdbStore::save_inner`'s pre-commit verification reopen (and,
+    /// unpatched, every later real restart) failed for any collection with a
+    /// default-backend (HNSW) vector field.
+    ///
+    /// No scalar quantization on the wire, matching the flat seal contract:
+    /// the segment stores decoded `f32`, so recovery reads plain rows.
+    fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let dim = inner.store.spec.dim as usize;
+        let rows: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
+        drop(inner);
+        let n = rows.len();
+        let row_eids: Vec<String> = rows.iter().map(|(eid, _)| eid.clone()).collect();
+        let vectors: Vec<Option<&[f32]>> = rows.iter().map(|(_, v)| Some(v.as_slice())).collect();
+        crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
+        let reader = crate::segment::SegmentReader::open(path)?;
+        debug_assert_eq!(reader.n_docs() as usize, n);
+        Ok(Some(row_eids))
+    }
 }
 
 impl std::fmt::Debug for HnswCpuIndex {

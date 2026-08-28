@@ -10020,12 +10020,22 @@ impl FieldIndex {
                 idx.tombstones = RoaringBitmap::new(); // re-seal baked deletes in
                 Ok(None)
             }
-            FieldIndex::Vector { idx, bytes, .. } => {
-                // The flat-cpu backend seals + drops its data buffer and hands
-                // back the row→eid mapping; the collection persists it. A
-                // non-flat backend (HNSW) returns None and is left in RAM.
+            FieldIndex::Vector { spec, idx, bytes } => {
+                // Every backend seals its corpus into the SAME columnar
+                // vector-segment format and hands back the row→eid mapping;
+                // the collection persists that as the `<field>.eids.lseg`
+                // sidecar (issue #3951: `open_from_segments` requires it
+                // unconditionally for any `Vector` field, whatever backend
+                // sealed it — the reopen side always reconstructs a
+                // segment-backed field as an exact flat scan, see
+                // `FieldIndex::open_from_segment`). Only the flat-cpu backend
+                // also DROPS its in-RAM buffer at seal (the segment becomes
+                // its sole source, demand-paged); HNSW keeps its graph and
+                // raw vectors resident so the *live* process keeps serving
+                // approximate kNN off the graph right up until an actual
+                // restart reopens the field from the segment instead.
                 let row_eids = idx.seal_to_segment_prod(&path)?;
-                if row_eids.is_some() {
+                if row_eids.is_some() && spec.backend == crate::types::VectorBackend::FlatCpu {
                     // The contiguous scan buffer left RAM; reflect that in bytes.
                     *bytes = 0;
                 }
