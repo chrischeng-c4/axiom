@@ -553,6 +553,10 @@ name = "spec_gen_e2e"
 path = "e2e/spec_gen_e2e.rs"
 
 [[test]]
+name = "snapshot_round_trip_keeps_sealed_inverted_index"
+path = "e2e/snapshot_round_trip_keeps_sealed_inverted_index.rs"
+
+[[test]]
 name = "spec_route_parity"
 path = "e2e/spec_route_parity.rs"
 
