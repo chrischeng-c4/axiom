@@ -78,6 +78,19 @@ fn findings(source: &str) -> Vec<&'static str> {
             "PUBLIC_IMAGE",
             "v2-public.json\" >/dev/null || die \"public runtime is not the fixed 0.4.29 serving image\"",
         ),
+        ("PATCH", "patch_statefulset_image \"$statefulset\" \"$label\""),
+        ("PATCH", "patch_statefulset_image \"$V2_APPLY_ROOT/runtime/statefulset.yaml\" v2"),
+        ("PATCH", "yaml_json \"$statefulset\" \"$canonical\""),
+        ("PATCH", ".spec.template.spec.containers | length == 1"),
+        ("PATCH", "(.spec.template.spec.containers | length == 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\""),
+        ("PATCH", ".spec.template.spec.containers[0].name == \"serving\""),
+        ("PATCH", ".spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\""),
+        ("PATCH", ".spec.template.spec.containers[0].image = $image"),
+        ("PATCH", "mv -f -- \"$patched\" \"$statefulset\""),
+        ("PATCH", "cmp -s \"$original_canonical\" \"$patched_canonical\""),
+        ("PATCH", "cmp -s \"$TMP_ROOT/v2-public-no-image.json\" \"$TMP_ROOT/v2-private-no-image.json\""),
+        ("PATCH", "digest patch changed fields other than the serving image"),
+        ("PATCH", "private runtime changed fields other than serving image"),
         ("ARCHIVE", "tar -xOf"),
         (
             "ARCHIVE",
@@ -348,6 +361,9 @@ fn findings(source: &str) -> Vec<&'static str> {
     }
     if source.contains("$undefined") {
         bad.push("RECEIPT");
+    }
+    if source.matches("patch_statefulset_image").count() != 3 || source.contains("k set image") {
+        bad.push("PATCH");
     }
 
     let state = function_body(source, "v2_get_state");
@@ -654,6 +670,36 @@ fn negative_mutations_remove_real_gate_obligations() {
             "v2-public.json\" >/dev/null || die \"public runtime is not the fixed 0.4.29 serving image\"",
             "v2-public.json\" >/dev/null || true",
             "PUBLIC_IMAGE",
+        ),
+        (
+            "patch_statefulset_image \"$statefulset\" \"$label\"",
+            "k set image -f \"$statefulset\" serving=\"$LUMEN_STANDALONE_GKE_IMAGE\" --local -o yaml >\"$statefulset\"",
+            "PATCH",
+        ),
+        (
+            "patch_statefulset_image \"$V2_APPLY_ROOT/runtime/statefulset.yaml\" v2",
+            "k set image -f \"$V2_APPLY_ROOT/runtime/statefulset.yaml\" serving=\"$LUMEN_STANDALONE_GKE_IMAGE\" --local -o yaml >\"$V2_APPLY_ROOT/runtime/statefulset.yaml\"",
+            "PATCH",
+        ),
+        (
+            "(.spec.template.spec.containers | length == 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\"",
+            "(.spec.template.spec.containers | length >= 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\"",
+            "PATCH",
+        ),
+        (
+            ".spec.template.spec.containers[0].image = $image",
+            ".spec.template.spec.containers[].image = $image",
+            "PATCH",
+        ),
+        (
+            "cmp -s \"$original_canonical\" \"$patched_canonical\"",
+            "true # field comparison bypassed",
+            "PATCH",
+        ),
+        (
+            "cmp -s \"$TMP_ROOT/v2-public-no-image.json\" \"$TMP_ROOT/v2-private-no-image.json\"",
+            "true # v2 field comparison bypassed",
+            "PATCH",
         ),
         (
             "candidate archive hash mismatch",
