@@ -8,7 +8,8 @@
 
 use serde_json::{json, Value};
 use service_k8s::render::{
-    dedicated_node_affinity, service_statefulset, RenderCtx, ServiceStatefulSet,
+    dedicated_node_affinity, service_statefulset, service_statefulset_with_service_links, RenderCtx,
+    ServiceStatefulSet,
     WorkloadVolumeClaim,
 };
 
@@ -269,4 +270,25 @@ fn compatibility_adapter_matches_all_lumen_statefulset_profiles() {
             "profile {kind} changed object order"
         );
     }
+}
+
+#[test]
+fn service_links_opt_in_only_adds_the_explicit_pod_field() {
+    let cx = RenderCtx {
+        app: "lumen",
+        manager: "lumen-operator",
+        api_version: "v1",
+        kind: "Lumen",
+        name: "lumen",
+        ns: "default",
+        owner: None,
+    };
+    let legacy = service_statefulset(profile(&cx, 0));
+    let disabled = service_statefulset_with_service_links(profile(&cx, 0), false);
+    let enabled = service_statefulset_with_service_links(profile(&cx, 0), true);
+    let mut expected = legacy.clone();
+    expected["spec"]["template"]["spec"]["enableServiceLinks"] = json!(false);
+    assert_eq!(disabled, expected);
+    assert!(legacy["spec"]["template"]["spec"].get("enableServiceLinks").is_none());
+    assert_eq!(enabled["spec"]["template"]["spec"]["enableServiceLinks"], true);
 }

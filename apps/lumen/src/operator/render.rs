@@ -599,7 +599,7 @@ fn serving_statefulset(
     if let Some(sc) = &s.raft_storage_class {
         pvc_template["spec"]["storageClassName"] = json!(sc);
     }
-    let mut sts = render::service_statefulset(ServiceStatefulSet {
+    let serving_plan = ServiceStatefulSet {
         cx,
         name: cx.name,
         component: COMPONENT,
@@ -691,7 +691,10 @@ fn serving_statefulset(
             mount_path: "/var/lib/lumen",
             read_only: false,
         }),
-    });
+    };
+    // Keep Kubernetes' legacy Service env injection from replacing the
+    // ConfigMap-backed numeric `LUMEN_PORT` with a `tcp://...` value.
+    let mut sts = render::service_statefulset_with_service_links(serving_plan, false);
     if lumen.spec.replicas_per_shard <= 1 {
         if let Some(spec) = sts["spec"].as_object_mut() {
             let replicas = if lumen.spec.shard_count > 1 {

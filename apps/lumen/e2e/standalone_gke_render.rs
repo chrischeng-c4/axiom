@@ -159,6 +159,10 @@ fn render_emits_one_durable_in_cluster_instance_and_split_rbac() {
     let stateful_set = yaml(out.join("runtime/statefulset.yaml"));
     assert_eq!(stateful_set["kind"], "StatefulSet");
     assert_eq!(stateful_set["spec"]["replicas"], 1);
+    assert_eq!(
+        stateful_set["spec"]["template"]["spec"]["enableServiceLinks"],
+        false
+    );
     assert!(stateful_set["spec"]["volumeClaimTemplates"].is_null());
     let data_volume = stateful_set["spec"]["template"]["spec"]["volumes"]
         .as_array()

@@ -66,6 +66,7 @@ run_hash() { sha256_text "$1" | cut -c1-10; }
 cluster_name() { printf 'lumen-sa-%s\n' "$(run_hash "$1")"; }
 pool_name() { printf 'lumen-np-%s\n' "$(run_hash "$1")"; }
 node_service_account() { printf 'lumen-nodes-%s\n' "$(run_hash "$1")"; }
+owner_label() { printf 'lumen-standalone-%s\n' "$(run_hash "$1")"; }
 
 safe_private_dir() {
   local path=$1
@@ -160,7 +161,7 @@ validate_inputs() {
   CLUSTER=$(cluster_name "$RUN_ID")
   NODE_POOL=$(pool_name "$RUN_ID")
   NODE_SERVICE_ACCOUNT=$(node_service_account "$RUN_ID")
-  OWNER_LABEL="lumen-standalone-$(run_hash "$RUN_ID")"
+  OWNER_LABEL=$(owner_label "$RUN_ID")
   [[ "$CONFIRM_CREATE" == "$CLUSTER" && "$CONFIRM_DESTROY" == "$CLUSTER" ]] || die 'cluster confirmation does not match derived identity'
 }
 

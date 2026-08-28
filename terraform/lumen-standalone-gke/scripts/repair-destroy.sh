@@ -13,10 +13,13 @@ source "$SCRIPT_DIR/live-acceptance.sh"
 STATE_DIR=''
 REPAIR_CONFIRM=''
 REPAIR_SEEN_OPTIONS='|'
+REPAIR_STAGE=''
+REPAIR_ATTEMPT=''
+REPAIR_STAGE_MOVED=0
 
 require_repair_tools() {
   local tool
-  for tool in jq terraform gcloud awk cut rm mkdir; do
+  for tool in jq terraform gcloud awk cut rm mkdir mktemp chmod cp mv stat; do
     command -v "$tool" >/dev/null 2>&1 || die "required repair tool is missing: $tool"
   done
   if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then die 'sha256 tool is missing'; fi
@@ -99,27 +102,110 @@ load_contract() {
 }
 
 repair_plan_is_safe() {
-  plan_has_delete_subset "$1"
+  local owner email
+  owner=$(owner_label "$RUN_ID") || return 1
+  email="${NODE_SERVICE_ACCOUNT}@${PROJECT_ID}.iam.gserviceaccount.com"
+  jq -e --arg project "$PROJECT_ID" --arg zone "$GKE_ZONE" --arg cluster "$CLUSTER" \
+    --arg pool "$NODE_POOL" --arg account "$NODE_SERVICE_ACCOUNT" --arg node_sa "$email" --arg owner "$owner" '
+    (.resource_changes) as $changes |
+    ($changes | type == "array" and length <= 4) and
+    (([$changes[].address] | length) == ([$changes[].address] | unique | length)) and
+    all($changes[];
+      .mode == "managed" and
+      (.change | type == "object" and has("before") and has("after")) and
+      .change.actions == ["delete"] and
+      (.change.before | type == "object") and
+      .change.after == null and
+      (if .address == "google_container_cluster.standalone" then
+        .type == "google_container_cluster" and .name == "standalone" and
+        .change.before.project == $project and .change.before.name == $cluster and
+        .change.before.location == $zone and .change.before.resource_labels["lumen-owner"] == $owner
+      elif .address == "google_container_node_pool.standalone" then
+        .type == "google_container_node_pool" and .name == "standalone" and
+        .change.before.project == $project and .change.before.name == $pool and
+        .change.before.location == $zone and .change.before.cluster == $cluster and
+        (.change.before.node_config | type == "array" and length == 1) and
+        .change.before.node_config[0].service_account == $node_sa and
+        .change.before.node_config[0].labels["lumen-owner"] == $owner
+      elif .address == "google_project_iam_member.node_baseline" then
+        .type == "google_project_iam_member" and .name == "node_baseline" and
+        .change.before.project == $project and
+        .change.before.role == "roles/container.defaultNodeServiceAccount" and
+        .change.before.member == ("serviceAccount:" + $node_sa)
+      elif .address == "google_service_account.nodes" then
+        .type == "google_service_account" and .name == "nodes" and
+        .change.before.project == $project and .change.before.account_id == $account and
+        .change.before.email == $node_sa
+      else false end)
+    )
+  ' "$1" >/dev/null
+}
+
+cleanup_repair_stage() {
+  if [[ "$REPAIR_STAGE_MOVED" -eq 0 && -n "$REPAIR_STAGE" &&
+    "${REPAIR_STAGE%/*}" == "$PRIVATE_TMP_ROOT" &&
+    "${REPAIR_STAGE##*/}" =~ ^lumen-standalone-gke-repair\.[A-Za-z0-9]{6}$ &&
+    -d "$REPAIR_STAGE" && ! -L "$REPAIR_STAGE" &&
+    "$(cd "$REPAIR_STAGE" && pwd -P)" == "$REPAIR_STAGE" &&
+    "$(private_mode "$REPAIR_STAGE")" == 700 ]]; then
+    rm -rf -- "$REPAIR_STAGE"
+  fi
+}
+
+prepare_repair_stage() {
+  local source_state="$STATE_DIR/terraform.tfstate" source_digest
+  REPAIR_STAGE=$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-standalone-gke-repair.XXXXXX") || die 'cannot create repair staging directory'
+  [[ -d "$REPAIR_STAGE" && ! -L "$REPAIR_STAGE" && "$(cd "$REPAIR_STAGE" && pwd -P)" == "$REPAIR_STAGE" ]] || die 'repair staging directory is unsafe'
+  [[ "$(cd "${REPAIR_STAGE%/*}" && pwd -P)" == "$PRIVATE_TMP_ROOT" ]] || die 'repair staging parent is unsafe'
+  chmod 700 "$REPAIR_STAGE"
+  [[ "$(private_mode "$REPAIR_STAGE")" == 700 ]] || die 'repair staging directory mode is not 0700'
+  export LUMEN_STANDALONE_GKE_REPAIR_WORK_DIR="$REPAIR_STAGE"
+  mkdir -m 700 "$REPAIR_STAGE/terraform-data" "$REPAIR_STAGE/control"
+  safe_private_file "$source_state" || die 'repair state file is missing or unsafe'
+  source_digest=$(sha256_file "$source_state") || die 'cannot hash repair state'
+  cp -- "$source_state" "$REPAIR_STAGE/terraform.tfstate" || die 'cannot copy repair state into staging'
+  chmod 600 "$REPAIR_STAGE/terraform.tfstate"
+  [[ -f "$REPAIR_STAGE/terraform.tfstate" && ! -L "$REPAIR_STAGE/terraform.tfstate" ]] || die 'repair staged state is unsafe'
+  [[ "$(sha256_file "$REPAIR_STAGE/terraform.tfstate")" == "$source_digest" ]] || die 'repair staged state hash changed'
 }
 
 prepare_repair_plan() {
-  local plan="$STATE_DIR/repair-destroy.tfplan" json="$STATE_DIR/control/repair-destroy-plan.json"
-  if [[ -e "$plan" || -L "$plan" ]]; then
-    [[ -f "$plan" && ! -L "$plan" ]] || die 'saved repair plan path is unsafe'
-    rm -f -- "$plan"
-  fi
+  local plan="$REPAIR_STAGE/repair-destroy.tfplan" json="$REPAIR_STAGE/control/repair-destroy-plan.json"
+  export TF_DATA_DIR="$REPAIR_STAGE/terraform-data"
+  terraform -chdir="$MODULE_DIR" init -backend=false -input=false -lockfile=readonly -no-color >"$REPAIR_STAGE/control/repair-init.log" 2>"$REPAIR_STAGE/control/repair-init.err" || die 'repair Terraform init failed'
+  terraform -chdir="$MODULE_DIR" state list -state="$REPAIR_STAGE/terraform.tfstate" >"$REPAIR_STAGE/control/repair-state-before.txt" 2>"$REPAIR_STAGE/control/repair-state-before.err" || die 'repair cannot read Terraform state'
   terraform -chdir="$MODULE_DIR" plan -destroy -input=false -no-color \
-    -state="$STATE_DIR/terraform.tfstate" \
+    -state="$REPAIR_STAGE/terraform.tfstate" \
     -out="$plan" \
     -var="project_id=$PROJECT_ID" \
     -var="region=$REGION" \
     -var="gke_zone=$GKE_ZONE" \
     -var="run_id=$RUN_ID" \
     -var='storage_class_name=premium-rwo' \
-    >"$STATE_DIR/control/repair-plan.log" 2>"$STATE_DIR/control/repair-plan.err" || die 'repair destroy plan failed'
+    >"$REPAIR_STAGE/control/repair-plan.log" 2>"$REPAIR_STAGE/control/repair-plan.err" || die 'repair destroy plan failed'
   [[ -f "$plan" && ! -L "$plan" ]] || die 'saved repair plan path is unsafe'
-  terraform -chdir="$MODULE_DIR" show -json "$plan" >"$json" 2>"$STATE_DIR/control/repair-show.err" || die 'cannot inspect saved repair plan'
+  terraform -chdir="$MODULE_DIR" show -json "$plan" >"$json" 2>"$REPAIR_STAGE/control/repair-show.err" || die 'cannot inspect saved repair plan'
+  [[ -d "$REPAIR_STAGE/control" && ! -L "$REPAIR_STAGE/control" && -f "$json" && ! -L "$json" ]] || die 'repair plan guard path is unsafe'
   repair_plan_is_safe "$json" || die 'saved repair plan exceeds the known delete subset'
+}
+
+promote_repair_plan() {
+  local digest nonce attempt plan
+  plan="$REPAIR_STAGE/repair-destroy.tfplan"
+  digest=$(sha256_file "$plan") || die 'cannot hash saved repair plan'
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || die 'saved repair plan hash is invalid'
+  nonce=$(sha256_text "$digest:$$" | cut -c1-16) || die 'cannot derive repair attempt identity'
+  attempt="$STATE_DIR/repair-attempt.$nonce"
+  safe_new_private_path "$attempt" || die 'repair attempt evidence already exists or is unsafe'
+  mv -- "$REPAIR_STAGE" "$attempt" || die 'cannot atomically retain repair attempt'
+  REPAIR_ATTEMPT="$attempt"
+  REPAIR_STAGE_MOVED=1
+  REPAIR_STAGE=''
+  [[ -d "$attempt" && ! -L "$attempt" && "$(cd "$attempt" && pwd -P)" == "$attempt" ]] || die 'retained repair attempt is unsafe'
+  plan="$attempt/repair-destroy.tfplan"
+  [[ "$(sha256_file "$plan")" == "$digest" ]] || die 'retained repair plan hash changed'
+  export TF_DATA_DIR="$attempt/terraform-data"
+  export LUMEN_STANDALONE_GKE_REPAIR_WORK_DIR="$attempt"
 }
 
 main_repair() {
@@ -131,23 +217,17 @@ main_repair() {
   safe_private_dir "$STATE_DIR" || die 'repair state directory is unsafe'
   load_contract
   require_repair_tools
-  [[ -f "$STATE_DIR/terraform.tfstate" && ! -L "$STATE_DIR/terraform.tfstate" ]] || die 'repair state file is missing or unsafe'
-  [[ -d "$STATE_DIR/terraform-data" && ! -L "$STATE_DIR/terraform-data" ]] || die 'repair Terraform data directory is missing or unsafe'
-  [[ "$(cd "$STATE_DIR/terraform-data" && pwd -P)" == "$STATE_DIR/terraform-data" ]] || die 'repair Terraform data directory is unsafe'
-  if [[ -e "$STATE_DIR/control" || -L "$STATE_DIR/control" ]]; then
-    [[ -d "$STATE_DIR/control" && ! -L "$STATE_DIR/control" && "$(cd "$STATE_DIR/control" && pwd -P)" == "$STATE_DIR/control" ]] || die 'repair control directory is unsafe'
-  else
-    mkdir -m 700 "$STATE_DIR/control"
-  fi
-  export TF_DATA_DIR="$STATE_DIR/terraform-data"
-
-  terraform -chdir="$MODULE_DIR" init -backend=false -input=false -lockfile=readonly -no-color >"$STATE_DIR/control/repair-init.log" 2>"$STATE_DIR/control/repair-init.err" || die 'repair Terraform init failed'
-  terraform -chdir="$MODULE_DIR" state list -state="$STATE_DIR/terraform.tfstate" >"$STATE_DIR/control/repair-state-before.txt" 2>"$STATE_DIR/control/repair-state-before.err" || die 'repair cannot read Terraform state'
+  trap cleanup_repair_stage EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  prepare_repair_stage
   prepare_repair_plan
-  terraform -chdir="$MODULE_DIR" apply -input=false -no-color -state="$STATE_DIR/terraform.tfstate" -backup=- "$STATE_DIR/repair-destroy.tfplan" >"$STATE_DIR/control/repair-apply.log" 2>"$STATE_DIR/control/repair-apply.err" || die 'saved repair destroy apply failed'
-  state_output=$(terraform -chdir="$MODULE_DIR" state list -state="$STATE_DIR/terraform.tfstate" 2>"$STATE_DIR/control/repair-state-after.err") || die 'repair cannot prove empty Terraform state'
+  promote_repair_plan
+  terraform -chdir="$MODULE_DIR" apply -input=false -no-color -state="$STATE_DIR/terraform.tfstate" -backup=- "$REPAIR_ATTEMPT/repair-destroy.tfplan" >"$REPAIR_ATTEMPT/control/repair-apply.log" 2>"$REPAIR_ATTEMPT/control/repair-apply.err" || die 'saved repair destroy apply failed'
+  state_output=$(terraform -chdir="$MODULE_DIR" state list -state="$STATE_DIR/terraform.tfstate" 2>"$REPAIR_ATTEMPT/control/repair-state-after.err") || die 'repair cannot prove empty Terraform state'
   [[ -z "$state_output" ]] || die 'repair Terraform state is not empty'
-  cluster_is_absent "$STATE_DIR/control/repair-clusters.json" "$STATE_DIR/control/repair-clusters.err" || die 'repair cannot prove cluster absence'
+  cluster_is_absent "$REPAIR_ATTEMPT/control/repair-clusters.json" "$REPAIR_ATTEMPT/control/repair-clusters.err" || die 'repair cannot prove cluster absence'
+  trap - EXIT INT TERM
   printf '%s\n' 'standalone GKE repair: destroy verified; private state retained'
 }
 

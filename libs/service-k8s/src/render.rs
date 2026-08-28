@@ -545,6 +545,19 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     crate::render::stateful_instance::render_compat_service_statefulset(p)
 }
 
+/// Render a StatefulSet with an explicit Kubernetes service-link setting.
+/// This additive entry point keeps the historical struct and renderer
+/// source-compatible.
+pub fn service_statefulset_with_service_links(
+    p: ServiceStatefulSet,
+    enable_service_links: bool,
+) -> Value {
+    crate::render::stateful_instance::render_compat_service_statefulset_with_links(
+        p,
+        enable_service_links,
+    )
+}
+
 /// Parameters for [`sharded_statefulset`].
 pub struct ShardedStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,

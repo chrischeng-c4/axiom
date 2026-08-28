@@ -937,6 +937,7 @@ v2_wait_pod() {
         expected="$(v2_expected_child "$TMP_ROOT/v2-pod.json")"
         [[ "$image" == *"$expected" ]] || die "observed container child digest does not match scheduled node architecture"
         jq -e --arg auth "$auth" --arg cpu "$cpu" --arg memory "$memory" '
+          .spec.enableServiceLinks == false and
           ([.spec.containers[] | select(.name == "serving") | .env[] | select(.name == "LUMEN_AUTH") | .value] == [$auth]) and
           ([.spec.containers[] | select(.name == "serving") | .resources.requests.cpu] == [$cpu]) and
           ([.spec.containers[] | select(.name == "serving") | .resources.requests.memory] == [$memory])
