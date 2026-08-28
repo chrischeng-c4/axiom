@@ -15,20 +15,23 @@ every step that needs a human runs where a human can answer.
 - The controller also keeps dispatch scheduling, final acceptance, git land,
   tracker semantic decisions, and AGY payload authorization. Never delegate
   these.
-- `<app>-planner` (sonnet/xhigh) owns the **e2e** phase: it runs
+- `<app>-sr-dev` (sonnet/high) owns the **e2e** phase: it runs
   `/aw-e2e-for-wi`'s four verbs itself. The black-box contract is the strong
-  model's work, and it exists before the dev starts.
+  model's work, and it exists before the dev starts. The 22 `*-planner`
+  agents that used to carry this phase were deleted on 2026-08-28; only the
+  22 app-level sr-devs carry the ladder carve-out — the 22 lib-level sr-devs
+  do not, because `leg.leg_root` resolves under `apps/` only.
 - `<app>-dev` (haiku/medium) owns the **impl** phase — in Rust, colocated
   unit tests are part of the source, so the whole `src/` write root is the
   dev's. It runs `/aw-impl-for-wi`'s five verbs: the colocated tests land red
   first, `red` records that attribution evidence to
   `.aw/impl-red/<iid>.json`, and `C2` refuses a later `verify`/`test` whose
   tree has drifted from that record. Weak self-serving unit tests are caught
-  by the planner's independent e2e cases, which `impl` has to turn green
+  by the sr-dev's independent e2e cases, which `impl` has to turn green
   while they still refuse HEAD.
 - The model tiers above are defaults, not ceilings. For a hard case the
   controller may raise the model at dispatch time via the Agent call's `model`
-  override — planner to opus, dev to sonnet — without editing the agent
+  override — sr-dev to opus, dev to sonnet — without editing the agent
   definitions. Phase ownership does not move with the model.
 - `<app>-research` (opus/max, read-only) is optional and rarely dispatched:
   a long read-only investigation the controller does not want in its own
@@ -48,20 +51,23 @@ every step that needs a human runs where a human can answer.
 
 ## Verification
 
-- The ladder fleet is the 22 planners and the 22 plain `<app>-dev` agents. The
-  `*-dev.md` glob also matches the 88 codex-mirrored `*-sr-dev.md` /
-  `*-jr-dev.md` agents added on 2026-08-27, which run no ladder phase, so the
-  set has to exclude them by name — `*[!r]-dev.md` does not work, because it
-  also drops `courier-dev.md` and `meter-dev.md`, whose own names end in `r`.
-  Both numbers below must read 44; comparing the two is the point, because a
-  count of matches alone cannot tell a complete fleet from a larger fleet with
-  holes in it.
+- The ladder fleet is the 22 plain `<app>-dev` agents (impl) plus their 22
+  same-app `<app>-sr-dev` twins (e2e). The `*-dev.md` glob also matches the
+  jr/sr agents, so the plain set has to exclude them by name —
+  `*[!r]-dev.md` does not work, because it also drops `courier-dev.md` and
+  `meter-dev.md`, whose own names end in `r`. The sr-dev set is then derived
+  from the plain set rather than globbed, because only the 22 app-level
+  sr-devs carry the carve-out and a bare `*-sr-dev.md` glob matches all 44.
+  All three numbers below must read 22; comparing them is the point, because
+  a count of matches alone cannot tell a complete fleet from a larger fleet
+  with holes in it.
 
   ```
-  set=$(ls .claude/agents/*-planner.md .claude/agents/*-dev.md \
-        | grep -vE -- '-(sr|jr)-dev\.md$')
-  echo "$set" | wc -l                                        # 44 in the fleet
-  echo "$set" | xargs grep -lE 'aw-e2e-for-wi|aw-impl-for-wi' | wc -l  # 44 carry it
+  set=$(ls .claude/agents/*-dev.md | grep -vE -- '-(sr|jr)-dev\.md$')
+  echo "$set" | wc -l                                          # 22 plain devs
+  echo "$set" | xargs grep -l 'aw-impl-for-wi' | wc -l          # 22 carry impl
+  echo "$set" | sed 's/-dev\.md$/-sr-dev.md/' \
+    | xargs grep -l 'aw-e2e-for-wi' | wc -l                     # 22 carry e2e
   ```
 
   `grep -l 'meta.py check' .claude/agents/*-research.md | wc -l` returns 22.
@@ -74,5 +80,5 @@ every step that needs a human runs where a human can answer.
 - `CLAUDE.md` sections "Skills", "Work-item lifecycle", "Artifact write order".
 - `.claude/rules/operations/persistent-branches.md` for the worktree
   allocation this composes with.
-- `.claude/agents/<app>-{planner,dev,research}.md` each carry their own ladder
+- `.claude/agents/<app>-{sr-dev,dev,research}.md` each carry their own ladder
   carve-out text.
