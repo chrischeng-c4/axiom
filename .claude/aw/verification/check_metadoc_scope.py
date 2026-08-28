@@ -692,14 +692,47 @@ with tempfile.TemporaryDirectory() as raw:
               "apps/other/README.md", "README.md",
               f"{PROJECT}/docsnt/area.md")]
           == [True, True, True, True, False, False, False, False, False])
-    check("is_area admits docs area files and neither index nor top-level doc",
-          [metadoc.is_area(PROJECT, p) for p in (
+    # `is_area` reads the tree -- the index beside the file is what makes it an
+    # area -- so it needs a checkout, unlike `in_scope`, which reads the string.
+    repo = build(tmp / "areas")
+    check("is_area admits indexed docs files and neither index nor top-level doc",
+          [metadoc.is_area(repo, PROJECT, p) for p in (
               f"{PROJECT}/docs/product/area.md",
               f"{PROJECT}/docs/operating/guide.md",
               f"{PROJECT}/docs/product/README.md",
               f"{PROJECT}/README.md", f"{PROJECT}/STATUS.md",
               f"{PROJECT}/docs/product/notes.txt")]
           == [True, True, False, False, False, False])
+
+    # The index requirement, and the reason it exists. Widening the allowlist
+    # from `docs/product/` to `docs/**` on 2026-08-27 swept 61 pre-existing
+    # reference documents across seven projects into the promise population --
+    # runbooks, benchmark postures, an operator handoff manual -- and a
+    # reference document has no owner bullet, so `wis.py`'s G1 read `?`
+    # UNMEASURED for every one of those projects. Registration in the
+    # directory's own index is what tells a promise from a document that
+    # happens to live under `docs/`.
+    loose = repo / PROJECT / "docs/runbooks"
+    loose.mkdir(parents=True)
+    (loose / "drain.md").write_text("# Drain\n", encoding="utf-8")
+    rel = f"{PROJECT}/docs/runbooks/drain.md"
+    unindexed = metadoc.is_area(repo, PROJECT, rel)
+    (loose / "README.md").write_text("# Runbooks\n", encoding="utf-8")
+    indexed = metadoc.is_area(repo, PROJECT, rel)
+    check("an unindexed docs file is reference, and its index promotes it",
+          (unindexed, indexed) == (False, True),
+          f"without index {unindexed}, with index {indexed}")
+
+    # The population line the report prints, which is the only thing standing
+    # between "this project promises six things" and "this project has 61
+    # documents nobody is measuring". A count of areas alone cannot say which.
+    areas, reference = metadoc.area_population(repo, PROJECT)
+    check("area_population separates indexed areas from unindexed reference",
+          (areas, reference) == (3, 0), f"{areas} area(s), {reference} reference")
+    (loose / "README.md").unlink()
+    areas, reference = metadoc.area_population(repo, PROJECT)
+    check("taking an index away moves its files into the reference count",
+          (areas, reference) == (2, 1), f"{areas} area(s), {reference} reference")
 
     # -- the project resolver ---------------------------------------------
     repo = build(tmp / "resolve")

@@ -151,10 +151,11 @@ class Promise:
 def area_texts(repo: Path, project: str) -> dict[str, str]:
     """Every area file under the project's `docs/`, keyed by repo-relative path.
 
-    `metadoc.is_area` is the filter, so a directory index and the three
-    top-level documents are excluded here for the same reason they are excluded
-    there -- an index has no owner bullet, and a project README owns headings
-    that are not promises at all.
+    `metadoc.is_area` is the filter, so a directory index, the three top-level
+    documents, and every file in a directory carrying no index are excluded
+    here for the same reasons they are excluded there -- an index has no owner
+    bullet, a project README owns headings that are not promises at all, and an
+    unindexed directory holds reference material rather than promises.
     """
     root = repo / project / metadoc.AREAS
     out: dict[str, str] = {}
@@ -162,7 +163,7 @@ def area_texts(repo: Path, project: str) -> dict[str, str]:
         return out
     for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(repo).as_posix()
-        if metadoc.is_area(project, rel):
+        if metadoc.is_area(repo, project, rel):
             out[rel] = path.read_text(encoding="utf-8")
     return out
 

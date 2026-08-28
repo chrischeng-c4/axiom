@@ -294,18 +294,65 @@ def in_scope(project: str, path: str) -> bool:
             or path.startswith(f"{project}/{AREAS}/"))
 
 
-def is_area(project: str, path: str) -> bool:
+def is_area(repo: Path, project: str, path: str) -> bool:
     """Whether a path is an area file -- a `docs/**` section document.
 
+    Three exclusions, and the third is the one that had to be added.
+
     A directory's own `README.md` is its index, not an area, and the three
-    top-level documents are not under `docs/` at all. Both exclusions matter:
-    an index measured as an area has no owner bullet and would trip `P5` on
-    every run, and a project README measured as one would trip it on every
-    heading it owns.
+    top-level documents are not under `docs/` at all. Both of those matter for
+    the same reason: an index measured as an area has no owner bullet and would
+    trip `P5` on every run, and a project README measured as one would trip it
+    on every heading it owns.
+
+    The third is that **a directory with no index holds no areas**. Until
+    2026-08-27 the schema's scope was `docs/product/` and this could not
+    arise; widening it to `docs/**` swept in 61 pre-existing reference
+    documents across seven projects -- jet's `docs/bundler.md`, mamba's
+    `docs/blockers/*`, lumen's `docs/protocol.md`, tape's own
+    `docs/deployment-handoff.md` -- none of which is a promise. Measured as
+    areas they made `wis.py`'s `G1` row permanently `?` UNMEASURED for every
+    one of those projects, because a section with no owner bullet has no kind.
+
+    So the index is the registry. `/aw-grill-me-to-meta` already writes one
+    `README.md` per `docs/` directory and refuses a section indexed in the
+    wrong directory's; this makes that file the thing that declares its
+    directory to hold promises at all. A reference document needs no marker
+    and no move -- it just sits in a directory that never got an index.
+
+    The hazard the rule creates is the mirror of the one it fixes: deleting an
+    index silently demotes every area beside it, and `P5` stops refusing them.
+    That is why `collect()` reports the reference count beside the area count
+    rather than dropping the files quietly -- the population line moves when an
+    index goes.
     """
-    return (path.startswith(f"{project}/{AREAS}/")
-            and path.endswith(".md")
-            and not path.endswith(f"/{INDEX}"))
+    if not (path.startswith(f"{project}/{AREAS}/") and path.endswith(".md")):
+        return False
+    if path.endswith(f"/{INDEX}"):
+        return False
+    return ((repo / path).parent / INDEX).is_file()
+
+
+def area_population(repo: Path, project: str) -> tuple[int, int]:
+    """How many `docs/**` files are areas, and how many are unindexed reference.
+
+    Printed rather than returned to a caller that could ignore it: the second
+    number is what moves when an index is deleted, and a demotion nobody sees
+    is a rule that stopped applying without failing.
+    """
+    root = repo / project / AREAS
+    if not root.is_dir():
+        return 0, 0
+    areas = reference = 0
+    for path in sorted(root.rglob("*.md")):
+        rel = path.relative_to(repo).as_posix()
+        if rel.endswith(f"/{INDEX}"):
+            continue
+        if is_area(repo, project, rel):
+            areas += 1
+        else:
+            reference += 1
+    return areas, reference
 
 
 def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
@@ -324,7 +371,8 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
     if not (repo / areas).is_dir():
         out.append(Finding("P1", areas, "missing; run /aw-grill-me-to-meta in "
                            "create mode before this check can mean anything"))
-        return out, {"project": project, "changed": [], "sections": 0}
+        return out, {"project": project, "changed": [], "sections": 0,
+                      "areas": 0, "reference": 0}
 
     # -- P2/P3: the write allowlist ----------------------------------------
     dirty = leg.dirty_set(repo)
@@ -347,7 +395,7 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
     # Only files that still exist are read. A deleted area file is a change
     # this script has to account for -- P8 does, through the index rows that
     # still point at it -- but it has no body left to measure.
-    touched = [p for p in changed if is_area(project, p) and (repo / p).is_file()]
+    touched = [p for p in changed if is_area(repo, project, p) and (repo / p).is_file()]
     texts = {p: (repo / p).read_text(encoding="utf-8") for p in touched}
     status = (root / "STATUS.md").read_text(encoding="utf-8") if (root / "STATUS.md").is_file() else ""
     roadmap = (root / "ROADMAP.md").read_text(encoding="utf-8") if (root / "ROADMAP.md").is_file() else ""
@@ -503,7 +551,10 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
                                + (detail or proc.stderr.strip() or "no report")))
 
     out.sort(key=lambda f: (f.rule, f.path, f.message))
-    return out, {"project": project, "changed": changed, "sections": counted}
+    areas, reference = area_population(repo, project)
+    return out, {"project": project, "changed": changed,
+                 "sections": counted, "areas": areas,
+                 "reference": reference}
 
 
 def section_modes(repo: Path, project: str, changed: list[str]) -> list[str]:
@@ -520,7 +571,7 @@ def section_modes(repo: Path, project: str, changed: list[str]) -> list[str]:
     """
     lines = []
     for path in sorted(changed):
-        if not is_area(project, path):
+        if not is_area(repo, project, path):
             continue
         before = {bare(t): b for t, b in sections(git_show(repo, path))}
         after = ({bare(t): b for t, b in
@@ -545,7 +596,7 @@ def unbound_count(repo: Path, project: str, changed: list[str]) -> int:
     """
     total = 0
     for path in changed:
-        if not is_area(project, path) or not (repo / path).is_file():
+        if not is_area(repo, project, path) or not (repo / path).is_file():
             continue
         for raw, _ in sections((repo / path).read_text(encoding="utf-8")):
             if bare(raw) != FOOTER and not IID.search(raw):
@@ -564,6 +615,9 @@ def report(findings: list[Finding], population: dict, fmt: str,
     print(f"META-doc check: {population['project']}, "
           f"{len(population['changed'])} changed path(s), "
           f"{population['sections']} section(s) read")
+    print(f"  docs/: {population.get('areas', 0)} indexed area file(s), "
+          f"{population.get('reference', 0)} unindexed reference file(s) "
+          f"not measured as promises")
     counts = {rule: sum(1 for f in findings if f.rule == rule) for rule in CHECKS}
     for rule, why in CHECKS.items():
         print(f"  {rule:<4} {counts[rule]:>3}  {why}")
