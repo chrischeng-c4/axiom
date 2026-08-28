@@ -19,6 +19,7 @@ const ACTIONS: &[&str] = &[
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
     "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
     "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9",
+    "ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b",
     "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
     "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
     "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
@@ -28,7 +29,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "9f339673e2171e9a708f70d9a04ac4257ee0f353ef4bb47afe1b725f697e10ab";
+    "5d8cf1ac6a455e7a2b695f058cfa1eca282fcfe500905118f73641886e1a294c";
 const RELEASE_PERF_GATE: &str =
     "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
@@ -157,6 +158,117 @@ fn validate_uv_setup(workflow: &Yaml) -> Result<(), Finding> {
         with.get(&key("enable-cache")).and_then(Yaml::as_bool) == Some(false),
         "UV_SETUP",
     )?;
+    Ok(())
+}
+
+fn validate_cloud_free_acceptance_gates(workflow: &Yaml) -> Result<(), Finding> {
+    const RUBY: &str = "ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b";
+    let steps = field(
+        job(workflow, "verify-candidate").ok_or(Finding("CLOUD_FREE_GATES"))?,
+        "steps",
+    )
+    .and_then(Yaml::as_sequence)
+    .ok_or(Finding("CLOUD_FREE_GATES"))?;
+    let index_of = |name: &str| {
+        steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| field(step, "name").and_then(Yaml::as_str) == Some(name))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()
+    };
+    let uv = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| {
+            field(step, "uses").and_then(Yaml::as_str)
+                == Some("astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9")
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    require(uv.len() == 1, "CLOUD_FREE_GATES")?;
+    let ruby = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| field(step, "uses").and_then(Yaml::as_str) == Some(RUBY))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    require(ruby.len() == 1, "CLOUD_FREE_GATES")?;
+    let ruby_step = &steps[ruby[0]];
+    require(
+        ruby_step.as_mapping().map(|map| map.len()) == Some(2)
+            && field(ruby_step, "with")
+                .and_then(Yaml::as_mapping)
+                .map(|map| map.len())
+                == Some(2)
+            && field(ruby_step, "with")
+                .and_then(|with| field(with, "ruby-version"))
+                .and_then(Yaml::as_str)
+                == Some("3.3.6")
+            && field(ruby_step, "with")
+                .and_then(|with| field(with, "bundler"))
+                .and_then(Yaml::as_str)
+                == Some("none"),
+        "CLOUD_FREE_GATES",
+    )?;
+    validate_exact_run_step(
+        workflow,
+        "verify-candidate",
+        "Install verified Terraform 1.9.4",
+        &["name", "shell", "run"],
+        &[
+            "set -euo pipefail",
+            "curl -fsSL https://releases.hashicorp.com/terraform/1.9.4/terraform_1.9.4_linux_amd64.zip -o /tmp/terraform.zip",
+            "echo '6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c  /tmp/terraform.zip' | sha256sum -c -",
+            "unzip -oq /tmp/terraform.zip -d /tmp/terraform-bin",
+            "sudo install -m 0755 /tmp/terraform-bin/terraform /usr/local/bin/terraform",
+        ],
+    )?;
+    validate_exact_run_step(
+        workflow,
+        "verify-candidate",
+        "Install verified kubectl v1.37.0",
+        &["name", "shell", "run"],
+        &[
+            "set -euo pipefail",
+            "curl -fsSL https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl -o /tmp/kubectl",
+            "echo '6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f  /tmp/kubectl' | sha256sum -c -",
+            "chmod +x /tmp/kubectl",
+            "sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl",
+        ],
+    )?;
+    validate_exact_run_step(
+        workflow,
+        "verify-candidate",
+        "Run cloud-free Terraform acceptance gate",
+        &["name", "shell", "run"],
+        &["bash terraform/lumen-standalone-gke/scripts/check.sh"],
+    )?;
+    validate_exact_run_step(
+        workflow,
+        "verify-candidate",
+        "Run cloud-free Kustomize acceptance gate",
+        &["name", "shell", "run"],
+        &["bash kustomize/lumen-standalone-acceptance/tests/contract.sh"],
+    )?;
+    let names = [
+        "Install verified Terraform 1.9.4",
+        "Install verified kubectl v1.37.0",
+        "Run cloud-free Terraform acceptance gate",
+        "Run cloud-free Kustomize acceptance gate",
+        "Run required Lumen product gates without GKE",
+    ];
+    let ordered = names.iter().map(|name| index_of(name)).collect::<Vec<_>>();
+    require(
+        ordered.iter().all(|indices| indices.len() == 1),
+        "CLOUD_FREE_GATES",
+    )?;
+    let mut previous = uv[0];
+    for indices in ordered {
+        require(previous < indices[0], "CLOUD_FREE_GATES")?;
+        previous = indices[0];
+    }
+    require(ruby[0] == uv[0] + 1, "CLOUD_FREE_GATES")?;
     Ok(())
 }
 
@@ -592,7 +704,7 @@ fn named_step<'a>(workflow: &'a Yaml, job_name: &str, step_name: &str) -> Option
         .iter()
         .filter(|step| field(step, "name").and_then(Yaml::as_str) == Some(step_name))
         .collect::<Vec<_>>();
-    (matches.len() == 1).then_some(matches[0])
+    (matches.len() == 1).then(|| matches[0])
 }
 
 fn indexed_step_by_id<'a>(
@@ -765,6 +877,11 @@ fn validate_gate_step_inventory(workflow: &Yaml) -> Result<(), Finding> {
                 "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
                 "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
                 "uses:astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9",
+                "uses:ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b",
+                "Install verified Terraform 1.9.4",
+                "Install verified kubectl v1.37.0",
+                "Run cloud-free Terraform acceptance gate",
+                "Run cloud-free Kustomize acceptance gate",
                 "Run required Lumen product gates without GKE",
                 "Verify full run-scoped candidate supply chain",
             ][..],
@@ -1020,6 +1137,7 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
     validate_candidate_image_outputs(&workflow)?;
     validate_no_gcloud_execution(&workflow)?;
     validate_uv_setup(&workflow)?;
+    validate_cloud_free_acceptance_gates(&workflow)?;
     validate_libraries_job(&workflow)?;
     validate_product_gate_partition(&workflow, source)?;
     validate_perf_gate_source(&perf_gate_source())?;
@@ -1146,6 +1264,13 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
         "--image \"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\"",
         "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST", "final-candidate-manifest.json",
         "Verify final receipt as local fixture only", "--mode local",
+        "ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b",
+        "ruby-version: '3.3.6'", "terraform/1.9.4/terraform_1.9.4_linux_amd64.zip",
+        "6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c",
+        "v1.37.0/bin/linux/amd64/kubectl",
+        "6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f",
+        "bash terraform/lumen-standalone-gke/scripts/check.sh",
+        "bash kustomize/lumen-standalone-acceptance/tests/contract.sh",
     ] {
         require(source.contains(needle), "GATES")?;
     }
@@ -1326,6 +1451,104 @@ fn verifier() -> (String, u32) {
 }
 fn dockerfile() -> String {
     fs::read_to_string(root().join("apps/lumen/Dockerfile.release")).unwrap()
+}
+
+#[test]
+fn cloud_free_gate_mutations_fail_without_hash_oracle() {
+    let source = workflow();
+    let assert_finding = |from: &str, to: &str, finding| {
+        let changed = replace_once(&source, from, to);
+        assert_eq!(
+            validate_workflow_semantics(&changed, &dockerfile()).unwrap_err(),
+            Finding(finding),
+        );
+    };
+    assert_finding(
+        "ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b",
+        "ruby/setup-ruby@0000000000000000000000000000000000000000",
+        "CLOUD_FREE_GATES",
+    );
+    assert_finding(
+        "ruby-version: '3.3.6'",
+        "ruby-version: '3.3.7'",
+        "CLOUD_FREE_GATES",
+    );
+    assert_finding(
+        "terraform/1.9.4/terraform_1.9.4_linux_amd64.zip",
+        "terraform/1.9.5/terraform_1.9.5_linux_amd64.zip",
+        "GATE_COMMANDS",
+    );
+    assert_finding(
+        "6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "GATE_COMMANDS",
+    );
+    assert_finding(
+        "v1.37.0/bin/linux/amd64/kubectl",
+        "v1.37.1/bin/linux/amd64/kubectl",
+        "GATE_COMMANDS",
+    );
+    assert_finding(
+        "6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "GATE_COMMANDS",
+    );
+    assert_finding(
+        "bash terraform/lumen-standalone-gke/scripts/check.sh",
+        "bash terraform/lumen-standalone-gke/scripts/other.sh",
+        "GATE_COMMANDS",
+    );
+    assert_finding(
+        "bash kustomize/lumen-standalone-acceptance/tests/contract.sh",
+        "bash kustomize/lumen-standalone-acceptance/tests/other.sh",
+        "GATE_COMMANDS",
+    );
+    let terraform_step = "      - name: Install verified Terraform 1.9.4\n        shell: bash\n        run: |\n          set -euo pipefail\n          curl -fsSL https://releases.hashicorp.com/terraform/1.9.4/terraform_1.9.4_linux_amd64.zip -o /tmp/terraform.zip\n          echo '6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c  /tmp/terraform.zip' | sha256sum -c -\n          unzip -oq /tmp/terraform.zip -d /tmp/terraform-bin\n          sudo install -m 0755 /tmp/terraform-bin/terraform /usr/local/bin/terraform\n";
+    let without_terraform = replace_once(&source, terraform_step, "");
+    assert_eq!(
+        validate_workflow_semantics(&without_terraform, &dockerfile()).unwrap_err(),
+        Finding("GATE_COMMANDS"),
+    );
+    let terraform_start = source
+        .find("      - name: Run cloud-free Terraform acceptance gate\n")
+        .unwrap();
+    let product_start = source
+        .find("      - name: Run required Lumen product gates without GKE\n")
+        .unwrap();
+    assert!(terraform_start < product_start);
+    let product_end = product_start
+        + source[product_start..]
+            .find("\n      - name: Verify full run-scoped candidate supply chain\n")
+            .unwrap()
+        + 1;
+    let terraform_block = &source[terraform_start..product_start];
+    let product_block = &source[product_start..product_end];
+    let moved = format!(
+        "{}{}{}{}",
+        &source[..terraform_start],
+        product_block,
+        terraform_block,
+        &source[product_end..]
+    );
+    assert_eq!(
+        validate_workflow_semantics(&moved, &dockerfile()).unwrap_err(),
+        Finding("CLOUD_FREE_GATES"),
+    );
+    assert_finding(
+        "        run: bash terraform/lumen-standalone-gke/scripts/check.sh",
+        "        run: '# bash terraform/lumen-standalone-gke/scripts/check.sh'",
+        "GATE_COMMANDS",
+    );
+    assert_finding(
+        "        run: bash kustomize/lumen-standalone-acceptance/tests/contract.sh",
+        "        run: echo 'bash kustomize/lumen-standalone-acceptance/tests/contract.sh'",
+        "GATE_COMMANDS",
+    );
+    assert_finding(
+        "        run: bash terraform/lumen-standalone-gke/scripts/check.sh",
+        "        run: if false; then bash terraform/lumen-standalone-gke/scripts/check.sh; fi",
+        "GATE_COMMANDS",
+    );
 }
 
 #[test]
