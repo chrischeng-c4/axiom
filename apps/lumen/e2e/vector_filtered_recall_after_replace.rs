@@ -208,49 +208,76 @@ async fn unfiltered_knn_returns_the_exact_top_k_after_one_replace() {
 
 #[test]
 fn permissive_knn_after_replace_answers_from_graph_without_exact_scan() {
+    use std::collections::HashSet;
+
     use lumen::types::{VectorBackend, VectorMetric, VectorSpec};
     use lumen::vector_index::{HnswCpuIndex, VectorIndex};
 
-    let spec = VectorSpec {
-        dim: 3,
-        metric: VectorMetric::L2,
-        backend: VectorBackend::HnswCpu,
-        quantize: None,
-    };
-    let index = HnswCpuIndex::new(spec);
+    // hnsw_rs topology has no controllable seed. This verifies the same
+    // topology-independent public predicate for every fresh topology, not
+    // general exact HNSW recall.
+    const INDEPENDENT_GRAPHS: usize = 64;
+    const REPEATED_QUERIES_PER_GRAPH: usize = 2;
 
-    for i in 0..CORPUS {
-        let eid = format!("v{i:02}");
-        index
-            .add(&eid, &[i as f32, 0.0, 0.0])
-            .expect("initial insert");
+    for graph_index in 0..INDEPENDENT_GRAPHS {
+        let spec = VectorSpec {
+            dim: 3,
+            metric: VectorMetric::L2,
+            backend: VectorBackend::HnswCpu,
+            quantize: None,
+        };
+        let index = HnswCpuIndex::new(spec);
+        for _ in 0..2 {
+            for i in 0..CORPUS {
+                let eid = format!("v{i:02}");
+                index
+                    .add(&eid, &[i as f32, 0.0, 0.0])
+                    .expect("fixture insert");
+            }
+        }
+        assert_eq!(index.len(), CORPUS);
+
+        let mut first_hits = None;
+        for query_index in 0..REPEATED_QUERIES_PER_GRAPH {
+            let before = index.exact_scan_fallbacks();
+            let hits = index
+                .search_knn_filtered(&[0.0, 0.0, 0.0], K, &|_| true)
+                .expect("permissive graph search");
+            let after = index.exact_scan_fallbacks();
+            let context = || {
+                format!(
+                    "graph={graph_index} query={query_index} hits={hits:?} before={before} after={after}"
+                )
+            };
+            assert_eq!(hits.len(), K, "{}", context());
+
+            let ids: Vec<&str> = hits.iter().map(|(eid, _)| eid.as_str()).collect();
+            let unique: HashSet<&str> = ids.iter().copied().collect();
+            assert_eq!(unique.len(), K, "{}", context());
+
+            for (eid, score) in &hits {
+                let rank = eid
+                    .strip_prefix('v')
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .filter(|&value| value < CORPUS)
+                    .unwrap_or_else(|| panic!("{}", context()));
+                assert_eq!(*eid, format!("v{rank:02}"), "{}", context());
+                assert_eq!(*score, -(rank as f32), "{}", context());
+            }
+            assert!(
+                hits.windows(2).all(|pair| pair[0].1 >= pair[1].1),
+                "{}",
+                context()
+            );
+
+            if let Some(first) = &first_hits {
+                assert_eq!(hits, *first, "{}", context());
+            } else {
+                first_hits = Some(hits.clone());
+            }
+            assert_eq!(after, before, "{}", context());
+        }
     }
-    for i in 0..CORPUS {
-        let eid = format!("v{i:02}");
-        index
-            .add(&eid, &[i as f32, 0.0, 0.0])
-            .expect("replace insert");
-    }
-
-    let before = index.exact_scan_fallbacks();
-    let hits = index
-        .search_knn_filtered(&[0.0, 0.0, 0.0], K, &|_| true)
-        .expect("search knn");
-    let after = index.exact_scan_fallbacks();
-
-    let ids: Vec<String> = hits.into_iter().map(|(eid, _)| eid).collect();
-    let expected = vec![
-        "v00".to_string(),
-        "v01".to_string(),
-        "v02".to_string(),
-        "v03".to_string(),
-        "v04".to_string(),
-    ];
-    assert_eq!(ids, expected);
-    assert_eq!(
-        after, before,
-        "permissive query on clean rebuilt graph must answer from traversal without exact scan fallback"
-    );
 }
 
 #[test]
