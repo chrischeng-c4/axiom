@@ -213,6 +213,40 @@ v2_read_job_log job "$TMP_ROOT/log"
     }
 }
 
+fn run_api_status_oracle(source: &str, label: &str, expected: &str, log: &str) -> Output {
+    let fixture = tempfile::Builder::new()
+        .prefix("lumen-api-status-oracle-")
+        .tempdir()
+        .expect("api-status fixture");
+    let log_path = fixture.path().join("job.log");
+    fs::write(&log_path, log).expect("write API job log fixture");
+    let script = fixture.path().join("run.sh");
+    let harness = [
+        r##"#!/usr/bin/env bash
+set -euo pipefail
+die() {
+  printf 'standalone GKE acceptance: %s\n' "$*" >&2
+  exit 2
+}
+v2_assert_api_job_log() {
+"##,
+        function_body(source, "v2_assert_api_job_log"),
+        r#"
+}
+v2_assert_api_job_log "$LABEL" "$EXPECTED" "$LOG"
+"#,
+    ]
+    .concat();
+    fs::write(&script, harness).expect("write API-status harness");
+    Command::new("bash")
+        .arg(&script)
+        .env("LABEL", label)
+        .env("EXPECTED", expected)
+        .env("LOG", log_path)
+        .output()
+        .expect("run API-status harness")
+}
+
 fn appears_before(source: &str, first: &str, second: &str) -> bool {
     match (source.find(first), source.find(second)) {
         (Some(first), Some(second)) => first < second,
@@ -1433,6 +1467,63 @@ fn job_log_reader_retries_only_konnectivity_transients() {
             assert!(stderr.contains(needle), "mode={mode}: {stderr}");
         }
     }
+}
+
+#[test]
+fn api_job_status_contract_accepts_only_a_single_concrete_2xx_log_line() {
+    let source = full_script();
+    for status in ["200", "201", "299"] {
+        let result = run_api_status_oracle(&source, "create", "2xx", &format!("row=create status={status}\n"));
+        assert!(
+            result.status.success(),
+            "concrete 2xx status {status} was rejected: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    for (name, log) in [
+        ("literal", "row=create status=2xx\n"),
+        ("1xx", "row=create status=199\n"),
+        ("3xx", "row=create status=300\n"),
+        ("4xx", "row=create status=403\n"),
+        ("5xx", "row=create status=500\n"),
+        ("short", "row=create status=20\n"),
+        ("long", "row=create status=2000\n"),
+        ("prefix", "note row=create status=200\n"),
+        ("suffix", "row=create status=200 note\n"),
+        ("wrong-label", "row=other status=200\n"),
+        ("extra-line", "row=create status=200\nrow=create status=201\n"),
+    ] {
+        let result = run_api_status_oracle(&source, "create", "2xx", log);
+        assert!(
+            !result.status.success(),
+            "invalid 2xx log passed: {name}; stderr: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let exact = run_api_status_oracle(&source, "unlisted", "403", "row=unlisted status=403\n");
+    assert!(exact.status.success(), "exact status was rejected");
+    for log in ["row=unlisted status=2xx\n", "row=unlisted status=401\n", "row=unlisted status=403\nextra\n"] {
+        assert!(
+            !run_api_status_oracle(&source, "unlisted", "403", log)
+                .status
+                .success(),
+            "exact-status contract accepted invalid log: {log:?}"
+        );
+    }
+
+    let literal_mutation = replace_once(&source, "status=2[0-9][0-9]", "status=2xx");
+    assert!(
+        !run_api_status_oracle(&literal_mutation, "create", "2xx", "row=create status=200\n")
+            .status
+            .success(),
+        "literal-status mutation still accepted a concrete 2xx response"
+    );
+    assert!(
+        run_api_status_oracle(&literal_mutation, "create", "2xx", "row=create status=2xx\n")
+            .status
+            .success(),
+        "literal-status mutation fixture did not expose the bypass"
+    );
 }
 
 #[test]
