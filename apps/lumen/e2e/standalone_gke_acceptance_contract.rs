@@ -10,6 +10,8 @@ use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use serde_json::Value;
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -249,6 +251,97 @@ v2_assert_api_job_log "$LABEL" "$EXPECTED" "$LOG"
         .env("LOG", log_path)
         .output()
         .expect("run API-status harness")
+}
+
+struct MetricDeltaOracleResult {
+    output: Output,
+    evidence: BTreeMap<String, String>,
+}
+
+fn run_metric_delta_oracle(
+    source: &str,
+    profile: &str,
+    before: &str,
+    after: &str,
+) -> MetricDeltaOracleResult {
+    let private_root = fs::canonicalize("/tmp").expect("canonical private temporary root");
+    let fixture = tempfile::Builder::new()
+        .prefix("lumen-metric-delta-oracle-")
+        .tempdir_in(private_root)
+        .expect("metric-delta fixture");
+    let evidence = fixture.path().join("evidence");
+    fs::create_dir(&evidence).expect("metric-delta evidence directory");
+    let before_path = fixture.path().join("before.metrics");
+    let after_path = fixture.path().join("after.metrics");
+    fs::write(&before_path, before).expect("write metric before fixture");
+    fs::write(&after_path, after).expect("write metric after fixture");
+    let script = fixture.path().join("run.sh");
+    let harness = [
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+PRIVATE_TMP_ROOT="$(cd -P /tmp && pwd -P)"
+safe_private_dir() {
+  local path=$1
+  [[ "$path" == "$PRIVATE_TMP_ROOT"/* && "$path" != */ && -d "$path" && ! -L "$path" ]] || return 1
+  [[ "$(cd "$path" && pwd -P)" == "$path" ]]
+}
+safe_private_file() {
+  local path=$1 parent
+  [[ "$path" == "$PRIVATE_TMP_ROOT"/* && -f "$path" && ! -L "$path" ]] || return 1
+  parent=${path%/*}; safe_private_dir "$parent"
+}
+die() {
+  printf "standalone GKE acceptance: %s\n" "$*" >&2
+  exit 2
+}
+v2_metric_total() {
+"#,
+        function_body(source, "v2_metric_total"),
+        r#"
+}
+v2_metric_shape() {
+"#,
+        function_body(source, "v2_metric_shape"),
+        r#"
+}
+v2_write_metric_failure() {
+"#,
+        function_body(source, "v2_write_metric_failure"),
+        r#"
+}
+v2_fail_metric_delta() {
+"#,
+        function_body(source, "v2_fail_metric_delta"),
+        r#"
+}
+v2_metric_deltas() {
+"#,
+        function_body(source, "v2_metric_deltas"),
+        r#"
+}
+v2_metric_deltas "$PROFILE" "$BEFORE" "$AFTER"
+"#,
+    ]
+    .concat();
+    fs::write(&script, harness).expect("write metric-delta harness");
+    let output = Command::new("bash")
+        .arg(&script)
+        .env("PROFILE", profile)
+        .env("BEFORE", before_path)
+        .env("AFTER", after_path)
+        .env("LUMEN_STANDALONE_GKE_EVIDENCE_DIR", &evidence)
+        .output()
+        .expect("run metric-delta harness");
+    let evidence = fs::read_dir(&evidence)
+        .expect("read metric-delta evidence")
+        .map(|entry| {
+            let entry = entry.expect("metric-delta evidence entry");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let value = fs::read_to_string(entry.path()).expect("read metric-delta evidence file");
+            (name, value)
+        })
+        .collect();
+    MetricDeltaOracleResult { output, evidence }
 }
 
 fn appears_before(source: &str, first: &str, second: &str) -> bool {
@@ -591,6 +684,21 @@ fn findings(source: &str) -> Vec<&'static str> {
         ("METRICS", "delegated_auth_denied_total"),
         (
             "METRICS",
+            "lumen-standalone-gke-metric-shape-failure.json",
+        ),
+        ("METRICS", "lumen.standalone-gke-metric-shape/v1"),
+        ("REDACTION", "metric_values_retained:false"),
+        ("REDACTION", "metric_label_values_retained:false"),
+        (
+            "METRICS",
+            "v2_metric_deltas in-cluster \"$TMP_ROOT/metrics-before-incluster.metrics\" \"$TMP_ROOT/metrics-after-incluster.metrics\"",
+        ),
+        (
+            "METRICS",
+            "v2_metric_deltas required \"$TMP_ROOT/metrics-before-required.metrics\" \"$TMP_ROOT/metrics-after-required.metrics\"",
+        ),
+        (
+            "METRICS",
             "db=\"$(v2_metric_total delegated_auth_denied_total \"$before\")\"",
         ),
         ("METRICS", "--argjson tokenreview_delta \"$((ta-tb))\""),
@@ -772,8 +880,74 @@ fn findings(source: &str) -> Vec<&'static str> {
     if source.contains("case \"$arch\" in amd64|arm64)") {
         bad.push("CLIENT");
     }
-    if source.find("metrics-before-incluster") > source.find("v2_run_api_job create")
-        || source.find("metrics-before-required") > source.find("required-projected-app")
+    let metric_failure = function_body(source, "v2_write_metric_failure");
+    for required in [
+        "case \"$profile\" in in-cluster|required) ;; *) return 1 ;; esac",
+        "case \"$reason\" in missing_metric|non_positive_delta) ;; *) return 1 ;; esac",
+        "report=\"$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/lumen-standalone-gke-metric-shape-failure.json\"",
+        "tmp=\"$(mktemp \"$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/.metric-shape.XXXXXX\")\" || return 1",
+        "chmod 600 \"$tmp\"",
+        "safe_private_file \"$report\"",
+        "metric_values_retained:false",
+        "metric_label_values_retained:false",
+        "(keys | sort) == [\"failure\",\"observations\",\"redaction\",\"schema\"]",
+        "before_token=\"$(v2_metric_shape delegated_auth_token_reviews_total \"$before\")\" || return 1",
+        "after_denied=\"$(v2_metric_shape delegated_auth_denied_total \"$after\")\" || return 1",
+    ] {
+        if !metric_failure.contains(required) {
+            bad.push("METRICS");
+        }
+    }
+    if metric_failure.contains("cat \"$before\"")
+        || metric_failure.contains("cat \"$after\"")
+        || metric_failure.contains("cp \"$before\"")
+        || metric_failure.contains("cp \"$after\"")
+    {
+        bad.push("REDACTION");
+    }
+    let metric_deltas = function_body(source, "v2_metric_deltas");
+    for required in [
+        "local profile=\"$1\" before=\"$2\" after=\"$3\"",
+        "v2_fail_metric_delta \"$profile\" missing_metric \"$before\" \"$after\"",
+        "v2_fail_metric_delta \"$profile\" non_positive_delta \"$before\" \"$after\"",
+    ] {
+        if !metric_deltas.contains(required) {
+            bad.push("METRICS");
+        }
+    }
+    let metric_fail = function_body(source, "v2_fail_metric_delta");
+    for required in [
+        "v2_write_metric_failure \"$profile\" \"$reason\" \"$before\" \"$after\" ||",
+        "die \"could not retain redacted metric shape evidence\"",
+    ] {
+        if !metric_fail.contains(required) {
+            bad.push("METRICS");
+        }
+    }
+    let run = function_body(source, "run_live_acceptance_v2");
+    for required in [
+        "v2_run_metrics_job metrics-before-incluster",
+        "v2_run_api_job marker-after-resize app default POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 2xx durable-first none",
+        "v2_run_api_job metrics-denied-after-resize unlisted default POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 403 none none",
+        "v2_run_metrics_job metrics-after-incluster",
+        "v2_run_metrics_job metrics-before-required",
+        "v2_run_metrics_job metrics-after-required",
+    ] {
+        if !has_exact_line(run, required) {
+            bad.push("METRICS");
+        }
+    }
+    if !appears_before(run, "v2_wait_pod \"$replacement_uid\" in-cluster 1 1Gi", "v2_run_metrics_job metrics-before-incluster")
+        || !appears_before(run, "v2_run_metrics_job metrics-before-incluster", "v2_run_api_job marker-after-resize")
+        || !appears_before(run, "v2_run_api_job marker-after-resize", "v2_run_api_job metrics-denied-after-resize")
+        || !appears_before(run, "v2_run_api_job metrics-denied-after-resize", "v2_run_metrics_job metrics-after-incluster")
+        || !appears_before(run, "v2_run_metrics_job metrics-after-incluster", "v2_metric_deltas in-cluster")
+        || !appears_before(run, "v2_wait_pod \"$resized_uid\" required 1 1Gi", "v2_run_metrics_job metrics-before-required")
+        || !appears_before(run, "v2_run_metrics_job metrics-before-required", "v2_run_api_job required-projected-app")
+        || !appears_before(run, "v2_run_api_job required-projected-app", "v2_run_api_job required-default-app")
+        || !appears_before(run, "v2_run_api_job required-default-app", "v2_run_api_job required-projected-unlisted")
+        || !appears_before(run, "v2_run_api_job required-projected-unlisted", "v2_run_metrics_job metrics-after-required")
+        || !appears_before(run, "v2_run_metrics_job metrics-after-required", "v2_metric_deltas required")
     {
         bad.push("METRICS");
     }
@@ -1543,6 +1717,155 @@ fn api_job_status_contract_accepts_only_a_single_concrete_2xx_log_line() {
             .status
             .success(),
         "literal-status mutation fixture did not expose the bypass"
+    );
+}
+
+#[test]
+fn metric_delta_failures_retain_only_redacted_shape_evidence() {
+    let source = full_script();
+    let missing_before = concat!(
+        "delegated_auth_access_reviews_total 0\n",
+        "delegated_auth_allowed_total 0\n",
+        "delegated_auth_denied_total 0\n",
+    );
+    let complete_after = concat!(
+        "delegated_auth_token_reviews_total 1\n",
+        "delegated_auth_access_reviews_total 1\n",
+        "delegated_auth_allowed_total 1\n",
+        "delegated_auth_denied_total 1\n",
+    );
+    let missing = run_metric_delta_oracle(&source, "in-cluster", missing_before, complete_after);
+    assert_eq!(missing.output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&missing.output.stderr)
+            .contains("missing delegated_auth_token_reviews_total"),
+        "missing-metric failure did not retain and report its cause: stderr={}; evidence={:?}",
+        String::from_utf8_lossy(&missing.output.stderr),
+        missing.evidence
+    );
+    assert_eq!(
+        missing.evidence.len(),
+        1,
+        "a metric failure must retain exactly one final artifact"
+    );
+    let missing_body = missing
+        .evidence
+        .get("lumen-standalone-gke-metric-shape-failure.json")
+        .expect("redacted missing-metric artifact");
+    assert!(
+        !missing_body.contains("delegated_auth_token_reviews_total 1"),
+        "failure artifact must not retain raw metric rows: {missing_body}"
+    );
+    let missing_json: Value = serde_json::from_str(missing_body).expect("missing-metric JSON");
+    assert_eq!(missing_json["schema"], "lumen.standalone-gke-metric-shape/v1");
+    assert_eq!(missing_json["failure"]["profile"], "in-cluster");
+    assert_eq!(missing_json["failure"]["reason"], "missing_metric");
+    assert_eq!(
+        missing_json["observations"][0]["metrics"]["delegated_auth_token_reviews_total"]["shape"],
+        "absent"
+    );
+    assert_eq!(
+        missing_json["observations"][1]["metrics"]["delegated_auth_token_reviews_total"]["value_class"],
+        "positive"
+    );
+    assert_eq!(missing_json["redaction"]["metric_values_retained"], false);
+    assert_eq!(missing_json["redaction"]["metric_label_values_retained"], false);
+
+    let labeled_zero = concat!(
+        "delegated_auth_token_reviews_total{private_label=\"secret-value\"} 0\n",
+        "delegated_auth_access_reviews_total{private_label=\"secret-value\"} 0\n",
+        "delegated_auth_allowed_total{private_label=\"secret-value\"} 0\n",
+        "delegated_auth_denied_total{private_label=\"secret-value\"} 0\n",
+    );
+    let non_positive = run_metric_delta_oracle(&source, "required", labeled_zero, labeled_zero);
+    assert_eq!(non_positive.output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&non_positive.output.stderr)
+            .contains("measured auth metric deltas are not positive")
+    );
+    assert_eq!(non_positive.evidence.len(), 1);
+    let non_positive_body = non_positive
+        .evidence
+        .get("lumen-standalone-gke-metric-shape-failure.json")
+        .expect("redacted non-positive artifact");
+    assert!(
+        !non_positive_body.contains("secret-value"),
+        "failure artifact must not retain metric label values: {non_positive_body}"
+    );
+    let non_positive_json: Value =
+        serde_json::from_str(non_positive_body).expect("non-positive metric JSON");
+    assert_eq!(non_positive_json["failure"]["profile"], "required");
+    assert_eq!(non_positive_json["failure"]["reason"], "non_positive_delta");
+    for phase in [0, 1] {
+        assert_eq!(
+            non_positive_json["observations"][phase]["metrics"]["delegated_auth_denied_total"]["shape"],
+            "labeled"
+        );
+        assert_eq!(
+            non_positive_json["observations"][phase]["metrics"]["delegated_auth_denied_total"]["value_class"],
+            "zero"
+        );
+    }
+}
+
+#[test]
+fn metric_shape_and_restart_window_mutations_fail_the_static_contract() {
+    let source = live_slice();
+    for (from, to, expected) in [
+        (
+            "v2_write_metric_failure \"$profile\" \"$reason\" \"$before\" \"$after\" ||",
+            "true # redacted failure evidence disabled",
+            "METRICS",
+        ),
+        (
+            "safe_private_file \"$report\"",
+            "cp \"$before\" \"$report\"",
+            "REDACTION",
+        ),
+        (
+            "before_token=\"$(v2_metric_shape delegated_auth_token_reviews_total \"$before\")\" || return 1",
+            "before_token=\"$(v2_metric_shape delegated_auth_token_reviews \"$before\")\" || return 1",
+            "METRICS",
+        ),
+        (
+            "v2_metric_deltas in-cluster \"$TMP_ROOT/metrics-before-incluster.metrics\" \"$TMP_ROOT/metrics-after-incluster.metrics\"",
+            "v2_metric_deltas required \"$TMP_ROOT/metrics-before-incluster.metrics\" \"$TMP_ROOT/metrics-after-incluster.metrics\"",
+            "METRICS",
+        ),
+        (
+            "v2_run_api_job metrics-denied-after-resize unlisted default POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 403 none none",
+            "# post-resize denial removed",
+            "METRICS",
+        ),
+        (
+            "v2_run_metrics_job metrics-before-incluster\n  v2_run_api_job marker-after-resize",
+            "v2_run_api_job marker-after-resize\n  v2_run_metrics_job metrics-before-incluster",
+            "METRICS",
+        ),
+        (
+            "v2_wait_pod \"$resized_uid\" required 1 1Gi\n  required_uid=\"$V2_LAST_POD_UID\"\n  [[ \"$required_uid\" != \"$resized_uid\" ]] || die \"required profile did not replace pod\"\n  v2_run_metrics_job metrics-before-required",
+            "v2_run_metrics_job metrics-before-required\n  v2_wait_pod \"$resized_uid\" required 1 1Gi\n  required_uid=\"$V2_LAST_POD_UID\"\n  [[ \"$required_uid\" != \"$resized_uid\" ]] || die \"required profile did not replace pod\"",
+            "METRICS",
+        ),
+        (
+            "v2_run_metrics_job metrics-before-required\n  v2_run_api_job required-projected-app app projected POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 2xx durable-first none\n  v2_run_api_job required-default-app app default POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 401 none none",
+            "v2_run_api_job required-default-app app default POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 401 none none\n  v2_run_metrics_job metrics-before-required\n  v2_run_api_job required-projected-app app projected POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 2xx durable-first none",
+            "METRICS",
+        ),
+    ] {
+        let changed = replace_once(&source, from, to);
+        assert!(
+            findings(&changed).contains(&expected),
+            "metric mutation {from:?} did not trigger {expected}; findings={:?}",
+            findings(&changed)
+        );
+    }
+    let changed = source.replace("metric_values_retained:false", "metric_values_retained:true");
+    assert_ne!(source, changed, "redaction mutation changes bytes");
+    assert!(
+        findings(&changed).contains(&"REDACTION"),
+        "metric-value retention mutation did not fail the redaction contract: {:?}",
+        findings(&changed)
     );
 }
 

@@ -246,6 +246,84 @@ async fn status(s: &TestServer, row: &Row, token: Option<&str>) -> u16 {
     r.await.status_code().as_u16()
 }
 
+fn delegated_metric(body: &str, name: &str) -> u64 {
+    let prefix = format!("{name} ");
+    let samples: Vec<_> = body
+        .lines()
+        .filter(|line| line.starts_with(&prefix))
+        .collect();
+    assert_eq!(
+        samples.len(),
+        1,
+        "{name} must have exactly one bare sample in:\n{body}"
+    );
+    assert!(
+        !body
+            .lines()
+            .any(|line| line.starts_with(&format!("{name}{{"))),
+        "{name} must not be labeled in:\n{body}"
+    );
+    samples[0]
+        .strip_prefix(&prefix)
+        .expect("sample has the metric prefix")
+        .parse()
+        .unwrap_or_else(|error| panic!("{name} sample is not an integer: {error}; body:\n{body}"))
+}
+
+/// Delegated counters must use the same probe router as the public `/metrics`
+/// endpoint. This checks the zero samples before requests and both authorization
+/// outcomes after requests, so it fails if the router drops verifier metrics.
+#[tokio::test]
+async fn delegated_metrics_are_exposed_by_the_actual_router() {
+    let s = delegated_server(Arc::new(Cluster::new()));
+    let before = s.get("/metrics").await;
+    before.assert_status_ok();
+    let before = before.text();
+    for name in [
+        "delegated_auth_token_reviews_total",
+        "delegated_auth_access_reviews_total",
+        "delegated_auth_allowed_total",
+        "delegated_auth_denied_total",
+    ] {
+        assert_eq!(delegated_metric(&before, name), 0, "{name} must start at zero");
+    }
+
+    assert_eq!(
+        s.get("/collections/users/stats")
+            .add_header("authorization", "Bearer t-reader")
+            .await
+            .status_code()
+            .as_u16(),
+        404,
+        "the granted reader reaches the handler even when the collection is absent"
+    );
+    assert_eq!(
+        s.get("/collections/users/stats")
+            .add_header("authorization", "Bearer t-stranger")
+            .await
+            .status_code()
+            .as_u16(),
+        403,
+        "the ungranted ServiceAccount is denied by the real router"
+    );
+
+    let after = s.get("/metrics").await;
+    after.assert_status_ok();
+    let after = after.text();
+    for (name, expected) in [
+        ("delegated_auth_token_reviews_total", 2),
+        ("delegated_auth_access_reviews_total", 2),
+        ("delegated_auth_allowed_total", 1),
+        ("delegated_auth_denied_total", 1),
+    ] {
+        assert_eq!(
+            delegated_metric(&after, name),
+            expected,
+            "{name} must reflect the routed allowed and denied requests"
+        );
+    }
+}
+
 /// The whole matrix in one pass: for every endpoint, the three identities that
 /// hold a *different* verb are denied, and only the one holding this
 /// endpoint's verb gets through.
