@@ -434,6 +434,14 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P); state="$repo/test-stat
   printf '%s\n' "$2" >"$state/kubeconfig-path"
   printf '%s\n' kubectl:config >>"$state/events"; server=https://203.0.113.8; [[ "$mode" == kube-bad ]] && server=https://wrong.invalid
   jq -nc --arg s "$server" '{"current-context":"contract-context",contexts:[{name:"contract-context",context:{cluster:"contract-cluster",user:"contract-user"}}],clusters:[{name:"contract-cluster",cluster:{server:$s}}],users:[{name:"contract-user",user:{exec:{command:"gke-gcloud-auth-plugin"}}}]}'
+elif [[ "$#" -eq 12 && "$1" == --kubeconfig && "$3" == --context && "$4" == contract-context && "$5" == --request-timeout=10s && "$6" == get && "$7" == deployment && "$8" == konnectivity-agent && "$9" == --namespace && "${10}" == kube-system && "${11}" == -o && "${12}" == json ]]; then
+  printf '%s\n' kubectl:konnectivity >>"$state/events"
+  case "$mode" in
+    konnectivity-missing|konnectivity-request-fail) exit 74 ;;
+    konnectivity-malformed) printf '%s\n' malformed ;;
+    konnectivity-not-ready) jq -nc '{metadata:{generation:2},spec:{replicas:1},status:{observedGeneration:2,replicas:1,readyReplicas:0,availableReplicas:0,unavailableReplicas:1}}' ;;
+    *) jq -nc '{metadata:{generation:2},spec:{replicas:1},status:{observedGeneration:2,replicas:1,readyReplicas:1,availableReplicas:1,unavailableReplicas:0}}' ;;
+  esac
 elif [[ "$#" -eq 9 && "$1" == --kubeconfig && "$2" == "$(<"$state/kubeconfig-path")" && "$3" == --context && "$4" == contract-context && "$5" == get && "$6" == storageclass && "$7" == premium-rwo && "$8" == -o && "$9" == json ]]; then
   printf '%s\n' kubectl:storage >>"$state/events"; provisioner=pd.csi.storage.gke.io; [[ "$mode" == storage-bad ]] && provisioner=kubernetes.io/gce-pd
   jq -nc --arg p "$provisioner" '{metadata:{name:"premium-rwo"},provisioner:$p,parameters:{type:"pd-ssd"},reclaimPolicy:"Delete",volumeBindingMode:"WaitForFirstConsumer",allowVolumeExpansion:true}'
@@ -448,7 +456,12 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 if [[ "$(<"$repo/test-state/mode")" == publication-extra ]]; then destination=''; for arg in "$@"; do destination=$arg; done; : >"${destination%/*}/extra"; fi
 EOF
 
-chmod 755 "$FIXTURE/terraform/lumen-standalone-gke/scripts/check.sh" "$FIXTURE/kustomize/lumen-standalone-acceptance/tests/contract.sh" "$FIXTURE/apps/lumen/scripts/standalone-gke-acceptance.sh" "$FIXTURE/apps/lumen/scripts/verify-release-artifacts.sh" "$FIXTURE/bin/terraform" "$FIXTURE/bin/gcloud" "$FIXTURE/bin/kubectl" "$FIXTURE/bin/cp"
+cat >"$FIXTURE/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+chmod 755 "$FIXTURE/terraform/lumen-standalone-gke/scripts/check.sh" "$FIXTURE/kustomize/lumen-standalone-acceptance/tests/contract.sh" "$FIXTURE/apps/lumen/scripts/standalone-gke-acceptance.sh" "$FIXTURE/apps/lumen/scripts/verify-release-artifacts.sh" "$FIXTURE/bin/terraform" "$FIXTURE/bin/gcloud" "$FIXTURE/bin/kubectl" "$FIXTURE/bin/cp" "$FIXTURE/bin/sleep"
 
 LIVE_FIXTURE="$FIXTURE/terraform/lumen-standalone-gke/scripts/live-acceptance.sh"
 REPAIR_FIXTURE="$FIXTURE/terraform/lumen-standalone-gke/scripts/repair-destroy.sh"
@@ -497,8 +510,16 @@ actual_inventory=$(find "$CASE_OUT" -mindepth 1 -maxdepth 1 -type f -exec basena
 [[ "$actual_inventory" == $'lumen-standalone-gke-receipt.json\nlumen-standalone-gke-receipt.json.sha256' ]] || fail 'happy publication inventory changed'
 happy_hash=$(sha256_file "$CASE_OUT/lumen-standalone-gke-receipt.json")
 [[ "$(<"$CASE_STDOUT")" == "$happy_hash"$'\n'"$CASE_OUT" ]] || fail 'happy stdout is not exactly hash and path'
-expected_events=$'check\nkustomize\ngcloud:list\nterraform:init\nterraform:plan:create\nterraform:show:create\nterraform:apply:create\nterraform:state-list\nterraform:show:state\ngcloud:cluster-describe\ngcloud:node-pools-list\ngcloud:node-pool-describe\ngcloud:get-credentials\nkubectl:config\nkubectl:storage\ninner\nverifier:receipt\nverifier:gke\nterraform:plan:destroy\nterraform:show:destroy\nterraform:apply:destroy\nterraform:state-list\ngcloud:list'
+expected_events=$'check\nkustomize\ngcloud:list\nterraform:init\nterraform:plan:create\nterraform:show:create\nterraform:apply:create\nterraform:state-list\nterraform:show:state\ngcloud:cluster-describe\ngcloud:node-pools-list\ngcloud:node-pool-describe\ngcloud:get-credentials\nkubectl:config\nkubectl:storage\nkubectl:konnectivity\ninner\nverifier:receipt\nverifier:gke\nterraform:plan:destroy\nterraform:show:destroy\nterraform:apply:destroy\nterraform:state-list\ngcloud:list'
 [[ "$(<"$STATE/events")" == "$expected_events" ]] || fail 'happy call order changed'
+
+for mode in konnectivity-not-ready konnectivity-missing konnectivity-malformed konnectivity-request-fail; do
+  reset_case "$mode" "$mode"; expect_live_reject "$mode"
+  [[ ! -e "$CASE_OUT" ]] || fail "$mode published a receipt"
+  [[ "$(grep -c '^kubectl:konnectivity$' "$STATE/events")" -eq 20 ]] || fail "$mode did not use the fixed Konnectivity bound"
+  ! grep -q '^inner$' "$STATE/events" || fail "$mode invoked inner gate"
+  grep -q '^terraform:apply:destroy$' "$STATE/events" || fail "$mode did not destroy the cluster"
+done
 
 : >"$STATE/events"
 expect_reject missing "$LIVE_FIXTURE" --project-id abcde1

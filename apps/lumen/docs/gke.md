@@ -68,6 +68,11 @@ KSA returns `403`. It also checks cleanup and writes a sanitized receipt only
 after every check passes. The gate has not passed until the controller records
 that receipt. Its private cluster inputs and exact execution remain
 controller-owned.
+The gate first waits for the platform Konnectivity agent. Its timeout is a GKE
+infrastructure failure, not a Lumen product failure.
+For `lumen@0.4.29`, the GitHub Release publishes
+`lumen-standalone-gke-receipt.json`, its exact `.sha256` sidecar, and the
+receipt SHA-256 in the release notes.
 
 ## Contract map
 
@@ -78,7 +83,7 @@ controller-owned.
 | Install and upgrade order | [Deployment](deployment.md) | Use the commands for the selected current mode. |
 | Current Kubernetes API | Generated Lumen CRDs | `lumen k8s crd render --out <directory>` |
 | Current GCP substrate | [Installation Terraform](../terraform/README.md) | Read the current capacity-catalog and PKI boundaries. |
-| Current GKE acceptance evidence | [GCP acceptance](../../../acceptance/gcp/README.md) | `bash acceptance/gcp/scripts/check.sh` |
+| Current Managed GCP acceptance | [GCP acceptance](../../../acceptance/gcp/README.md) | Run `bash acceptance/gcp/scripts/check.sh` for the static contract. Use the linked controller-run path for live proof. |
 
 ## Support tiers
 
@@ -236,14 +241,26 @@ public client trust bundle into allowed client namespaces. See
 
 ## Verification
 
-The current static GCP gate is:
+The current Managed GCP static gate is:
 
 ```bash
 bash acceptance/gcp/scripts/check.sh
 ```
 
-The current live harness uses a named zonal Standard cluster. Its documented
-proof remains valuable, but it does not certify the target regional profile.
+The separate Managed zonal live harness uses a named Standard cluster. Its
+documented proof remains valuable, but it does not certify the target regional
+profile.
+
+The Standalone live release gate is separate. The controller runs
+`terraform/lumen-standalone-gke/scripts/live-acceptance.sh` with private inputs.
+After release, verify its public receipt and exact checksum sidecar:
+
+```bash
+receipt_dir=$(mktemp -d)
+gh release download lumen@0.4.29 --repo chrischeng-c4/axiom \
+  --pattern 'lumen-standalone-gke-receipt.json*' --dir "$receipt_dir"
+(cd "$receipt_dir" && shasum -a 256 -c lumen-standalone-gke-receipt.json.sha256)
+```
 
 The future regional gate must prove at least:
 
