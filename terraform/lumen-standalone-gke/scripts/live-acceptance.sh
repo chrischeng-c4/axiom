@@ -90,18 +90,21 @@ safe_new_private_path() {
   safe_private_dir "$parent"
 }
 
-private_mode() {
-  local path=$1 mode status
+private_mode_is() {
+  local path=$1 expected=$2 mode status
   mode=$(stat -c %a "$path" 2>/dev/null); status=$?
   if [[ "$status" -eq 0 ]]; then
-    [[ "$mode" == 700 ]] || return 1
-    printf '%s\n' "$mode"
+    [[ "$mode" == "$expected" ]] || return 1
     return 0
   fi
   [[ -z "$mode" ]] || return 1
   mode=$(stat -f %Lp "$path" 2>/dev/null) || return 1
-  [[ "$mode" == 700 ]] || return 1
-  printf '%s\n' "$mode"
+  [[ "$mode" == "$expected" ]]
+}
+
+private_mode() {
+  private_mode_is "$1" 700 || return 1
+  printf '%s\n' 700
 }
 
 require_tools() {
@@ -219,7 +222,8 @@ safe_remove_run_root() {
     case "$base" in
       terraform-data|control|private-receipt) [[ -d "$file" ]] || return 1 ;;
       gke_gcloud_auth_plugin_cache)
-        [[ -d "$file" && ! -L "$file" && "$(cd "$file" && pwd -P)" == "$file" ]] || return 1
+        [[ -f "$file" && ! -L "$file" ]] || return 1
+        private_mode_is "$file" 600 || return 1
         cache=$file
         ;;
       terraform.tfstate|kubeconfig|create.tfplan|destroy.tfplan|recovery-destroy.tfplan|run-contract.json) [[ -f "$file" ]] || return 1 ;;
@@ -228,17 +232,6 @@ safe_remove_run_root() {
     esac
     [[ -L "$file" ]] && return 1
   done <<<"$inventory"
-  if [[ -n "$cache" ]]; then
-    inventory=$(find "$cache" -depth -print) || return 1
-    while IFS= read -r file; do
-      [[ -L "$file" ]] && return 1
-      if [[ -d "$file" ]]; then
-        [[ "$(cd "$file" && pwd -P)" == "$file" ]] || return 1
-      elif [[ ! -f "$file" ]]; then
-        return 1
-      fi
-    done <<<"$inventory"
-  fi
   for dir in "$RUN_ROOT/terraform-data" "$RUN_ROOT/control" "$RUN_ROOT/private-receipt"; do
     [[ -d "$dir" && ! -L "$dir" && "$(cd "$dir" && pwd -P)" == "$dir" ]] || return 1
     inventory=$(find "$dir" -depth -print) || return 1
@@ -279,15 +272,9 @@ safe_remove_run_root() {
     fi
   done
   if [[ -n "$cache" ]]; then
-    inventory=$(find "$cache" -depth -print) || return 1
-    while IFS= read -r file; do
-      [[ "$file" == "$cache" ]] && continue
-      if [[ -L "$file" ]]; then return 1
-      elif [[ -f "$file" ]]; then rm -f -- "$file" || return 1
-      elif [[ -d "$file" ]]; then rmdir -- "$file" || return 1
-      else return 1; fi
-    done <<<"$inventory"
-    rmdir -- "$cache" || return 1
+    [[ -f "$cache" && ! -L "$cache" ]] || return 1
+    private_mode_is "$cache" 600 || return 1
+    rm -f -- "$cache" || return 1
   fi
   [[ -z "$backup" ]] || rm -f -- "$backup" || return 1
   if [[ -d "$RUN_ROOT/private-receipt" && ! -L "$RUN_ROOT/private-receipt" ]]; then
