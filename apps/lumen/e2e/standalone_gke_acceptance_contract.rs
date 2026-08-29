@@ -10,7 +10,7 @@ use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -41,6 +41,101 @@ fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
         .split_once("\n}\n")
         .unwrap_or_else(|| panic!("function terminator is present: {name}"));
     body
+}
+
+struct RequiredRuntimeOracleResult {
+    output: Output,
+    statefulset: Option<String>,
+}
+
+fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> RequiredRuntimeOracleResult {
+    let fixture = tempfile::Builder::new()
+        .prefix("lumen-required-runtime-oracle-")
+        .tempdir()
+        .expect("required-runtime fixture");
+    let live = json!({
+        "apiVersion": "apps/v1",
+        "kind": "StatefulSet",
+        "metadata": {"name": "lumen", "labels": {"stable": "true"}},
+        "spec": {
+            "serviceName": "lumen",
+            "replicas": 1,
+            "template": {
+                "metadata": {"labels": {"stable": "true"}},
+                "spec": {
+                    "containers": [{
+                        "name": "serving",
+                        "image": "example.invalid/lumen@sha256:stable",
+                        "env": [
+                            {"name": "LUMEN_AUTH", "value": "in-cluster"},
+                            {"name": "OTHER", "value": "stable"}
+                        ],
+                        "resources": {"requests": {"cpu": "1", "memory": "1Gi"}}
+                    }]
+                }
+            }
+        }
+    });
+    let mut after = live.clone();
+    after["metadata"]["creationTimestamp"] = Value::Null;
+    after["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"] =
+        Value::String("required".to_owned());
+    match mutation {
+        None => {}
+        Some("image") => {
+            after["spec"]["template"]["spec"]["containers"][0]["image"] =
+                Value::String("example.invalid/lumen@sha256:changed".to_owned());
+        }
+        Some("cpu") => {
+            after["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]
+                ["cpu"] = Value::String("2".to_owned());
+        }
+        Some("other-env") => {
+            after["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] =
+                Value::String("changed".to_owned());
+        }
+        Some(other) => panic!("unknown required-runtime mutation: {other}"),
+    }
+    let live_path = fixture.path().join("live.json");
+    let after_path = fixture.path().join("after.json");
+    let script_path = fixture.path().join("run.sh");
+    fs::write(&live_path, serde_json::to_vec(&live).expect("live fixture JSON"))
+        .expect("write live fixture");
+    fs::write(&after_path, serde_json::to_vec(&after).expect("after fixture JSON"))
+        .expect("write after fixture");
+    let harness = [
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+V2_RUNTIME_NAMESPACE=runtime
+V2_REQUIRED_STATEFULSET=''
+LUMEN_STANDALONE_GKE_IMAGE='example.invalid/lumen@sha256:stable'
+die() { printf '%s\n' "$*" >&2; exit 2; }
+k() {
+  case "$1:$2" in
+    get:statefulset) cat "$LIVE_FIXTURE" ;;
+    set:env) cat "$AFTER_FIXTURE" ;;
+    *) exit 99 ;;
+  esac
+}
+v2_required_runtime() {
+"#,
+        function_body(source, "v2_required_runtime"),
+        r#"
+}
+v2_required_runtime
+"#,
+    ]
+    .concat();
+    fs::write(&script_path, harness).expect("write required-runtime harness");
+    let output = Command::new("bash")
+        .arg(&script_path)
+        .env("TMP_ROOT", fixture.path())
+        .env("LIVE_FIXTURE", &live_path)
+        .env("AFTER_FIXTURE", &after_path)
+        .output()
+        .expect("run required-runtime harness");
+    let statefulset = fs::read_to_string(fixture.path().join("v2-required-statefulset.json")).ok();
+    RequiredRuntimeOracleResult { output, statefulset }
 }
 
 fn has_exact_line(source: &str, expected: &str) -> bool {
@@ -733,6 +828,34 @@ fn findings(source: &str) -> Vec<&'static str> {
         (
             "REQUIRED",
             "required continuity patch changed live desired fields other than LUMEN_AUTH",
+        ),
+        (
+            "REQUIRED",
+            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-before-required.json\" >\"$TMP_ROOT/v2-before-required-noauth.json\"",
+        ),
+        (
+            "REQUIRED",
+            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "REQUIRED",
+            "cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"",
+        ),
+        (
+            "REQUIRED",
+            ".spec.template.spec.containers[0].image == $image and",
+        ),
+        (
+            "REQUIRED",
+            "([.spec.template.spec.containers[0].env[]|select(.name == \"LUMEN_AUTH\")|.value] == [\"required\"])",
+        ),
+        (
+            "REQUIRED",
+            "([.spec.template.spec.containers[0].resources.requests.cpu] == [\"1\"])",
+        ),
+        (
+            "REQUIRED",
+            "([.spec.template.spec.containers[0].resources.requests.memory] == [\"1Gi\"])",
         ),
         ("REQUIRED", "V2_REQUIRED_STATEFULSET=\"$TMP_ROOT/v2-required-statefulset.json\""),
         ("REQUIRED", "k apply -f \"$V2_REQUIRED_STATEFULSET\""),
@@ -1624,6 +1747,90 @@ fn live_gate_has_the_complete_candidate_bound_contract() {
         "findings: {:?}",
         findings(&live)
     );
+}
+
+#[test]
+fn required_runtime_accepts_only_serializer_metadata_and_auth_change() {
+    let source = full_script();
+    let accepted = run_required_runtime_oracle(&source, None);
+    assert!(
+        accepted.output.status.success(),
+        "serializer-only required transition was rejected: {}",
+        String::from_utf8_lossy(&accepted.output.stderr)
+    );
+    let statefulset: Value = serde_json::from_str(
+        accepted
+            .statefulset
+            .as_deref()
+            .expect("successful required transition writes StatefulSet"),
+    )
+    .expect("required StatefulSet JSON");
+    assert_eq!(
+        statefulset["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"],
+        "required",
+        "required transition must retain the exact auth profile"
+    );
+
+    for mutation in ["image", "cpu", "other-env"] {
+        let rejected = run_required_runtime_oracle(&source, Some(mutation));
+        assert_eq!(
+            rejected.output.status.code(),
+            Some(2),
+            "business-field mutation passed: {mutation}; stderr={} ",
+            String::from_utf8_lossy(&rejected.output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&rejected.output.stderr)
+                .contains("required continuity patch changed live desired fields other than LUMEN_AUTH"),
+            "business-field mutation did not fail at continuity comparator: {mutation}"
+        );
+        assert!(
+            rejected.statefulset.is_none(),
+            "business-field mutation wrote the required StatefulSet: {mutation}"
+        );
+    }
+}
+
+#[test]
+fn required_runtime_continuity_mutations_fail_the_static_contract() {
+    let source = live_slice();
+    for (from, to) in [
+        (
+            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S '(.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata,.spec) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"",
+            "cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || true",
+        ),
+        (
+            ".spec.template.spec.containers[0].image == $image and",
+            "true and",
+        ),
+        (
+            "([.spec.template.spec.containers[0].env[]|select(.name == \"LUMEN_AUTH\")|.value] == [\"required\"])",
+            "([.spec.template.spec.containers[0].env[]|select(.name == \"LUMEN_AUTH\")|.value] == [\"optional\"])",
+        ),
+        (
+            "([.spec.template.spec.containers[0].resources.requests.cpu] == [\"1\"])",
+            "([.spec.template.spec.containers[0].resources.requests.cpu] == [\"2\"])",
+        ),
+        (
+            "([.spec.template.spec.containers[0].resources.requests.memory] == [\"1Gi\"])",
+            "([.spec.template.spec.containers[0].resources.requests.memory] == [\"2Gi\"])",
+        ),
+    ] {
+        let changed = replace_once(&source, from, to);
+        assert!(
+            findings(&changed).contains(&"REQUIRED"),
+            "required continuity mutation did not trigger REQUIRED; findings={:?}",
+            findings(&changed)
+        );
+    }
 }
 
 #[test]
