@@ -932,7 +932,7 @@ v2_wait_pod() {
   while :; do
     if k get pod lumen-0 --namespace "$V2_RUNTIME_NAMESPACE" -o json >"$TMP_ROOT/v2-pod.json" 2>/dev/null; then
       uid="$(jq -er '.metadata.uid' "$TMP_ROOT/v2-pod.json")"
-      if [[ ( -z "$old_uid" || "$uid" != "$old_uid" ) && "$(jq -r '[.status.conditions[]? | select(.type == "Ready") | .status] | first // "False"' "$TMP_ROOT/v2-pod.json")" == true ]]; then
+      if [[ ( -z "$old_uid" || "$uid" != "$old_uid" ) && "$(jq -r '[.status.conditions[]? | select(.type == "Ready") | .status] | first // "False"' "$TMP_ROOT/v2-pod.json")" == True ]]; then
         image="$(jq -er '.status.containerStatuses[]|select(.name == "serving")|.imageID' "$TMP_ROOT/v2-pod.json")"
         expected="$(v2_expected_child "$TMP_ROOT/v2-pod.json")"
         [[ "$image" == *"$expected" ]] || die "observed container child digest does not match scheduled node architecture"

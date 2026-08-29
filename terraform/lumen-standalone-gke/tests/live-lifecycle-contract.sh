@@ -408,8 +408,11 @@ event() { printf '%s\n' "$1" >>"$state/events"; }
 if [[ "$#" -eq 6 && "$1" == container && "$2" == clusters && "$3" == list && "$4" == --project=abcde1 && "$5" == --location=us-central1-a && "$6" == --format=json ]]; then
   event gcloud:list; resource=$(<"$state/resource-state")
   [[ "$mode" != pre-list-fail ]] || exit 71
+  [[ "$mode" != repair-query-fail ]] || exit 71
   [[ ! ( "$mode" == post-list-fail && "$resource" == destroyed ) ]] || exit 72
-  if [[ "$mode" == cluster-exists || ( "$mode" == post-list-present && "$resource" == destroyed ) ]]; then jq -nc --arg n "$cluster" '[{name:$n}]'; else printf '%s\n' '[]'; fi
+  if [[ "$mode" == repair-query-malformed ]]; then printf '%s\n' '[{}]'
+  elif [[ "$mode" == cluster-exists || "$mode" == repair-query-present || ( "$mode" == post-list-present && "$resource" == destroyed ) ]]; then jq -nc --arg n "$cluster" '[{name:$n}]'
+  else printf '%s\n' '[]'; fi
 elif [[ "$#" -eq 7 && "$1" == container && "$2" == clusters && "$3" == describe && "$4" == "$cluster" && "$5" == --project=abcde1 && "$6" == --location=us-central1-a && "$7" == --format=json ]]; then
   event gcloud:cluster-describe; datapath=ADVANCED_DATAPATH; [[ "$mode" == cluster-bad ]] && datapath=LEGACY_DATAPATH
   jq -nc --arg c "$cluster" --arg d "$datapath" --arg o "$owner" '{name:$c,location:"us-central1-a",status:"RUNNING",autopilot:{},endpoint:"203.0.113.8",ipAllocationPolicy:{useIpAliases:true},networkConfig:{datapathProvider:$d},releaseChannel:{channel:"REGULAR"},workloadIdentityConfig:{workloadPool:"abcde1.svc.id.goog"},addonsConfig:{gcePersistentDiskCsiDriverConfig:{enabled:true}},loggingConfig:{componentConfig:{enableComponents:["SYSTEM_COMPONENTS","WORKLOADS"]}},resourceLabels:{"lumen-owner":$o,"goog-terraform-provisioned":"true"}}'
@@ -419,6 +422,7 @@ elif [[ "$#" -eq 8 && "$1" == container && "$2" == node-pools && "$3" == describ
   event gcloud:node-pool-describe; machine=e2-standard-2; [[ "$mode" == node-bad ]] && machine=e2-small
   jq -nc --arg p "$pool" --arg n "$node" --arg o "$owner" --arg m "$machine" '{name:$p,status:"RUNNING",initialNodeCount:1,autoscaling:{enabled:true,minNodeCount:1,maxNodeCount:3},config:{machineType:$m,serviceAccount:($n+"@abcde1.iam.gserviceaccount.com"),oauthScopes:["https://www.googleapis.com/auth/cloud-platform"],metadata:{"disable-legacy-endpoints":"true"},labels:{"lumen-owner":$o},taints:[],workloadMetadataConfig:{mode:"GKE_METADATA"}}}'
 elif [[ "$#" -eq 6 && "$1" == container && "$2" == clusters && "$3" == get-credentials && "$4" == "$cluster" && "$5" == --project=abcde1 && "$6" == --location=us-central1-a ]]; then event gcloud:get-credentials
+  run_root=${KUBECONFIG%/kubeconfig}; mkdir -m 700 "$run_root/gke_gcloud_auth_plugin_cache" "$run_root/gke_gcloud_auth_plugin_cache/nested"; : >"$run_root/gke_gcloud_auth_plugin_cache/nested/cache-entry"; : >"$run_root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup"
 else exit 73; fi
 EOF
 
@@ -533,6 +537,37 @@ PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root"
 [[ "$(<"$TMP/repair.stdout")" == 'standalone GKE repair: destroy verified; private state retained' ]] || fail 'repair stdout changed'
 if ! grep -q 'terraform:plan:destroy' "$STATE/events" || ! grep -q 'terraform:apply:destroy' "$STATE/events"; then fail 'repair did not apply a saved destroy plan'; fi
 [[ ! -e "$TMP/out-create-uncertain" ]] || fail 'repair wrote a public receipt'
+
+# An empty retained state is safe only after an exact cloud absence query.
+: >"$STATE/events"; printf '%s\n' empty-noop >"$STATE/mode"
+no_op_manifest() { local path; { find "$uncertain_root" -mindepth 1 -print; while IFS= read -r path; do printf '%s\t%s\n' "$path" "$(sha256_file "$path")"; done < <(find "$uncertain_root" -type f -print); } | LC_ALL=C sort; }
+no_op_stages() { find "$PRIVATE_TMP_ROOT" -maxdepth 1 -type d -name 'lumen-standalone-gke-repair.??????' -print | LC_ALL=C sort; }
+empty_before_manifest=$(no_op_manifest); empty_before_stages=$(no_op_stages)
+PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID" >"$TMP/repair-empty.stdout" 2>"$TMP/repair-empty.stderr" || fail 'empty repair no-op failed'
+[[ "$(<"$TMP/repair-empty.stdout")" == 'standalone GKE repair: verified no-op; private state retained' ]] || fail 'empty repair stdout changed'
+[[ "$(<"$STATE/events")" == $'terraform:init\nterraform:state-list\ngcloud:list' ]] || fail 'empty repair ran unexpected events'
+! grep -Eq 'terraform:(plan|show|apply)|attempt|receipt' "$STATE/events" || fail 'empty repair performed a destructive action'
+[[ "$(no_op_manifest)" == "$empty_before_manifest" && "$(no_op_stages)" == "$empty_before_stages" ]] || fail 'empty repair changed retained evidence or staging inventory'
+# The retained manifest covers private receipt evidence.  Repair has no public output path.
+for mode in repair-query-fail repair-query-malformed repair-query-present; do
+  : >"$STATE/events"; printf '%s\n' "$mode" >"$STATE/mode"
+  query_before_manifest=$(no_op_manifest); query_before_stages=$(no_op_stages)
+  if PATH="$FIXTURE/bin:$SYSTEM_PATH" "$REPAIR_FIXTURE" --state-dir "$uncertain_root" --confirm-destroy "$CLUSTER_ID" >"$TMP/repair-query-$mode.stdout" 2>"$TMP/repair-query-$mode.stderr"; then fail "$mode was accepted"; fi
+  [[ ! -s "$TMP/repair-query-$mode.stdout" ]] || fail "$mode emitted success output"
+  [[ "$(grep -c '^terraform:init$' "$STATE/events")" -eq 1 && "$(grep -c '^terraform:state-list$' "$STATE/events")" -eq 1 && "$(grep -c '^gcloud:list$' "$STATE/events")" -eq 1 ]] || fail "$mode missed exact query events"
+  ! grep -Eq 'terraform:(plan|show|apply)' "$STATE/events" || fail "$mode performed a Terraform mutation"
+  [[ "$(no_op_manifest)" == "$query_before_manifest" && "$(no_op_stages)" == "$query_before_stages" ]] || fail "$mode changed retained evidence or staging inventory"
+done
+
+# The safe staging helper must validate every entry before deleting any one.
+stage_unit=$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-standalone-gke-repair.XXXXXX"); chmod 700 "$stage_unit"
+printf '%s\n' stage-sentinel >"$stage_unit/sentinel"; stage_hash=$(sha256_file "$stage_unit/sentinel"); ln -s "$TMP/path-real/file" "$stage_unit/late-link"
+if ( source "$REPAIR_FIXTURE"; REPAIR_STAGE="$stage_unit"; REPAIR_STAGE_MOVED=0; remove_repair_stage_safe ); then fail 'staging helper accepted a symlink'; fi
+[[ -f "$stage_unit/sentinel" && "$(sha256_file "$stage_unit/sentinel")" == "$stage_hash" && -L "$stage_unit/late-link" && -d "$stage_unit" ]] || fail 'staging helper partially deleted invalid stage'
+rm -f -- "$stage_unit/late-link" "$stage_unit/sentinel"; rmdir -- "$stage_unit"
+stage_unit=$(mktemp -d "$PRIVATE_TMP_ROOT/lumen-standalone-gke-repair.XXXXXX"); chmod 700 "$stage_unit"; : >"$stage_unit/sentinel"
+if ! ( source "$REPAIR_FIXTURE"; REPAIR_STAGE="$stage_unit"; REPAIR_STAGE_MOVED=0; remove_repair_stage_safe ); then fail 'staging helper rejected valid stage'; fi
+[[ ! -e "$stage_unit" ]] || fail 'staging helper retained valid stage'
 
 for mode in state-bad output-bad cluster-bad node-list-bad node-bad kube-bad storage-bad inner-fail verify-fail inner-sidecar-bad receipt-after-verify-tamper; do
   reset_case "$mode" "$mode"; expect_live_reject "$mode"
@@ -732,7 +767,14 @@ run_removal_negative() {
     leaf) rm -f -- "$root/terraform.tfstate"; mkdir -m 700 "$root/terraform.tfstate" ;;
     subtree) ln -s "$TMP/path-real/file" "$root/control/link" ;;
     receipt) : >"$root/private-receipt/extra" ;;
-    receipt-leaf) rm -rf -- "${root:?}/private-receipt/lumen-standalone-gke-receipt.json.sha256"; mkdir -m 700 "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ;;
+    receipt-leaf) rm -f -- "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256"; mkdir -m 700 "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ;;
+    cache-symlink) ln -s "$TMP/path-real" "$root/gke_gcloud_auth_plugin_cache" ;;
+    cache-file) : >"$root/gke_gcloud_auth_plugin_cache" ;;
+    cache-inner-symlink) mkdir -m 700 "$root/gke_gcloud_auth_plugin_cache"; ln -s "$TMP/path-real/file" "$root/gke_gcloud_auth_plugin_cache/link" ;;
+    backup-symlink) ln -s "$TMP/path-real/file" "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ;;
+    backup-dir) mkdir -m 700 "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ;;
+    backup-bad-regex) : >"$root/kubeconfig.2026-08-29T12-34-56Z.1.backup" ;;
+    backup-second) : >"$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup"; : >"$root/kubeconfig.2026-08-29T12-34-57Z.1.00.backup" ;;
   esac
   RUN_ROOT="$root"
   : >"$STATE/events"
@@ -749,12 +791,32 @@ run_removal_negative() {
     subtree) [[ -L "$root/control/link" ]] ;;
     receipt) [[ -e "$root/private-receipt/extra" ]] ;;
     receipt-leaf) [[ -d "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ]] ;;
+    cache-symlink) [[ -L "$root/gke_gcloud_auth_plugin_cache" ]] ;;
+    cache-file) [[ -f "$root/gke_gcloud_auth_plugin_cache" ]] ;;
+    cache-inner-symlink) [[ -L "$root/gke_gcloud_auth_plugin_cache/link" ]] ;;
+    backup-symlink) [[ -L "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ]] ;;
+    backup-dir) [[ -d "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ]] ;;
+    backup-bad-regex) [[ -f "$root/kubeconfig.2026-08-29T12-34-56Z.1.backup" ]] ;;
+    backup-second) [[ -f "$root/kubeconfig.2026-08-29T12-34-57Z.1.00.backup" ]] ;;
   esac
 }
-for pair in 'unknown unknown' 'named-leaf leaf' 'control-subtree subtree' 'receipt-extra receipt' 'receipt-leaf receipt-leaf'; do
+for pair in 'unknown unknown' 'named-leaf leaf' 'control-subtree subtree' 'receipt-extra receipt' 'receipt-leaf receipt-leaf' \
+  'cache-symlink cache-symlink' 'cache-file cache-file' 'cache-inner-symlink cache-inner-symlink' \
+  'backup-symlink backup-symlink' 'backup-dir backup-dir' 'backup-bad-regex backup-bad-regex' 'backup-second backup-second'; do
   read -r label mutation <<<"$pair"
   run_removal_negative "$label" "$mutation"
 done
+RUN_ROOT=''
+
+# The exact tool-created cache and one valid kubeconfig backup are removable.
+positive_root=$(make_removal_negative_root safe-positive)
+mkdir -m 700 "$positive_root/gke_gcloud_auth_plugin_cache"
+mkdir -m 700 "$positive_root/gke_gcloud_auth_plugin_cache/subdir"
+: >"$positive_root/gke_gcloud_auth_plugin_cache/subdir/cache-file"
+: >"$positive_root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup"
+RUN_ROOT="$positive_root"
+safe_remove_run_root || fail 'safe-remove-positive rejected valid tool output'
+[[ ! -e "$positive_root" ]] || fail 'safe-remove-positive retained valid tool output'
 RUN_ROOT=''
 
 # A fresh repair plan may contain a strict known delete subset when a prior

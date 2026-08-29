@@ -108,7 +108,7 @@ repair_plan_is_safe() {
   jq -e --arg project "$PROJECT_ID" --arg zone "$GKE_ZONE" --arg cluster "$CLUSTER" \
     --arg pool "$NODE_POOL" --arg account "$NODE_SERVICE_ACCOUNT" --arg node_sa "$email" --arg owner "$owner" '
     (.resource_changes) as $changes |
-    ($changes | type == "array" and length <= 4) and
+    ($changes | type == "array" and length >= 1 and length <= 4) and
     (([$changes[].address] | length) == ([$changes[].address] | unique | length)) and
     all($changes[];
       .mode == "managed" and
@@ -141,16 +141,35 @@ repair_plan_is_safe() {
   ' "$1" >/dev/null
 }
 
-cleanup_repair_stage() {
-  if [[ "$REPAIR_STAGE_MOVED" -eq 0 && -n "$REPAIR_STAGE" &&
+remove_repair_stage_safe() {
+  local inventory file
+  [[ "$REPAIR_STAGE_MOVED" -eq 0 && -n "$REPAIR_STAGE" &&
     "${REPAIR_STAGE%/*}" == "$PRIVATE_TMP_ROOT" &&
     "${REPAIR_STAGE##*/}" =~ ^lumen-standalone-gke-repair\.[A-Za-z0-9]{6}$ &&
     -d "$REPAIR_STAGE" && ! -L "$REPAIR_STAGE" &&
     "$(cd "$REPAIR_STAGE" && pwd -P)" == "$REPAIR_STAGE" &&
-    "$(private_mode "$REPAIR_STAGE")" == 700 ]]; then
-    rm -rf -- "$REPAIR_STAGE"
-  fi
+    "$(private_mode "$REPAIR_STAGE")" == 700 ]] || return 1
+  inventory=$(find "$REPAIR_STAGE" -depth -print) || return 1
+  while IFS= read -r file; do
+    [[ "$file" == "$REPAIR_STAGE" ]] && continue
+    [[ ! -L "$file" ]] || return 1
+    if [[ -d "$file" ]]; then
+      [[ "$(cd "$file" && pwd -P)" == "$file" ]] || return 1
+    elif [[ ! -f "$file" ]]; then
+      return 1
+    fi
+  done <<<"$inventory"
+  while IFS= read -r file; do
+    [[ "$file" == "$REPAIR_STAGE" ]] && continue
+    if [[ -f "$file" ]]; then rm -f -- "$file" || return 1
+    elif [[ -d "$file" ]]; then rmdir -- "$file" || return 1
+    else return 1; fi
+  done <<<"$inventory"
+  rmdir -- "$REPAIR_STAGE" || return 1
 }
+
+# EXIT cleanup must never replace the original failure status.
+cleanup_repair_stage() { remove_repair_stage_safe >/dev/null 2>&1 || true; }
 
 prepare_repair_stage() {
   local source_state="$STATE_DIR/terraform.tfstate" source_digest
@@ -170,10 +189,20 @@ prepare_repair_stage() {
 }
 
 prepare_repair_plan() {
-  local plan="$REPAIR_STAGE/repair-destroy.tfplan" json="$REPAIR_STAGE/control/repair-destroy-plan.json"
+  local plan="$REPAIR_STAGE/repair-destroy.tfplan" json="$REPAIR_STAGE/control/repair-destroy-plan.json" state_output cluster_json
   export TF_DATA_DIR="$REPAIR_STAGE/terraform-data"
   terraform -chdir="$MODULE_DIR" init -backend=false -input=false -lockfile=readonly -no-color >"$REPAIR_STAGE/control/repair-init.log" 2>"$REPAIR_STAGE/control/repair-init.err" || die 'repair Terraform init failed'
-  terraform -chdir="$MODULE_DIR" state list -state="$REPAIR_STAGE/terraform.tfstate" >"$REPAIR_STAGE/control/repair-state-before.txt" 2>"$REPAIR_STAGE/control/repair-state-before.err" || die 'repair cannot read Terraform state'
+  state_output=$(terraform -chdir="$MODULE_DIR" state list -state="$REPAIR_STAGE/terraform.tfstate" 2>"$REPAIR_STAGE/control/repair-state-before.err") || die 'repair cannot read Terraform state'
+  printf '%s\n' "$state_output" >"$REPAIR_STAGE/control/repair-state-before.txt"
+  if [[ -z "$state_output" ]]; then
+    cluster_json="$REPAIR_STAGE/control/repair-clusters.json"
+    gcloud container clusters list --project="$PROJECT_ID" --location="$GKE_ZONE" --format=json >"$cluster_json" 2>"$REPAIR_STAGE/control/repair-clusters.err" || die 'repair cannot query cluster absence'
+    jq -e --arg cluster "$CLUSTER" 'type == "array" and all(.[]; type == "object" and (.name | type == "string") and .name != $cluster)' "$cluster_json" >/dev/null || die 'repair cluster absence query is invalid or cluster is present'
+    remove_repair_stage_safe || die 'cannot remove repair staging directory'
+    trap - EXIT INT TERM
+    printf '%s\n' 'standalone GKE repair: verified no-op; private state retained'
+    return 10
+  fi
   terraform -chdir="$MODULE_DIR" plan -destroy -input=false -no-color \
     -state="$REPAIR_STAGE/terraform.tfstate" \
     -out="$plan" \
@@ -209,7 +238,7 @@ promote_repair_plan() {
 }
 
 main_repair() {
-  local state_output
+  local state_output repair_status
   parse_repair_args "$@"
   [[ "$STATE_DIR" == "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live."* ]] || die 'repair state directory is outside the private temp root'
   [[ "${STATE_DIR%/*}" == "$PRIVATE_TMP_ROOT" ]] || die 'repair state directory parent is unsafe'
@@ -221,7 +250,12 @@ main_repair() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
   prepare_repair_stage
+  set +e
   prepare_repair_plan
+  repair_status=$?
+  set -e
+  [[ "$repair_status" -eq 0 || "$repair_status" -eq 10 ]] || exit "$repair_status"
+  [[ "$repair_status" -eq 10 ]] && exit 0
   promote_repair_plan
   terraform -chdir="$MODULE_DIR" apply -input=false -no-color -state="$STATE_DIR/terraform.tfstate" -backup=- "$REPAIR_ATTEMPT/repair-destroy.tfplan" >"$REPAIR_ATTEMPT/control/repair-apply.log" 2>"$REPAIR_ATTEMPT/control/repair-apply.err" || die 'saved repair destroy apply failed'
   state_output=$(terraform -chdir="$MODULE_DIR" state list -state="$STATE_DIR/terraform.tfstate" 2>"$REPAIR_ATTEMPT/control/repair-state-after.err") || die 'repair cannot prove empty Terraform state'
