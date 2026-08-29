@@ -422,7 +422,7 @@ elif [[ "$#" -eq 8 && "$1" == container && "$2" == node-pools && "$3" == describ
   event gcloud:node-pool-describe; machine=e2-standard-2; [[ "$mode" == node-bad ]] && machine=e2-small
   jq -nc --arg p "$pool" --arg n "$node" --arg o "$owner" --arg m "$machine" '{name:$p,status:"RUNNING",initialNodeCount:1,autoscaling:{enabled:true,minNodeCount:1,maxNodeCount:3},config:{machineType:$m,serviceAccount:($n+"@abcde1.iam.gserviceaccount.com"),oauthScopes:["https://www.googleapis.com/auth/cloud-platform"],metadata:{"disable-legacy-endpoints":"true"},labels:{"lumen-owner":$o},taints:[],workloadMetadataConfig:{mode:"GKE_METADATA"}}}'
 elif [[ "$#" -eq 6 && "$1" == container && "$2" == clusters && "$3" == get-credentials && "$4" == "$cluster" && "$5" == --project=abcde1 && "$6" == --location=us-central1-a ]]; then event gcloud:get-credentials
-  run_root=${KUBECONFIG%/kubeconfig}; mkdir -m 700 "$run_root/gke_gcloud_auth_plugin_cache" "$run_root/gke_gcloud_auth_plugin_cache/nested"; : >"$run_root/gke_gcloud_auth_plugin_cache/nested/cache-entry"; : >"$run_root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup"
+  run_root=${KUBECONFIG%/kubeconfig}; : >"$run_root/gke_gcloud_auth_plugin_cache"; chmod 600 "$run_root/gke_gcloud_auth_plugin_cache"; : >"$run_root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup"
 else exit 73; fi
 EOF
 
@@ -790,8 +790,8 @@ run_removal_negative() {
     receipt) : >"$root/private-receipt/extra" ;;
     receipt-leaf) rm -f -- "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256"; mkdir -m 700 "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ;;
     cache-symlink) ln -s "$TMP/path-real" "$root/gke_gcloud_auth_plugin_cache" ;;
-    cache-file) : >"$root/gke_gcloud_auth_plugin_cache" ;;
-    cache-inner-symlink) mkdir -m 700 "$root/gke_gcloud_auth_plugin_cache"; ln -s "$TMP/path-real/file" "$root/gke_gcloud_auth_plugin_cache/link" ;;
+    cache-directory) mkdir -m 700 "$root/gke_gcloud_auth_plugin_cache" ;;
+    cache-wrong-mode) : >"$root/gke_gcloud_auth_plugin_cache"; chmod 640 "$root/gke_gcloud_auth_plugin_cache" ;;
     backup-symlink) ln -s "$TMP/path-real/file" "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ;;
     backup-dir) mkdir -m 700 "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ;;
     backup-bad-regex) : >"$root/kubeconfig.2026-08-29T12-34-56Z.1.backup" ;;
@@ -813,8 +813,11 @@ run_removal_negative() {
     receipt) [[ -e "$root/private-receipt/extra" ]] ;;
     receipt-leaf) [[ -d "$root/private-receipt/lumen-standalone-gke-receipt.json.sha256" ]] ;;
     cache-symlink) [[ -L "$root/gke_gcloud_auth_plugin_cache" ]] ;;
-    cache-file) [[ -f "$root/gke_gcloud_auth_plugin_cache" ]] ;;
-    cache-inner-symlink) [[ -L "$root/gke_gcloud_auth_plugin_cache/link" ]] ;;
+    cache-directory) [[ -d "$root/gke_gcloud_auth_plugin_cache" ]] ;;
+    cache-wrong-mode)
+      [[ -f "$root/gke_gcloud_auth_plugin_cache" ]] || fail "safe-remove-$label deleted offending cache file"
+      if ! private_mode_is "$root/gke_gcloud_auth_plugin_cache" 640; then fail "safe-remove-$label changed cache mode"; fi
+      ;;
     backup-symlink) [[ -L "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ]] ;;
     backup-dir) [[ -d "$root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup" ]] ;;
     backup-bad-regex) [[ -f "$root/kubeconfig.2026-08-29T12-34-56Z.1.backup" ]] ;;
@@ -822,18 +825,17 @@ run_removal_negative() {
   esac
 }
 for pair in 'unknown unknown' 'named-leaf leaf' 'control-subtree subtree' 'receipt-extra receipt' 'receipt-leaf receipt-leaf' \
-  'cache-symlink cache-symlink' 'cache-file cache-file' 'cache-inner-symlink cache-inner-symlink' \
+  'cache-symlink cache-symlink' 'cache-directory cache-directory' 'cache-wrong-mode cache-wrong-mode' \
   'backup-symlink backup-symlink' 'backup-dir backup-dir' 'backup-bad-regex backup-bad-regex' 'backup-second backup-second'; do
   read -r label mutation <<<"$pair"
   run_removal_negative "$label" "$mutation"
 done
 RUN_ROOT=''
 
-# The exact tool-created cache and one valid kubeconfig backup are removable.
+# The exact tool-created cache file and one valid kubeconfig backup are removable.
 positive_root=$(make_removal_negative_root safe-positive)
-mkdir -m 700 "$positive_root/gke_gcloud_auth_plugin_cache"
-mkdir -m 700 "$positive_root/gke_gcloud_auth_plugin_cache/subdir"
-: >"$positive_root/gke_gcloud_auth_plugin_cache/subdir/cache-file"
+: >"$positive_root/gke_gcloud_auth_plugin_cache"
+chmod 600 "$positive_root/gke_gcloud_auth_plugin_cache"
 : >"$positive_root/kubeconfig.2026-08-29T12-34-56Z.1.00.backup"
 RUN_ROOT="$positive_root"
 safe_remove_run_root || fail 'safe-remove-positive rejected valid tool output'
