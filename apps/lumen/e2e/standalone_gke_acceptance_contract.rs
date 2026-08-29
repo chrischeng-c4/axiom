@@ -52,6 +52,8 @@ fn run_service_link_wait(
     image_id: &str,
     pod_image: &str,
     status_image: &str,
+    scheduled_arch: &str,
+    scheduled_child: &str,
 ) -> Output {
     let fixture = tempfile::Builder::new()
         .prefix("lumen-service-link-oracle-")
@@ -102,7 +104,7 @@ k() {
   cat "$POD_FIXTURE"
 }
 
-    v2_expected_child() { V2_NODE_ARCH=amd64; V2_CHILD_DIGEST='sha256:child'; }
+v2_expected_child() { V2_NODE_ARCH="$SCHEDULED_ARCH"; V2_CHILD_DIGEST="$SCHEDULED_CHILD"; }
 sleep() { SECONDS=300; }
 v2_wait_pod() {
 "#,
@@ -118,6 +120,8 @@ v2_wait_pod '' in-cluster 500m 512Mi
         .arg(&script_path)
         .env("POD_FIXTURE", pod_path)
         .env("TMP_ROOT", fixture.path())
+        .env("SCHEDULED_ARCH", scheduled_arch)
+        .env("SCHEDULED_CHILD", scheduled_child)
         .output()
         .expect("run service-link wait harness")
 }
@@ -499,6 +503,22 @@ fn findings(source: &str) -> Vec<&'static str> {
             "[[ \"$CANDIDATE_ATTEMPT\" == \"$LUMEN_STANDALONE_GKE_EXPECTED_RUN_ATTEMPT\" ]]",
         ),
         (
+            "RUNTIME_IMAGE",
+            "if [[ \"$image\" == \"$LUMEN_STANDALONE_GKE_IMAGE\" ]]; then",
+        ),
+        (
+            "RUNTIME_IMAGE",
+            "elif [[ \"$image\" == \"ghcr.io/chrischeng-c4/lumen@$V2_CHILD_DIGEST\" ]]; then",
+        ),
+        (
+            "RUNTIME_IMAGE",
+            "V2_OBSERVED_RUNTIME_IMAGE_DIGEST=\"$V2_CHILD_DIGEST\"",
+        ),
+        (
+            "RUNTIME_IMAGE",
+            "observed container imageID is not the exact candidate root or scheduled child digest",
+        ),
+        (
             "PUBLIC_IMAGE",
             "v2-public.json\" >/dev/null || die \"public runtime is not the fixed 0.4.29 serving image\"",
         ),
@@ -666,7 +686,7 @@ fn findings(source: &str) -> Vec<&'static str> {
         ),
         (
             "RECEIPT",
-            ".matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest",
+            "((.matrix.required_continuity.scheduled_node_arch == \"amd64\" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.amd64_digest and (.matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest or .matrix.required_continuity.observed_runtime_image_digest == .candidate.amd64_digest)) or (.matrix.required_continuity.scheduled_node_arch == \"arm64\" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.arm64_digest and (.matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest or .matrix.required_continuity.observed_runtime_image_digest == .candidate.arm64_digest)))",
         ),
         ("RECEIPT", "type == \"number\" and floor == . and . > 0"),
         ("RECEIPT", "--argjson required_deltas \"$V2_REQUIRED_DELTAS\""),
@@ -1527,18 +1547,61 @@ fn api_job_status_contract_accepts_only_a_single_concrete_2xx_log_line() {
 }
 
 #[test]
-fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
+fn runtime_image_identity_binds_root_or_scheduled_child_inside_pod_wait_predicate() {
     let source = live_slice();
     let root = "ghcr.io/chrischeng-c4/lumen@sha256:root";
-    let child = "ghcr.io/chrischeng-c4/lumen@sha256:child";
+    let amd64_child = "ghcr.io/chrischeng-c4/lumen@sha256:amd64-child";
+    let arm64_child = "ghcr.io/chrischeng-c4/lumen@sha256:arm64-child";
     let config = "ghcr.io/other/config@sha256:config";
-    let disabled = run_service_link_wait(&source, false, "True", root, root, config);
-    assert!(
-        disabled.status.success(),
-        "disabled service links were rejected: {}",
-        String::from_utf8_lossy(&disabled.stderr)
+
+    for (arch, child, other_child) in [
+        ("amd64", amd64_child, arm64_child),
+        ("arm64", arm64_child, amd64_child),
+    ] {
+        for image_id in [root, child] {
+            let result = run_service_link_wait(
+                &source,
+                false,
+                "True",
+                image_id,
+                root,
+                config,
+                arch,
+                child.rsplit_once('@').unwrap().1,
+            );
+            assert!(
+                result.status.success(),
+                "{arch} accepted runtime image was rejected: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+
+        let cross_arch = run_service_link_wait(
+            &source,
+            false,
+            "True",
+            other_child,
+            root,
+            config,
+            arch,
+            child.rsplit_once('@').unwrap().1,
+        );
+        assert!(
+            !cross_arch.status.success(),
+            "{arch} accepted the other architecture child"
+        );
+    }
+
+    let enabled = run_service_link_wait(
+        &source,
+        true,
+        "True",
+        root,
+        root,
+        config,
+        "amd64",
+        "sha256:amd64-child",
     );
-    let enabled = run_service_link_wait(&source, true, "True", root, root, config);
     assert!(
         !enabled.status.success(),
         "enabled service links bypassed the executable pod assertion"
@@ -1559,67 +1622,140 @@ fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
         "prose fixture must prove why the executable oracle is required"
     );
     assert!(
-        run_service_link_wait(&prose_bypass, true, "True", root, root, config)
-            .status
-            .success(),
+        run_service_link_wait(
+            &prose_bypass,
+            true,
+            "True",
+            root,
+            root,
+            config,
+            "amd64",
+            "sha256:amd64-child",
+        )
+        .status
+        .success(),
         "prose fixture did not remove the executable service-link assertion"
     );
-    let not_ready = run_service_link_wait(&source, false, "False", root, root, config);
+
+    let not_ready = run_service_link_wait(
+        &source,
+        false,
+        "False",
+        root,
+        root,
+        config,
+        "amd64",
+        "sha256:amd64-child",
+    );
     assert!(
         !not_ready.status.success(),
         "non-Ready pod bypassed the executable pod wait predicate"
     );
 
     for (name, image_id) in [
-        ("child", child),
-        ("config", config),
+        ("wrong repo", config),
+        ("wrong repo with root digest", "ghcr.io/chrischeng-c4/other@sha256:root"),
+        (
+            "wrong repo with scheduled child digest",
+            "ghcr.io/chrischeng-c4/other@sha256:amd64-child",
+        ),
         ("tag", "ghcr.io/chrischeng-c4/lumen:0.4.29"),
+        (
+            "tag plus root digest",
+            "ghcr.io/chrischeng-c4/lumen:0.4.29@sha256:root",
+        ),
+        (
+            "tag plus scheduled child digest",
+            "ghcr.io/chrischeng-c4/lumen:0.4.29@sha256:amd64-child",
+        ),
+        ("malformed", "sha256:amd64-child"),
         ("substring", "ghcr.io/chrischeng-c4/lumen@sha256:root-extra"),
         ("prefix", "prefixghcr.io/chrischeng-c4/lumen@sha256:root"),
         ("suffix", "ghcr.io/chrischeng-c4/lumen@sha256:root-suffix"),
     ] {
-        let result = run_service_link_wait(&source, false, "True", image_id, root, config);
+        let result = run_service_link_wait(
+            &source,
+            false,
+            "True",
+            image_id,
+            root,
+            config,
+            "amd64",
+            "sha256:amd64-child",
+        );
         assert!(!result.status.success(), "identity mutation passed: {name}");
     }
 
-    let wrong_pod = run_service_link_wait(
-        &source,
-        false,
-        "True",
-        root,
-        "ghcr.io/chrischeng-c4/other@sha256:root",
-        config,
-    );
-    assert!(
-        !wrong_pod.status.success(),
-        "non-root PodSpec image bypassed the exact image assertion"
-    );
-
-    for (name, mutation) in [
-        ("removed exact imageID check", "true # image identity unchecked"),
-        (
-            "wildcard imageID check",
-            "[[ \"$image\" == *\"$LUMEN_STANDALONE_GKE_IMAGE\"* ]]",
-        ),
+    for (name, pod_image) in [
+        ("wrong repository", "ghcr.io/chrischeng-c4/other@sha256:root"),
+        ("child instead of root", amd64_child),
     ] {
-        let mutated = replace_once(
-            &source,
-            "[[ \"$image\" == \"$LUMEN_STANDALONE_GKE_IMAGE\" ]] || die \"observed container imageID is not the exact root digest\"",
-            mutation,
-        );
         let result = run_service_link_wait(
-            &mutated,
+            &source,
+            false,
+            "True",
+            root,
+            pod_image,
+            config,
+            "amd64",
+            "sha256:amd64-child",
+        );
+        assert!(
+            !result.status.success(),
+            "{name} PodSpec image bypassed the exact root assertion"
+        );
+    }
+
+    let exact_runtime_identity = r#"        if [[ "$image" == "$LUMEN_STANDALONE_GKE_IMAGE" ]]; then
+          V2_OBSERVED_RUNTIME_IMAGE_DIGEST="$ROOT_DIGEST"
+        elif [[ "$image" == "ghcr.io/chrischeng-c4/lumen@$V2_CHILD_DIGEST" ]]; then
+          V2_OBSERVED_RUNTIME_IMAGE_DIGEST="$V2_CHILD_DIGEST"
+        else
+          die "observed container imageID is not the exact candidate root or scheduled child digest"
+        fi"#;
+    let unchecked_identity = replace_once(
+        &source,
+        exact_runtime_identity,
+        "        V2_OBSERVED_RUNTIME_IMAGE_DIGEST=\"$image\"",
+    );
+    assert!(findings(&unchecked_identity).contains(&"RUNTIME_IMAGE"));
+    assert!(
+        run_service_link_wait(
+            &unchecked_identity,
             false,
             "True",
             "prefixghcr.io/chrischeng-c4/lumen@sha256:root",
             root,
             config,
-        );
-        assert!(
-            result.status.success(),
-            "identity bypass fixture did not expose the {name} mutation"
-        );
-    }
+            "amd64",
+            "sha256:amd64-child",
+        )
+        .status
+        .success(),
+        "identity bypass fixture did not remove the runtime image gate"
+    );
+
+    let unbound_child = replace_once(
+        &source,
+        "elif [[ \"$image\" == \"ghcr.io/chrischeng-c4/lumen@$V2_CHILD_DIGEST\" ]]; then",
+        "elif [[ \"$image\" == \"ghcr.io/chrischeng-c4/lumen@sha256:wrong-child\" ]]; then",
+    );
+    assert!(findings(&unbound_child).contains(&"RUNTIME_IMAGE"));
+    assert!(
+        !run_service_link_wait(
+            &unbound_child,
+            false,
+            "True",
+            amd64_child,
+            root,
+            config,
+            "amd64",
+            "sha256:amd64-child",
+        )
+        .status
+        .success(),
+        "runtime child identity was not bound to the scheduled child"
+    );
 
     let read_status_image = replace_once(
         &source,
@@ -1627,34 +1763,19 @@ fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
         ".status.containerStatuses[]|select(.name == \"serving\")|.image",
     );
     assert!(
-        !run_service_link_wait(&read_status_image, false, "True", root, root, config)
-            .status
-            .success(),
-        "status.image was accepted as the runtime image identity"
-    );
-
-    let unchecked_identity = replace_once(
-        &source,
-        "[[ \"$image\" == \"$LUMEN_STANDALONE_GKE_IMAGE\" ]] || die \"observed container imageID is not the exact root digest\"",
-        "true # image identity unchecked",
-    );
-    let unchecked_identity = replace_once(
-        &unchecked_identity,
-        "[[ \"$V2_OBSERVED_RUNTIME_IMAGE_DIGEST\" == \"$ROOT_DIGEST\" ]] || die \"observed container imageID digest is not the candidate root\"",
-        "true # image digest unchecked",
-    );
-    assert!(
-        run_service_link_wait(
-            &unchecked_identity,
+        !run_service_link_wait(
+            &read_status_image,
             false,
             "True",
-            "ghcr.io/chrischeng-c4/lumen@sha256:root-extra",
+            root,
             root,
             config,
+            "amd64",
+            "sha256:amd64-child",
         )
         .status
         .success(),
-        "identity bypass fixture did not remove the compound exact-root gate"
+        "status.image was accepted as the runtime image identity"
     );
 
     let unchecked_pod_image = replace_once(
@@ -1668,12 +1789,14 @@ fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
             false,
             "True",
             root,
-            "ghcr.io/chrischeng-c4/other@sha256:root",
+            amd64_child,
             config,
+            "amd64",
+            "sha256:amd64-child",
         )
         .status
         .success(),
-        "PodSpec image bypass fixture did not remove the exact image assertion"
+        "PodSpec image bypass fixture did not remove the exact root assertion"
     );
 }
 
@@ -2029,7 +2152,7 @@ fn negative_mutations_remove_real_gate_obligations() {
             "RECEIPT",
         ),
         (
-            ".matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest",
+            "((.matrix.required_continuity.scheduled_node_arch == \"amd64\" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.amd64_digest and (.matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest or .matrix.required_continuity.observed_runtime_image_digest == .candidate.amd64_digest)) or (.matrix.required_continuity.scheduled_node_arch == \"arm64\" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.arm64_digest and (.matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest or .matrix.required_continuity.observed_runtime_image_digest == .candidate.arm64_digest)))",
             "true # nested child unchecked",
             "RECEIPT",
         ),
