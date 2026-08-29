@@ -1220,8 +1220,8 @@ v2_required_runtime() {
   k get statefulset lumen --namespace "$V2_RUNTIME_NAMESPACE" -o json >"$live"
   jq 'del(.status,.metadata.uid,.metadata.resourceVersion,.metadata.generation,.metadata.creationTimestamp,.metadata.managedFields,.metadata.ownerReferences)' "$live" >"$before"
   k set env -f "$before" LUMEN_AUTH=required --local -o json >"$after"
-  jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != "LUMEN_AUTH")))' "$TMP_ROOT/v2-before-required.json" >"$TMP_ROOT/v2-before-required-noauth.json"
-  jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != "LUMEN_AUTH")))' "$TMP_ROOT/v2-after-required.json" >"$TMP_ROOT/v2-after-required-noauth.json"
+  jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != "LUMEN_AUTH")))' "$TMP_ROOT/v2-before-required.json" >"$TMP_ROOT/v2-before-required-noauth.json"
+  jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != "LUMEN_AUTH")))' "$TMP_ROOT/v2-after-required.json" >"$TMP_ROOT/v2-after-required-noauth.json"
   if ! cmp -s "$TMP_ROOT/v2-before-required-noauth.json" "$TMP_ROOT/v2-after-required-noauth.json"; then
     v2_write_required_continuity_diff "$TMP_ROOT/v2-before-required-noauth.json" "$TMP_ROOT/v2-after-required-noauth.json" || die "required continuity diagnostic could not be written"
     die "required continuity patch changed live desired fields other than LUMEN_AUTH"
