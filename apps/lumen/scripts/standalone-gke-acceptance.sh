@@ -103,6 +103,7 @@ for tool in \
   mktemp \
   cp \
   mv \
+  ln \
   chmod \
   find \
   grep \
@@ -1180,6 +1181,36 @@ v2_assert_network() {
   fi
 }
 
+v2_write_required_continuity_diff() {
+  local before="$1" after="$2" diagnostic="$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/lumen-standalone-gke-required-continuity-diff.json" temporary
+  [[ -f "$before" && ! -L "$before" && -f "$after" && ! -L "$after" ]] || return 1
+  [[ ! -e "$diagnostic" && ! -L "$diagnostic" ]] || return 1
+  temporary="$(mktemp "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/.required-continuity-diff.XXXXXX")" || return 1
+  if ! chmod 600 "$temporary" ||
+    ! jq -n --slurpfile before "$before" --slurpfile after "$after" '
+      def pointer($path): if ($path|length)==0 then "" else "/" + ($path|map(if type=="number" then tostring else tostring|gsub("~";"~0")|gsub("/";"~1") end)|join("/")) end;
+      def differences($left;$right;$path): ($left|type) as $left_type | ($right|type) as $right_type | if $left_type != $right_type then [pointer($path)] elif $left_type == "object" then [ (((($left|keys)+($right|keys))|unique[]) as $key | if ($left|has($key)) and ($right|has($key)) then differences($left[$key];$right[$key];$path+[$key]) else [pointer($path+[$key])] end) ] | add // [] elif $left_type == "array" then ([($left|length),($right|length)]|max) as $length | [ range(0;$length) as $index | if $index < ($left|length) and $index < ($right|length) then differences($left[$index];$right[$index];$path+[$index]) else [pointer($path+[$index])] end ] | add // [] elif $left == $right then [] else [pointer($path)] end; (differences($before[0];$after[0];[])|unique) as $paths | {schema:"lumen.standalone-gke-required-continuity-diff/v1",paths:$paths}
+    ' >"$temporary" 2>/dev/null ||
+    ! jq -e '
+      (keys|sort) == ["paths","schema"] and
+      .schema == "lumen.standalone-gke-required-continuity-diff/v1" and
+      (.paths|type == "array") and
+      (.paths == (.paths|sort|unique)) and
+      all(.paths[]; type == "string")
+    ' "$temporary" >/dev/null 2>/dev/null; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  if ! ln -- "$temporary" "$diagnostic" 2>/dev/null; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  if ! rm -f -- "$temporary"; then
+    return 1
+  fi
+  [[ -f "$diagnostic" && ! -L "$diagnostic" ]] || return 1
+}
+
 v2_required_runtime() {
   local live before after
   live="$TMP_ROOT/v2-live-resized-statefulset.json"
@@ -1191,7 +1222,10 @@ v2_required_runtime() {
   k set env -f "$before" LUMEN_AUTH=required --local -o json >"$after"
   jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != "LUMEN_AUTH")))' "$TMP_ROOT/v2-before-required.json" >"$TMP_ROOT/v2-before-required-noauth.json"
   jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != "LUMEN_AUTH")))' "$TMP_ROOT/v2-after-required.json" >"$TMP_ROOT/v2-after-required-noauth.json"
-  cmp -s "$TMP_ROOT/v2-before-required-noauth.json" "$TMP_ROOT/v2-after-required-noauth.json" || die "required continuity patch changed live desired fields other than LUMEN_AUTH"
+  if ! cmp -s "$TMP_ROOT/v2-before-required-noauth.json" "$TMP_ROOT/v2-after-required-noauth.json"; then
+    v2_write_required_continuity_diff "$TMP_ROOT/v2-before-required-noauth.json" "$TMP_ROOT/v2-after-required-noauth.json" || die "required continuity diagnostic could not be written"
+    die "required continuity patch changed live desired fields other than LUMEN_AUTH"
+  fi
   cp "$after" "$V2_REQUIRED_STATEFULSET"
   jq -e --arg image "$LUMEN_STANDALONE_GKE_IMAGE" '
     .spec.template.spec.containers[0].image == $image and

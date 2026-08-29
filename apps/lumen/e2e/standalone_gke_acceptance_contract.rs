@@ -46,6 +46,8 @@ fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
 struct RequiredRuntimeOracleResult {
     output: Output,
     statefulset: Option<String>,
+    diagnostic: Option<String>,
+    receipt: Option<String>,
 }
 
 fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> RequiredRuntimeOracleResult {
@@ -80,15 +82,20 @@ fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> Required
     after["metadata"]["creationTimestamp"] = Value::Null;
     after["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"] =
         Value::String("required".to_owned());
+    let inject_race = mutation == Some("race");
     match mutation {
         None => {}
-        Some("image") => {
+        Some("image") | Some("race") => {
             after["spec"]["template"]["spec"]["containers"][0]["image"] =
                 Value::String("example.invalid/lumen@sha256:changed".to_owned());
         }
         Some("cpu") => {
             after["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]
                 ["cpu"] = Value::String("2".to_owned());
+        }
+        Some("memory") => {
+            after["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]
+                ["memory"] = Value::String("2Gi".to_owned());
         }
         Some("other-env") => {
             after["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] =
@@ -99,6 +106,8 @@ fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> Required
     let live_path = fixture.path().join("live.json");
     let after_path = fixture.path().join("after.json");
     let script_path = fixture.path().join("run.sh");
+    let evidence = fixture.path().join("evidence");
+    fs::create_dir(&evidence).expect("required-runtime private evidence directory");
     fs::write(&live_path, serde_json::to_vec(&live).expect("live fixture JSON"))
         .expect("write live fixture");
     fs::write(&after_path, serde_json::to_vec(&after).expect("after fixture JSON"))
@@ -117,6 +126,18 @@ k() {
     *) exit 99 ;;
   esac
 }
+ln() {
+  if [[ "${RACE_INJECT:-}" == 1 ]]; then
+    local destination="${!#}"
+    printf '%s' "$RACE_BYTES" >"$destination"
+  fi
+  command ln "$@"
+}
+v2_write_required_continuity_diff() {
+"#,
+        function_body(source, "v2_write_required_continuity_diff"),
+        r#"
+}
 v2_required_runtime() {
 "#,
         function_body(source, "v2_required_runtime"),
@@ -130,12 +151,81 @@ v2_required_runtime
     let output = Command::new("bash")
         .arg(&script_path)
         .env("TMP_ROOT", fixture.path())
+        .env("LUMEN_STANDALONE_GKE_EVIDENCE_DIR", &evidence)
+        .env("RACE_INJECT", if inject_race { "1" } else { "0" })
+        .env("RACE_BYTES", "injected-target-bytes\n")
         .env("LIVE_FIXTURE", &live_path)
         .env("AFTER_FIXTURE", &after_path)
         .output()
         .expect("run required-runtime harness");
     let statefulset = fs::read_to_string(fixture.path().join("v2-required-statefulset.json")).ok();
-    RequiredRuntimeOracleResult { output, statefulset }
+    let diagnostic = fs::read_to_string(
+        evidence.join("lumen-standalone-gke-required-continuity-diff.json"),
+    )
+    .ok();
+    let receipt = fs::read_to_string(evidence.join("lumen-standalone-gke-receipt.json")).ok();
+    RequiredRuntimeOracleResult {
+        output,
+        statefulset,
+        diagnostic,
+        receipt,
+    }
+}
+
+fn run_required_continuity_diff_oracle(
+    source: &str,
+    before: &Value,
+    after: &Value,
+    preexisting: Option<&str>,
+) -> (Output, Option<String>, BTreeMap<PathBuf, Vec<u8>>, u32) {
+    let fixture = tempfile::Builder::new()
+        .prefix("lumen-required-continuity-diff-oracle-")
+        .tempdir()
+        .expect("required-continuity diff fixture");
+    let before_path = fixture.path().join("before.json");
+    let after_path = fixture.path().join("after.json");
+    let evidence = fixture.path().join("evidence");
+    let script_path = fixture.path().join("run.sh");
+    fs::create_dir(&evidence).expect("required-continuity diff private evidence directory");
+    if let Some(contents) = preexisting {
+        let diagnostic_path = evidence.join("lumen-standalone-gke-required-continuity-diff.json");
+        fs::write(&diagnostic_path, contents).expect("write pre-existing private diagnostic");
+        fs::set_permissions(&diagnostic_path, fs::Permissions::from_mode(0o644))
+            .expect("set pre-existing private diagnostic mode");
+    }
+    fs::write(&before_path, serde_json::to_vec(before).expect("before fixture JSON"))
+        .expect("write before fixture");
+    fs::write(&after_path, serde_json::to_vec(after).expect("after fixture JSON"))
+        .expect("write after fixture");
+    let harness = [
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+v2_write_required_continuity_diff() {
+"#,
+        function_body(source, "v2_write_required_continuity_diff"),
+        r#"
+}
+v2_write_required_continuity_diff "$BEFORE_FIXTURE" "$AFTER_FIXTURE"
+"#,
+    ]
+    .concat();
+    fs::write(&script_path, harness).expect("write required-continuity diff harness");
+    let output = Command::new("bash")
+        .arg(&script_path)
+        .env("BEFORE_FIXTURE", &before_path)
+        .env("AFTER_FIXTURE", &after_path)
+        .env("LUMEN_STANDALONE_GKE_EVIDENCE_DIR", &evidence)
+        .output()
+        .expect("run required-continuity diff harness");
+    let diagnostic = fs::read_to_string(
+        evidence.join("lumen-standalone-gke-required-continuity-diff.json"),
+    )
+    .ok();
+    let files = collect_files(&evidence);
+    let mode = fs::metadata(evidence.join("lumen-standalone-gke-required-continuity-diff.json"))
+        .map(|metadata| metadata.permissions().mode() & 0o777)
+        .unwrap_or(0);
+    (output, diagnostic, files, mode)
 }
 
 fn has_exact_line(source: &str, expected: &str) -> bool {
@@ -839,7 +929,39 @@ fn findings(source: &str) -> Vec<&'static str> {
         ),
         (
             "REQUIRED",
-            "cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"",
+            "if ! cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\"; then",
+        ),
+        (
+            "REQUIRED",
+            "v2_write_required_continuity_diff \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity diagnostic could not be written\"",
+        ),
+        (
+            "REQUIRED",
+            "lumen-standalone-gke-required-continuity-diff.json",
+        ),
+        (
+            "REQUIRED",
+            "diagnostic=\"$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/lumen-standalone-gke-required-continuity-diff.json\"",
+        ),
+        (
+            "REQUIRED",
+            "lumen.standalone-gke-required-continuity-diff/v1",
+        ),
+        ("REQUIRED", "jq -n --slurpfile before \"$before\" --slurpfile after \"$after\""),
+        ("REQUIRED", "(differences($before[0];$after[0];[])|unique) as $paths | {schema:\"lumen.standalone-gke-required-continuity-diff/v1\",paths:$paths}"),
+        ("REQUIRED", "gsub(\"~\";\"~0\")|gsub(\"/\";\"~1\")"),
+        ("REQUIRED", "if ($left|has($key)) and ($right|has($key)) then differences($left[$key];$right[$key];$path+[$key])"),
+        ("REQUIRED", "if $index < ($left|length) and $index < ($right|length) then differences($left[$index];$right[$index];$path+[$index])"),
+        ("REQUIRED", "(.paths == (.paths|sort|unique))"),
+        ("REQUIRED", "(keys|sort) == [\"paths\",\"schema\"]"),
+        ("REQUIRED", "chmod 600 \"$temporary\""),
+        ("REQUIRED", "if ! ln -- \"$temporary\" \"$diagnostic\" 2>/dev/null; then"),
+        ("REQUIRED", "if ! rm -f -- \"$temporary\"; then"),
+        ("REQUIRED", "! -e \"$diagnostic\" && ! -L \"$diagnostic\""),
+        ("REQUIRED", "required continuity diagnostic could not be written"),
+        (
+            "REQUIRED",
+            "die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"",
         ),
         (
             "REQUIRED",
@@ -960,6 +1082,22 @@ fn findings(source: &str) -> Vec<&'static str> {
         function_body(source, "v2_wait_pod"),
         ".spec.enableServiceLinks == false and",
     ) {
+        bad.push("REQUIRED");
+    }
+    let required_runtime = function_body(source, "v2_required_runtime");
+    let required_continuity_block = "if ! cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\"; then\n    v2_write_required_continuity_diff \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity diagnostic could not be written\"\n    die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"\n  fi";
+    if !required_runtime.contains(required_continuity_block) {
+        bad.push("REQUIRED");
+    }
+    let diagnostic_writer = function_body(source, "v2_write_required_continuity_diff");
+    let no_clobber_publish = "if ! ln -- \"$temporary\" \"$diagnostic\" 2>/dev/null; then\n    rm -f -- \"$temporary\"\n    return 1\n  fi\n  if ! rm -f -- \"$temporary\"; then\n    return 1\n  fi";
+    if !diagnostic_writer.contains(no_clobber_publish)
+        || diagnostic_writer.contains("mv ")
+        || diagnostic_writer.contains("cp ")
+        || diagnostic_writer.contains("ln -f")
+        || diagnostic_writer.contains("ln --force")
+        || diagnostic_writer.contains("rm -f -- \"$diagnostic\"")
+    {
         bad.push("REQUIRED");
     }
     for required in [
@@ -1756,8 +1894,20 @@ fn required_runtime_accepts_only_serializer_metadata_and_auth_change() {
         "required",
         "required transition must retain the exact auth profile"
     );
+    assert!(accepted.diagnostic.is_none(), "accepted transition wrote a diagnostic");
+    assert!(accepted.receipt.is_none(), "required-runtime oracle wrote a receipt");
+    assert!(
+        accepted.output.stdout.is_empty(),
+        "accepted transition wrote unexpected stdout: {:?}",
+        String::from_utf8_lossy(&accepted.output.stdout)
+    );
 
-    for mutation in ["image", "cpu", "other-env"] {
+    for (mutation, expected_path) in [
+        ("image", "/spec/template/spec/containers/0/image"),
+        ("cpu", "/spec/template/spec/containers/0/resources/requests/cpu"),
+        ("memory", "/spec/template/spec/containers/0/resources/requests/memory"),
+        ("other-env", "/spec/template/spec/containers/0/env/0/value"),
+    ] {
         let rejected = run_required_runtime_oracle(&source, Some(mutation));
         assert_eq!(
             rejected.output.status.code(),
@@ -1774,7 +1924,154 @@ fn required_runtime_accepts_only_serializer_metadata_and_auth_change() {
             rejected.statefulset.is_none(),
             "business-field mutation wrote the required StatefulSet: {mutation}"
         );
+        assert!(rejected.receipt.is_none(), "business-field mutation wrote a receipt: {mutation}");
+        assert!(
+            rejected.output.stdout.is_empty(),
+            "business-field mutation wrote stdout: {mutation}; stdout={:?}",
+            String::from_utf8_lossy(&rejected.output.stdout)
+        );
+        let diagnostic: Value = serde_json::from_str(
+            rejected
+                .diagnostic
+                .as_deref()
+                .expect("business-field mutation writes private path-only diagnostic"),
+        )
+        .expect("private required-continuity diagnostic JSON");
+        assert_eq!(
+            diagnostic,
+            json!({
+                "schema": "lumen.standalone-gke-required-continuity-diff/v1",
+                "paths": [expected_path],
+            }),
+            "business-field mutation wrote an unexpected diagnostic: {mutation}"
+        );
+        assert!(
+            !rejected
+                .diagnostic
+                .as_deref()
+                .expect("diagnostic text")
+                .contains("changed"),
+            "private diagnostic retained a changed fixture value: {mutation}"
+        );
     }
+
+    let raced = run_required_runtime_oracle(&source, Some("race"));
+    assert_eq!(
+        raced.output.status.code(),
+        Some(2),
+        "injected target race did not fail closed: {}",
+        String::from_utf8_lossy(&raced.output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&raced.output.stderr),
+        "required continuity diagnostic could not be written\n",
+        "injected target race must fail only with the generic diagnostic error"
+    );
+    assert!(raced.output.stdout.is_empty(), "injected target race wrote stdout");
+    assert_eq!(
+        raced.diagnostic.as_deref(),
+        Some("injected-target-bytes\n"),
+        "injected target bytes must not be overwritten or altered"
+    );
+    assert!(raced.statefulset.is_none(), "injected target race wrote required StatefulSet");
+    assert!(raced.receipt.is_none(), "injected target race wrote a public receipt");
+}
+
+#[test]
+fn required_continuity_diff_reports_only_sorted_rfc6901_paths() {
+    let source = full_script();
+    let before = json!({
+        "array": ["same"],
+        "canary": "do-not-retain-this-private-value",
+        "removed": {"member": "private"},
+        "scalar": "before-private-value",
+        "slash/key": "before",
+        "structure": {"kept": true},
+        "tilde~key": "before",
+        "type": "string",
+    });
+    let after = json!({
+        "array": ["same", "private-added"],
+        "canary": "do-not-retain-this-private-value",
+        "missing": null,
+        "removed": {},
+        "scalar": "after-private-value",
+        "slash/key": "after",
+        "structure": {"added": "private", "kept": true},
+        "tilde~key": "after",
+        "type": {"nested": "private"},
+    });
+    let (output, diagnostic, files, mode) =
+        run_required_continuity_diff_oracle(&source, &before, &after, None);
+    assert!(
+        output.status.success(),
+        "path-only diagnostic writer rejected a composite difference: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty(), "diagnostic writer emitted stdout");
+    let diagnostic_text = diagnostic.expect("private path-only diagnostic");
+    let diagnostic: Value = serde_json::from_str(&diagnostic_text).expect("diagnostic JSON");
+    assert_eq!(
+        diagnostic,
+        json!({
+            "schema": "lumen.standalone-gke-required-continuity-diff/v1",
+            "paths": [
+                "/array/1",
+                "/missing",
+                "/removed/member",
+                "/scalar",
+                "/slash~1key",
+                "/structure/added",
+                "/tilde~0key",
+                "/type",
+            ],
+        })
+    );
+    assert_eq!(
+        diagnostic.as_object().expect("diagnostic object").len(),
+        2,
+        "diagnostic object has only schema and paths"
+    );
+    for private_value in [
+        "do-not-retain-this-private-value",
+        "before-private-value",
+        "after-private-value",
+        "private-added",
+    ] {
+        assert!(
+            !diagnostic_text.contains(private_value),
+            "diagnostic retained a private value: {private_value}"
+        );
+    }
+    assert_eq!(files.len(), 1, "diagnostic writer retained only one private artifact");
+    assert!(
+        files.contains_key(&PathBuf::from("lumen-standalone-gke-required-continuity-diff.json")),
+        "diagnostic writer used the exact private file name"
+    );
+    assert_eq!(mode, 0o600, "diagnostic mode must be 0600");
+}
+
+#[test]
+fn required_continuity_diff_fails_closed_without_replacing_existing_private_artifact() {
+    let source = full_script();
+    let before = json!({"private": "before"});
+    let after = json!({"private": "after"});
+    let (output, diagnostic, files, mode) = run_required_continuity_diff_oracle(
+        &source,
+        &before,
+        &after,
+        Some("pre-existing-private-artifact\n"),
+    );
+    assert!(!output.status.success(), "existing diagnostic path must fail closed");
+    assert!(output.stdout.is_empty(), "failed diagnostic writer emitted stdout");
+    assert!(output.stderr.is_empty(), "failed diagnostic writer emitted private diagnostics");
+    assert_eq!(
+        diagnostic.as_deref(),
+        Some("pre-existing-private-artifact\n"),
+        "failed writer must not replace the pre-existing private artifact"
+    );
+    assert_eq!(files.len(), 1, "failed writer must not leave a temporary artifact");
+    assert_eq!(mode, 0o644, "failed writer must not change the existing artifact mode");
 }
 
 #[test]
@@ -1790,8 +2087,72 @@ fn required_runtime_continuity_mutations_fail_the_static_contract() {
             "jq -S 'del(.metadata,.spec) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
         ),
         (
-            "cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"",
+            "if ! cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\"; then\n    v2_write_required_continuity_diff \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity diagnostic could not be written\"\n    die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"\n  fi",
             "cmp -s \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || true",
+        ),
+        (
+            "v2_write_required_continuity_diff \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity diagnostic could not be written\"",
+            "true # required-continuity diagnostic disabled",
+        ),
+        (
+            "v2_write_required_continuity_diff \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity diagnostic could not be written\"\n    die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"",
+            "die \"required continuity patch changed live desired fields other than LUMEN_AUTH\"\n    v2_write_required_continuity_diff \"$TMP_ROOT/v2-before-required-noauth.json\" \"$TMP_ROOT/v2-after-required-noauth.json\" || die \"required continuity diagnostic could not be written\"",
+        ),
+        (
+            "lumen-standalone-gke-required-continuity-diff.json",
+            "lumen-standalone-gke-receipt.json",
+        ),
+        (
+            "diagnostic=\"$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/lumen-standalone-gke-required-continuity-diff.json\"",
+            "diagnostic=\"$LUMEN_STANDALONE_GKE_CANDIDATE_RECEIPT_DIR/lumen-standalone-gke-required-continuity-diff.json\"",
+        ),
+        (
+            "--slurpfile before \"$before\" --slurpfile after \"$after\"",
+            "--arg before \"$before\" --arg after \"$after\"",
+        ),
+        (
+            "(differences($before[0];$after[0];[])|unique) as $paths | {schema:\"lumen.standalone-gke-required-continuity-diff/v1\",paths:$paths}",
+            "(differences($before[0];$after[0];[])|unique) as $paths | {schema:\"lumen.standalone-gke-required-continuity-diff/v1\",paths:$paths,before:$before}",
+        ),
+        (
+            "gsub(\"~\";\"~0\")|gsub(\"/\";\"~1\")",
+            "tostring",
+        ),
+        (
+            "if ($left|has($key)) and ($right|has($key)) then differences($left[$key];$right[$key];$path+[$key])",
+            "if ($left[$key] != null) and ($right[$key] != null) then differences($left[$key];$right[$key];$path+[$key])",
+        ),
+        (
+            "differences($left[$key];$right[$key];$path+[$key])",
+            "[pointer($path+[$key])]",
+        ),
+        (
+            "if $index < ($left|length) and $index < ($right|length) then differences($left[$index];$right[$index];$path+[$index])",
+            "[pointer($path+[$index])]",
+        ),
+        (
+            "(.paths == (.paths|sort|unique))",
+            "true # path uniqueness unchecked",
+        ),
+        (
+            "if ! ln -- \"$temporary\" \"$diagnostic\" 2>/dev/null; then\n    rm -f -- \"$temporary\"\n    return 1\n  fi",
+            "true # diagnostic commit bypassed",
+        ),
+        (
+            "ln -- \"$temporary\" \"$diagnostic\" 2>/dev/null",
+            "mv -f -- \"$temporary\" \"$diagnostic\"",
+        ),
+        (
+            "ln -- \"$temporary\" \"$diagnostic\" 2>/dev/null",
+            "cp -f -- \"$temporary\" \"$diagnostic\"",
+        ),
+        (
+            "ln -- \"$temporary\" \"$diagnostic\" 2>/dev/null",
+            "ln -f -- \"$temporary\" \"$diagnostic\"",
+        ),
+        (
+            "if ! ln -- \"$temporary\" \"$diagnostic\" 2>/dev/null; then\n    rm -f -- \"$temporary\"\n    return 1\n  fi",
+            "ln -- \"$temporary\" \"$diagnostic\" || true",
         ),
         (
             ".spec.template.spec.containers[0].image == $image and",
