@@ -45,7 +45,14 @@ fn has_exact_line(source: &str, expected: &str) -> bool {
     source.lines().any(|line| line.trim() == expected)
 }
 
-fn run_service_link_wait(source: &str, enable_service_links: bool, ready_status: &str) -> Output {
+fn run_service_link_wait(
+    source: &str,
+    enable_service_links: bool,
+    ready_status: &str,
+    image_id: &str,
+    pod_image: &str,
+    status_image: &str,
+) -> Output {
     let fixture = tempfile::Builder::new()
         .prefix("lumen-service-link-oracle-")
         .tempdir()
@@ -54,18 +61,22 @@ fn run_service_link_wait(source: &str, enable_service_links: bool, ready_status:
       "metadata":{"uid":"replacement"},
       "status":{
         "conditions":[{"type":"Ready","status":"READY_STATUS"}],
-        "containerStatuses":[{"name":"serving","imageID":"ghcr.io/chrischeng-c4/lumen@sha256:child"}]
+        "containerStatuses":[{"name":"serving","imageID":"IMAGE_ID","image":"STATUS_IMAGE"}]
       },
       "spec":{
         "enableServiceLinks":SERVICE_LINKS,
         "containers":[{
           "name":"serving",
+          "image":"POD_IMAGE",
           "env":[{"name":"LUMEN_AUTH","value":"in-cluster"}],
           "resources":{"requests":{"cpu":"500m","memory":"512Mi"}}
         }]
       }
     }"#
     .replace("READY_STATUS", ready_status)
+    .replace("IMAGE_ID", image_id)
+    .replace("POD_IMAGE", pod_image)
+    .replace("STATUS_IMAGE", status_image)
     .replace(
         "SERVICE_LINKS",
         if enable_service_links { "true" } else { "false" },
@@ -80,14 +91,18 @@ V2_RUNTIME_NAMESPACE=runtime
 V2_PVC_UID=''
 V2_PV_NAME=''
 V2_CHILD_DIGEST=''
+V2_NODE_ARCH=''
+V2_OBSERVED_RUNTIME_IMAGE_DIGEST=''
 V2_LAST_POD_UID=''
+ROOT_DIGEST='sha256:root'
+LUMEN_STANDALONE_GKE_IMAGE='ghcr.io/chrischeng-c4/lumen@sha256:root'
 die() { exit 2; }
 k() {
   [[ "$1" == get && "$2" == pod ]] || return 99
   cat "$POD_FIXTURE"
 }
 
-v2_expected_child() { printf '%s' 'sha256:child'; }
+    v2_expected_child() { V2_NODE_ARCH=amd64; V2_CHILD_DIGEST='sha256:child'; }
 sleep() { SECONDS=300; }
 v2_wait_pod() {
 "#,
@@ -580,7 +595,7 @@ fn findings(source: &str) -> Vec<&'static str> {
             "REQUIRED",
             "required-projected-unlisted unlisted projected POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 403 none none",
         ),
-        ("RECEIPT", "lumen.standalone-gke-receipt/v1"),
+        ("RECEIPT", "lumen.standalone-gke-receipt/v2"),
         ("RECEIPT", "cluster_identity_retained:false"),
         ("RECEIPT", "command_output_retained:false"),
         ("RECEIPT", "canary_scan:true"),
@@ -592,7 +607,7 @@ fn findings(source: &str) -> Vec<&'static str> {
         ("RECEIPT", "receipt redaction has unexpected keys"),
         (
             "RECEIPT",
-            ".schema == \"lumen.standalone-gke-receipt/v1\" and .stage == \"slice-b-live\" and .complete == true",
+            ".schema == \"lumen.standalone-gke-receipt/v2\" and .stage == \"slice-b-live\" and .complete == true",
         ),
         (
             "RECEIPT",
@@ -617,7 +632,7 @@ fn findings(source: &str) -> Vec<&'static str> {
         ),
         (
             "RECEIPT",
-            ".matrix.required_continuity.observed_runtime_child_digest == .candidate.observed_runtime_child_digest",
+            ".matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest",
         ),
         ("RECEIPT", "type == \"number\" and floor == . and . > 0"),
         ("RECEIPT", "--argjson required_deltas \"$V2_REQUIRED_DELTAS\""),
@@ -673,7 +688,7 @@ fn findings(source: &str) -> Vec<&'static str> {
         }
     }
     for required in [
-        ".schema == \"lumen.standalone-gke-receipt/v1\" and .stage == \"slice-b-live\" and .complete == true and",
+        ".schema == \"lumen.standalone-gke-receipt/v2\" and .stage == \"slice-b-live\" and .complete == true and",
         "([.matrix|to_entries[]|select(.key != \"required_continuity\")|.value] | all(.[]; . == \"passed\")) and",
         ".redaction == {authorization_retained:false,canary_scan:true,cluster_identity_retained:false,command_output_retained:false,kubeconfig_retained:false,secret_retained:false,token_retained:false} and",
     ] {
@@ -1423,13 +1438,16 @@ fn job_log_reader_retries_only_konnectivity_transients() {
 #[test]
 fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
     let source = live_slice();
-    let disabled = run_service_link_wait(&source, false, "True");
+    let root = "ghcr.io/chrischeng-c4/lumen@sha256:root";
+    let child = "ghcr.io/chrischeng-c4/lumen@sha256:child";
+    let config = "ghcr.io/other/config@sha256:config";
+    let disabled = run_service_link_wait(&source, false, "True", root, root, config);
     assert!(
         disabled.status.success(),
         "disabled service links were rejected: {}",
         String::from_utf8_lossy(&disabled.stderr)
     );
-    let enabled = run_service_link_wait(&source, true, "True");
+    let enabled = run_service_link_wait(&source, true, "True", root, root, config);
     assert!(
         !enabled.status.success(),
         "enabled service links bypassed the executable pod assertion"
@@ -1450,13 +1468,121 @@ fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
         "prose fixture must prove why the executable oracle is required"
     );
     assert!(
-        run_service_link_wait(&prose_bypass, true, "True").status.success(),
+        run_service_link_wait(&prose_bypass, true, "True", root, root, config)
+            .status
+            .success(),
         "prose fixture did not remove the executable service-link assertion"
     );
-    let not_ready = run_service_link_wait(&source, false, "False");
+    let not_ready = run_service_link_wait(&source, false, "False", root, root, config);
     assert!(
         !not_ready.status.success(),
         "non-Ready pod bypassed the executable pod wait predicate"
+    );
+
+    for (name, image_id) in [
+        ("child", child),
+        ("config", config),
+        ("tag", "ghcr.io/chrischeng-c4/lumen:0.4.29"),
+        ("substring", "ghcr.io/chrischeng-c4/lumen@sha256:root-extra"),
+        ("prefix", "prefixghcr.io/chrischeng-c4/lumen@sha256:root"),
+        ("suffix", "ghcr.io/chrischeng-c4/lumen@sha256:root-suffix"),
+    ] {
+        let result = run_service_link_wait(&source, false, "True", image_id, root, config);
+        assert!(!result.status.success(), "identity mutation passed: {name}");
+    }
+
+    let wrong_pod = run_service_link_wait(
+        &source,
+        false,
+        "True",
+        root,
+        "ghcr.io/chrischeng-c4/other@sha256:root",
+        config,
+    );
+    assert!(
+        !wrong_pod.status.success(),
+        "non-root PodSpec image bypassed the exact image assertion"
+    );
+
+    for (name, mutation) in [
+        ("removed exact imageID check", "true # image identity unchecked"),
+        (
+            "wildcard imageID check",
+            "[[ \"$image\" == *\"$LUMEN_STANDALONE_GKE_IMAGE\"* ]]",
+        ),
+    ] {
+        let mutated = replace_once(
+            &source,
+            "[[ \"$image\" == \"$LUMEN_STANDALONE_GKE_IMAGE\" ]] || die \"observed container imageID is not the exact root digest\"",
+            mutation,
+        );
+        let result = run_service_link_wait(
+            &mutated,
+            false,
+            "True",
+            "prefixghcr.io/chrischeng-c4/lumen@sha256:root",
+            root,
+            config,
+        );
+        assert!(
+            result.status.success(),
+            "identity bypass fixture did not expose the {name} mutation"
+        );
+    }
+
+    let read_status_image = replace_once(
+        &source,
+        ".status.containerStatuses[]|select(.name == \"serving\")|.imageID",
+        ".status.containerStatuses[]|select(.name == \"serving\")|.image",
+    );
+    assert!(
+        !run_service_link_wait(&read_status_image, false, "True", root, root, config)
+            .status
+            .success(),
+        "status.image was accepted as the runtime image identity"
+    );
+
+    let unchecked_identity = replace_once(
+        &source,
+        "[[ \"$image\" == \"$LUMEN_STANDALONE_GKE_IMAGE\" ]] || die \"observed container imageID is not the exact root digest\"",
+        "true # image identity unchecked",
+    );
+    let unchecked_identity = replace_once(
+        &unchecked_identity,
+        "[[ \"$V2_OBSERVED_RUNTIME_IMAGE_DIGEST\" == \"$ROOT_DIGEST\" ]] || die \"observed container imageID digest is not the candidate root\"",
+        "true # image digest unchecked",
+    );
+    assert!(
+        run_service_link_wait(
+            &unchecked_identity,
+            false,
+            "True",
+            "ghcr.io/chrischeng-c4/lumen@sha256:root-extra",
+            root,
+            config,
+        )
+        .status
+        .success(),
+        "identity bypass fixture did not remove the compound exact-root gate"
+    );
+
+    let unchecked_pod_image = replace_once(
+        &source,
+        "          ([.spec.containers[] | select(.name == \"serving\") | .image] == [$image]) and",
+        "          true and",
+    );
+    assert!(
+        run_service_link_wait(
+            &unchecked_pod_image,
+            false,
+            "True",
+            root,
+            "ghcr.io/chrischeng-c4/other@sha256:root",
+            config,
+        )
+        .status
+        .success(),
+        "PodSpec image bypass fixture did not remove the exact image assertion"
     );
 }
 
@@ -1792,8 +1918,8 @@ fn negative_mutations_remove_real_gate_obligations() {
             "RECEIPT",
         ),
         (
-            ".schema == \"lumen.standalone-gke-receipt/v1\" and .stage == \"slice-b-live\" and .complete == true",
-            ".schema == \"lumen.standalone-gke-receipt/v1\" and true",
+            ".schema == \"lumen.standalone-gke-receipt/v2\" and .stage == \"slice-b-live\" and .complete == true",
+            ".schema == \"lumen.standalone-gke-receipt/v2\" and true",
             "RECEIPT",
         ),
         (
@@ -1812,7 +1938,7 @@ fn negative_mutations_remove_real_gate_obligations() {
             "RECEIPT",
         ),
         (
-            ".matrix.required_continuity.observed_runtime_child_digest == .candidate.observed_runtime_child_digest",
+            ".matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest",
             "true # nested child unchecked",
             "RECEIPT",
         ),
