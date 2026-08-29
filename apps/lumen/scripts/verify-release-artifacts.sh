@@ -237,8 +237,7 @@ validate_standalone_gke_receipt() {
     ($receipt.matrix.required_continuity as $continuity |
       ($continuity | keys | sort) == ["allowed_delta","audience","denied_delta","observed_runtime_image_digest","profile","projected_allowed_2xx","projected_unlisted_403","same_ksa_default_token_401","scheduled_node_arch","scheduled_runtime_child_digest","subjectaccessreview_delta","tokenreview_delta"] and
       $continuity.profile == "LUMEN_AUTH=required" and $continuity.audience == "lumen.axiom.dev" and
-      $continuity.observed_runtime_image_digest == $root and
-      (($continuity.scheduled_node_arch == "amd64" and $continuity.scheduled_runtime_child_digest == $amd64) or ($continuity.scheduled_node_arch == "arm64" and $continuity.scheduled_runtime_child_digest == $arm64)) and
+      ((($continuity.scheduled_node_arch == "amd64" and $continuity.scheduled_runtime_child_digest == $amd64 and ($continuity.observed_runtime_image_digest == $root or $continuity.observed_runtime_image_digest == $amd64)) or ($continuity.scheduled_node_arch == "arm64" and $continuity.scheduled_runtime_child_digest == $arm64 and ($continuity.observed_runtime_image_digest == $root or $continuity.observed_runtime_image_digest == $arm64)))) and
       $continuity.projected_allowed_2xx == "passed" and $continuity.same_ksa_default_token_401 == "passed" and $continuity.projected_unlisted_403 == "passed" and
       ([$continuity.tokenreview_delta,$continuity.subjectaccessreview_delta,$continuity.allowed_delta,$continuity.denied_delta] | all(.[]; type == "number" and floor == . and . > 0))) and
     $receipt.redaction == {kubeconfig_retained:false,token_retained:false,authorization_retained:false,secret_retained:false,cluster_identity_retained:false,command_output_retained:false,canary_scan:true}

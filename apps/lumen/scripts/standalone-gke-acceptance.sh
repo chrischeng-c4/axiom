@@ -963,9 +963,13 @@ v2_wait_pod() {
         image="$(jq -er '.status.containerStatuses[]|select(.name == "serving")|.imageID' "$TMP_ROOT/v2-pod.json")"
         v2_expected_child "$TMP_ROOT/v2-pod.json"
         [[ -n "$V2_NODE_ARCH" && -n "$V2_CHILD_DIGEST" ]] || die "scheduled node identity is incomplete"
-        [[ "$image" == "$LUMEN_STANDALONE_GKE_IMAGE" ]] || die "observed container imageID is not the exact root digest"
-        V2_OBSERVED_RUNTIME_IMAGE_DIGEST="${image##*@}"
-        [[ "$V2_OBSERVED_RUNTIME_IMAGE_DIGEST" == "$ROOT_DIGEST" ]] || die "observed container imageID digest is not the candidate root"
+        if [[ "$image" == "$LUMEN_STANDALONE_GKE_IMAGE" ]]; then
+          V2_OBSERVED_RUNTIME_IMAGE_DIGEST="$ROOT_DIGEST"
+        elif [[ "$image" == "ghcr.io/chrischeng-c4/lumen@$V2_CHILD_DIGEST" ]]; then
+          V2_OBSERVED_RUNTIME_IMAGE_DIGEST="$V2_CHILD_DIGEST"
+        else
+          die "observed container imageID is not the exact candidate root or scheduled child digest"
+        fi
         jq -e --arg image "$LUMEN_STANDALONE_GKE_IMAGE" --arg auth "$auth" --arg cpu "$cpu" --arg memory "$memory" '
           ([.spec.containers[] | select(.name == "serving") | .image] == [$image]) and
           .spec.enableServiceLinks == false and
@@ -1132,8 +1136,7 @@ v2_write_receipt_body() {
     .matrix.required_continuity.projected_unlisted_403 == "passed" and
     .redaction == {authorization_retained:false,canary_scan:true,cluster_identity_retained:false,command_output_retained:false,kubeconfig_retained:false,secret_retained:false,token_retained:false} and
     .candidate.amd64_digest != .candidate.arm64_digest and
-    .matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest and
-    ((.matrix.required_continuity.scheduled_node_arch == "amd64" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.amd64_digest) or (.matrix.required_continuity.scheduled_node_arch == "arm64" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.arm64_digest)) and
+    ((.matrix.required_continuity.scheduled_node_arch == "amd64" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.amd64_digest and (.matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest or .matrix.required_continuity.observed_runtime_image_digest == .candidate.amd64_digest)) or (.matrix.required_continuity.scheduled_node_arch == "arm64" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.arm64_digest and (.matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest or .matrix.required_continuity.observed_runtime_image_digest == .candidate.arm64_digest))) and
     ([.matrix.required_continuity.tokenreview_delta,.matrix.required_continuity.subjectaccessreview_delta,.matrix.required_continuity.allowed_delta,.matrix.required_continuity.denied_delta] | all(.[]; type == "number" and floor == . and . > 0))
   ' "$RECEIPT_TMP" >/dev/null || die "receipt required continuity has invalid runtime identity or non-positive deltas"
   if grep -Eiq 'Bearer[[:space:]]|eyJ[A-Za-z0-9_-]{20,}|-----BEGIN|lumen-standalone|gke-acceptance' "$RECEIPT_TMP"; then die "receipt redaction scan failed"; fi

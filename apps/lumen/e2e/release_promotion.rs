@@ -17,7 +17,7 @@ const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
     "14cbd1d902c2961ff2efae64a11a68fe82aeb9ee767e56b338acd8ea76b6a2b4";
 const PROMOTION_VERIFIER_BYTES_SHA256: &str =
-    "f9e5fc3ba948e3c8157b41e5119bc28415e5ca501510d03e32354b72a4c71f5c";
+    "08a21bb4b62db5b09d0371e52eb0f2ea88edbd5ed99dbe170355e2af32e8526a";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const COSIGN_INSTALLER: &str = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6";
 const SETUP_BUILDX: &str = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f";
@@ -2276,13 +2276,43 @@ fn fixture_mode_requires_exact_candidate_bytes_and_private_home_binary() {
 }
 
 #[test]
-fn fixture_mode_accepts_the_exact_0_4_29_standalone_gke_receipt() {
+fn fixture_mode_accepts_root_or_matching_scheduled_child_in_the_0_4_29_receipt() {
     let fixture = gke_receipt_fixture();
     let output = run_gke_receipt_fixture(&fixture);
     assert!(
         output.status.success(),
-        "0.4.29 receipt fixture failed: {}",
+        "root image receipt fixture failed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut amd64_receipt =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&fixture.receipt).unwrap()).unwrap();
+    let amd64 = amd64_receipt["candidate"]["amd64_digest"].clone();
+    amd64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] = amd64;
+    rewrite_receipt(&fixture, &amd64_receipt);
+    let amd64_output = run_gke_receipt_fixture(&fixture);
+    assert!(
+        amd64_output.status.success(),
+        "matching amd64 child receipt was rejected: {}",
+        String::from_utf8_lossy(&amd64_output.stderr)
+    );
+
+    let arm64_fixture = gke_receipt_fixture();
+    let mut arm64_receipt = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&arm64_fixture.receipt).unwrap(),
+    )
+    .unwrap();
+    let arm64 = arm64_receipt["candidate"]["arm64_digest"].clone();
+    arm64_receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("arm64");
+    arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] =
+        arm64.clone();
+    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] = arm64;
+    rewrite_receipt(&arm64_fixture, &arm64_receipt);
+    let arm64_output = run_gke_receipt_fixture(&arm64_fixture);
+    assert!(
+        arm64_output.status.success(),
+        "matching arm64 child receipt was rejected: {}",
+        String::from_utf8_lossy(&arm64_output.stderr)
     );
 }
 
@@ -2455,6 +2485,10 @@ fn fixture_mode_rejects_standalone_gke_receipt_schema_and_candidate_binding_drif
                 json!(format!("sha256:{}", "4".repeat(64)));
         }
     );
+    assert_receipt_rejected!("amd64 observed arm64 child", |receipt: &mut serde_json::Value| {
+        let arm64 = receipt["candidate"]["arm64_digest"].clone();
+        receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] = arm64;
+    });
     assert_receipt_rejected!("wrong scheduled child", |receipt: &mut serde_json::Value| {
         let arm64 = receipt["candidate"]["arm64_digest"].clone();
         receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = arm64;
@@ -2469,16 +2503,28 @@ fn fixture_mode_rejects_standalone_gke_receipt_schema_and_candidate_binding_drif
     )
     .unwrap();
     let arm64 = arm64_receipt["candidate"]["arm64_digest"].clone();
+    let amd64 = arm64_receipt["candidate"]["amd64_digest"].clone();
     arm64_receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("arm64");
-    arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = arm64;
+    arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] =
+        arm64.clone();
+    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] =
+        arm64;
     rewrite_receipt(&arm64_fixture, &arm64_receipt);
     let arm64_output = run_gke_receipt_fixture(&arm64_fixture);
     assert!(
         arm64_output.status.success(),
-        "valid arm64 scheduled child was rejected: {}",
+        "valid arm64 scheduled child receipt was rejected: {}",
         String::from_utf8_lossy(&arm64_output.stderr)
     );
-    let amd64 = arm64_receipt["candidate"]["amd64_digest"].clone();
+    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] =
+        amd64.clone();
+    rewrite_receipt(&arm64_fixture, &arm64_receipt);
+    assert!(
+        !run_gke_receipt_fixture(&arm64_fixture).status.success(),
+        "arm64 receipt accepted the amd64 observed child"
+    );
+    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] =
+        arm64_receipt["candidate"]["arm64_digest"].clone();
     arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = amd64;
     rewrite_receipt(&arm64_fixture, &arm64_receipt);
     assert!(
