@@ -45,7 +45,7 @@ fn has_exact_line(source: &str, expected: &str) -> bool {
     source.lines().any(|line| line.trim() == expected)
 }
 
-fn run_service_link_wait(source: &str, enable_service_links: bool) -> Output {
+fn run_service_link_wait(source: &str, enable_service_links: bool, ready_status: &str) -> Output {
     let fixture = tempfile::Builder::new()
         .prefix("lumen-service-link-oracle-")
         .tempdir()
@@ -53,7 +53,7 @@ fn run_service_link_wait(source: &str, enable_service_links: bool) -> Output {
     let pod = r#"{
       "metadata":{"uid":"replacement"},
       "status":{
-        "conditions":[{"type":"Ready","status":"true"}],
+        "conditions":[{"type":"Ready","status":"READY_STATUS"}],
         "containerStatuses":[{"name":"serving","imageID":"ghcr.io/chrischeng-c4/lumen@sha256:child"}]
       },
       "spec":{
@@ -65,6 +65,7 @@ fn run_service_link_wait(source: &str, enable_service_links: bool) -> Output {
         }]
       }
     }"#
+    .replace("READY_STATUS", ready_status)
     .replace(
         "SERVICE_LINKS",
         if enable_service_links { "true" } else { "false" },
@@ -86,6 +87,7 @@ k() {
   cat "$POD_FIXTURE"
 }
 v2_expected_child() { printf '%s' 'sha256:child'; }
+sleep() { SECONDS=300; }
 v2_wait_pod() {
 "#,
         function_body(source, "v2_wait_pod"),
@@ -1266,13 +1268,13 @@ fn live_gate_has_the_complete_candidate_bound_contract() {
 #[test]
 fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
     let source = live_slice();
-    let disabled = run_service_link_wait(&source, false);
+    let disabled = run_service_link_wait(&source, false, "True");
     assert!(
         disabled.status.success(),
         "disabled service links were rejected: {}",
         String::from_utf8_lossy(&disabled.stderr)
     );
-    let enabled = run_service_link_wait(&source, true);
+    let enabled = run_service_link_wait(&source, true, "True");
     assert!(
         !enabled.status.success(),
         "enabled service links bypassed the executable pod assertion"
@@ -1293,8 +1295,13 @@ fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
         "prose fixture must prove why the executable oracle is required"
     );
     assert!(
-        run_service_link_wait(&prose_bypass, true).status.success(),
+        run_service_link_wait(&prose_bypass, true, "True").status.success(),
         "prose fixture did not remove the executable service-link assertion"
+    );
+    let not_ready = run_service_link_wait(&source, false, "False");
+    assert!(
+        !not_ready.status.success(),
+        "non-Ready pod bypassed the executable pod wait predicate"
     );
 }
 

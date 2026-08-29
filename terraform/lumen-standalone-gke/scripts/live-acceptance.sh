@@ -208,7 +208,7 @@ cleanup_public_staging() {
 }
 
 safe_remove_run_root() {
-  local inventory file dir base
+  local inventory file dir base cache='' backup='' backup_count=0
   [[ -n "$RUN_ROOT" && "$RUN_ROOT" == "$PRIVATE_TMP_ROOT/lumen-standalone-gke-live."* && -d "$RUN_ROOT" && ! -L "$RUN_ROOT" ]] || return 1
   [[ "${RUN_ROOT%/*}" == "$PRIVATE_TMP_ROOT" ]] || return 1
   [[ "${RUN_ROOT##*/}" =~ ^lumen-standalone-gke-live\.[A-Za-z0-9]{6}$ ]] || return 1
@@ -218,11 +218,27 @@ safe_remove_run_root() {
     base=${file##*/}
     case "$base" in
       terraform-data|control|private-receipt) [[ -d "$file" ]] || return 1 ;;
+      gke_gcloud_auth_plugin_cache)
+        [[ -d "$file" && ! -L "$file" && "$(cd "$file" && pwd -P)" == "$file" ]] || return 1
+        cache=$file
+        ;;
       terraform.tfstate|kubeconfig|create.tfplan|destroy.tfplan|recovery-destroy.tfplan|run-contract.json) [[ -f "$file" ]] || return 1 ;;
+      kubeconfig.*) [[ "$base" =~ ^kubeconfig\.[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3])-[0-5][0-9]-[0-5][0-9]Z\.[1-9][0-9]*\.[0-9]{2}\.backup$ && -f "$file" && ! -L "$file" ]] || return 1; backup_count=$((backup_count + 1)); backup=$file; (( backup_count <= 1 )) || return 1 ;;
       *) return 1 ;;
     esac
     [[ -L "$file" ]] && return 1
   done <<<"$inventory"
+  if [[ -n "$cache" ]]; then
+    inventory=$(find "$cache" -depth -print) || return 1
+    while IFS= read -r file; do
+      [[ -L "$file" ]] && return 1
+      if [[ -d "$file" ]]; then
+        [[ "$(cd "$file" && pwd -P)" == "$file" ]] || return 1
+      elif [[ ! -f "$file" ]]; then
+        return 1
+      fi
+    done <<<"$inventory"
+  fi
   for dir in "$RUN_ROOT/terraform-data" "$RUN_ROOT/control" "$RUN_ROOT/private-receipt"; do
     [[ -d "$dir" && ! -L "$dir" && "$(cd "$dir" && pwd -P)" == "$dir" ]] || return 1
     inventory=$(find "$dir" -depth -print) || return 1
@@ -262,6 +278,18 @@ safe_remove_run_root() {
       rmdir -- "$dir" || return 1
     fi
   done
+  if [[ -n "$cache" ]]; then
+    inventory=$(find "$cache" -depth -print) || return 1
+    while IFS= read -r file; do
+      [[ "$file" == "$cache" ]] && continue
+      if [[ -L "$file" ]]; then return 1
+      elif [[ -f "$file" ]]; then rm -f -- "$file" || return 1
+      elif [[ -d "$file" ]]; then rmdir -- "$file" || return 1
+      else return 1; fi
+    done <<<"$inventory"
+    rmdir -- "$cache" || return 1
+  fi
+  [[ -z "$backup" ]] || rm -f -- "$backup" || return 1
   if [[ -d "$RUN_ROOT/private-receipt" && ! -L "$RUN_ROOT/private-receipt" ]]; then
     rm -f -- "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json" "$RUN_ROOT/private-receipt/lumen-standalone-gke-receipt.json.sha256" || return 1
     rmdir -- "$RUN_ROOT/private-receipt" || return 1
