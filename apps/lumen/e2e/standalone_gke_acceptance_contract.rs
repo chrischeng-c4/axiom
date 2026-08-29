@@ -80,6 +80,9 @@ fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> Required
     });
     let mut after = live.clone();
     after["metadata"]["creationTimestamp"] = Value::Null;
+    after["spec"]["template"]["metadata"]["creationTimestamp"] =
+        Value::String("2026-08-30T00:00:00Z".to_owned());
+    after["status"] = json!({"observedGeneration": 1});
     after["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"] =
         Value::String("required".to_owned());
     let inject_race = mutation == Some("race");
@@ -921,11 +924,11 @@ fn findings(source: &str) -> Vec<&'static str> {
         ),
         (
             "REQUIRED",
-            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-before-required.json\" >\"$TMP_ROOT/v2-before-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-before-required.json\" >\"$TMP_ROOT/v2-before-required-noauth.json\"",
         ),
         (
             "REQUIRED",
-            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
         ),
         (
             "REQUIRED",
@@ -2079,11 +2082,43 @@ fn required_runtime_continuity_mutations_fail_the_static_contract() {
     let source = live_slice();
     for (from, to) in [
         (
-            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
             "jq -S '(.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
         ),
         (
-            "jq -S 'del(.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-before-required.json\" >\"$TMP_ROOT/v2-before-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.status,.spec.template.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-before-required.json\" >\"$TMP_ROOT/v2-before-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status?) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status,.spec.template.spec.serviceAccountName) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
+        ),
+        (
+            "jq -S 'del(.metadata.creationTimestamp,.spec.template.metadata.creationTimestamp,.status) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
             "jq -S 'del(.metadata,.spec) | (.spec.template.spec.containers[0].env |= map(select(.name != \"LUMEN_AUTH\")))' \"$TMP_ROOT/v2-after-required.json\" >\"$TMP_ROOT/v2-after-required-noauth.json\"",
         ),
         (
