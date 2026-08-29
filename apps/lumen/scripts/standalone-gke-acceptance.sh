@@ -587,6 +587,8 @@ V2_RUNTIME_NAMESPACE_UID=""
 V2_CLIENT_NAMESPACE_UID=""
 V2_CRB_UID=""
 V2_CHILD_DIGEST=""
+V2_NODE_ARCH=""
+V2_OBSERVED_RUNTIME_IMAGE_DIGEST=""
 V2_LAST_POD_UID=""
 V2_REQUIRED_DELTAS='{}'
 RECEIPT_TMP=""
@@ -932,7 +934,8 @@ v2_expected_child() {
   local pod_json="$1" node arch
   node="$(jq -er '.spec.nodeName' "$pod_json")"
   arch="$(k get node "$node" -o json | jq -er '.metadata.labels["kubernetes.io/arch"]')"
-  case "$arch" in amd64) printf '%s' "$AMD64_DIGEST" ;; arm64) printf '%s' "$ARM64_DIGEST" ;; *) die "unsupported scheduled node architecture" ;; esac
+  V2_NODE_ARCH="$arch"
+  case "$arch" in amd64) V2_CHILD_DIGEST="$AMD64_DIGEST" ;; arm64) V2_CHILD_DIGEST="$ARM64_DIGEST" ;; *) die "unsupported scheduled node architecture" ;; esac
 }
 
 v2_capture_pvc_identity() {
@@ -942,15 +945,19 @@ v2_capture_pvc_identity() {
 }
 
 v2_wait_pod() {
-  local old_uid="$1" auth="$2" cpu="$3" memory="$4" deadline=$((SECONDS + 300)) uid image expected
+  local old_uid="$1" auth="$2" cpu="$3" memory="$4" deadline=$((SECONDS + 300)) uid image
   while :; do
     if k get pod lumen-0 --namespace "$V2_RUNTIME_NAMESPACE" -o json >"$TMP_ROOT/v2-pod.json" 2>/dev/null; then
       uid="$(jq -er '.metadata.uid' "$TMP_ROOT/v2-pod.json")"
       if [[ ( -z "$old_uid" || "$uid" != "$old_uid" ) && "$(jq -r '[.status.conditions[]? | select(.type == "Ready") | .status] | first // "False"' "$TMP_ROOT/v2-pod.json")" == True ]]; then
         image="$(jq -er '.status.containerStatuses[]|select(.name == "serving")|.imageID' "$TMP_ROOT/v2-pod.json")"
-        expected="$(v2_expected_child "$TMP_ROOT/v2-pod.json")"
-        [[ "$image" == *"$expected" ]] || die "observed container child digest does not match scheduled node architecture"
-        jq -e --arg auth "$auth" --arg cpu "$cpu" --arg memory "$memory" '
+        v2_expected_child "$TMP_ROOT/v2-pod.json"
+        [[ -n "$V2_NODE_ARCH" && -n "$V2_CHILD_DIGEST" ]] || die "scheduled node identity is incomplete"
+        [[ "$image" == "$LUMEN_STANDALONE_GKE_IMAGE" ]] || die "observed container imageID is not the exact root digest"
+        V2_OBSERVED_RUNTIME_IMAGE_DIGEST="${image##*@}"
+        [[ "$V2_OBSERVED_RUNTIME_IMAGE_DIGEST" == "$ROOT_DIGEST" ]] || die "observed container imageID digest is not the candidate root"
+        jq -e --arg image "$LUMEN_STANDALONE_GKE_IMAGE" --arg auth "$auth" --arg cpu "$cpu" --arg memory "$memory" '
+          ([.spec.containers[] | select(.name == "serving") | .image] == [$image]) and
           .spec.enableServiceLinks == false and
           ([.spec.containers[] | select(.name == "serving") | .env[] | select(.name == "LUMEN_AUTH") | .value] == [$auth]) and
           ([.spec.containers[] | select(.name == "serving") | .resources.requests.cpu] == [$cpu]) and
@@ -961,7 +968,6 @@ v2_wait_pod() {
           [[ "$(k get pvc "$PVC_NAME" --namespace "$V2_RUNTIME_NAMESPACE" -o jsonpath='{.metadata.uid}')" == "$V2_PVC_UID" ]] || die "PVC uid changed after replacement"
           [[ "$(k get pvc "$PVC_NAME" --namespace "$V2_RUNTIME_NAMESPACE" -o jsonpath='{.spec.volumeName}')" == "$V2_PV_NAME" ]] || die "PV identity changed after replacement"
         fi
-        V2_CHILD_DIGEST="$expected"
         V2_LAST_POD_UID="$uid"
         return
       fi
@@ -1090,23 +1096,24 @@ v2_write_receipt_body() {
   local receipt="$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/lumen-standalone-gke-receipt.json" receipt_name receipt_bytes
   [[ "$V2_LIVE" == true && "$V2_REQUIRED" == true && "$V2_CLEAN" == true ]] || return 1
   [[ -n "$RECEIPT_TMP" && -n "$RECEIPT_SIDECAR_TMP" ]] || return 1
+  [[ -n "$V2_OBSERVED_RUNTIME_IMAGE_DIGEST" && -n "$V2_NODE_ARCH" && -n "$V2_CHILD_DIGEST" ]] || return 1
   rm -f -- "$receipt" "$receipt.sha256"
-  jq -n --arg repository "chrischeng-c4/axiom" --arg version "0.4.29" --arg commit "$CANDIDATE_COMMIT" --arg workflow_ref "$CANDIDATE_WORKFLOW" --arg run_id "$CANDIDATE_RUN_ID" --arg run_attempt "$CANDIDATE_ATTEMPT" --arg manifest_sha256 "$RECEIPT_SHA256" --arg root_digest "$ROOT_DIGEST" --arg amd64_digest "$AMD64_DIGEST" --arg arm64_digest "$ARM64_DIGEST" --arg target "$LUMEN_STANDALONE_GKE_CLI_TARGET" --arg cli_sha256 "$CONTROLLER_CLI_SHA256" --arg child "$V2_CHILD_DIGEST" --argjson required_deltas "$V2_REQUIRED_DELTAS" '
-    {schema:"lumen.standalone-gke-receipt/v1",stage:"slice-b-live",complete:true,
-     candidate:{repository:$repository,version:$version,commit:$commit,workflow_ref:$workflow_ref,run_id:$run_id,run_attempt:$run_attempt,manifest_sha256:$manifest_sha256,root_digest:$root_digest,amd64_digest:$amd64_digest,arm64_digest:$arm64_digest,controller_cli:{target:$target,sha256:$cli_sha256},observed_runtime_child_digest:$child},
-     matrix:{clusterip_only:"passed",network_policy:"passed",allowed_ksa:"passed",unlisted_ksa:"passed",missing_token:"passed",bad_token:"passed",tokenreview:"passed",subjectaccessreview:"passed",application_admin_403:"passed",admin_backup_restore:"passed",pod_replacement:"passed",pvc_recovery:"passed",vertical_resize:"passed",cleanup:"passed",required_continuity:({profile:"LUMEN_AUTH=required",audience:"lumen.axiom.dev",observed_runtime_child_digest:$child,projected_allowed_2xx:"passed",same_ksa_default_token_401:"passed",projected_unlisted_403:"passed"} + $required_deltas)},
+  jq -n --arg repository "chrischeng-c4/axiom" --arg version "0.4.29" --arg commit "$CANDIDATE_COMMIT" --arg workflow_ref "$CANDIDATE_WORKFLOW" --arg run_id "$CANDIDATE_RUN_ID" --arg run_attempt "$CANDIDATE_ATTEMPT" --arg manifest_sha256 "$RECEIPT_SHA256" --arg root_digest "$ROOT_DIGEST" --arg amd64_digest "$AMD64_DIGEST" --arg arm64_digest "$ARM64_DIGEST" --arg target "$LUMEN_STANDALONE_GKE_CLI_TARGET" --arg cli_sha256 "$CONTROLLER_CLI_SHA256" --arg observed_root "$V2_OBSERVED_RUNTIME_IMAGE_DIGEST" --arg child "$V2_CHILD_DIGEST" --arg arch "$V2_NODE_ARCH" --argjson required_deltas "$V2_REQUIRED_DELTAS" '
+    {schema:"lumen.standalone-gke-receipt/v2",stage:"slice-b-live",complete:true,
+     candidate:{repository:$repository,version:$version,commit:$commit,workflow_ref:$workflow_ref,run_id:$run_id,run_attempt:$run_attempt,manifest_sha256:$manifest_sha256,root_digest:$root_digest,amd64_digest:$amd64_digest,arm64_digest:$arm64_digest,controller_cli:{target:$target,sha256:$cli_sha256}},
+     matrix:{clusterip_only:"passed",network_policy:"passed",allowed_ksa:"passed",unlisted_ksa:"passed",missing_token:"passed",bad_token:"passed",tokenreview:"passed",subjectaccessreview:"passed",application_admin_403:"passed",admin_backup_restore:"passed",pod_replacement:"passed",pvc_recovery:"passed",vertical_resize:"passed",cleanup:"passed",required_continuity:({profile:"LUMEN_AUTH=required",audience:"lumen.axiom.dev",observed_runtime_image_digest:$observed_root,scheduled_node_arch:$arch,scheduled_runtime_child_digest:$child,projected_allowed_2xx:"passed",same_ksa_default_token_401:"passed",projected_unlisted_403:"passed"} + $required_deltas)},
      redaction:{kubeconfig_retained:false,token_retained:false,authorization_retained:false,secret_retained:false,cluster_identity_retained:false,command_output_retained:false,canary_scan:true}}
   ' >"$RECEIPT_TMP"
   receipt_bytes="$(wc -c < "$RECEIPT_TMP" | tr -d ' ')"
   [[ "$receipt_bytes" -gt 0 && "$receipt_bytes" -le 16384 ]] || die "receipt bytes must be within the 16KiB workflow transport limit"
   [[ "$(jq -c 'keys|sort' "$RECEIPT_TMP")" == '["candidate","complete","matrix","redaction","schema","stage"]' ]] || die "receipt has unexpected keys"
-  [[ "$(jq -c '.candidate|keys|sort' "$RECEIPT_TMP")" == '["amd64_digest","arm64_digest","commit","controller_cli","manifest_sha256","observed_runtime_child_digest","repository","root_digest","run_attempt","run_id","version","workflow_ref"]' ]] || die "receipt candidate has unexpected keys"
+  [[ "$(jq -c '.candidate|keys|sort' "$RECEIPT_TMP")" == '["amd64_digest","arm64_digest","commit","controller_cli","manifest_sha256","repository","root_digest","run_attempt","run_id","version","workflow_ref"]' ]] || die "receipt candidate has unexpected keys"
   [[ "$(jq -c '.candidate.controller_cli|keys|sort' "$RECEIPT_TMP")" == '["sha256","target"]' ]] || die "receipt controller CLI has unexpected keys"
   [[ "$(jq -c '.matrix|keys|sort' "$RECEIPT_TMP")" == '["admin_backup_restore","allowed_ksa","application_admin_403","bad_token","cleanup","clusterip_only","missing_token","network_policy","pod_replacement","pvc_recovery","required_continuity","subjectaccessreview","tokenreview","unlisted_ksa","vertical_resize"]' ]] || die "receipt matrix has unexpected keys"
-  [[ "$(jq -c '.matrix.required_continuity|keys|sort' "$RECEIPT_TMP")" == '["allowed_delta","audience","denied_delta","observed_runtime_child_digest","profile","projected_allowed_2xx","projected_unlisted_403","same_ksa_default_token_401","subjectaccessreview_delta","tokenreview_delta"]' ]] || die "receipt required continuity has unexpected keys"
+  [[ "$(jq -c '.matrix.required_continuity|keys|sort' "$RECEIPT_TMP")" == '["allowed_delta","audience","denied_delta","observed_runtime_image_digest","profile","projected_allowed_2xx","projected_unlisted_403","same_ksa_default_token_401","scheduled_node_arch","scheduled_runtime_child_digest","subjectaccessreview_delta","tokenreview_delta"]' ]] || die "receipt required continuity has unexpected keys"
   [[ "$(jq -c '.redaction|keys|sort' "$RECEIPT_TMP")" == '["authorization_retained","canary_scan","cluster_identity_retained","command_output_retained","kubeconfig_retained","secret_retained","token_retained"]' ]] || die "receipt redaction has unexpected keys"
   jq -e '
-    .schema == "lumen.standalone-gke-receipt/v1" and .stage == "slice-b-live" and .complete == true and
+    .schema == "lumen.standalone-gke-receipt/v2" and .stage == "slice-b-live" and .complete == true and
     ([.matrix|to_entries[]|select(.key != "required_continuity")|.value] | all(.[]; . == "passed")) and
     .matrix.required_continuity.profile == "LUMEN_AUTH=required" and
     .matrix.required_continuity.audience == "lumen.axiom.dev" and
@@ -1115,10 +1122,10 @@ v2_write_receipt_body() {
     .matrix.required_continuity.projected_unlisted_403 == "passed" and
     .redaction == {authorization_retained:false,canary_scan:true,cluster_identity_retained:false,command_output_retained:false,kubeconfig_retained:false,secret_retained:false,token_retained:false} and
     .candidate.amd64_digest != .candidate.arm64_digest and
-    ((.candidate.observed_runtime_child_digest == .candidate.amd64_digest) or (.candidate.observed_runtime_child_digest == .candidate.arm64_digest)) and
-    .matrix.required_continuity.observed_runtime_child_digest == .candidate.observed_runtime_child_digest and
+    .matrix.required_continuity.observed_runtime_image_digest == .candidate.root_digest and
+    ((.matrix.required_continuity.scheduled_node_arch == "amd64" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.amd64_digest) or (.matrix.required_continuity.scheduled_node_arch == "arm64" and .matrix.required_continuity.scheduled_runtime_child_digest == .candidate.arm64_digest)) and
     ([.matrix.required_continuity.tokenreview_delta,.matrix.required_continuity.subjectaccessreview_delta,.matrix.required_continuity.allowed_delta,.matrix.required_continuity.denied_delta] | all(.[]; type == "number" and floor == . and . > 0))
-  ' "$RECEIPT_TMP" >/dev/null || die "receipt required continuity has invalid child digest or non-positive deltas"
+  ' "$RECEIPT_TMP" >/dev/null || die "receipt required continuity has invalid runtime identity or non-positive deltas"
   if grep -Eiq 'Bearer[[:space:]]|eyJ[A-Za-z0-9_-]{20,}|-----BEGIN|lumen-standalone|gke-acceptance' "$RECEIPT_TMP"; then die "receipt redaction scan failed"; fi
   printf '%s  %s\n' "$(sha256_file "$RECEIPT_TMP")" "${receipt##*/}" >"$RECEIPT_SIDECAR_TMP"
   receipt_name="${receipt##*/}"

@@ -223,22 +223,22 @@ validate_standalone_gke_receipt() {
   jq -e --arg manifest_sha "$(sha256_file "$manifest")" --arg commit "$COMMIT" --arg run "$CANDIDATE_RUN_ID" --arg attempt "$CANDIDATE_ATTEMPT" --arg root "$root" --arg amd64 "$amd64" --arg arm64 "$arm64" '
     . as $receipt |
     (keys | sort) == ["candidate","complete","matrix","redaction","schema","stage"] and
-    .schema == "lumen.standalone-gke-receipt/v1" and .stage == "slice-b-live" and .complete == true and
-    (.candidate | (keys | sort) == ["amd64_digest","arm64_digest","commit","controller_cli","manifest_sha256","observed_runtime_child_digest","repository","root_digest","run_attempt","run_id","version","workflow_ref"]) and
+    .schema == "lumen.standalone-gke-receipt/v2" and .stage == "slice-b-live" and .complete == true and
+    (.candidate | (keys | sort) == ["amd64_digest","arm64_digest","commit","controller_cli","manifest_sha256","repository","root_digest","run_attempt","run_id","version","workflow_ref"]) and
     .candidate.repository == "chrischeng-c4/axiom" and .candidate.version == "0.4.29" and .candidate.commit == $commit and
     .candidate.workflow_ref == "chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main" and
     .candidate.run_id == $run and .candidate.run_attempt == $attempt and .candidate.manifest_sha256 == $manifest_sha and
     .candidate.root_digest == $root and .candidate.amd64_digest == $amd64 and .candidate.arm64_digest == $arm64 and
     (.candidate.controller_cli | (keys | sort) == ["sha256","target"] and (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
       (.target == "aarch64-apple-darwin" or .target == "x86_64-unknown-linux-gnu" or .target == "aarch64-unknown-linux-gnu" or .target == "x86_64-unknown-linux-musl" or .target == "aarch64-unknown-linux-musl")) and
-    (.candidate.observed_runtime_child_digest == $amd64 or .candidate.observed_runtime_child_digest == $arm64) and
     ($receipt.matrix as $matrix |
       ($matrix | keys | sort) == ["admin_backup_restore","allowed_ksa","application_admin_403","bad_token","cleanup","clusterip_only","missing_token","network_policy","pod_replacement","pvc_recovery","required_continuity","subjectaccessreview","tokenreview","unlisted_ksa","vertical_resize"] and
       ($matrix | del(.required_continuity) | to_entries | all(.[]; (.value | type == "string" and . == "passed")))) and
     ($receipt.matrix.required_continuity as $continuity |
-      ($continuity | keys | sort) == ["allowed_delta","audience","denied_delta","observed_runtime_child_digest","profile","projected_allowed_2xx","projected_unlisted_403","same_ksa_default_token_401","subjectaccessreview_delta","tokenreview_delta"] and
+      ($continuity | keys | sort) == ["allowed_delta","audience","denied_delta","observed_runtime_image_digest","profile","projected_allowed_2xx","projected_unlisted_403","same_ksa_default_token_401","scheduled_node_arch","scheduled_runtime_child_digest","subjectaccessreview_delta","tokenreview_delta"] and
       $continuity.profile == "LUMEN_AUTH=required" and $continuity.audience == "lumen.axiom.dev" and
-      $continuity.observed_runtime_child_digest == $receipt.candidate.observed_runtime_child_digest and
+      $continuity.observed_runtime_image_digest == $root and
+      (($continuity.scheduled_node_arch == "amd64" and $continuity.scheduled_runtime_child_digest == $amd64) or ($continuity.scheduled_node_arch == "arm64" and $continuity.scheduled_runtime_child_digest == $arm64)) and
       $continuity.projected_allowed_2xx == "passed" and $continuity.same_ksa_default_token_401 == "passed" and $continuity.projected_unlisted_403 == "passed" and
       ([$continuity.tokenreview_delta,$continuity.subjectaccessreview_delta,$continuity.allowed_delta,$continuity.denied_delta] | all(.[]; type == "number" and floor == . and . > 0))) and
     $receipt.redaction == {kubeconfig_retained:false,token_retained:false,authorization_retained:false,secret_retained:false,cluster_identity_retained:false,command_output_retained:false,canary_scan:true}

@@ -17,7 +17,7 @@ const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
     "14cbd1d902c2961ff2efae64a11a68fe82aeb9ee767e56b338acd8ea76b6a2b4";
 const PROMOTION_VERIFIER_BYTES_SHA256: &str =
-    "4da124818b89753107c1797b70e95d6b99745595913eaf0ac3eab901d9b67cd3";
+    "f9e5fc3ba948e3c8157b41e5119bc28415e5ca501510d03e32354b72a4c71f5c";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const COSIGN_INSTALLER: &str = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6";
 const SETUP_BUILDX: &str = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f";
@@ -350,7 +350,7 @@ fn gke_receipt_fixture() -> GkeReceiptFixture {
     let arm64 = format!("sha256:{}", "3".repeat(64));
     let receipt = release.candidate.join("lumen-standalone-gke-receipt.json");
     let body = json!({
-        "schema": "lumen.standalone-gke-receipt/v1",
+        "schema": "lumen.standalone-gke-receipt/v2",
         "stage": "slice-b-live",
         "complete": true,
         "candidate": {
@@ -361,11 +361,10 @@ fn gke_receipt_fixture() -> GkeReceiptFixture {
             "run_id": RUN_ID,
             "run_attempt": "1",
             "manifest_sha256": sha256(&manifest_path),
-            "root_digest": root,
-            "amd64_digest": amd64,
-            "arm64_digest": arm64,
+            "root_digest": root.clone(),
+            "amd64_digest": amd64.clone(),
+            "arm64_digest": arm64.clone(),
             "controller_cli": {"target": target, "sha256": archive_member_sha256(&release.candidate, target)},
-            "observed_runtime_child_digest": format!("sha256:{}", "2".repeat(64)),
         },
         "matrix": {
             "clusterip_only": "passed",
@@ -385,7 +384,9 @@ fn gke_receipt_fixture() -> GkeReceiptFixture {
             "required_continuity": {
                 "profile": "LUMEN_AUTH=required",
                 "audience": "lumen.axiom.dev",
-                "observed_runtime_child_digest": format!("sha256:{}", "2".repeat(64)),
+                "observed_runtime_image_digest": root.clone(),
+                "scheduled_node_arch": "amd64",
+                "scheduled_runtime_child_digest": amd64.clone(),
                 "projected_allowed_2xx": "passed",
                 "same_ksa_default_token_401": "passed",
                 "projected_unlisted_403": "passed",
@@ -487,6 +488,22 @@ fn rewrite_receipt(fixture: &GkeReceiptFixture, receipt: &serde_json::Value) {
             "{}  lumen-standalone-gke-receipt.json\n",
             sha256(&fixture.receipt)
         ),
+    )
+    .unwrap();
+    fs::copy(
+        &fixture.receipt,
+        fixture
+            .release
+            .public
+            .join("lumen-standalone-gke-receipt.json"),
+    )
+    .unwrap();
+    fs::copy(
+        &fixture.sidecar,
+        fixture
+            .release
+            .public
+            .join("lumen-standalone-gke-receipt.json.sha256"),
     )
     .unwrap();
 }
@@ -2362,6 +2379,9 @@ fn fixture_mode_rejects_standalone_gke_receipt_schema_and_candidate_binding_drif
         }};
     }
 
+    assert_receipt_rejected!("v1 schema", |receipt: &mut serde_json::Value| {
+        receipt["schema"] = json!("lumen.standalone-gke-receipt/v1");
+    });
     assert_receipt_rejected!("missing top key", |receipt: &mut serde_json::Value| {
         receipt.as_object_mut().unwrap().remove("stage");
     });
@@ -2429,12 +2449,43 @@ fn fixture_mode_rejects_standalone_gke_receipt_schema_and_candidate_binding_drif
         }
     );
     assert_receipt_rejected!(
-        "mismatched observed runtime child",
+        "mismatched observed runtime image",
         |receipt: &mut serde_json::Value| {
-            receipt["candidate"]["observed_runtime_child_digest"] =
+            receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] =
                 json!(format!("sha256:{}", "4".repeat(64)));
         }
     );
+    assert_receipt_rejected!("wrong scheduled child", |receipt: &mut serde_json::Value| {
+        let arm64 = receipt["candidate"]["arm64_digest"].clone();
+        receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = arm64;
+    });
+    assert_receipt_rejected!("unknown scheduled arch", |receipt: &mut serde_json::Value| {
+        receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("s390x");
+    });
+
+    let arm64_fixture = gke_receipt_fixture();
+    let mut arm64_receipt = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&arm64_fixture.receipt).unwrap(),
+    )
+    .unwrap();
+    let arm64 = arm64_receipt["candidate"]["arm64_digest"].clone();
+    arm64_receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("arm64");
+    arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = arm64;
+    rewrite_receipt(&arm64_fixture, &arm64_receipt);
+    let arm64_output = run_gke_receipt_fixture(&arm64_fixture);
+    assert!(
+        arm64_output.status.success(),
+        "valid arm64 scheduled child was rejected: {}",
+        String::from_utf8_lossy(&arm64_output.stderr)
+    );
+    let amd64 = arm64_receipt["candidate"]["amd64_digest"].clone();
+    arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = amd64;
+    rewrite_receipt(&arm64_fixture, &arm64_receipt);
+    assert!(
+        !run_gke_receipt_fixture(&arm64_fixture).status.success(),
+        "arm64 receipt accepted the amd64 scheduled child"
+    );
+
     assert_receipt_rejected!(
         "missing redaction key",
         |receipt: &mut serde_json::Value| {
