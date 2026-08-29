@@ -842,6 +842,17 @@ v2_run_client_tooling_job() {
   [[ "$(wc -l < "$log" | tr -d ' ')" == 1 ]] || die "client tooling job emitted extra output"
 }
 
+v2_assert_api_job_log() {
+  local label="$1" expected="$2" log="$3"
+  [[ "$label" =~ ^[a-z0-9-]{1,40}$ ]] || die "unsafe client job label"
+  if [[ "$expected" == 2xx ]]; then
+    grep -Ex "row=$label status=2[0-9][0-9]" "$log" >/dev/null || die "client job did not prove expected status"
+  else
+    grep -Fx "row=$label status=$expected" "$log" >/dev/null || die "client job did not prove expected status"
+  fi
+  [[ "$(wc -l < "$log" | tr -d ' ')" == 1 ]] || die "client job retained request or response output"
+}
+
 v2_run_api_job() {
   local label="$1" account="$2" token_mode="$3" method="$4" path="$5" body="$6" expected="$7" need_id="$8" reject_id="$9"
   local job render_dir request_file log
@@ -893,8 +904,7 @@ v2_run_api_job() {
   k wait --for=condition=complete "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --timeout=150s >/dev/null
   log="$TMP_ROOT/${job}.log"
   v2_read_job_log "$job" "$log"
-  grep -Fx "row=$label status=$expected" "$log" >/dev/null || die "client job did not prove expected status"
-  [[ "$(wc -l < "$log" | tr -d ' ')" == 1 ]] || die "client job retained request or response output"
+  v2_assert_api_job_log "$label" "$expected" "$log"
 }
 
 v2_run_metrics_job() {
