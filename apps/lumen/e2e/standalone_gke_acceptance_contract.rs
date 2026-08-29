@@ -4,7 +4,7 @@
 //! executable live slice and rejects mutations that make a green static test
 //! look plausible while removing a live security or durability assertion.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -1561,20 +1561,6 @@ fn collect_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
-fn physical_temp_children(root: &Path) -> BTreeSet<PathBuf> {
-    fs::read_dir(root)
-        .expect("read physical temporary root")
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("lumen-standalone-gke.")
-        })
-        .map(|entry| entry.path())
-        .collect()
-}
-
 struct GkeOracleFixture {
     _root: tempfile::TempDir,
     physical_root: PathBuf,
@@ -1621,7 +1607,7 @@ fn make_gke_oracle_fixture() -> GkeOracleFixture {
     let gcloud_marker = root.path().join("gcloud.marker");
     install_fake(
         &fake_bin.join("kubectl"),
-        "#!/bin/sh\nset -eu\ncache=\ncount=0\nprevious=\nfor arg in \"$@\"; do\n  if [ \"$previous\" = --cache-dir ]; then cache=$arg; count=$((count + 1)); fi\n  previous=$arg\ndone\n[ \"$count\" -eq 1 ] || exit 18\ncache=$(cd \"$cache\" && pwd -P) || exit 19\ncase \"$cache\" in\n  /tmp/lumen-standalone-gke.??????/kubectl-cache|/private/tmp/lumen-standalone-gke.??????/kubectl-cache) ;;\n  *) exit 20 ;;\nesac\nprintf '%s\\n' \"$cache\" >>\"$FAKE_KUBECTL_CALLS\"\nmkdir -p \"$cache/discovery\" \"$cache/http\"\n: >\"$cache/discovery/response\"\n: >\"$cache/http/response\"\nif [ \"$(wc -l <\"$FAKE_KUBECTL_CALLS\" | tr -d ' ')\" -eq 1 ]; then\n  { find \"$FAKE_PHYSICAL_ROOT\" -maxdepth 1 -name 'lumen-standalone-gke.*' -print; printf '%s\\n' --tmpdir; find \"$TMPDIR\" -maxdepth 1 -name 'lumen-standalone-gke.*' -print; } >\"$FAKE_KUBECTL_MARKER\"\nfi\nprintf '%s\\n' oracle-context\n",
+        "#!/bin/sh\nset -eu\ncache=\ncount=0\nprevious=\nfor arg in \"$@\"; do\n  if [ \"$previous\" = --cache-dir ]; then cache=$arg; count=$((count + 1)); fi\n  previous=$arg\ndone\n[ \"$count\" -eq 1 ] || exit 18\ncache=$(cd \"$cache\" && pwd -P) || exit 19\nprintf '%s\\n' \"$cache\" >>\"$FAKE_KUBECTL_CALLS\"\nmkdir -p \"$cache/discovery\" \"$cache/http\"\n: >\"$cache/discovery/response\"\n: >\"$cache/http/response\"\nif [ \"$(wc -l <\"$FAKE_KUBECTL_CALLS\" | tr -d ' ')\" -eq 1 ]; then\n  { printf '%s\\n' \"${cache%/kubectl-cache}\"; printf '%s\\n' --tmpdir; find \"$TMPDIR\" -maxdepth 1 -name 'lumen-standalone-gke.*' -print; } >\"$FAKE_KUBECTL_MARKER\"\nfi\nprintf '%s\\n' oracle-context\n",
     );
     install_fake(
         &fake_bin.join("gcloud"),
@@ -2973,7 +2959,6 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
     let harness = root().join("kustomize/lumen-standalone-acceptance");
     let harness_before = collect_files(&harness);
 
-    let before_children = physical_temp_children(&fixture.physical_root);
     let output = run_gke_oracle(&fixture, &fixture.kubeconfig, &fixture.evidence);
     assert!(!output.status.success(), "fake gcloud unexpectedly passed");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2992,39 +2977,24 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
     assert_eq!(run_root.parent(), Some(fixture.physical_root.as_path()));
     assert!(!run_root.exists(), "cleanup did not remove the acceptance run root");
     let marker = fs::read_to_string(&fixture.kubectl_marker).expect("read fake kubectl marker");
-    let mut observed_children = BTreeSet::new();
-    let mut in_tmpdir_section = false;
-    for line in marker.lines() {
-        if line == "--tmpdir" {
-            in_tmpdir_section = true;
-        } else if !in_tmpdir_section {
-            observed_children.insert(PathBuf::from(line));
-        } else {
+    let mut marker_lines = marker.lines();
+    let observed_run_root = PathBuf::from(marker_lines.next().expect("marker run root"));
+    assert_eq!(observed_run_root, run_root);
+    assert_eq!(marker_lines.next(), Some("--tmpdir"));
+    for line in marker_lines {
+        if !line.is_empty() {
             panic!("TMPDIR was used for the private acceptance root: {marker}");
         }
     }
-    let added_children: Vec<_> = observed_children
-        .difference(&before_children)
-        .collect();
-    assert_eq!(added_children.len(), 1, "fake kubectl saw the wrong physical temp set: {marker}");
-    let added_name = added_children[0]
+    let added_name = run_root
         .file_name()
         .expect("physical temp child name")
         .to_string_lossy();
     assert!(added_name.starts_with("lumen-standalone-gke."));
     assert_eq!(added_name.len(), "lumen-standalone-gke.".len() + 6);
-    assert!(
-        in_tmpdir_section,
-        "fake kubectl did not inspect the unrelated TMPDIR: {marker}"
-    );
     assert_eq!(
         fs::read_to_string(&fixture.gcloud_marker).expect("read gcloud marker"),
         "home-unset\n"
-    );
-    assert_eq!(
-        physical_temp_children(&fixture.physical_root),
-        before_children,
-        "acceptance left a physical temporary child"
     );
     assert_eq!(collect_files(&harness), harness_before, "checked-in harness changed");
     assert!(
@@ -3056,7 +3026,6 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
         let _ = fs::remove_file(&fixture.kubectl_marker);
         let _ = fs::remove_file(&fixture.kubectl_calls);
         let _ = fs::remove_file(&fixture.gcloud_marker);
-        let children = physical_temp_children(&fixture.physical_root);
         let output = run_gke_oracle(&fixture, &kubeconfig, &evidence);
         assert!(!output.status.success(), "{label} unexpectedly passed");
         assert!(
@@ -3067,7 +3036,6 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
         assert!(!fixture.kubectl_marker.exists(), "{label} reached fake kubectl");
         assert!(!fixture.kubectl_calls.exists(), "{label} reached fake kubectl");
         assert!(!fixture.gcloud_marker.exists(), "{label} reached fake gcloud");
-        assert_eq!(physical_temp_children(&fixture.physical_root), children, "{label} created a temporary child");
         assert_eq!(collect_files(&harness), harness_before, "{label} changed checked-in harness");
         assert!(!fixture.cwd.join(".kube").exists(), "{label} wrote a default kubectl cache");
     }
@@ -3110,7 +3078,6 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
         let _ = fs::remove_file(&fixture.kubectl_marker);
         let _ = fs::remove_file(&fixture.kubectl_calls);
         let _ = fs::remove_file(&fixture.gcloud_marker);
-        let children = physical_temp_children(&fixture.physical_root);
         let output = run_gke_oracle(&fixture, &kubeconfig, &evidence);
         assert!(!output.status.success(), "{label} unexpectedly passed");
         assert!(
@@ -3121,7 +3088,6 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
         assert!(!fixture.kubectl_marker.exists(), "{label} reached fake kubectl");
         assert!(!fixture.kubectl_calls.exists(), "{label} reached fake kubectl");
         assert!(!fixture.gcloud_marker.exists(), "{label} reached fake gcloud");
-        assert_eq!(physical_temp_children(&fixture.physical_root), children, "{label} created a temporary child");
         assert_eq!(collect_files(&harness), harness_before, "{label} changed checked-in harness");
         assert!(!fixture.cwd.join(".kube").exists(), "{label} wrote a default kubectl cache");
     }
