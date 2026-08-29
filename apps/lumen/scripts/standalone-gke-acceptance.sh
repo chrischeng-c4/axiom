@@ -777,22 +777,117 @@ v2_cleanup() {
 v2_metric_total() {
   local metric="$1" file="$2"
   awk -v metric="$metric" '
-    $1 ~ ("^" metric "($|\\{") && $2 ~ /^[0-9]+([.][0-9]+)?$/ { sum += $2; seen = 1 }
+    ($1 == metric || index($1, metric "{") == 1) && $2 ~ /^[0-9]+([.][0-9]+)?$/ { sum += $2; seen = 1 }
     END { if (!seen) exit 1; printf "%.0f", sum }
   ' "$file"
 }
 
+v2_metric_shape() {
+  local metric="$1" file="$2"
+  awk -v metric="$metric" '
+    ($1 == metric || index($1, metric "{") == 1) {
+      samples += 1
+      if ($1 == metric) { unlabeled += 1 } else { labeled += 1 }
+      if ($2 ~ /^[0-9]+([.][0-9]+)?$/) { sum += $2 } else { invalid += 1 }
+    }
+    END {
+      if (samples == 0) {
+        shape = "absent"; value_class = "absent"
+      } else if (invalid > 0) {
+        shape = "invalid"; value_class = "invalid"
+      } else {
+        if (unlabeled > 0 && labeled > 0) { shape = "mixed" }
+        else if (unlabeled > 0) { shape = "unlabeled" }
+        else { shape = "labeled" }
+        if (sum == 0) { value_class = "zero" } else { value_class = "positive" }
+      }
+      printf "{\"sample_count\":%d,\"shape\":\"%s\",\"value_class\":\"%s\"}", samples, shape, value_class
+    }
+  ' "$file"
+}
+
+v2_write_metric_failure() {
+  local profile="$1" reason="$2" before="$3" after="$4"
+  local before_token before_access before_allowed before_denied
+  local after_token after_access after_allowed after_denied
+  local report tmp report_bytes
+  case "$profile" in in-cluster|required) ;; *) return 1 ;; esac
+  case "$reason" in missing_metric|non_positive_delta) ;; *) return 1 ;; esac
+  before_token="$(v2_metric_shape delegated_auth_token_reviews_total "$before")" || return 1
+  before_access="$(v2_metric_shape delegated_auth_access_reviews_total "$before")" || return 1
+  before_allowed="$(v2_metric_shape delegated_auth_allowed_total "$before")" || return 1
+  before_denied="$(v2_metric_shape delegated_auth_denied_total "$before")" || return 1
+  after_token="$(v2_metric_shape delegated_auth_token_reviews_total "$after")" || return 1
+  after_access="$(v2_metric_shape delegated_auth_access_reviews_total "$after")" || return 1
+  after_allowed="$(v2_metric_shape delegated_auth_allowed_total "$after")" || return 1
+  after_denied="$(v2_metric_shape delegated_auth_denied_total "$after")" || return 1
+  report="$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/lumen-standalone-gke-metric-shape-failure.json"
+  [[ ! -e "$report" && ! -L "$report" ]] || return 1
+  tmp="$(mktemp "$LUMEN_STANDALONE_GKE_EVIDENCE_DIR/.metric-shape.XXXXXX")" || return 1
+  chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
+  if ! jq -n --arg profile "$profile" --arg reason "$reason" \
+    --argjson before_token "$before_token" --argjson before_access "$before_access" --argjson before_allowed "$before_allowed" --argjson before_denied "$before_denied" \
+    --argjson after_token "$after_token" --argjson after_access "$after_access" --argjson after_allowed "$after_allowed" --argjson after_denied "$after_denied" '
+      {schema:"lumen.standalone-gke-metric-shape/v1",failure:{profile:$profile,reason:$reason},
+       observations:[
+         {phase:"before",metrics:{delegated_auth_token_reviews_total:$before_token,delegated_auth_access_reviews_total:$before_access,delegated_auth_allowed_total:$before_allowed,delegated_auth_denied_total:$before_denied}},
+         {phase:"after",metrics:{delegated_auth_token_reviews_total:$after_token,delegated_auth_access_reviews_total:$after_access,delegated_auth_allowed_total:$after_allowed,delegated_auth_denied_total:$after_denied}}
+       ],
+       redaction:{authorization_retained:false,cluster_identity_retained:false,command_output_retained:false,kubeconfig_retained:false,metric_label_values_retained:false,metric_values_retained:false,secret_retained:false,token_retained:false}}
+    ' >"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if ! jq -e --arg profile "$profile" --arg reason "$reason" '
+      def shape:
+        type == "object" and
+        (keys | sort) == ["sample_count","shape","value_class"] and
+        (.sample_count | type == "number" and floor == . and . >= 0) and
+        ((.shape == "absent" and .value_class == "absent" and .sample_count == 0) or
+         (.shape == "invalid" and .value_class == "invalid" and .sample_count > 0) or
+         ((.shape == "unlabeled" or .shape == "labeled" or .shape == "mixed") and
+          (.value_class == "zero" or .value_class == "positive") and .sample_count > 0));
+      def metrics:
+        type == "object" and
+        (keys | sort) == ["delegated_auth_access_reviews_total","delegated_auth_allowed_total","delegated_auth_denied_total","delegated_auth_token_reviews_total"] and
+        (to_entries | all(.[]; .value | shape));
+      def observation($phase):
+        type == "object" and (keys | sort) == ["metrics","phase"] and .phase == $phase and (.metrics | metrics);
+      (keys | sort) == ["failure","observations","redaction","schema"] and
+      .schema == "lumen.standalone-gke-metric-shape/v1" and
+      .failure == {profile:$profile,reason:$reason} and
+      (.observations | type == "array" and length == 2) and
+      (.observations[0] | observation("before")) and
+      (.observations[1] | observation("after")) and
+      .redaction == {metric_label_values_retained:false,metric_values_retained:false,authorization_retained:false,cluster_identity_retained:false,command_output_retained:false,kubeconfig_retained:false,secret_retained:false,token_retained:false}
+    ' "$tmp" >/dev/null; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  report_bytes="$(wc -c < "$tmp" | tr -d ' ')"
+  [[ "$report_bytes" -gt 0 && "$report_bytes" -le 8192 ]] || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$report" || { rm -f -- "$tmp"; return 1; }
+  safe_private_file "$report"
+}
+
+v2_fail_metric_delta() {
+  local profile="$1" reason="$2" before="$3" after="$4" message="$5"
+  v2_write_metric_failure "$profile" "$reason" "$before" "$after" ||
+    die "could not retain redacted metric shape evidence"
+  die "$message"
+}
+
 v2_metric_deltas() {
-  local before="$1" after="$2" tb ta ab aa lb la db da
-  tb="$(v2_metric_total delegated_auth_token_reviews_total "$before")" || die "missing delegated_auth_token_reviews_total"
-  ta="$(v2_metric_total delegated_auth_token_reviews_total "$after")" || die "missing delegated_auth_token_reviews_total"
-  ab="$(v2_metric_total delegated_auth_access_reviews_total "$before")" || die "missing delegated_auth_access_reviews_total"
-  aa="$(v2_metric_total delegated_auth_access_reviews_total "$after")" || die "missing delegated_auth_access_reviews_total"
-  lb="$(v2_metric_total delegated_auth_allowed_total "$before")" || die "missing delegated_auth_allowed_total"
-  la="$(v2_metric_total delegated_auth_allowed_total "$after")" || die "missing delegated_auth_allowed_total"
-  db="$(v2_metric_total delegated_auth_denied_total "$before")" || die "missing delegated_auth_denied_total"
-  da="$(v2_metric_total delegated_auth_denied_total "$after")" || die "missing delegated_auth_denied_total"
-  [[ "$ta" -gt "$tb" && "$aa" -gt "$ab" && "$la" -gt "$lb" && "$da" -gt "$db" ]] || die "measured auth metric deltas are not positive"
+  local profile="$1" before="$2" after="$3" tb ta ab aa lb la db da
+  tb="$(v2_metric_total delegated_auth_token_reviews_total "$before")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_token_reviews_total"
+  ta="$(v2_metric_total delegated_auth_token_reviews_total "$after")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_token_reviews_total"
+  ab="$(v2_metric_total delegated_auth_access_reviews_total "$before")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_access_reviews_total"
+  aa="$(v2_metric_total delegated_auth_access_reviews_total "$after")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_access_reviews_total"
+  lb="$(v2_metric_total delegated_auth_allowed_total "$before")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_allowed_total"
+  la="$(v2_metric_total delegated_auth_allowed_total "$after")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_allowed_total"
+  db="$(v2_metric_total delegated_auth_denied_total "$before")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_denied_total"
+  da="$(v2_metric_total delegated_auth_denied_total "$after")" || v2_fail_metric_delta "$profile" missing_metric "$before" "$after" "missing delegated_auth_denied_total"
+  [[ "$ta" -gt "$tb" && "$aa" -gt "$ab" && "$la" -gt "$lb" && "$da" -gt "$db" ]] || v2_fail_metric_delta "$profile" non_positive_delta "$before" "$after" "measured auth metric deltas are not positive"
   jq -n --argjson tokenreview_delta "$((ta-tb))" --argjson subjectaccessreview_delta "$((aa-ab))" --argjson allowed_delta "$((la-lb))" --argjson denied_delta "$((da-db))" \
     '{tokenreview_delta:$tokenreview_delta,subjectaccessreview_delta:$subjectaccessreview_delta,allowed_delta:$allowed_delta,denied_delta:$denied_delta}'
 }
@@ -1197,7 +1292,6 @@ run_live_acceptance_v2() {
   v2_capture_pvc_identity
   initial_uid="$V2_LAST_POD_UID"
   v2_assert_network
-  v2_run_metrics_job metrics-before-incluster
   v2_run_api_job create app default PUT /collections/gke '{"fields":{"tag":{"type":"keyword"}}}' 2xx none none
   v2_run_api_job index-first app default POST /collections/gke/index '{"items":[{"external_id":"durable-first","field":"tag","value":"first"}]}' 2xx none none
   v2_run_api_job search-first app default POST /collections/gke/search '{"query":{"term":{"field":"tag","value":"first"}},"limit":10}' 2xx durable-first none
@@ -1220,9 +1314,11 @@ run_live_acceptance_v2() {
   k patch statefulset lumen --namespace "$V2_RUNTIME_NAMESPACE" --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":"1"},{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":"1Gi"}]' >/dev/null
   v2_wait_pod "$replacement_uid" in-cluster 1 1Gi
   resized_uid="$V2_LAST_POD_UID"
+  v2_run_metrics_job metrics-before-incluster
   v2_run_api_job marker-after-resize app default POST /collections/gke/search '{"query":{"term":{"field":"tag","value":"first"}},"limit":10}' 2xx durable-first none
+  v2_run_api_job metrics-denied-after-resize unlisted default POST /collections/gke/search '{"query":{"term":{"field":"tag","value":"first"}},"limit":10}' 403 none none
   v2_run_metrics_job metrics-after-incluster
-  v2_metric_deltas "$TMP_ROOT/metrics-before-incluster.metrics" "$TMP_ROOT/metrics-after-incluster.metrics" >/dev/null
+  v2_metric_deltas in-cluster "$TMP_ROOT/metrics-before-incluster.metrics" "$TMP_ROOT/metrics-after-incluster.metrics" >/dev/null
   v2_required_runtime
   k apply -f "$V2_REQUIRED_STATEFULSET" >/dev/null
   v2_wait_pod "$resized_uid" required 1 1Gi
@@ -1233,7 +1329,7 @@ run_live_acceptance_v2() {
   v2_run_api_job required-default-app app default POST /collections/gke/search '{"query":{"term":{"field":"tag","value":"first"}},"limit":10}' 401 none none
   v2_run_api_job required-projected-unlisted unlisted projected POST /collections/gke/search '{"query":{"term":{"field":"tag","value":"first"}},"limit":10}' 403 none none
   v2_run_metrics_job metrics-after-required
-  V2_REQUIRED_DELTAS="$(v2_metric_deltas "$TMP_ROOT/metrics-before-required.metrics" "$TMP_ROOT/metrics-after-required.metrics")"
+  V2_REQUIRED_DELTAS="$(v2_metric_deltas required "$TMP_ROOT/metrics-before-required.metrics" "$TMP_ROOT/metrics-after-required.metrics")"
   V2_LIVE=true
   V2_REQUIRED=true
 }
