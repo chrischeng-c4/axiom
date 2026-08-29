@@ -437,6 +437,18 @@ validate_live_infrastructure() {
   assert_storage_class "$RUN_ROOT/control/storage-class.json" || die 'premium-rwo StorageClass violates the fixed contract'
 }
 
+wait_for_konnectivity_agent() {
+  local attempt
+  for ((attempt = 1; attempt <= 20; attempt++)); do
+    if kubectl --kubeconfig "$KUBECONFIG" --context "$CONTEXT" --request-timeout=10s get deployment konnectivity-agent --namespace kube-system -o json >"$RUN_ROOT/control/konnectivity-agent.json" 2>"$RUN_ROOT/control/konnectivity-agent.err" &&
+      jq -e 'type == "object" and (.metadata.generation | type == "number") and (.status.observedGeneration | type == "number") and (.status.observedGeneration >= .metadata.generation) and (.spec.replicas | type == "number" and . > 0) and (.status.replicas | type == "number") and (.status.replicas == .spec.replicas) and (.status.readyReplicas | type == "number") and (.status.readyReplicas == .spec.replicas) and (.status.availableReplicas | type == "number") and (.status.availableReplicas == .spec.replicas) and ((.status.unavailableReplicas // 0) == 0)' "$RUN_ROOT/control/konnectivity-agent.json" >/dev/null; then
+      return 0
+    fi
+    [[ "$attempt" -lt 20 ]] && sleep 5
+  done
+  die 'Konnectivity agent did not become ready'
+}
+
 run_inner_gate() {
   env -i PATH="$PATH" KUBECONFIG="$KUBECONFIG" LUMEN_STANDALONE_GKE_CONTEXT="$CONTEXT" LUMEN_STANDALONE_GKE_PROJECT_ID="$PROJECT_ID" LUMEN_STANDALONE_GKE_LOCATION="$GKE_ZONE" LUMEN_STANDALONE_GKE_CLUSTER="$CLUSTER" LUMEN_STANDALONE_GKE_CLI="$LUMEN_CLI" LUMEN_STANDALONE_GKE_IMAGE="$IMAGE" LUMEN_STANDALONE_GKE_CLIENT_IMAGE="$CLIENT_IMAGE" LUMEN_STANDALONE_GKE_CLI_TARGET="$CLI_TARGET" LUMEN_STANDALONE_GKE_STORAGE_CLASS='premium-rwo' LUMEN_STANDALONE_GKE_NODE_POOL="$NODE_POOL" LUMEN_STANDALONE_GKE_RUN_ID="$RUN_ID" LUMEN_STANDALONE_GKE_EXPECTED_COMMIT="$EXPECTED_COMMIT" LUMEN_STANDALONE_GKE_EXPECTED_RUN_ID="$EXPECTED_RUN_ID" LUMEN_STANDALONE_GKE_EXPECTED_RUN_ATTEMPT="$EXPECTED_RUN_ATTEMPT" LUMEN_STANDALONE_GKE_EXPECTED_MANIFEST_SHA256="$EXPECTED_MANIFEST_SHA256" LUMEN_STANDALONE_GKE_EVIDENCE_DIR="$RUN_ROOT/private-receipt" LUMEN_STANDALONE_GKE_MUTATION=1 LUMEN_STANDALONE_GKE_CANDIDATE_RECEIPT_DIR="$CANDIDATE_RECEIPT_DIR" bash "$REPO_ROOT/apps/lumen/scripts/standalone-gke-acceptance.sh" --mode gke >"$RUN_ROOT/control/inner.log" 2>"$RUN_ROOT/control/inner.err" || die 'inner standalone GKE gate failed'
 }
@@ -483,6 +495,7 @@ main() {
   run_static_prechecks
   create_cluster
   validate_live_infrastructure
+  wait_for_konnectivity_agent
   run_inner_gate
   validate_private_receipt
   destroy_cluster

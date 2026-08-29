@@ -86,6 +86,7 @@ k() {
   [[ "$1" == get && "$2" == pod ]] || return 99
   cat "$POD_FIXTURE"
 }
+
 v2_expected_child() { printf '%s' 'sha256:child'; }
 sleep() { SECONDS=300; }
 v2_wait_pod() {
@@ -104,6 +105,97 @@ v2_wait_pod '' in-cluster 500m 512Mi
         .env("TMP_ROOT", fixture.path())
         .output()
         .expect("run service-link wait harness")
+}
+
+struct JobLogOracleResult {
+    output: Output,
+    calls: u32,
+    sleeps: usize,
+    log: String,
+}
+
+fn run_job_log_reader(source: &str, mode: &str) -> JobLogOracleResult {
+    let fixture = tempfile::Builder::new()
+        .prefix("lumen-job-log-oracle-")
+        .tempdir()
+        .expect("job-log fixture");
+    let script = fixture.path().join("run.sh");
+    let harness = [
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+V2_CLIENT_NAMESPACE=client
+COUNT="$TMP_ROOT/count"
+SLEEPS="$TMP_ROOT/sleeps"
+die() {
+  printf 'standalone GKE acceptance: %s\n' "$*" >&2
+  exit 2
+}
+sleep() {
+  [[ "$1" == 5 ]] || exit 93
+  printf x >>"$SLEEPS"
+}
+k() {
+  [[ "$1" == logs ]] || exit 91
+  [[ " $* " == *' --request-timeout=10s '* ]] || exit 92
+  local n
+  n=$(<"$COUNT")
+  n=$((n + 1))
+  printf '%s' "$n" >"$COUNT"
+  case "$ORACLE_MODE:$n" in
+    permanent:*)
+      printf 'Forbidden\n' >&2
+      return 1
+      ;;
+    transient6:*)
+      printf 'Error from server: Get "https://redacted/containerLogs/...": No agent available\n' >&2
+      return 1
+      ;;
+    transient:1|transient:2|transient5permanent:1|transient5permanent:2|transient5permanent:3|transient5permanent:4|transient5permanent:5)
+      printf 'Error from server: Get "https://redacted/containerLogs/...": No agent available\n' >&2
+      return 1
+      ;;
+    transient5permanent:6)
+      printf 'Forbidden\n' >&2
+      return 1
+      ;;
+    *)
+      printf 'row=job status=passed\n'
+      return 0
+      ;;
+  esac
+}
+v2_read_job_log() {
+"#,
+        function_body(source, "v2_read_job_log"),
+        r#"
+}
+printf 0 >"$COUNT"
+: >"$SLEEPS"
+v2_read_job_log job "$TMP_ROOT/log"
+"#,
+    ]
+    .concat();
+    fs::write(&script, harness).expect("write job-log harness");
+    let output = Command::new("bash")
+        .arg(&script)
+        .env("TMP_ROOT", fixture.path())
+        .env("ORACLE_MODE", mode)
+        .output()
+        .expect("run job-log harness");
+    let calls = fs::read_to_string(fixture.path().join("count"))
+        .expect("job-log call count")
+        .parse()
+        .expect("decimal job-log call count");
+    let sleeps = fs::read(fixture.path().join("sleeps"))
+        .expect("job-log sleep count")
+        .len();
+    let log = fs::read_to_string(fixture.path().join("log")).unwrap_or_default();
+    JobLogOracleResult {
+        output,
+        calls,
+        sleeps,
+        log,
+    }
 }
 
 fn appears_before(source: &str, first: &str, second: &str) -> bool {
@@ -138,12 +230,38 @@ fn kubectl_line_inventory_is_complete(source: &str) -> bool {
 
 fn shared_renderer_findings(source: &str) -> Vec<&'static str> {
     let mut bad = Vec::new();
+    let log_reader = function_body(source, "v2_read_job_log");
+    if source.matches("k logs").count() != 1
+        || log_reader.contains("apply")
+        || log_reader.contains("wait")
+        || log_reader.contains("create")
+        || source.contains("LUMEN_STANDALONE_GKE_TEST_NO_SLEEP")
+        || !appears_before(source, "grep -Fq -- 'No agent available'", "[[ \"$attempt\" -lt 6 ]]")
+    {
+        bad.push("CLIENT");
+    }
+    for required in [
+        "for ((attempt = 1; attempt <= 6; attempt++)); do",
+        "grep -Fq -- 'No agent available' \"$error\" || die \"job log read failed\"",
+        "[[ \"$attempt\" -lt 6 ]] || die \"Konnectivity agent unavailable while reading job log\"",
+        "sleep 5",
+    ] {
+        if !has_exact_line(log_reader, required) {
+            bad.push("CLIENT");
+        }
+    }
+    if !log_reader.contains("--request-timeout=10s") {
+        bad.push("CLIENT");
+    }
     for (name, component) in [
         ("v2_run_client_tooling_job", "tooling"),
         ("v2_run_api_job", "api"),
         ("v2_run_metrics_job", "metrics"),
     ] {
         let body = function_body(source, name);
+        if body.matches("v2_read_job_log \"$job\" \"$log\"").count() != 1 {
+            bad.push("CLIENT");
+        }
         let renderer = format!("\"$KUSTOMIZE_RENDERER\" {component} \\");
         let validator = format!("ruby \"$KUSTOMIZE_VALIDATOR\" {component} \\");
         if body.lines().filter(|line| line.trim() == renderer).count() != 1
@@ -1266,6 +1384,43 @@ fn live_gate_has_the_complete_candidate_bound_contract() {
 }
 
 #[test]
+fn job_log_reader_retries_only_konnectivity_transients() {
+    let source = full_script();
+    for (mode, code, calls, sleeps, log, needle) in [
+        ("transient", 0, 3, 2, "row=job status=passed\n", ""),
+        (
+            "transient6",
+            2,
+            6,
+            5,
+            "",
+            "Konnectivity agent unavailable while reading job log",
+        ),
+        ("permanent", 2, 1, 0, "", "job log read failed"),
+        (
+            "transient5permanent",
+            2,
+            6,
+            5,
+            "",
+            "job log read failed",
+        ),
+    ] {
+        let result = run_job_log_reader(&source, mode);
+        let stderr = String::from_utf8_lossy(&result.output.stderr);
+        assert_eq!(result.output.status.code(), Some(code), "mode={mode}: {stderr}");
+        assert_eq!(result.calls, calls, "mode={mode}: wrong call count");
+        assert_eq!(result.sleeps, sleeps, "mode={mode}: wrong sleep count");
+        assert_eq!(result.log, log, "mode={mode}: wrong log bytes");
+        if needle.is_empty() {
+            assert!(stderr.is_empty(), "mode={mode}: {stderr}");
+        } else {
+            assert!(stderr.contains(needle), "mode={mode}: {stderr}");
+        }
+    }
+}
+
+#[test]
 fn service_link_assertion_executes_inside_the_pod_wait_predicate() {
     let source = live_slice();
     let disabled = run_service_link_wait(&source, false, "True");
@@ -1468,6 +1623,42 @@ fn negative_mutations_remove_real_gate_obligations() {
         (
             "if ! k apply -f \"$TMP_ROOT/v2-client/rendered.yaml\" >/dev/null; then die \"client apply failed\"; fi",
             "if ! k apply -f \"$TMP_ROOT/v2-client/namespace.json\" >/dev/null; then die \"client apply failed\"; fi",
+            "CLIENT",
+        ),
+        (
+            "for ((attempt = 1; attempt <= 6; attempt++))",
+            "for ((attempt = 1; attempt <= 60; attempt++))",
+            "CLIENT",
+        ),
+        (
+            "--request-timeout=10s",
+            "--request-timeout=60s",
+            "CLIENT",
+        ),
+        (
+            "grep -Fq -- 'No agent available'",
+            "grep -Fqx -- 'No agent available'",
+            "CLIENT",
+        ),
+        ("sleep 5", "sleep 1", "CLIENT"),
+        (
+            "grep -Fq -- 'No agent available' \"$error\" || die \"job log read failed\"",
+            "grep -Fq -- 'No agent available' \"$error\" || true # retry every log error",
+            "CLIENT",
+        ),
+        (
+            "v2_read_job_log \"$job\" \"$log\"\n  grep -Fx 'row=client-tools status=passed'",
+            "k logs \"job/$job\" --namespace \"$V2_CLIENT_NAMESPACE\" >\"$log\"\n  grep -Fx 'row=client-tools status=passed'",
+            "CLIENT",
+        ),
+        (
+            "v2_read_job_log \"$job\" \"$log\"\n  grep -Fx 'row=client-tools status=passed'",
+            "k apply -f \"$render_dir/rendered.yaml\" >/dev/null\n  v2_read_job_log \"$job\" \"$log\"\n  grep -Fx 'row=client-tools status=passed'",
+            "CLIENT",
+        ),
+        (
+            "v2_read_job_log() {\n",
+            "v2_read_job_log() {\n  LUMEN_STANDALONE_GKE_TEST_NO_SLEEP=1\n",
             "CLIENT",
         ),
         (

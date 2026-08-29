@@ -800,6 +800,20 @@ v2_job_name() {
   printf 'lumen-gke-%s-%s' "$V2_RUN_HASH" "$1"
 }
 
+v2_read_job_log() {
+  local job="$1" log="$2" attempt
+  local error="$TMP_ROOT/$job.logs.err"
+  for ((attempt = 1; attempt <= 6; attempt++)); do
+    if k logs "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --request-timeout=10s >"$log" 2>"$error"; then
+      return 0
+    fi
+    grep -Fq -- 'No agent available' "$error" || die "job log read failed"
+    [[ "$attempt" -lt 6 ]] || die "Konnectivity agent unavailable while reading job log"
+    sleep 5
+  done
+  die "Konnectivity agent unavailable while reading job log"
+}
+
 v2_run_client_tooling_job() {
   local job render_dir log
   job="$(v2_job_name client-tools)"
@@ -821,7 +835,7 @@ v2_run_client_tooling_job() {
   k apply -f "$render_dir/rendered.yaml" >/dev/null
   k wait --for=condition=complete "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --timeout=150s >/dev/null
   log="$TMP_ROOT/${job}.log"
-  k logs "job/$job" --namespace "$V2_CLIENT_NAMESPACE" >"$log"
+  v2_read_job_log "$job" "$log"
   grep -Fx 'row=client-tools status=passed' "$log" >/dev/null || die "client image tooling contract failed"
   [[ "$(wc -l < "$log" | tr -d ' ')" == 1 ]] || die "client tooling job emitted extra output"
 }
@@ -876,7 +890,7 @@ v2_run_api_job() {
   k apply -f "$render_dir/rendered.yaml" >/dev/null
   k wait --for=condition=complete "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --timeout=150s >/dev/null
   log="$TMP_ROOT/${job}.log"
-  k logs "job/$job" --namespace "$V2_CLIENT_NAMESPACE" >"$log"
+  v2_read_job_log "$job" "$log"
   grep -Fx "row=$label status=$expected" "$log" >/dev/null || die "client job did not prove expected status"
   [[ "$(wc -l < "$log" | tr -d ' ')" == 1 ]] || die "client job retained request or response output"
 }
@@ -908,7 +922,7 @@ v2_run_metrics_job() {
   k apply -f "$render_dir/rendered.yaml" >/dev/null
   k wait --for=condition=complete "job/$job" --namespace "$V2_CLIENT_NAMESPACE" --timeout=150s >/dev/null
   log="$TMP_ROOT/${job}.log"
-  k logs "job/$job" --namespace "$V2_CLIENT_NAMESPACE" >"$log"
+  v2_read_job_log "$job" "$log"
   grep -Fx "row=$label status=200" "$log" >/dev/null || die "metrics job did not return 200"
   sed '1d' "$log" >"$TMP_ROOT/${label}.metrics"
   [[ -s "$TMP_ROOT/${label}.metrics" ]] || die "metrics text is missing from private temp"
