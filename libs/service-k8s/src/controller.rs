@@ -466,15 +466,20 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
         // transition times and observed generations included. Replacing it with
         // the empty projection would delete the service's status on the pass
         // that was supposed to withdraw the controller's.
-        let mut projected = if facts.is_empty() {
-            prior
-                .iter()
-                .filter(|c| c.type_ != PRUNE_BLOCKED)
-                .cloned()
-                .collect()
+        let mut projected: Vec<_> = if facts.is_empty() {
+            prior.to_vec()
         } else {
             service::project(&prior, facts, generation, &now)
         };
+        // `PruneBlocked` is the controller's condition and the controller is its
+        // sole author, so it is stripped here whatever produced it — the
+        // carried-forward `prior`, or a service that declared a fact of the same
+        // name. `project` maps facts 1:1 with no dedup, so without this the
+        // second case appends a duplicate: two entries with the same `type` in
+        // `status.conditions`, which the CRD declares `listType: map` keyed on
+        // `type` and the apiserver refuses outright — costing the whole status
+        // patch, not just the condition.
+        projected.retain(|c| c.type_ != PRUNE_BLOCKED);
         if let Some(fact) = blocked {
             projected.extend(service::project(&prior, vec![fact], generation, &now));
         }

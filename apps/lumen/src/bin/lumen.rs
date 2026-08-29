@@ -875,9 +875,9 @@ struct SnapshotImportArgs {
 
 /// `lumen inspect` flags: the offline half of the re-index audit
 /// (`Engine::reindex_needed`, which the serving node runs on every reopen and
-/// logs). Reads a document, restores it into a throwaway in-process engine,
-/// and prints what that engine could not restore. Nothing is written and no
-/// node is contacted.
+/// logs). Parses a document and prints which of its fields will not come back,
+/// which of them it could not judge, and how many documents it read to say so.
+/// Nothing is restored, nothing is written, and no node is contacted.
 #[derive(clap::Args)]
 struct InspectArgs {
     /// Read SnapshotV1 JSON bytes from this path. Omit to read stdin.
@@ -893,7 +893,8 @@ struct InspectArgs {
 enum InspectFormat {
     /// Operator-readable lines plus a trailing `next:` command.
     Text,
-    /// A single JSON document: `reindex_needed`, `documents_scanned`.
+    /// A single JSON document: `reindex_needed`, `fields_not_audited`,
+    /// `documents_scanned`.
     Json,
 }
 
@@ -1718,10 +1719,19 @@ async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
 /// operator holding a backup file, deciding whether to import it at all: by
 /// the time a node can answer, the decision has already been made.
 ///
+/// It asks the parsed document, not a restored engine. Restoring first would
+/// build every interner, roaring bitmap and forward map of the whole backup in
+/// RAM — a multiple of the file size, on the machine that most needs the
+/// answer, and against a file already suspected of being damaged — to compute
+/// something out of fields the parsed document already carries.
+/// `SnapshotV1::reindex_needed` and `Engine::reindex_needed` are held to one
+/// verdict by `e2e/reopen_names_the_fields_that_need_reindexing.rs`, which runs
+/// both over the same bytes and requires the same rows.
+///
 /// Deliberately not behind the `backup` feature. Reading a local file and
-/// restoring it into an in-process engine needs no HTTP client, and an operator
-/// diagnosing a suspect backup should not first have to work out which build
-/// of the binary they are holding.
+/// auditing its fields needs no HTTP client, and an operator diagnosing a
+/// suspect backup should not first have to work out which build of the binary
+/// they are holding.
 fn dispatch_snapshot_inspect(args: InspectArgs) -> Result<()> {
     let payload = match &args.file {
         Some(path) => std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
@@ -1737,25 +1747,16 @@ fn dispatch_snapshot_inspect(args: InspectArgs) -> Result<()> {
          not an on-disk segment directory",
     )?;
 
-    // A throwaway engine, so the audit runs against exactly what a real restore
-    // would have produced rather than against a re-reading of the bytes.
-    let engine = Engine::new();
-    engine
-        .restore(snapshot)
-        .context("restore the document into a throwaway in-process engine")?;
-
-    let needed = engine.reindex_needed()?;
-    let mut documents_scanned: std::collections::BTreeMap<String, u64> = Default::default();
-    for id in engine.list_collections()? {
-        let indexed = engine.stats(&id)?.documents_indexed;
-        documents_scanned.insert(id, indexed);
-    }
+    let needed = snapshot.reindex_needed();
+    let not_audited = snapshot.fields_not_audited();
+    let documents_scanned = snapshot.documents_scanned();
 
     match args.format {
         InspectFormat::Json => println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "reindex_needed": needed,
+                "fields_not_audited": not_audited,
                 "documents_scanned": documents_scanned,
             }))?
         ),
@@ -1765,13 +1766,22 @@ fn dispatch_snapshot_inspect(args: InspectArgs) -> Result<()> {
             for (id, indexed) in &documents_scanned {
                 println!("scanned {id}: {indexed} documents");
             }
+            // And so does what the audit could not look at. An empty
+            // `reindex_needed` over a collection whose every field is here is a
+            // clean verdict about nothing.
+            for row in &not_audited {
+                println!(
+                    "NOT AUDITED {}.{}: {}",
+                    row.collection, row.field, row.reason
+                );
+            }
             if needed.is_empty() {
-                println!("no field needs re-indexing");
+                println!("no audited field needs re-indexing");
                 println!("next: done");
             } else {
                 for row in &needed {
                     println!(
-                        "REINDEX {}.{}: the census covers {} documents, the restored index holds \
+                        "REINDEX {}.{}: the census covers {} documents, this document holds \
                          a value for none of them",
                         row.collection, row.field, row.documents_covered
                     );

@@ -15,15 +15,28 @@
 //!
 //! | Case | Runs | What it pins |
 //! |---|---|---|
-//! | the declared list carries `create` | always | the constant the manifests are written from |
-//! | a Role with exactly the declared verbs bootstraps | `SERVICE_K8S_LIVE_KUBE=1` | the apiserver agrees with the list, on the create *and* the renewal |
-//! | the same Role minus `create` cannot bootstrap | `SERVICE_K8S_LIVE_KUBE=1` | `create` is required, not merely declared — without this the live case would pass under any superset |
+//! | the declared list carries `create` | whenever this target does — see below | the constant the manifests are written from |
+//! | a Role with exactly the declared verbs bootstraps | `--ignored` plus `SERVICE_K8S_LIVE_KUBE=1` | the apiserver agrees with the list, on the create *and* the renewal |
+//! | the same Role minus `create` cannot bootstrap | `--ignored` plus `SERVICE_K8S_LIVE_KUBE=1` | `create` is required, not merely declared — without this the live case would pass under any superset |
+//!
+//! No case here runs unconditionally: the manifest declares
+//! `required-features = ["certificate"]` for the whole target, so a build
+//! without that feature compiles none of it — the offline case included. The
+//! feature is in `default`, which is why that reads as "always" until someone
+//! builds with `--no-default-features`.
 //!
 //! The live cases run under an *impersonated* ServiceAccount bound to a Role
 //! this file builds from `REQUIRED_RBAC_VERBS` itself. The lifecycle case in
 //! `certificate_kubernetes_store.rs` beside it runs as the caller's own
 //! kubeconfig identity, which in every environment this has been run in is
 //! cluster-admin — which is precisely why it could not see this.
+//!
+//! Those cases CREATE AND DELETE NAMESPACES. `SERVICE_K8S_LIVE_KUBE=1` says
+//! only that a live run is wanted, not which cluster it is wanted against —
+//! `Config::infer()` then goes to whatever the ambient kubeconfig points at,
+//! which for anyone with a production context selected is production. So
+//! `live_or_skip` also reads `current-context` and requires it to be a `kind-`
+//! cluster, or to match `SERVICE_K8S_LIVE_KUBE_CONTEXT` exactly.
 
 use service_k8s::certificate::kubernetes_store::{RBAC_VERBS, REQUIRED_RBAC_VERBS};
 
@@ -78,12 +91,62 @@ mod live {
 
     const SA: &str = "least-privilege-projector";
 
+    /// Refuse to run against a cluster nobody said to run against.
+    ///
+    /// `SERVICE_K8S_LIVE_KUBE=1` is consent to a live run, not a destination:
+    /// `Config::infer()` reads the ambient kubeconfig, so the flag alone points
+    /// these cases at whichever context happens to be selected. They create
+    /// namespaces and delete namespaces. So the destination is checked too — a
+    /// `kind-` context by default, or exactly what `SERVICE_K8S_LIVE_KUBE_CONTEXT`
+    /// names, for a throwaway cluster whose context is called something else.
     fn live_or_skip() {
         let live = std::env::var("SERVICE_K8S_LIVE_KUBE").unwrap_or_default();
         assert_eq!(
             live, "1",
             "SERVICE_K8S_LIVE_KUBE=1 must be set to run a live cluster test"
         );
+        let context = kube::config::Kubeconfig::read()
+            .expect("read the kubeconfig these cases would otherwise run against")
+            .current_context
+            .expect(
+                "the kubeconfig names no current-context, so there is no way to tell what \
+                 cluster this would create and delete namespaces in",
+            );
+        match std::env::var("SERVICE_K8S_LIVE_KUBE_CONTEXT") {
+            Ok(want) => assert_eq!(
+                context, want,
+                "kubeconfig current-context is `{context}`, but SERVICE_K8S_LIVE_KUBE_CONTEXT \
+                 names `{want}`"
+            ),
+            Err(_) => assert!(
+                context.starts_with("kind-"),
+                "these cases create and delete namespaces, and kubeconfig current-context is \
+                 `{context}` — not a `kind-` cluster. Point kubectl at a throwaway cluster, or \
+                 set SERVICE_K8S_LIVE_KUBE_CONTEXT={context} to say that is deliberate"
+            ),
+        }
+    }
+
+    /// Run `body`, then delete the namespace whether or not it panicked.
+    ///
+    /// `tear_down` as a test's last statement is not a teardown: every assertion
+    /// above it panics on failure, so the one outcome that leaves a namespace
+    /// worth cleaning up — a failing case — is the outcome that skips the
+    /// cleanup. Each leak is a Namespace, a ServiceAccount, a Role and a
+    /// RoleBinding, and a developer iterating on a live failure accumulates one
+    /// per attempt in the cluster they are debugging in.
+    async fn with_teardown<F>(admin: &Client, ns: &str, body: F)
+    where
+        F: std::future::Future<Output = ()>,
+    {
+        use futures::FutureExt as _;
+        let outcome = std::panic::AssertUnwindSafe(body).catch_unwind().await;
+        tear_down(admin, ns).await;
+        if let Err(panic) = outcome {
+            // Re-raise the original panic unchanged, so the test still fails
+            // with the message its own assertion wrote.
+            std::panic::resume_unwind(panic);
+        }
     }
 
     /// A client that talks to the cluster as `system:serviceaccount:<ns>:<SA>`.
@@ -202,29 +265,30 @@ mod live {
         let admin = Client::try_default().await.expect("admin client");
         let ns = stand_up(&admin, REQUIRED_RBAC_VERBS, "declared").await;
 
-        let store = KubernetesSecretStore::new(as_service_account(&ns).await);
-        let name = "peer-tls";
+        with_teardown(&admin, &ns, async {
+            let store = KubernetesSecretStore::new(as_service_account(&ns).await);
+            let name = "peer-tls";
 
-        store
-            .apply(desired(&ns, name, "first"))
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "the first apply creates the Secret, and the apiserver authorizes \
-                     an apply-against-absent as `create`. A grant of {REQUIRED_RBAC_VERBS:?} \
-                     must cover it: {e:?}"
-                )
-            });
-        assert!(
-            store.read(&ns, name).await.expect("read back").is_some(),
-            "the projected Secret must be readable through the same grant"
-        );
-        store
-            .apply(desired(&ns, name, "second"))
-            .await
-            .expect("the renewal apply updates an existing Secret and needs only `patch`");
-
-        tear_down(&admin, &ns).await;
+            store
+                .apply(desired(&ns, name, "first"))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "the first apply creates the Secret, and the apiserver authorizes \
+                         an apply-against-absent as `create`. A grant of \
+                         {REQUIRED_RBAC_VERBS:?} must cover it: {e:?}"
+                    )
+                });
+            assert!(
+                store.read(&ns, name).await.expect("read back").is_some(),
+                "the projected Secret must be readable through the same grant"
+            );
+            store
+                .apply(desired(&ns, name, "second"))
+                .await
+                .expect("the renewal apply updates an existing Secret and needs only `patch`");
+        })
+        .await;
     }
 
     /// The negative control. Without it the case above passes under any grant
@@ -248,32 +312,33 @@ mod live {
         );
         let ns = stand_up(&admin, &reduced, "reduced").await;
 
-        let store = KubernetesSecretStore::new(as_service_account(&ns).await);
-        let err = store
-            .apply(desired(&ns, "peer-tls", "first"))
-            .await
-            .expect_err("a first apply without `create` must be refused");
-        assert!(
-            matches!(err.kind, StoreErrorKind::Forbidden),
-            "the refusal is an RBAC one: {err:?}"
-        );
+        with_teardown(&admin, &ns, async {
+            let store = KubernetesSecretStore::new(as_service_account(&ns).await);
+            let err = store
+                .apply(desired(&ns, "peer-tls", "first"))
+                .await
+                .expect_err("a first apply without `create` must be refused");
+            assert!(
+                matches!(err.kind, StoreErrorKind::Forbidden),
+                "the refusal is an RBAC one: {err:?}"
+            );
 
-        // …and the reduced grant still covers a Secret that already exists, so
-        // the failure above is about `create` and not about the Role being
-        // broken outright.
-        Api::<k8s_openapi::api::core::v1::Secret>::namespaced(admin.clone(), &ns)
-            .patch(
-                "peer-tls",
-                &PatchParams::apply(FIELD_MANAGER).force(),
-                &Patch::Apply(desired(&ns, "peer-tls", "seeded")),
-            )
-            .await
-            .expect("admin seeds the Secret");
-        store
-            .apply(desired(&ns, "peer-tls", "renewed"))
-            .await
-            .expect("`patch` alone still covers an apply against an existing Secret");
-
-        tear_down(&admin, &ns).await;
+            // …and the reduced grant still covers a Secret that already exists,
+            // so the failure above is about `create` and not about the Role
+            // being broken outright.
+            Api::<k8s_openapi::api::core::v1::Secret>::namespaced(admin.clone(), &ns)
+                .patch(
+                    "peer-tls",
+                    &PatchParams::apply(FIELD_MANAGER).force(),
+                    &Patch::Apply(desired(&ns, "peer-tls", "seeded")),
+                )
+                .await
+                .expect("admin seeds the Secret");
+            store
+                .apply(desired(&ns, "peer-tls", "renewed"))
+                .await
+                .expect("`patch` alone still covers an apply against an existing Secret");
+        })
+        .await;
     }
 }

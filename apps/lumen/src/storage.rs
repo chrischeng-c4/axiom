@@ -2480,27 +2480,35 @@ impl FieldIndex {
         }
     }
 
-    /// Does this field hold a value for ANY of `ids`, read through the same
-    /// segment-aware accessors a query uses? Early-exits on the first hit, so a
-    /// healthy field costs one lookup however many documents cover it.
-    ///
-    /// The Text arm is deliberately excluded — it answers `true` without
-    /// looking. Its snapshot writes a forward entry for EVERY covered id,
-    /// explicit-empty values included, so "no tokens" is what a field of empty
-    /// strings looks like as well as what a dropped one does, and the two are
-    /// not separable here. It is also not in the damaged class: the seal bug
-    /// this feeds emptied a `Set` field's two halves, and Text's column was
-    /// never read from them.
-    fn holds_any(&self, ids: &[u32]) -> bool {
+    /// How much of this arm the reindex audit can actually see. See
+    /// [`FieldAudit`] — and note that an arm answering
+    /// [`FieldAudit::Unauditable`] is reported to the caller as unexamined
+    /// rather than silently folded into a clean verdict.
+    fn audit_kind(&self) -> FieldAudit {
         match self {
-            FieldIndex::Text { .. } => true,
-            FieldIndex::Keyword(k) => ids.iter().any(|&id| k.keyword_at(id).is_some()),
-            FieldIndex::Number(n) => ids.iter().any(|&id| n.live_number_at(id).is_some()),
-            FieldIndex::Set(s) => ids.iter().any(|&id| s.live_set_members(id).is_some()),
-            // A vector index has no per-id accessor that distinguishes "absent"
-            // from "the zero vector"; its own population is the honest answer.
-            FieldIndex::Vector { idx, .. } => idx.len() > 0,
-            FieldIndex::Hash(h) => ids.iter().any(|&id| h.hash_at(id).is_some()),
+            FieldIndex::Text { .. } => FieldAudit::Unauditable(TEXT_UNAUDITABLE),
+            FieldIndex::Keyword(_)
+            | FieldIndex::Number(_)
+            | FieldIndex::Set(_)
+            | FieldIndex::Hash(_) => FieldAudit::PerId,
+            FieldIndex::Vector { idx, .. } => FieldAudit::WholeIndex(idx.len() > 0),
+        }
+    }
+
+    /// Does this field hold a value for `id`, read through the same
+    /// segment-aware accessors a query uses?
+    ///
+    /// Only meaningful for the arms [`FieldIndex::audit_kind`] answers
+    /// [`FieldAudit::PerId`] for; the others answer `true` so that a caller
+    /// that probes them anyway cannot manufacture a damage report out of an
+    /// arm this cannot speak for.
+    fn holds(&self, id: u32) -> bool {
+        match self {
+            FieldIndex::Keyword(k) => k.keyword_at(id).is_some(),
+            FieldIndex::Number(n) => n.live_number_at(id).is_some(),
+            FieldIndex::Set(s) => s.live_set_members(id).is_some(),
+            FieldIndex::Hash(h) => h.hash_at(id).is_some(),
+            FieldIndex::Text { .. } | FieldIndex::Vector { .. } => true,
         }
     }
 
@@ -3192,8 +3200,13 @@ impl Engine {
     /// * If it exists but is soft-deleted, the tombstone is superseded
     ///   (#3953): the result is a fresh, empty collection holding only the
     ///   declared fields — but its version CONTINUES the tombstone's rather
-    ///   than restarting at 1, so `version` stays monotonic for the life of
-    ///   the id and a caller cannot mistake a supersede for a stale read.
+    ///   than restarting at 1, so a caller watching the id cannot mistake a
+    ///   supersede for a stale read. This holds across a *soft* delete only:
+    ///   `force` and `sweep_deleted` drop the entry outright, and the next
+    ///   create answers 1 again — that id has no history left to continue, and
+    ///   `e2e/collection_version_never_moves_backwards.rs` pins the reset. A
+    ///   caller that keys a cache on `version` must therefore treat a
+    ///   *decrease* as "different collection", not as a stale response.
     /// * If it exists, fields **missing** from the existing schema are
     ///   appended online (version bumps once per call regardless of how
     ///   many fields were added). Re-declaring an existing field with a
@@ -4731,6 +4744,23 @@ impl Engine {
             .collections
             .iter()
             .flat_map(|(id, coll)| coll.reindex_needed(id))
+            .collect();
+        out.sort_by(|a, b| (&a.collection, &a.field).cmp(&(&b.collection, &b.field)));
+        Ok(out)
+    }
+
+    /// Every field [`Engine::reindex_needed`] did not examine, across every
+    /// collection. See [`FieldNotAudited`].
+    ///
+    /// A caller reporting the empty verdict as "nothing needs re-indexing" has
+    /// to report this beside it, or it is describing a partial audit as a
+    /// complete one.
+    pub fn fields_not_audited(&self) -> Result<Vec<FieldNotAudited>> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        let mut out: Vec<FieldNotAudited> = state
+            .collections
+            .iter()
+            .flat_map(|(id, coll)| coll.fields_not_audited(id))
             .collect();
         out.sort_by(|a, b| (&a.collection, &a.field).cmp(&(&b.collection, &b.field)));
         Ok(out)
@@ -9483,11 +9513,25 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 /// [`SnapshotV1::version`].
 ///
 /// 2 dropped the `terms` / `elements` inverted maps from the Keyword and Set
-/// arms. Reading is unaffected in either direction of this build's own history
-/// — serde ignores a format-1 document's extra field — but an OLDER binary
-/// reading a format-2 document would fail deserialisation on the now-absent
-/// required field, with a message about `terms` rather than about the format.
-/// The bump is what turns that into the version refusal it actually is.
+/// arms. Reading forward is unaffected — serde ignores a format-1 document's
+/// extra field, and `e2e/snapshot_ships_only_the_forward_column.rs` pins that.
+///
+/// Reading BACKWARD, the bump does not do what a version gate looks like it
+/// does, and it is worth being exact about that rather than assuming a safety
+/// net that is not there. An 0.4.29 reader declares `terms` as a required
+/// field, so a format-2 document fails inside `serde_json` — with a message
+/// about a missing field — before that build's own `1..=1` check ever runs.
+/// `version` is a field of the same struct being deserialised; there is no
+/// point at which it is read first. The refusal is real either way, and the
+/// removal is safe for that reason; what the bump buys is a clear message for
+/// the NEXT reader, not for the ones already shipped.
+///
+/// Making an old reader refuse *by version* would have meant keeping the two
+/// maps on the wire as empty placeholders for one release, and that is exactly
+/// what the e2e above refuses. So the ordering constraint is the operational
+/// one: upgrade readers before writers. A rolling upgrade that starts a reshard
+/// or a Raft catch-up into a not-yet-upgraded peer surfaces this as a decode
+/// error naming `terms`, not as a version mismatch.
 const SNAPSHOT_VERSION: u32 = 2;
 
 /// Top-level snapshot document. JSON-serialisable.
@@ -9505,6 +9549,108 @@ pub struct CollectionSnapshot {
     pub version: u32,
     pub eid_fields: HashMap<String, BTreeSet<String>>,
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
+}
+
+impl SnapshotV1 {
+    /// The reindex audit, asked of the DOCUMENT instead of a restored engine.
+    ///
+    /// This must answer exactly what [`Engine::reindex_needed`] answers for the
+    /// same bytes, and `e2e/reopen_names_the_fields_that_need_reindexing.rs`
+    /// runs both over one document and requires the same rows — the differential
+    /// is what keeps the two from drifting.
+    ///
+    /// It exists because the audience is an operator holding a backup file,
+    /// deciding whether to import it at all. Restoring into a throwaway
+    /// `Engine` to ask would materialise every interner, roaring bitmap and
+    /// forward map of the entire backup in RAM — a multiple of the file size,
+    /// on the machine that most needs the answer — while every fact the audit
+    /// reads is already a plain field of the parsed document.
+    pub fn reindex_needed(&self) -> Vec<ReindexNeeded> {
+        struct Tally<'a> {
+            field: &'a FieldIndexSnapshot,
+            covered: u64,
+            holds: bool,
+            probe: bool,
+        }
+        let mut out = Vec::new();
+        // `collections` and `fields` are both `BTreeMap`, so the rows come out
+        // ordered by collection then field with no sort — the same order
+        // `Engine::reindex_needed` sorts into.
+        for (collection, coll) in &self.collections {
+            let mut tally: BTreeMap<&str, Tally<'_>> = coll
+                .fields
+                .iter()
+                .filter_map(|(name, field)| {
+                    let (holds, probe) = match field.audit_kind() {
+                        FieldAudit::PerId => (false, true),
+                        FieldAudit::WholeIndex(populated) => (populated, false),
+                        FieldAudit::Unauditable(_) => return None,
+                    };
+                    Some((
+                        name.as_str(),
+                        Tally {
+                            field,
+                            covered: 0,
+                            holds,
+                            probe,
+                        },
+                    ))
+                })
+                .collect();
+            for (eid, cov) in &coll.eid_fields {
+                for name in cov {
+                    if let Some(t) = tally.get_mut(name.as_str()) {
+                        t.covered += 1;
+                        if t.probe && !t.holds {
+                            t.holds = t.field.holds(eid);
+                        }
+                    }
+                }
+            }
+            out.extend(
+                tally
+                    .into_iter()
+                    .filter(|(_, t)| t.covered > 0 && !t.holds)
+                    .map(|(field, t)| ReindexNeeded {
+                        collection: collection.clone(),
+                        field: field.to_string(),
+                        documents_covered: t.covered,
+                    }),
+            );
+        }
+        out
+    }
+
+    /// Every field [`SnapshotV1::reindex_needed`] did not examine. See
+    /// [`FieldNotAudited`].
+    pub fn fields_not_audited(&self) -> Vec<FieldNotAudited> {
+        self.collections
+            .iter()
+            .flat_map(|(collection, coll)| {
+                coll.fields
+                    .iter()
+                    .filter_map(move |(field, index)| match index.audit_kind() {
+                        FieldAudit::Unauditable(reason) => Some(FieldNotAudited {
+                            collection: collection.clone(),
+                            field: field.clone(),
+                            reason: reason.to_string(),
+                        }),
+                        _ => None,
+                    })
+            })
+            .collect()
+    }
+
+    /// Per collection, how many live documents this document's census carries —
+    /// the same figure `stats` reports as `documents_indexed`. It travels with
+    /// the verdict so "nothing is damaged" reads differently from "nothing was
+    /// read".
+    pub fn documents_scanned(&self) -> BTreeMap<String, u64> {
+        self.collections
+            .iter()
+            .map(|(id, coll)| (id.clone(), coll.eid_fields.len() as u64))
+            .collect()
+    }
 }
 
 /// One field a reopen could not restore: the collection's own document census
@@ -9528,6 +9674,42 @@ pub struct ReindexNeeded {
     pub collection: String,
     pub field: String,
     pub documents_covered: u64,
+}
+
+/// A field the reindex audit did NOT examine, and why.
+///
+/// This travels beside [`ReindexNeeded`] because the audit's whole value to an
+/// operator is the negative answer — "nothing needs re-indexing, import the
+/// backup" — and a negative answer is only worth acting on next to the list of
+/// what it did not cover. Without this, a `Text` field whose contents were
+/// dropped clears the same audit a healthy one does, and the report says so in
+/// exactly the same words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldNotAudited {
+    pub collection: String,
+    pub field: String,
+    pub reason: String,
+}
+
+const TEXT_UNAUDITABLE: &str = "a Text field writes a forward entry for every covered document, \
+     explicit-empty values included, so a field of empty strings and a field whose contents were \
+     dropped are the same bytes here";
+
+/// How much of a field's arm the reindex audit can see.
+///
+/// The three answers are genuinely different, and collapsing them is what made
+/// the audit overclaim: `Unauditable` is not a healthy verdict, and
+/// `WholeIndex` catches a field emptied outright but not one emptied in part.
+enum FieldAudit {
+    /// Every covered document can be probed individually. Damage is "the census
+    /// covers N documents and not one of them has a value".
+    PerId,
+    /// The arm has no per-id accessor, so only the index's own population is
+    /// observable. `true` = populated.
+    WholeIndex(bool),
+    /// The arm cannot be audited at all. The payload is the reason, and it is
+    /// reported to the caller verbatim.
+    Unauditable(&'static str),
 }
 
 /// Response summary for `POST /admin/reshard:apply` (#1380 R1).
@@ -9617,6 +9799,42 @@ pub enum FieldIndexSnapshot {
     },
 }
 
+impl FieldIndexSnapshot {
+    /// What the reindex audit can learn about this arm, in the same three
+    /// shapes [`FieldIndex::audit_kind`] answers in. The two must agree arm for
+    /// arm: `SnapshotV1::reindex_needed` and `Engine::reindex_needed` are one
+    /// verdict asked of the document and of the restored engine.
+    fn audit_kind(&self) -> FieldAudit {
+        match self {
+            FieldIndexSnapshot::Text { .. } => FieldAudit::Unauditable(TEXT_UNAUDITABLE),
+            FieldIndexSnapshot::Keyword { .. }
+            | FieldIndexSnapshot::Number { .. }
+            | FieldIndexSnapshot::Set { .. }
+            | FieldIndexSnapshot::Hash { .. } => FieldAudit::PerId,
+            FieldIndexSnapshot::Vector { vectors, .. } => {
+                FieldAudit::WholeIndex(!vectors.is_empty())
+            }
+        }
+    }
+
+    /// Whether the forward column carries `eid`.
+    ///
+    /// This is the document-side twin of [`FieldIndex::holds`], and it reads the
+    /// exact column `from_snapshot` restores the index from — so "the document
+    /// holds it" and "the restored index answers for it" cannot come apart
+    /// without a `from_snapshot` bug, which is a different failure from the one
+    /// this audit is looking for.
+    fn holds(&self, eid: &str) -> bool {
+        match self {
+            FieldIndexSnapshot::Keyword { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Number { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Set { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Hash { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Text { .. } | FieldIndexSnapshot::Vector { .. } => true,
+        }
+    }
+}
+
 impl Collection {
     /// Every field this collection's document census covers and its index
     /// cannot answer for. See [`ReindexNeeded`].
@@ -9626,42 +9844,87 @@ impl Collection {
     /// it stands — a field re-indexed after the reopen that reported it stops
     /// being reported, and a field sealed since the reopen does not start.
     fn reindex_needed(&self, collection: &str) -> Vec<ReindexNeeded> {
-        // The same single walk of the coverage map `to_snapshot` does: a
-        // per-field probe of `eid_fields` would be one pass per field.
-        let mut ids_by_field: BTreeMap<&str, Vec<u32>> = self
+        // One walk of the coverage map, probing as it goes.
+        //
+        // The shape this replaces materialised a `Vec<u32>` of every covered id
+        // for every field first, then probed. That is documents × fields of
+        // allocation — gigabytes on a large collection — on a path that runs at
+        // the end of every restore and every segment reopen, to answer a
+        // question that early-exits on the first hit. Probing inside the walk
+        // keeps the single pass AND the early exit while holding O(fields):
+        // once a field has been seen to hold something, the remaining ids only
+        // cost the count.
+        struct Tally<'a> {
+            index: &'a FieldIndex,
+            covered: u64,
+            holds: bool,
+            probe: bool,
+        }
+        // Unauditable arms are excluded here rather than answered `true`:
+        // `fields_not_audited` reports them, and folding them into a clean
+        // verdict is what let a dropped Text field clear this audit.
+        let mut tally: BTreeMap<&str, Tally<'_>> = self
             .fields
-            .keys()
-            .map(|name| (name.as_str(), Vec::new()))
+            .iter()
+            .filter_map(|(name, index)| {
+                let (holds, probe) = match index.audit_kind() {
+                    FieldAudit::PerId => (false, true),
+                    FieldAudit::WholeIndex(populated) => (populated, false),
+                    FieldAudit::Unauditable(_) => return None,
+                };
+                Some((
+                    name.as_str(),
+                    Tally {
+                        index,
+                        covered: 0,
+                        holds,
+                        probe,
+                    },
+                ))
+            })
             .collect();
         for (id, cov) in &self.eid_fields {
             for name in cov.iter() {
-                if let Some(ids) = ids_by_field.get_mut(name.as_str()) {
-                    ids.push(*id);
+                if let Some(t) = tally.get_mut(name.as_str()) {
+                    t.covered += 1;
+                    if t.probe && !t.holds {
+                        t.holds = t.index.holds(*id);
+                    }
                 }
             }
         }
-        let mut out: Vec<ReindexNeeded> = self
+        // `BTreeMap` already yields fields in name order, and the report is
+        // read by humans and diffed by scripts, so the order is the contract.
+        tally
+            .into_iter()
+            // A field no live document carries is empty on purpose. This is
+            // what keeps a sparsely-used field, and every field of an empty
+            // collection, out of the report.
+            .filter(|(_, t)| t.covered > 0 && !t.holds)
+            .map(|(name, t)| ReindexNeeded {
+                collection: collection.to_string(),
+                field: name.to_string(),
+                documents_covered: t.covered,
+            })
+            .collect()
+    }
+
+    /// Every field of this collection the audit above could not examine. See
+    /// [`FieldNotAudited`]. O(fields) — no walk of the census is needed,
+    /// because the answer is a property of the arm, not of the documents.
+    fn fields_not_audited(&self, collection: &str) -> Vec<FieldNotAudited> {
+        let mut out: Vec<FieldNotAudited> = self
             .fields
             .iter()
-            .filter_map(|(name, fi)| {
-                let ids = ids_by_field
-                    .get(name.as_str())
-                    .map_or(&[][..], Vec::as_slice);
-                // A field no live document carries is empty on purpose. This is
-                // what keeps a sparsely-used field, and every field of an empty
-                // collection, out of the report.
-                if ids.is_empty() || fi.holds_any(ids) {
-                    return None;
-                }
-                Some(ReindexNeeded {
+            .filter_map(|(name, index)| match index.audit_kind() {
+                FieldAudit::Unauditable(reason) => Some(FieldNotAudited {
                     collection: collection.to_string(),
                     field: name.clone(),
-                    documents_covered: ids.len() as u64,
-                })
+                    reason: reason.to_string(),
+                }),
+                _ => None,
             })
             .collect();
-        // `fields` is a hash map; the report is read by humans and diffed by
-        // scripts, so it gets a stable order.
         out.sort_by(|a, b| a.field.cmp(&b.field));
         out
     }

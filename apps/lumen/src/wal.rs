@@ -743,11 +743,17 @@ mod tests {
 
     /// #3952 negative control: an AOF/WAL segment written by a binary before
     /// this fix used tag `WAL_FAST_INDEX` (1) and never wrote a version byte
-    /// per item at all. That decode branch must stay byte-for-byte readable
-    /// — this test hand-builds bytes in exactly that old shape (bypassing
-    /// today's encoder, which always emits the versioned tag) and confirms
-    /// decode still succeeds with every item's version reconstructed as
-    /// `None`, matching the pre-fix behavior exactly.
+    /// per item at all. That decode branch must stay byte-for-byte readable.
+    ///
+    /// Today's encoder still emits that tag — it picks the tag from the content,
+    /// and a batch where no item carries a version is written unversioned, which
+    /// is what keeps a segment readable by a peer that has not been upgraded
+    /// yet. So this test does not bypass the encoder to reach an unreachable
+    /// shape; it hand-builds the bytes so the branch is measured against a
+    /// literal layout rather than against whatever the encoder currently emits
+    /// — the encoder is the thing under suspicion in a compatibility case.
+    /// It confirms decode still succeeds with every item's version
+    /// reconstructed as `None`, matching the pre-fix behavior exactly.
     #[test]
     fn decode_fast_record_still_reads_legacy_unversioned_tag() {
         let mut bytes = Vec::new();

@@ -542,23 +542,41 @@ impl HnswCpuIndex {
     /// asks for and what [`VectorIndex::seal_releases_ram`] reports as `false`.
     /// The segment is consumed and dropped: once the rows are re-inserted the
     /// store owns them.
+    ///
+    /// This is a full graph build, and it runs synchronously on the reopen path
+    /// — the node is not serving while it happens. That cost is what declaring
+    /// `hnsw-cpu` buys and there is no cheaper honest option (a graph cannot be
+    /// traversed against a column it has no edges for), but a node that looks
+    /// hung for minutes at start-up with nothing in its log is a different
+    /// problem from a node that is slow. So it says what it is doing, before
+    /// and after, at a level an operator watching a restart actually has on.
     pub fn open_from_segment(
         spec: VectorSpec,
         seg: std::sync::Arc<crate::segment::SegmentReader>,
         row_eids: Vec<String>,
     ) -> Result<Self> {
         let dim = spec.dim as usize;
+        let rows = row_eids.len();
+        tracing::info!(
+            rows,
+            dim,
+            "rebuilding an hnsw-cpu graph from its sealed segment; the node does \
+             not serve this field until it completes"
+        );
+        let started = std::time::Instant::now();
         let idx = Self::new(spec);
         for (row, eid) in row_eids.iter().enumerate() {
             let vector = seg.vector_at(row as u32, dim).ok_or_else(|| {
-                anyhow!(
-                    "vector segment is missing row {row} of {} (eid `{eid}`)",
-                    row_eids.len()
-                )
+                anyhow!("vector segment is missing row {row} of {rows} (eid `{eid}`)")
             })?;
             idx.add(eid, vector)?;
         }
-        debug_assert_eq!(idx.len(), row_eids.len());
+        debug_assert_eq!(idx.len(), rows);
+        tracing::info!(
+            rows,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "hnsw-cpu graph rebuilt"
+        );
         Ok(idx)
     }
 
@@ -782,12 +800,25 @@ impl VectorIndex for HnswCpuIndex {
         }
         let vectors: Vec<Option<&[f32]>> = row_vecs.iter().map(|v| Some(v.as_slice())).collect();
         crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
-        // Read the segment back only where the assertion it feeds is compiled
-        // in. In release the open is pure I/O whose result is discarded.
-        #[cfg(debug_assertions)]
-        {
-            let reader = crate::segment::SegmentReader::open(path)?;
-            debug_assert_eq!(reader.n_docs() as usize, n);
+        // Reopen what was just written, in every build. Once the caller commits
+        // this checkpoint it drops the in-RAM store, so these bytes become the
+        // only copy of the vectors; a segment that cannot be read back has to
+        // fail HERE, while the RAM copy is still there to retry from, rather
+        // than at the next restart with nothing left to recover. The reopen is
+        // one header read against a file the page cache still holds — it is not
+        // the cost that would justify compiling it out.
+        let reader = crate::segment::SegmentReader::open(path).map_err(|e| {
+            anyhow!(
+                "vector segment written to {} could not be read back: {e}",
+                path.display()
+            )
+        })?;
+        if reader.n_docs() as usize != n {
+            bail!(
+                "vector segment written to {} reopened with {} rows, expected {n}",
+                path.display(),
+                reader.n_docs()
+            );
         }
         Ok(Some(row_eids))
     }

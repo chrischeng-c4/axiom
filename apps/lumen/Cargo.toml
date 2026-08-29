@@ -356,10 +356,6 @@ name = "collection_delete_recreate"
 path = "e2e/collection_delete_recreate.rs"
 
 [[test]]
-name = "snapshot_ships_only_the_forward_column"
-path = "e2e/snapshot_ships_only_the_forward_column.rs"
-
-[[test]]
 name = "collection_version_never_moves_backwards"
 path = "e2e/collection_version_never_moves_backwards.rs"
 
@@ -503,10 +499,6 @@ name = "release_artifacts"
 path = "e2e/release_artifacts.rs"
 
 [[test]]
-name = "reopen_names_the_fields_that_need_reindexing"
-path = "e2e/reopen_names_the_fields_that_need_reindexing.rs"
-
-[[test]]
 name = "release_promotion"
 path = "e2e/release_promotion.rs"
 
@@ -517,6 +509,10 @@ path = "e2e/release_candidate.rs"
 [[test]]
 name = "release_feature_set"
 path = "e2e/release_feature_set.rs"
+
+[[test]]
+name = "reopen_names_the_fields_that_need_reindexing"
+path = "e2e/reopen_names_the_fields_that_need_reindexing.rs"
 
 [[test]]
 name = "reshard_admin_e2e"
@@ -567,6 +563,10 @@ path = "e2e/spec_gen_e2e.rs"
 [[test]]
 name = "snapshot_round_trip_keeps_sealed_inverted_index"
 path = "e2e/snapshot_round_trip_keeps_sealed_inverted_index.rs"
+
+[[test]]
+name = "snapshot_ships_only_the_forward_column"
+path = "e2e/snapshot_ships_only_the_forward_column.rs"
 
 [[test]]
 name = "spec_route_parity"
