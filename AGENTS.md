@@ -77,13 +77,51 @@ Then read `CLAUDE.md`. It holds the work-item lifecycle, the per-phase write
 roots, and the rules that refuse against them, and it is the single copy of
 those rules — they are deliberately not repeated here.
 
-### Prefer AGY for bounded delegation
+### Use Codex subagents and select effort per task
 
-When a bounded task can use an external worker, prefer one fresh
-`agy-operator` subagent. Its model is `GPT-5.6 Luna` at medium reasoning.
-Create it only after the user authorizes the exact headless AGY payload. Make it
-directly inherit that user turn. Do not reuse an older operator. Do not forward
-authorization through a controller message.
+Before starting non-trivial work, split it into bounded workstreams where this
+can reduce elapsed time or improve independent review. Prefer the matching
+`<project>-dev` role under `.codex/agents/` for implementation, investigation,
+test design, review, and verification in one owned app or library. Keep the
+main thread as the controller. It freezes scope and ownership, integrates the
+results, reproduces the evidence, and owns final acceptance.
+
+Use several subagents when the workstreams are independent. Run read-only work
+in parallel. Run write work in parallel only when path ownership cannot
+overlap. Tell every worker that it is not alone in the checkout, that it must
+preserve unrelated changes, and that it must not undo another worker's work.
+Reuse a current subagent for a related follow-up. Keep a tiny task in the main
+thread when delegation would cost more than the work. For a cross-project task,
+assign one matching subagent per owned project and keep integration in the main
+thread.
+
+Every project `<project>-dev` role uses `gpt-5.6-terra`. Select its reasoning
+effort when dispatching the task:
+
+- `low` for narrow mechanical work with no public behavior change.
+- `medium` for contained behavior in one owner with focused tests.
+- `high` for material public behavior or several modules and consumers.
+- `xhigh` for cross-project, concurrency, durability, security,
+  compatibility, release, or supply-chain work.
+- `max` for the hardest quality-first work when failure would be costly and
+  deeper verification has measured value.
+
+Pass the selected value as `reasoning_effort` when calling `spawn_agent`. Use
+`fork_turns="none"` or a positive turn count when an explicit effort override
+is required, and include all context that the worker needs. Do not pin one
+universal effort in a role TOML.
+
+Choose the lowest effort that fits the task. Raise it when ambiguity, risk, or
+integration cost increases. A higher effort changes reasoning depth only. It
+never expands scope, write access, authority, or acceptance rights.
+
+### Use AGY only for authorized external delegation
+
+Codex project subagents are the default bounded workers. Use one fresh
+`agy-operator` subagent only when the user authorizes the exact headless AGY
+payload for an external task. Its model is `GPT-5.6 Luna` at medium reasoning.
+Make it directly inherit that user turn. Do not reuse an older operator. Do not
+forward authorization through a controller message.
 
 For more than one task in the same round: any number of `measure-only` tasks
 may run concurrently, and `bounded-write` tasks may run concurrently only
