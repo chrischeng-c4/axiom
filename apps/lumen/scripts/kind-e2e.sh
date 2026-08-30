@@ -174,7 +174,10 @@ wait_lumen_ready() {
 # real dependency closure. The repo-root .dockerignore keeps the context to
 # source-only (~MBs, not the 35G of target/). The deployment pins
 # imagePullPolicy: IfNotPresent, so once `kind load` has injected the image
-# into the node it is used without a registry pull.
+# into the node it is used without a registry pull -- but only for a container
+# that actually names $IMAGE_TAG. Every deploy path below has to repoint its
+# workload at it; `kind load` alone does not, because the manifests ship the
+# released tag and IfNotPresent matches on the whole reference, not the digest.
 build_and_load_image() {
   if [[ "$IMAGE_MODE" == "prebuilt" ]]; then
     echo "   prebuilt mode: skipping docker build and kind load for $IMAGE_TAG"
@@ -190,7 +193,28 @@ deploy_lumen() {
     deploy_via_operator
   else
     kubectl apply -k "${LUMEN_DIR}/k8s/overlays/dev"
+    # The overlay inherits base/deployment.yaml verbatim, and that manifest
+    # pins the released `ghcr.io/chrischeng-c4/lumen:<version>`. `kind load`
+    # injected the build under test under a different name, so IfNotPresent
+    # matched nothing and the node pulled the PREVIOUS RELEASE from GHCR --
+    # a run that looked green while serving code this branch never built.
+    # Repoint the Deployment the same way the local operator path does.
+    kubectl -n "$NAMESPACE" set image deploy/lumen lumen="$IMAGE_TAG"
+    assert_serving_deployment_runs_image_under_test
   fi
+}
+
+# `assert_cluster_identity` returns early unless IMAGE_MODE=prebuilt, so in the
+# default local mode nothing else observes which image the serving workload
+# actually names. Without this row the substitution above can silently stop
+# applying -- a renamed container, a reordered patch -- and the run still reads
+# as a pass.
+assert_serving_deployment_runs_image_under_test() {
+  local observed
+  observed="$(kubectl -n "$NAMESPACE" get deploy/lumen \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="lumen")].image}')"
+  [[ "$observed" == "$IMAGE_TAG" ]] || \
+    die "serving Deployment runs '$observed', not the image under test $IMAGE_TAG"
 }
 
 # Operator path: install the CRD + RBAC + operator (same image as serving),
