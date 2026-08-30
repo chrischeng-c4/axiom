@@ -119,9 +119,19 @@ printf '%s\n' "$NODE_SA_ID" >"$STATE/node-sa"
 printf '%s\n' "$OWNER_ID" >"$STATE/owner"
 printf '%s\n' absent >"$STATE/resource-state"
 : >"$STATE/events"
-printf '%s\n' '{}' >"$CANDIDATE/final-candidate-manifest.json"
-manifest_hash=$(sha256_file "$CANDIDATE/final-candidate-manifest.json")
-printf '%s  final-candidate-manifest.json\n' "$manifest_hash" >"$CANDIDATE/final-candidate-manifest.json.sha256"
+CANDIDATE_VERSION=0.4.30
+CANDIDATE_TAG=lumen@0.4.30
+CANDIDATE_ROOT_DIGEST="sha256:$(printf '%064d' 0)"
+CANDIDATE_COMMIT="$(printf '%040d' 0)"
+write_candidate_manifest() {
+  local version=$1 tag=$2 root_digest=$3
+  jq -nc --arg version "$version" --arg tag "$tag" --arg commit "$CANDIDATE_COMMIT" --arg root_digest "$root_digest" \
+    '{version:$version,tag:$tag,commit:$commit,run_id:"123",run_attempt:"2",image:{root_digest:$root_digest}}' >"$CANDIDATE/final-candidate-manifest.json"
+  manifest_hash=$(sha256_file "$CANDIDATE/final-candidate-manifest.json")
+  printf '%s  final-candidate-manifest.json\n' "$manifest_hash" >"$CANDIDATE/final-candidate-manifest.json.sha256"
+  printf '%s\n' "$manifest_hash" >"$STATE/expected-manifest"
+}
+write_candidate_manifest "$CANDIDATE_VERSION" "$CANDIDATE_TAG" "$CANDIDATE_ROOT_DIGEST"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$CLI"
 chmod 755 "$CLI"
 printf '%s\n' "$FIXTURE/bin:$SYSTEM_PATH" >"$STATE/expected-path"
@@ -170,7 +180,7 @@ for name in KUBECONFIG LUMEN_STANDALONE_GKE_CONTEXT LUMEN_STANDALONE_GKE_PROJECT
 [[ "$LUMEN_STANDALONE_GKE_RUN_ID" == contract-run ]]
 [[ "$LUMEN_STANDALONE_GKE_EXPECTED_RUN_ID" == 123 && "$LUMEN_STANDALONE_GKE_EXPECTED_RUN_ATTEMPT" == 2 ]]
 [[ "$LUMEN_STANDALONE_GKE_EXPECTED_COMMIT" == "$(printf '%040d' 0)" ]]
-[[ "$LUMEN_STANDALONE_GKE_EXPECTED_MANIFEST_SHA256" == "$(printf '%064d' 0)" ]]
+[[ "$LUMEN_STANDALONE_GKE_EXPECTED_MANIFEST_SHA256" == "$(<"$state/expected-manifest")" ]]
 [[ "$LUMEN_STANDALONE_GKE_STORAGE_CLASS" == premium-rwo && "$LUMEN_STANDALONE_GKE_MUTATION" == 1 ]]
 [[ "$LUMEN_STANDALONE_GKE_CLIENT_IMAGE" == docker.io/curlimages/curl@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13 ]]
 [[ "$LUMEN_STANDALONE_GKE_CANDIDATE_RECEIPT_DIR" == "$(<"$state/expected-candidate")" ]]
@@ -195,7 +205,7 @@ validate_receipt() {
 validate_standalone_gke_receipt() {
   local expected name extra actual
   printf '%s\n' verifier:gke >>"$fake_state/events"
-  [[ "$CANDIDATE_ATTEMPT" == 2 && "$COMMIT" == 0000000000000000000000000000000000000000 && "$CANDIDATE_RUN_ID" == 123 ]]
+  [[ "$TAG" == lumen@0.4.30 && "$CANDIDATE_ATTEMPT" == 2 && "$COMMIT" == 0000000000000000000000000000000000000000 && "$CANDIDATE_RUN_ID" == 123 ]]
   read -r expected name extra <"$STANDALONE_GKE_RECEIPT_SIDECAR"
   actual=$(fake_sha "$STANDALONE_GKE_RECEIPT")
   [[ "$expected" == "$actual" && "$name" == lumen-standalone-gke-receipt.json && -z "${extra:-}" ]]
@@ -465,7 +475,7 @@ chmod 755 "$FIXTURE/terraform/lumen-standalone-gke/scripts/check.sh" "$FIXTURE/k
 
 LIVE_FIXTURE="$FIXTURE/terraform/lumen-standalone-gke/scripts/live-acceptance.sh"
 REPAIR_FIXTURE="$FIXTURE/terraform/lumen-standalone-gke/scripts/repair-destroy.sh"
-COMMON_ARGS=(--project-id abcde1 --region us-central1 --gke-zone us-central1-a --run-id contract-run --candidate-receipt-dir "$CANDIDATE" --lumen-cli "$CLI" --cli-target aarch64-apple-darwin --image "ghcr.io/chrischeng-c4/lumen@sha256:$(printf '%064d' 0)" --expected-commit "$(printf '%040d' 0)" --expected-run-id 123 --expected-run-attempt 2 --expected-manifest-sha256 "$(printf '%064d' 0)")
+COMMON_ARGS=(--project-id abcde1 --region us-central1 --gke-zone us-central1-a --run-id contract-run --candidate-receipt-dir "$CANDIDATE" --lumen-cli "$CLI" --cli-target aarch64-apple-darwin --image "ghcr.io/chrischeng-c4/lumen@$CANDIDATE_ROOT_DIGEST" --expected-commit "$CANDIDATE_COMMIT" --expected-run-id 123 --expected-run-attempt 2)
 
 reset_case() {
   local name=$1 mode=$2
@@ -477,7 +487,7 @@ reset_case() {
 }
 
 run_live() {
-  PATH="$FIXTURE/bin:$SYSTEM_PATH" "$LIVE_FIXTURE" "${COMMON_ARGS[@]}" --receipt-out-dir "$CASE_OUT" --confirm-create "$CLUSTER_ID" --confirm-destroy "$CLUSTER_ID" >"$CASE_STDOUT" 2>"$CASE_STDERR"
+  PATH="$FIXTURE/bin:$SYSTEM_PATH" "$LIVE_FIXTURE" "${COMMON_ARGS[@]}" --expected-manifest-sha256 "$manifest_hash" --receipt-out-dir "$CASE_OUT" --confirm-create "$CLUSTER_ID" --confirm-destroy "$CLUSTER_ID" >"$CASE_STDOUT" 2>"$CASE_STDERR"
 }
 
 expect_live_reject() {
@@ -503,6 +513,25 @@ remember_repair_root() {
   printf '%s' "$root"
 }
 
+write_candidate_manifest 0.4 lumen@0.4 "$CANDIDATE_ROOT_DIGEST"
+reset_case candidate-version-invalid happy
+expect_live_reject candidate-version-invalid
+[[ ! -s "$STATE/events" && ! -e "$CASE_OUT" ]] || fail 'invalid candidate version reached a lifecycle dependency'
+assert_no_new_live_roots candidate-version-invalid
+
+write_candidate_manifest 0.4.30 lumen@0.4.29 "$CANDIDATE_ROOT_DIGEST"
+reset_case candidate-tag-mismatch happy
+expect_live_reject candidate-tag-mismatch
+[[ ! -s "$STATE/events" && ! -e "$CASE_OUT" ]] || fail 'candidate tag mismatch reached a lifecycle dependency'
+assert_no_new_live_roots candidate-tag-mismatch
+
+write_candidate_manifest 0.4.30 lumen@0.4.30 "sha256:$(printf '%064d' 1)"
+reset_case candidate-image-mismatch happy
+expect_live_reject candidate-image-mismatch
+[[ ! -s "$STATE/events" && ! -e "$CASE_OUT" ]] || fail 'candidate image mismatch reached a lifecycle dependency'
+assert_no_new_live_roots candidate-image-mismatch
+
+write_candidate_manifest "$CANDIDATE_VERSION" "$CANDIDATE_TAG" "$CANDIDATE_ROOT_DIGEST"
 reset_case happy happy
 run_live || fail 'happy lifecycle failed'
 [[ -d "$CASE_OUT" && ! -L "$CASE_OUT" ]] || fail 'happy receipt output is missing'

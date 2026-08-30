@@ -206,6 +206,9 @@ CANDIDATE_COMMIT=""
 CANDIDATE_RUN_ID=""
 CANDIDATE_ATTEMPT=""
 CANDIDATE_WORKFLOW=""
+CANDIDATE_VERSION=""
+CANDIDATE_TAG=""
+CANDIDATE_DEFAULT_IMAGE=""
 ROOT_DIGEST=""
 AMD64_DIGEST=""
 ARM64_DIGEST=""
@@ -379,10 +382,17 @@ validate_candidate_manifest_v2() {
   [[ -f "$manifest" && ! -L "$manifest" && -f "$sidecar" && ! -L "$sidecar" ]] || die "candidate final manifest and sidecar are required"
   RECEIPT_SHA256="$(sha256_file "$manifest")"
   checksum_sidecar_exact "$sidecar" "$RECEIPT_SHA256" "${manifest##*/}"
-  jq -e '
+  [[ "$RECEIPT_SHA256" == "$LUMEN_STANDALONE_GKE_EXPECTED_MANIFEST_SHA256" ]] ||
+    die "candidate manifest hash differs from the controller-bound expected hash"
+  if ! CANDIDATE_VERSION="$(jq -er '.version | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$manifest")"; then
+    die "candidate manifest version is not canonical"
+  fi
+  CANDIDATE_TAG="lumen@$CANDIDATE_VERSION"
+  CANDIDATE_DEFAULT_IMAGE="ghcr.io/chrischeng-c4/lumen:$CANDIDATE_VERSION"
+  jq -e --arg version "$CANDIDATE_VERSION" --arg tag "$CANDIDATE_TAG" '
     (keys|sort) == ["artifacts","candidate_tag","commit","image","jobs","pr","repository","run_attempt","run_id","run_url","sboms","schema","source_ref","tag","version","workflow_id","workflow_path","workflow_ref"] and
     .schema == "cclab.lumen.candidate-manifest.v3" and .repository == "chrischeng-c4/axiom" and
-    .version == "0.4.29" and .tag == "lumen@0.4.29" and .source_ref == "refs/heads/main" and
+    .version == $version and .tag == $tag and .source_ref == "refs/heads/main" and
     .workflow_path == ".github/workflows/lumen-release-candidate.yml" and
     .workflow_ref == "chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main" and
     (.commit|type == "string" and test("^[0-9a-f]{40}$")) and
@@ -406,8 +416,6 @@ validate_candidate_manifest_v2() {
   ROOT_DIGEST="$(jq -er '.image.root_digest' "$manifest")"
   AMD64_DIGEST="$(jq -er '.image.amd64_digest' "$manifest")"
   ARM64_DIGEST="$(jq -er '.image.arm64_digest' "$manifest")"
-  [[ "$RECEIPT_SHA256" == "$LUMEN_STANDALONE_GKE_EXPECTED_MANIFEST_SHA256" ]] ||
-    die "candidate manifest hash differs from the controller-bound expected hash"
   [[ "$CANDIDATE_COMMIT" == "$LUMEN_STANDALONE_GKE_EXPECTED_COMMIT" ]] ||
     die "candidate manifest commit differs from the controller-bound landed commit"
   [[ "$CANDIDATE_RUN_ID" == "$LUMEN_STANDALONE_GKE_EXPECTED_RUN_ID" ]] ||
@@ -470,6 +478,7 @@ assert_statefulset() {
     --arg cpu "$INITIAL_CPU" \
     --arg memory "$INITIAL_MEMORY" \
     --arg claim "$PVC_NAME" \
+    --arg expected_image "$CANDIDATE_DEFAULT_IMAGE" \
     '
       .apiVersion == "apps/v1"
       and .kind == "StatefulSet"
@@ -479,7 +488,7 @@ assert_statefulset() {
       and (.spec.template.spec.nodeSelector["cloud.google.com/gke-nodepool"] == $node_pool)
       and (.spec.template.spec.containers | length == 1)
       and .spec.template.spec.containers[0].name == "serving"
-      and .spec.template.spec.containers[0].image == "ghcr.io/chrischeng-c4/lumen:0.4.29"
+      and .spec.template.spec.containers[0].image == $expected_image
       and .spec.template.spec.containers[0].resources.requests.cpu == $cpu
       and .spec.template.spec.containers[0].resources.requests.memory == $memory
       and (.spec.template.spec.volumes
@@ -496,15 +505,15 @@ patch_statefulset_image() {
   local patched="$TMP_ROOT/${label}-image-patch-output.json"
 
   yaml_json "$statefulset" "$canonical"
-  jq -e '
+  jq -e --arg expected_image "$CANDIDATE_DEFAULT_IMAGE" '
     (.spec.template.spec.containers | length == 1)
     and .spec.template.spec.containers[0].name == "serving"
-    and .spec.template.spec.containers[0].image == "ghcr.io/chrischeng-c4/lumen:0.4.29"
+    and .spec.template.spec.containers[0].image == $expected_image
   ' "$canonical" >/dev/null || die "runtime image patch precondition failed"
-  jq --arg image "$LUMEN_STANDALONE_GKE_IMAGE" '
+  jq --arg image "$LUMEN_STANDALONE_GKE_IMAGE" --arg expected_image "$CANDIDATE_DEFAULT_IMAGE" '
     if (.spec.template.spec.containers | length) != 1
        or .spec.template.spec.containers[0].name != "serving"
-       or .spec.template.spec.containers[0].image != "ghcr.io/chrischeng-c4/lumen:0.4.29"
+       or .spec.template.spec.containers[0].image != $expected_image
     then error("runtime image patch precondition failed")
     else .spec.template.spec.containers[0].image = $image
     end
@@ -552,7 +561,8 @@ prepare_runtime_copy() {
   cmp -s "$original_init" "$patched_init" ||
     die "digest patch changed init containers"
   jq -e \
-    '.spec.template.spec.containers | length == 1 and .[0].name == "serving" and .[0].image == "ghcr.io/chrischeng-c4/lumen:0.4.29"' \
+    --arg expected_image "$CANDIDATE_DEFAULT_IMAGE" \
+    '.spec.template.spec.containers | length == 1 and .[0].name == "serving" and .[0].image == $expected_image' \
     "$original_json" >/dev/null || die "unpatched runtime is not the fixed serving image"
   jq -e \
     --arg image "$LUMEN_STANDALONE_GKE_IMAGE" \
@@ -1093,7 +1103,7 @@ v2_prepare_private_apply() {
   patch_statefulset_image "$V2_APPLY_ROOT/runtime/statefulset.yaml" v2
   k create --dry-run=client --validate=false -f "$RENDERED/runtime/statefulset.yaml" -o json >"$TMP_ROOT/v2-public.json"
   k create --dry-run=client --validate=false -f "$V2_APPLY_ROOT/runtime/statefulset.yaml" -o json >"$TMP_ROOT/v2-private.json"
-  jq -e '.spec.template.spec.containers | length == 1 and .[0].name == "serving" and .[0].image == "ghcr.io/chrischeng-c4/lumen:0.4.29"' "$TMP_ROOT/v2-public.json" >/dev/null || die "public runtime is not the fixed 0.4.29 serving image"
+  jq -e --arg expected_image "$CANDIDATE_DEFAULT_IMAGE" '.spec.template.spec.containers | length == 1 and .[0].name == "serving" and .[0].image == $expected_image' "$TMP_ROOT/v2-public.json" >/dev/null || die "public runtime is not the candidate-version serving image"
   jq -S 'del(.spec.template.spec.containers[0].image)' "$TMP_ROOT/v2-public.json" >"$TMP_ROOT/v2-public-no-image.json"
   jq -S 'del(.spec.template.spec.containers[0].image)' "$TMP_ROOT/v2-private.json" >"$TMP_ROOT/v2-private-no-image.json"
   cmp -s "$TMP_ROOT/v2-public-no-image.json" "$TMP_ROOT/v2-private-no-image.json" || die "private runtime changed fields other than serving image"
@@ -1241,7 +1251,7 @@ v2_write_receipt_body() {
   [[ -n "$RECEIPT_TMP" && -n "$RECEIPT_SIDECAR_TMP" ]] || return 1
   [[ -n "$V2_OBSERVED_RUNTIME_IMAGE_DIGEST" && -n "$V2_NODE_ARCH" && -n "$V2_CHILD_DIGEST" ]] || return 1
   rm -f -- "$receipt" "$receipt.sha256"
-  jq -n --arg repository "chrischeng-c4/axiom" --arg version "0.4.29" --arg commit "$CANDIDATE_COMMIT" --arg workflow_ref "$CANDIDATE_WORKFLOW" --arg run_id "$CANDIDATE_RUN_ID" --arg run_attempt "$CANDIDATE_ATTEMPT" --arg manifest_sha256 "$RECEIPT_SHA256" --arg root_digest "$ROOT_DIGEST" --arg amd64_digest "$AMD64_DIGEST" --arg arm64_digest "$ARM64_DIGEST" --arg target "$LUMEN_STANDALONE_GKE_CLI_TARGET" --arg cli_sha256 "$CONTROLLER_CLI_SHA256" --arg observed_root "$V2_OBSERVED_RUNTIME_IMAGE_DIGEST" --arg child "$V2_CHILD_DIGEST" --arg arch "$V2_NODE_ARCH" --argjson required_deltas "$V2_REQUIRED_DELTAS" '
+  jq -n --arg repository "chrischeng-c4/axiom" --arg version "$CANDIDATE_VERSION" --arg commit "$CANDIDATE_COMMIT" --arg workflow_ref "$CANDIDATE_WORKFLOW" --arg run_id "$CANDIDATE_RUN_ID" --arg run_attempt "$CANDIDATE_ATTEMPT" --arg manifest_sha256 "$RECEIPT_SHA256" --arg root_digest "$ROOT_DIGEST" --arg amd64_digest "$AMD64_DIGEST" --arg arm64_digest "$ARM64_DIGEST" --arg target "$LUMEN_STANDALONE_GKE_CLI_TARGET" --arg cli_sha256 "$CONTROLLER_CLI_SHA256" --arg observed_root "$V2_OBSERVED_RUNTIME_IMAGE_DIGEST" --arg child "$V2_CHILD_DIGEST" --arg arch "$V2_NODE_ARCH" --argjson required_deltas "$V2_REQUIRED_DELTAS" '
     {schema:"lumen.standalone-gke-receipt/v2",stage:"slice-b-live",complete:true,
      candidate:{repository:$repository,version:$version,commit:$commit,workflow_ref:$workflow_ref,run_id:$run_id,run_attempt:$run_attempt,manifest_sha256:$manifest_sha256,root_digest:$root_digest,amd64_digest:$amd64_digest,arm64_digest:$arm64_digest,controller_cli:{target:$target,sha256:$cli_sha256}},
      matrix:{clusterip_only:"passed",network_policy:"passed",allowed_ksa:"passed",unlisted_ksa:"passed",missing_token:"passed",bad_token:"passed",tokenreview:"passed",subjectaccessreview:"passed",application_admin_403:"passed",admin_backup_restore:"passed",pod_replacement:"passed",pvc_recovery:"passed",vertical_resize:"passed",cleanup:"passed",required_continuity:({profile:"LUMEN_AUTH=required",audience:"lumen.axiom.dev",observed_runtime_image_digest:$observed_root,scheduled_node_arch:$arch,scheduled_runtime_child_digest:$child,projected_allowed_2xx:"passed",same_ksa_default_token_401:"passed",projected_unlisted_403:"passed"} + $required_deltas)},
