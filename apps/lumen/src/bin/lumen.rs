@@ -99,6 +99,14 @@ enum Command {
     /// Import a SnapshotV1 JSON document from `--file` or stdin into a running
     /// node by replacing all engine state through `/admin/restore`.
     Import(SnapshotImportArgs),
+    /// Audit a SnapshotV1 JSON document offline — no server, nothing written —
+    /// and report which collection/field pairs would come back empty despite
+    /// the document's own census saying documents carry them. Those fields
+    /// cannot be repaired by restoring: their contents are not in the document,
+    /// and re-indexing is the only fix. Run this on a backup BEFORE importing
+    /// it, when the backup may have been taken by a build that sealed `set`
+    /// fields empty.
+    Inspect(InspectArgs),
     /// Self-update this binary from a published GitHub release. Resolves the
     /// running target + version, downloads the matching `lumen-<target>.tar.gz`,
     /// verifies its sha256, and atomically replaces the running executable.
@@ -865,6 +873,31 @@ struct SnapshotImportArgs {
     file: Option<PathBuf>,
 }
 
+/// `lumen inspect` flags: the offline half of the re-index audit
+/// (`Engine::reindex_needed`, which the serving node runs on every reopen and
+/// logs). Parses a document and prints which of its fields will not come back,
+/// which of them it could not judge, and how many documents it read to say so.
+/// Nothing is restored, nothing is written, and no node is contacted.
+#[derive(clap::Args)]
+struct InspectArgs {
+    /// Read SnapshotV1 JSON bytes from this path. Omit to read stdin.
+    #[arg(long)]
+    file: Option<PathBuf>,
+    /// `text` (default) for an operator-readable report, `json` for the same
+    /// facts as a machine-readable document on stdout.
+    #[arg(long, value_enum, default_value_t = InspectFormat::Text)]
+    format: InspectFormat,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum InspectFormat {
+    /// Operator-readable lines plus a trailing `next:` command.
+    Text,
+    /// A single JSON document: `reindex_needed`, `fields_not_audited`,
+    /// `documents_scanned`.
+    Json,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
     /// Typed task map for agent context selection (default).
@@ -1206,6 +1239,7 @@ async fn main() -> Result<()> {
         Command::Backup(args) => dispatch_backup(args).await,
         Command::Dump(args) | Command::Export(args) => dispatch_snapshot_export(args).await,
         Command::Load(args) | Command::Import(args) => dispatch_snapshot_import(args).await,
+        Command::Inspect(args) => dispatch_snapshot_inspect(args),
         Command::Connect(args) => connect(args).await,
         Command::Query(args) => dispatch_query(args).await,
     }
@@ -1674,6 +1708,93 @@ async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
          `--features backup` (or `operator`, which pulls it in — the published \
          image includes both)"
     )
+}
+
+/// `lumen inspect`: ask a snapshot document, offline, which of its fields will
+/// not come back.
+///
+/// This is the same audit `Engine::reindex_needed` runs — and the serving node
+/// logs — at the end of every `restore` and every segment reopen. It is
+/// duplicated here rather than queried from a node because the audience is an
+/// operator holding a backup file, deciding whether to import it at all: by
+/// the time a node can answer, the decision has already been made.
+///
+/// It asks the parsed document, not a restored engine. Restoring first would
+/// build every interner, roaring bitmap and forward map of the whole backup in
+/// RAM — a multiple of the file size, on the machine that most needs the
+/// answer, and against a file already suspected of being damaged — to compute
+/// something out of fields the parsed document already carries.
+/// `SnapshotV1::reindex_needed` and `Engine::reindex_needed` are held to one
+/// verdict by `e2e/reopen_names_the_fields_that_need_reindexing.rs`, which runs
+/// both over the same bytes and requires the same rows.
+///
+/// Deliberately not behind the `backup` feature. Reading a local file and
+/// auditing its fields needs no HTTP client, and an operator diagnosing a
+/// suspect backup should not first have to work out which build of the binary
+/// they are holding.
+fn dispatch_snapshot_inspect(args: InspectArgs) -> Result<()> {
+    let payload = match &args.file {
+        Some(path) => std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
+        None => {
+            let mut buf = Vec::new();
+            let mut stdin = std::io::stdin();
+            std::io::Read::read_to_end(&mut stdin, &mut buf)?;
+            buf
+        }
+    };
+    let snapshot: lumen::storage::SnapshotV1 = serde_json::from_slice(&payload).context(
+        "decode SnapshotV1 JSON — this reads the document `lumen export` writes, \
+         not an on-disk segment directory",
+    )?;
+
+    let needed = snapshot.reindex_needed();
+    let not_audited = snapshot.fields_not_audited();
+    let documents_scanned = snapshot.documents_scanned();
+
+    match args.format {
+        InspectFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "reindex_needed": needed,
+                "fields_not_audited": not_audited,
+                "documents_scanned": documents_scanned,
+            }))?
+        ),
+        InspectFormat::Text => {
+            // The census travels with the verdict in both formats: "nothing is
+            // damaged" and "nothing was read" print differently.
+            for (id, indexed) in &documents_scanned {
+                println!("scanned {id}: {indexed} documents");
+            }
+            // And so does what the audit could not look at. An empty
+            // `reindex_needed` over a collection whose every field is here is a
+            // clean verdict about nothing.
+            for row in &not_audited {
+                println!(
+                    "NOT AUDITED {}.{}: {}",
+                    row.collection, row.field, row.reason
+                );
+            }
+            if needed.is_empty() {
+                println!("no audited field needs re-indexing");
+                println!("next: done");
+            } else {
+                for row in &needed {
+                    println!(
+                        "REINDEX {}.{}: the census covers {} documents, this document holds \
+                         a value for none of them",
+                        row.collection, row.field, row.documents_covered
+                    );
+                }
+                println!(
+                    "next: re-index the {} field(s) above from their source of record — their \
+                     contents are not in this document",
+                    needed.len()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(feature = "backup")]

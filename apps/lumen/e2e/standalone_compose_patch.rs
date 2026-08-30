@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 
 use serde_yaml::Value;
 
-const IMAGE: &str = "ghcr.io/chrischeng-c4/lumen:0.4.29";
+const IMAGE: &str = "ghcr.io/chrischeng-c4/lumen:0.4.30";
 const MANAGED_LABEL: &str = "com.axiom.lumen.managed";
 
 fn run(current_dir: &Path, file: &OsStr, name: Option<&str>) -> Output {
@@ -72,7 +72,7 @@ fn assert_refused_without_write(source: &str, name: Option<&str>) {
 
 #[test]
 fn absent_relative_file_gets_the_exact_default_and_is_byte_idempotent() {
-    assert_eq!(env!("CARGO_PKG_VERSION"), "0.4.29");
+    assert_eq!(env!("CARGO_PKG_VERSION"), "0.4.30");
     let dir = tempfile::tempdir().unwrap();
     let relative = OsStr::new("compose.yaml");
 

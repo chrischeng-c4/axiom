@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.29"
+version = "0.4.30"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -198,6 +198,12 @@ release = [
 
 [dev-dependencies]
 axum-test = "17"
+# The on-disk snapshot is CBOR, and CBOR is the ROLLBACK path — a 0.4.30 node
+# writes `rdb.rs`'s data directory, the operator rolls back to 0.4.29, and that
+# build decodes it. `e2e/snapshot_ships_only_the_forward_column.rs` reads the
+# encoded bytes with the same decoder 0.4.29 uses, so the compat claim is
+# measured on the format that actually carries it rather than only on JSON.
+ciborium = "0.2"
 criterion = "0.5"
 proptest = "1"
 rand = "0.8"
@@ -261,6 +267,10 @@ required-features = ["operator"]
 [[test]]
 name = "admission_e2e"
 path = "e2e/admission_e2e.rs"
+
+[[test]]
+name = "aof_replay_version_lww"
+path = "e2e/aof_replay_version_lww.rs"
 
 [[test]]
 name = "api_e2e"
@@ -346,6 +356,14 @@ path = "e2e/cli_credential_paths_retired.rs"
 [[test]]
 name = "collapse_nested"
 path = "e2e/collapse_nested.rs"
+
+[[test]]
+name = "collection_delete_recreate"
+path = "e2e/collection_delete_recreate.rs"
+
+[[test]]
+name = "collection_version_never_moves_backwards"
+path = "e2e/collection_version_never_moves_backwards.rs"
 
 [[test]]
 name = "control_plane_identity_e2e"
@@ -499,6 +517,10 @@ name = "release_feature_set"
 path = "e2e/release_feature_set.rs"
 
 [[test]]
+name = "reopen_names_the_fields_that_need_reindexing"
+path = "e2e/reopen_names_the_fields_that_need_reindexing.rs"
+
+[[test]]
 name = "reshard_admin_e2e"
 path = "e2e/reshard_admin_e2e.rs"
 
@@ -525,6 +547,10 @@ name = "search_all_e2e"
 path = "e2e/search_all_e2e.rs"
 
 [[test]]
+name = "segment_checkpoint_vector_sidecar"
+path = "e2e/segment_checkpoint_vector_sidecar.rs"
+
+[[test]]
 name = "serving_tls_rotation"
 path = "e2e/serving_tls_rotation.rs"
 
@@ -539,6 +565,14 @@ path = "e2e/spec_cli.rs"
 [[test]]
 name = "spec_gen_e2e"
 path = "e2e/spec_gen_e2e.rs"
+
+[[test]]
+name = "snapshot_round_trip_keeps_sealed_inverted_index"
+path = "e2e/snapshot_round_trip_keeps_sealed_inverted_index.rs"
+
+[[test]]
+name = "snapshot_ships_only_the_forward_column"
+path = "e2e/snapshot_ships_only_the_forward_column.rs"
 
 [[test]]
 name = "spec_route_parity"
@@ -604,6 +638,14 @@ path = "e2e/vector_e2e.rs"
 [[test]]
 name = "vector_filtered_recall_after_replace"
 path = "e2e/vector_filtered_recall_after_replace.rs"
+
+[[test]]
+name = "vector_field_keeps_its_backend_across_reopen"
+path = "e2e/vector_field_keeps_its_backend_across_reopen.rs"
+
+[[test]]
+name = "wal_fast_record_stays_downgradable"
+path = "e2e/wal_fast_record_stays_downgradable.rs"
 
 [[test]]
 name = "wal_nats_e2e"

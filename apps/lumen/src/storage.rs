@@ -51,6 +51,7 @@ const IDEMPOTENCY_TTL: Duration = Duration::from_secs(300);
 const SEARCH_RESULT_CACHE_MAX: usize = 256;
 
 type FastHashMap<K, V> = FxHashMap<K, V>;
+type FastHashSet<K> = rustc_hash::FxHashSet<K>;
 
 /// Maximum items in a single `POST /index` request (README §1 v1 limit).
 pub const MAX_INDEX_ITEMS: usize = 10_000;
@@ -2204,6 +2205,28 @@ impl SetIndex {
         self.forward.get(&id).cloned()
     }
 
+    /// `set_members` MINUS the query-time tombstones — doc `id`'s member set as
+    /// a reader sees it, rather than as the immutable segment stored it.
+    ///
+    /// `set_members` deliberately does NOT subtract them: `drop_eid` calls it to
+    /// read the members it is about to un-index, and at that moment the id is not
+    /// yet tombstoned. Every OTHER caller wants the live answer, and a sealed-base
+    /// doc deleted after the seal is `Some(members)` there — the on-disk column
+    /// cannot be mutated, so the delete is recorded only in `tombstones`.
+    ///
+    /// This is the `live_` counterpart the other three arms already have
+    /// (`live_terms`, `live_elements`, `live_number_at`), and `KeywordIndex::keyword_at`
+    /// folds the same check inline. Without it, `to_snapshot` would resurrect a
+    /// deleted doc's memberships into the forward column, and `from_snapshot`
+    /// rebuilds the inverted index from exactly that column.
+    #[inline]
+    fn live_set_members(&self, id: u32) -> Option<BTreeSet<String>> {
+        if self.tombstones.contains(id) {
+            return None;
+        }
+        self.set_members(id)
+    }
+
     /// `true` once the sealed forward payload has been dropped to disk
     /// (Phase 2f-1) — the segment is attached. See `KeywordIndex::forward_dropped`.
     #[inline]
@@ -2454,6 +2477,38 @@ impl FieldIndex {
             FieldIndex::Set(s) => s.bytes,
             FieldIndex::Vector { bytes, .. } => *bytes,
             FieldIndex::Hash(h) => h.bytes,
+        }
+    }
+
+    /// How much of this arm the reindex audit can actually see. See
+    /// [`FieldAudit`] — and note that an arm answering
+    /// [`FieldAudit::Unauditable`] is reported to the caller as unexamined
+    /// rather than silently folded into a clean verdict.
+    fn audit_kind(&self) -> FieldAudit {
+        match self {
+            FieldIndex::Text { .. } => FieldAudit::Unauditable(TEXT_UNAUDITABLE),
+            FieldIndex::Keyword(_)
+            | FieldIndex::Number(_)
+            | FieldIndex::Set(_)
+            | FieldIndex::Hash(_) => FieldAudit::PerId,
+            FieldIndex::Vector { idx, .. } => FieldAudit::WholeIndex(idx.len() > 0),
+        }
+    }
+
+    /// Does this field hold a value for `id`, read through the same
+    /// segment-aware accessors a query uses?
+    ///
+    /// Only meaningful for the arms [`FieldIndex::audit_kind`] answers
+    /// [`FieldAudit::PerId`] for; the others answer `true` so that a caller
+    /// that probes them anyway cannot manufacture a damage report out of an
+    /// arm this cannot speak for.
+    fn holds(&self, id: u32) -> bool {
+        match self {
+            FieldIndex::Keyword(k) => k.keyword_at(id).is_some(),
+            FieldIndex::Number(n) => n.live_number_at(id).is_some(),
+            FieldIndex::Set(s) => s.live_set_members(id).is_some(),
+            FieldIndex::Hash(h) => h.hash_at(id).is_some(),
+            FieldIndex::Text { .. } | FieldIndex::Vector { .. } => true,
         }
     }
 
@@ -3142,6 +3197,16 @@ impl Engine {
     ///
     /// * If the collection does not exist, it is created with the
     ///   declared fields at version 1.
+    /// * If it exists but is soft-deleted, the tombstone is superseded
+    ///   (#3953): the result is a fresh, empty collection holding only the
+    ///   declared fields — but its version CONTINUES the tombstone's rather
+    ///   than restarting at 1, so a caller watching the id cannot mistake a
+    ///   supersede for a stale read. This holds across a *soft* delete only:
+    ///   `force` and `sweep_deleted` drop the entry outright, and the next
+    ///   create answers 1 again — that id has no history left to continue, and
+    ///   `e2e/collection_version_never_moves_backwards.rs` pins the reset. A
+    ///   caller that keys a cache on `version` must therefore treat a
+    ///   *decrease* as "different collection", not as a stale response.
     /// * If it exists, fields **missing** from the existing schema are
     ///   appended online (version bumps once per call regardless of how
     ///   many fields were added). Re-declaring an existing field with a
@@ -3169,8 +3234,24 @@ impl Engine {
             .collect();
         validate_schema(&schema)?;
 
-        if let Some(coll) = state.collections.get_mut(collection_id) {
-            coll.check_live(collection_id)?;
+        // #3953: a soft-deleted entry (`deleted_at.is_some()`) is a
+        // tombstone, not a live collection to merge schema into. A `PUT`
+        // against a tombstoned id is explicit caller intent to reclaim the
+        // name — it supersedes the tombstone immediately with a fresh,
+        // empty collection rather than waiting for `sweep_deleted`'s grace
+        // window (which stays owned by the "deleted and never recreated"
+        // case; see that fn's doc comment). Only a genuinely live entry
+        // takes the additive-merge path below.
+        let is_live = state
+            .collections
+            .get(collection_id)
+            .is_some_and(|coll| coll.deleted_at.is_none());
+
+        if is_live {
+            let coll = state
+                .collections
+                .get_mut(collection_id)
+                .expect("checked live above under the same state lock");
             let mut added = 0u32;
             for (name, spec) in schema {
                 match coll.schema.get(&name) {
@@ -3203,7 +3284,30 @@ impl Engine {
             return Ok(resp);
         }
 
-        let coll = Collection::new(schema)?;
+        // Either the id has never been used, or it names a tombstone being
+        // superseded: both start from a brand-new `Collection` built from
+        // the request's own schema alone (never merged with whatever a
+        // deleted predecessor declared) and with no inherited docs. `insert`
+        // overwrites any tombstoned entry in place.
+        //
+        // The one thing that DOES cross the tombstone is `version`. It is the
+        // number `PUT` hands the caller to key cached schema state on, so it
+        // has to be monotonic for the life of the id: an id that climbed to 7
+        // through online field additions and is then deleted and re-`PUT`
+        // must not answer 1, or a caller comparing against its cached 7
+        // reads the supersede as a stale response and keeps serving a schema
+        // whose documents are all gone. A supersede continues from the
+        // tombstone's last version; an id with no entry at all — never used,
+        // or physically removed by `force`/`sweep_deleted` — is genuinely new
+        // and starts at 1.
+        let mut coll = Collection::new(schema)?;
+        if let Some(tombstone) = state.collections.get(collection_id) {
+            debug_assert!(
+                tombstone.deleted_at.is_some(),
+                "a live entry took the additive-merge path above"
+            );
+            coll.version = tombstone.version.saturating_add(1);
+        }
         let version = coll.version;
         let fields_count = coll.fields_count();
         state.collections.insert(collection_id.to_string(), coll);
@@ -4627,13 +4731,81 @@ impl Engine {
         })
     }
 
+    /// Every field, across every collection, whose contents did not survive
+    /// into the state this engine is holding. See [`ReindexNeeded`].
+    ///
+    /// Ordered by collection then field. Empty is the healthy answer, and it is
+    /// a real answer: a caller can use it to clear a volume, which is why the
+    /// probe reads live state instead of a flag set at reopen — a flag would
+    /// keep reporting a field after the re-index that repaired it.
+    pub fn reindex_needed(&self) -> Result<Vec<ReindexNeeded>> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        let mut out: Vec<ReindexNeeded> = state
+            .collections
+            .iter()
+            .flat_map(|(id, coll)| coll.reindex_needed(id))
+            .collect();
+        out.sort_by(|a, b| (&a.collection, &a.field).cmp(&(&b.collection, &b.field)));
+        Ok(out)
+    }
+
+    /// Every field [`Engine::reindex_needed`] did not examine, across every
+    /// collection. See [`FieldNotAudited`].
+    ///
+    /// A caller reporting the empty verdict as "nothing needs re-indexing" has
+    /// to report this beside it, or it is describing a partial audit as a
+    /// complete one.
+    pub fn fields_not_audited(&self) -> Result<Vec<FieldNotAudited>> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        let mut out: Vec<FieldNotAudited> = state
+            .collections
+            .iter()
+            .flat_map(|(id, coll)| coll.fields_not_audited(id))
+            .collect();
+        out.sort_by(|a, b| (&a.collection, &a.field).cmp(&(&b.collection, &b.field)));
+        Ok(out)
+    }
+
+    /// Say out loud what a reopen could not restore.
+    ///
+    /// Called at the end of every path that populates state from durable
+    /// bytes. The reopen itself is left alone — refusing it would strand the
+    /// fields that ARE intact, and the operator needs the node up to re-index
+    /// at all — so this log is the entire difference between a damaged field
+    /// and a field nobody wrote.
+    fn report_reindex_needed(&self, source: &str) {
+        match self.reindex_needed() {
+            Ok(needed) => {
+                for row in &needed {
+                    tracing::error!(
+                        collection = %row.collection,
+                        field = %row.field,
+                        documents_covered = row.documents_covered,
+                        source = %source,
+                        "field restored empty while the document census covers it; \
+                         its contents did not survive and re-indexing is the only \
+                         repair (`lumen inspect` reports the same list offline)"
+                    );
+                }
+            }
+            // A poisoned lock is the caller's problem to surface, not this
+            // probe's to escalate: it is narration for a reopen that already
+            // succeeded.
+            Err(error) => tracing::warn!(%error, source, "could not audit the reopened state"),
+        }
+    }
+
     /// Atomically replace the engine's state with the given snapshot.
     /// Idempotency keys are not part of the snapshot — restored
     /// collections start with an empty deduplication window.
     pub fn restore(&self, snap: SnapshotV1) -> Result<()> {
-        if snap.version != SNAPSHOT_VERSION {
+        // Every format up to the one this build writes is readable: the only
+        // change so far REMOVED a field, and serde ignores what it does not
+        // know. Refusing an older snapshot here would strand data a running
+        // cluster wrote yesterday.
+        if !(1..=SNAPSHOT_VERSION).contains(&snap.version) {
             bail!(
-                "snapshot version mismatch: got {}, supported {}",
+                "snapshot version mismatch: got {}, supported 1..={}",
                 snap.version,
                 SNAPSHOT_VERSION
             );
@@ -4646,6 +4818,8 @@ impl Engine {
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         state.collections = collections;
         self.publish_storage_bytes(&state);
+        drop(state);
+        self.report_reindex_needed("restore");
         Ok(())
     }
 
@@ -4719,9 +4893,9 @@ impl Engine {
         delta: SnapshotV1,
         replace: Option<crate::reshard::ReshardBatchReplaceScope>,
     ) -> Result<ReshardApplyOutcome> {
-        if delta.version != SNAPSHOT_VERSION {
+        if !(1..=SNAPSHOT_VERSION).contains(&delta.version) {
             bail!(
-                "reshard batch snapshot version mismatch: got {}, supported {}",
+                "reshard batch snapshot version mismatch: got {}, supported 1..={}",
                 delta.version,
                 SNAPSHOT_VERSION
             );
@@ -9335,7 +9509,35 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 // Snapshot wire types
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_VERSION: u32 = 1;
+/// The format this build WRITES. Readers accept `1..=SNAPSHOT_VERSION`; see
+/// [`SnapshotV1::version`].
+///
+/// 2 dropped the CONTENTS of the `terms` / `elements` inverted maps from the
+/// Keyword and Set arms. Reading forward is unaffected — a format-1 document's
+/// populated map is dropped on arrival and `forward` restores the field, which
+/// `e2e/snapshot_ships_only_the_forward_column.rs` pins.
+///
+/// Reading BACKWARD needed care, because 0.4.29 is released and a version gate
+/// does not work the way it looks like it does. `version` is a field of the
+/// same struct being deserialised; there is no point at which it is read
+/// first. So an 0.4.29 build, whose `terms` is a required field with no
+/// `#[serde(default)]`, would fail inside serde on the missing key before its
+/// own `!= 1` check ever ran — reporting a missing field on a file that is
+/// perfectly intact. The sharp case is a ROLLBACK: `rdb.rs` writes a
+/// format-2 snapshot to the data directory in CBOR, the operator rolls the
+/// node back to 0.4.29 mid-incident, and 0.4.29 fails to decode its own data
+/// directory with a message that reads like corruption.
+///
+/// [`LegacyInvertedIndex`] is why that does not happen: the two keys stay on
+/// the wire as empty maps, so a released 0.4.29 parses the document and
+/// refuses it by version, in its own words, with the remedy (upgrade the
+/// binary) named. The payload saving is unchanged — what cost bytes was the
+/// dictionary, not the key.
+///
+/// The same applies to every other boundary these documents cross:
+/// `/admin/restore`, a reshard delta between shards, and a Raft catch-up into
+/// a peer that has not been upgraded yet. All of them now refuse by version.
+const SNAPSHOT_VERSION: u32 = 2;
 
 /// Top-level snapshot document. JSON-serialisable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9352,6 +9554,167 @@ pub struct CollectionSnapshot {
     pub version: u32,
     pub eid_fields: HashMap<String, BTreeSet<String>>,
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
+}
+
+impl SnapshotV1 {
+    /// The reindex audit, asked of the DOCUMENT instead of a restored engine.
+    ///
+    /// This must answer exactly what [`Engine::reindex_needed`] answers for the
+    /// same bytes, and `e2e/reopen_names_the_fields_that_need_reindexing.rs`
+    /// runs both over one document and requires the same rows — the differential
+    /// is what keeps the two from drifting.
+    ///
+    /// It exists because the audience is an operator holding a backup file,
+    /// deciding whether to import it at all. Restoring into a throwaway
+    /// `Engine` to ask would materialise every interner, roaring bitmap and
+    /// forward map of the entire backup in RAM — a multiple of the file size,
+    /// on the machine that most needs the answer — while every fact the audit
+    /// reads is already a plain field of the parsed document.
+    pub fn reindex_needed(&self) -> Vec<ReindexNeeded> {
+        struct Tally<'a> {
+            field: &'a FieldIndexSnapshot,
+            covered: u64,
+            holds: bool,
+            probe: bool,
+        }
+        let mut out = Vec::new();
+        // `collections` and `fields` are both `BTreeMap`, so the rows come out
+        // ordered by collection then field with no sort — the same order
+        // `Engine::reindex_needed` sorts into.
+        for (collection, coll) in &self.collections {
+            let mut tally: BTreeMap<&str, Tally<'_>> = coll
+                .fields
+                .iter()
+                .filter_map(|(name, field)| {
+                    let (holds, probe) = match field.audit_kind() {
+                        FieldAudit::PerId => (false, true),
+                        FieldAudit::WholeIndex(populated) => (populated, false),
+                        FieldAudit::Unauditable(_) => return None,
+                    };
+                    Some((
+                        name.as_str(),
+                        Tally {
+                            field,
+                            covered: 0,
+                            holds,
+                            probe,
+                        },
+                    ))
+                })
+                .collect();
+            for (eid, cov) in &coll.eid_fields {
+                for name in cov {
+                    if let Some(t) = tally.get_mut(name.as_str()) {
+                        t.covered += 1;
+                        if t.probe && !t.holds {
+                            t.holds = t.field.holds(eid);
+                        }
+                    }
+                }
+            }
+            out.extend(
+                tally
+                    .into_iter()
+                    .filter(|(_, t)| t.covered > 0 && !t.holds)
+                    .map(|(field, t)| ReindexNeeded {
+                        collection: collection.clone(),
+                        field: field.to_string(),
+                        documents_covered: t.covered,
+                    }),
+            );
+        }
+        out
+    }
+
+    /// Every field [`SnapshotV1::reindex_needed`] did not examine. See
+    /// [`FieldNotAudited`].
+    pub fn fields_not_audited(&self) -> Vec<FieldNotAudited> {
+        self.collections
+            .iter()
+            .flat_map(|(collection, coll)| {
+                coll.fields
+                    .iter()
+                    .filter_map(move |(field, index)| match index.audit_kind() {
+                        FieldAudit::Unauditable(reason) => Some(FieldNotAudited {
+                            collection: collection.clone(),
+                            field: field.clone(),
+                            reason: reason.to_string(),
+                        }),
+                        _ => None,
+                    })
+            })
+            .collect()
+    }
+
+    /// Per collection, how many live documents this document's census carries —
+    /// the same figure `stats` reports as `documents_indexed`. It travels with
+    /// the verdict so "nothing is damaged" reads differently from "nothing was
+    /// read".
+    pub fn documents_scanned(&self) -> BTreeMap<String, u64> {
+        self.collections
+            .iter()
+            .map(|(id, coll)| (id.clone(), coll.eid_fields.len() as u64))
+            .collect()
+    }
+}
+
+/// One field a reopen could not restore: the collection's own document census
+/// says `documents_covered` live documents carry it, and the restored index
+/// holds a value for none of them.
+///
+/// That disagreement is the whole signal, and it is what separates this from an
+/// empty field. `eid_fields` records a document under a field only because that
+/// field was written for it, so a field the census covers and the index cannot
+/// answer for is a field whose contents were dropped somewhere between the two
+/// — not one nobody used.
+///
+/// The known producer is a `Set` field sealed by a build predating the
+/// segment-aware forward gather: that seal emptied both the inverted `elements`
+/// map and the `forward` column before the snapshot writer read either, so the
+/// document travels with an intact census and an empty field. Nothing at
+/// restore can invent the values back; re-indexing the named field is the only
+/// repair, and naming it is what this type is for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReindexNeeded {
+    pub collection: String,
+    pub field: String,
+    pub documents_covered: u64,
+}
+
+/// A field the reindex audit did NOT examine, and why.
+///
+/// This travels beside [`ReindexNeeded`] because the audit's whole value to an
+/// operator is the negative answer — "nothing needs re-indexing, import the
+/// backup" — and a negative answer is only worth acting on next to the list of
+/// what it did not cover. Without this, a `Text` field whose contents were
+/// dropped clears the same audit a healthy one does, and the report says so in
+/// exactly the same words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldNotAudited {
+    pub collection: String,
+    pub field: String,
+    pub reason: String,
+}
+
+const TEXT_UNAUDITABLE: &str = "a Text field writes a forward entry for every covered document, \
+     explicit-empty values included, so a field of empty strings and a field whose contents were \
+     dropped are the same bytes here";
+
+/// How much of a field's arm the reindex audit can see.
+///
+/// The three answers are genuinely different, and collapsing them is what made
+/// the audit overclaim: `Unauditable` is not a healthy verdict, and
+/// `WholeIndex` catches a field emptied outright but not one emptied in part.
+enum FieldAudit {
+    /// Every covered document can be probed individually. Damage is "the census
+    /// covers N documents and not one of them has a value".
+    PerId,
+    /// The arm has no per-id accessor, so only the index's own population is
+    /// observable. `true` = populated.
+    WholeIndex(bool),
+    /// The arm cannot be audited at all. The payload is the reason, and it is
+    /// reported to the caller verbatim.
+    Unauditable(&'static str),
 }
 
 /// Response summary for `POST /admin/reshard:apply` (#1380 R1).
@@ -9383,6 +9746,38 @@ pub struct ReshardPruneOutcome {
     pub documents_pruned: u32,
 }
 
+/// A field that exists only so a format-1 READER can parse a format-2
+/// document and reach its own version check.
+///
+/// 0.4.29 is released. Its `FieldIndexSnapshot::Keyword` requires a `terms`
+/// key and its `Set` requires `elements`, neither carrying `#[serde(default)]`
+/// — so a 0.4.29 build fails inside serde on the missing key BEFORE
+/// `Engine::restore` ever compares versions. The operator then reads
+/// `missing field \`terms\`` (or, from `rdb.rs`'s CBOR, something less legible
+/// still) off a file that is not damaged, on a rollback where the only thing
+/// wrong is that the binary is too old to say so. Emitting `{}` here costs two
+/// bytes per field and hands 0.4.29 back the version error it already knows
+/// how to print.
+///
+/// It is written and never read: `skip_deserializing` drops a format-1
+/// document's populated map on arrival, which is what
+/// `FieldIndexSnapshot::from_snapshot` wants anyway — the inverted index is
+/// rebuilt from `forward` in both formats, so the map on the wire never had a
+/// reader.
+///
+/// Delete this, and bump the format again, once no supported release still
+/// requires the key. `e2e/snapshot_ships_only_the_forward_column.rs` pins that
+/// it stays empty; nothing else may put a value in it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LegacyInvertedIndex;
+
+impl Serialize for LegacyInvertedIndex {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        serializer.serialize_map(Some(0))?.end()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum FieldIndexSnapshot {
@@ -9394,8 +9789,23 @@ pub enum FieldIndexSnapshot {
         total_doc_len: u64,
         bytes: u64,
     },
+    /// Only the forward column travels. `from_snapshot` rebuilds `terms` from
+    /// it — it has to, because a snapshot whose persisted inverted index
+    /// disagreed with its own forward column would otherwise restore into an
+    /// index that answers queries no document satisfies. Once the reader
+    /// derives one representation from the other, serialising both is writing
+    /// a value nobody reads: a `terms` field on the wire is decoded out of the
+    /// segment at snapshot time, written to disk, shipped to a Raft follower
+    /// mid-catch-up, and dropped on arrival.
+    ///
+    /// A format-1 document still carries a populated one; `terms` below drops
+    /// it on arrival, and `forward` — always complete, even there — is what
+    /// restores. The key itself stays on the wire, empty, so a released 0.4.29
+    /// can still parse this document and refuse it by version rather than by
+    /// serde; see [`LegacyInvertedIndex`].
     Keyword {
-        terms: BTreeMap<String, BTreeSet<String>>,
+        #[serde(default, skip_deserializing)]
+        terms: LegacyInvertedIndex,
         forward: HashMap<String, String>,
         bytes: u64,
     },
@@ -9405,8 +9815,11 @@ pub enum FieldIndexSnapshot {
         forward: HashMap<String, f64>,
         bytes: u64,
     },
+    /// Forward column only, for the reason the Keyword arm above states, with
+    /// the same empty [`LegacyInvertedIndex`] under the key 0.4.29 requires.
     Set {
-        elements: BTreeMap<String, BTreeSet<String>>,
+        #[serde(default, skip_deserializing)]
+        elements: LegacyInvertedIndex,
         forward: HashMap<String, BTreeSet<String>>,
         bytes: u64,
     },
@@ -9431,16 +9844,164 @@ pub enum FieldIndexSnapshot {
     },
 }
 
+impl FieldIndexSnapshot {
+    /// What the reindex audit can learn about this arm, in the same three
+    /// shapes [`FieldIndex::audit_kind`] answers in. The two must agree arm for
+    /// arm: `SnapshotV1::reindex_needed` and `Engine::reindex_needed` are one
+    /// verdict asked of the document and of the restored engine.
+    fn audit_kind(&self) -> FieldAudit {
+        match self {
+            FieldIndexSnapshot::Text { .. } => FieldAudit::Unauditable(TEXT_UNAUDITABLE),
+            FieldIndexSnapshot::Keyword { .. }
+            | FieldIndexSnapshot::Number { .. }
+            | FieldIndexSnapshot::Set { .. }
+            | FieldIndexSnapshot::Hash { .. } => FieldAudit::PerId,
+            FieldIndexSnapshot::Vector { vectors, .. } => {
+                FieldAudit::WholeIndex(!vectors.is_empty())
+            }
+        }
+    }
+
+    /// Whether the forward column carries `eid`.
+    ///
+    /// This is the document-side twin of [`FieldIndex::holds`], and it reads the
+    /// exact column `from_snapshot` restores the index from — so "the document
+    /// holds it" and "the restored index answers for it" cannot come apart
+    /// without a `from_snapshot` bug, which is a different failure from the one
+    /// this audit is looking for.
+    fn holds(&self, eid: &str) -> bool {
+        match self {
+            FieldIndexSnapshot::Keyword { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Number { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Set { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Hash { forward, .. } => forward.contains_key(eid),
+            FieldIndexSnapshot::Text { .. } | FieldIndexSnapshot::Vector { .. } => true,
+        }
+    }
+}
+
 impl Collection {
+    /// Every field this collection's document census covers and its index
+    /// cannot answer for. See [`ReindexNeeded`].
+    ///
+    /// Read live rather than cached, off the same segment-aware accessors
+    /// `to_snapshot` gathers through, so the answer is about the collection as
+    /// it stands — a field re-indexed after the reopen that reported it stops
+    /// being reported, and a field sealed since the reopen does not start.
+    fn reindex_needed(&self, collection: &str) -> Vec<ReindexNeeded> {
+        // One walk of the coverage map, probing as it goes.
+        //
+        // The shape this replaces materialised a `Vec<u32>` of every covered id
+        // for every field first, then probed. That is documents × fields of
+        // allocation — gigabytes on a large collection — on a path that runs at
+        // the end of every restore and every segment reopen, to answer a
+        // question that early-exits on the first hit. Probing inside the walk
+        // keeps the single pass AND the early exit while holding O(fields):
+        // once a field has been seen to hold something, the remaining ids only
+        // cost the count.
+        struct Tally<'a> {
+            index: &'a FieldIndex,
+            covered: u64,
+            holds: bool,
+            probe: bool,
+        }
+        // Unauditable arms are excluded here rather than answered `true`:
+        // `fields_not_audited` reports them, and folding them into a clean
+        // verdict is what let a dropped Text field clear this audit.
+        let mut tally: BTreeMap<&str, Tally<'_>> = self
+            .fields
+            .iter()
+            .filter_map(|(name, index)| {
+                let (holds, probe) = match index.audit_kind() {
+                    FieldAudit::PerId => (false, true),
+                    FieldAudit::WholeIndex(populated) => (populated, false),
+                    FieldAudit::Unauditable(_) => return None,
+                };
+                Some((
+                    name.as_str(),
+                    Tally {
+                        index,
+                        covered: 0,
+                        holds,
+                        probe,
+                    },
+                ))
+            })
+            .collect();
+        for (id, cov) in &self.eid_fields {
+            for name in cov.iter() {
+                if let Some(t) = tally.get_mut(name.as_str()) {
+                    t.covered += 1;
+                    if t.probe && !t.holds {
+                        t.holds = t.index.holds(*id);
+                    }
+                }
+            }
+        }
+        // `BTreeMap` already yields fields in name order, and the report is
+        // read by humans and diffed by scripts, so the order is the contract.
+        tally
+            .into_iter()
+            // A field no live document carries is empty on purpose. This is
+            // what keeps a sparsely-used field, and every field of an empty
+            // collection, out of the report.
+            .filter(|(_, t)| t.covered > 0 && !t.holds)
+            .map(|(name, t)| ReindexNeeded {
+                collection: collection.to_string(),
+                field: name.to_string(),
+                documents_covered: t.covered,
+            })
+            .collect()
+    }
+
+    /// Every field of this collection the audit above could not examine. See
+    /// [`FieldNotAudited`]. O(fields) — no walk of the census is needed,
+    /// because the answer is a property of the arm, not of the documents.
+    fn fields_not_audited(&self, collection: &str) -> Vec<FieldNotAudited> {
+        let mut out: Vec<FieldNotAudited> = self
+            .fields
+            .iter()
+            .filter_map(|(name, index)| match index.audit_kind() {
+                FieldAudit::Unauditable(reason) => Some(FieldNotAudited {
+                    collection: collection.to_string(),
+                    field: name.clone(),
+                    reason: reason.to_string(),
+                }),
+                _ => None,
+            })
+            .collect();
+        out.sort_by(|a, b| a.field.cmp(&b.field));
+        out
+    }
+
     fn to_snapshot(&self) -> Result<CollectionSnapshot> {
+        // Which ids carry which field, in ONE walk of the coverage map.
+        // `eid_fields` is the document census — `documents_indexed` counts it,
+        // and a full delete removes the entry — so an id absent from it names
+        // no live document and every per-field accessor answers `None` for it.
+        // The forward gathers below used to sweep `0..interner.to_eid.len()`
+        // and probe every id for every field: on a sealed field each probe
+        // decodes out of the segment, so a ten-field collection paid ten
+        // segment decodes per interned id, including for every id whose
+        // document had since been deleted.
+        let mut ids_by_field: BTreeMap<&str, Vec<u32>> = self
+            .fields
+            .keys()
+            .map(|name| (name.as_str(), Vec::new()))
+            .collect();
+        for (id, cov) in &self.eid_fields {
+            for name in cov.iter() {
+                if let Some(ids) = ids_by_field.get_mut(name.as_str()) {
+                    ids.push(*id);
+                }
+            }
+        }
         let mut fields: BTreeMap<String, FieldIndexSnapshot> = BTreeMap::new();
         for (name, fi) in &self.fields {
-            let field_live = |id: u32| {
-                self.eid_fields
-                    .get(&id)
-                    .is_some_and(|fields| fields.contains(name))
-            };
-            fields.insert(name.clone(), fi.to_snapshot(&self.interner, &field_live)?);
+            let field_ids = ids_by_field
+                .get(name.as_str())
+                .map_or(&[][..], Vec::as_slice);
+            fields.insert(name.clone(), fi.to_snapshot(&self.interner, field_ids)?);
         }
         // The on-disk snapshot is String-keyed: resolve the dense doc-ids out
         // so the format is interner-independent and the e2e round-trips.
@@ -9459,16 +10020,18 @@ impl Collection {
 }
 
 impl FieldIndex {
-    fn to_snapshot(
-        &self,
-        interner: &Interner,
-        field_live: &dyn Fn(u32) -> bool,
-    ) -> Result<FieldIndexSnapshot> {
+    /// `field_ids` are the ids the collection's coverage map says carry THIS
+    /// field — the only ids a forward gather can find anything under.
+    fn to_snapshot(&self, interner: &Interner, field_ids: &[u32]) -> Result<FieldIndexSnapshot> {
         let eid = |id: u32| interner.resolve(id).to_string();
         Ok(match self {
             FieldIndex::Text { analyzer, idx } => {
                 // Snapshot the same composed source used by queries: sealed
                 // base postings minus tombstones, union live overlays.
+                // `field_ids` as a membership set: the posting filter below asks
+                // "does this id carry the field" once per posting entry, which
+                // is a lookup rather than the sweep the forward gathers do.
+                let field_live: FastHashSet<u32> = field_ids.iter().copied().collect();
                 let mut token_names = BTreeSet::new();
                 if let Some(seg) = &idx.segment {
                     let entries = seg
@@ -9484,7 +10047,7 @@ impl FieldIndex {
                         let mut docids = Vec::new();
                         let mut tfs = Vec::new();
                         for (&id, &tf) in postings.docids().iter().zip(postings.tfs()) {
-                            if field_live(id) {
+                            if field_live.contains(&id) {
                                 docids.push(id);
                                 tfs.push(tf);
                             }
@@ -9517,13 +10080,11 @@ impl FieldIndex {
                 }
                 // Preserve explicit empty values. The collection coverage map is
                 // the authority for field presence when a sealed DocLen is zero.
-                for id in 0..interner.to_eid.len() as u32 {
-                    if field_live(id) {
-                        forward
-                            .entry(eid(id))
-                            .or_insert_with(|| (BTreeSet::new(), idx.doc_len(id)))
-                            .1 = idx.doc_len(id);
-                    }
+                for &id in field_ids {
+                    forward
+                        .entry(eid(id))
+                        .or_insert_with(|| (BTreeSet::new(), idx.doc_len(id)))
+                        .1 = idx.doc_len(id);
                 }
                 FieldIndexSnapshot::Text {
                     analyzer: *analyzer,
@@ -9534,33 +10095,30 @@ impl FieldIndex {
                     bytes: idx.bytes,
                 }
             }
+            // The three forward-only arms below read the same segment-aware
+            // accessors they always did — after a seal the raw fields hold only
+            // the post-seal tail — but over the ids that carry the field rather
+            // than over every id the interner has ever issued.
             FieldIndex::Keyword(k) => FieldIndexSnapshot::Keyword {
-                terms: k
-                    .terms
+                terms: LegacyInvertedIndex,
+                forward: field_ids
                     .iter()
-                    .map(|(v, set)| (v.clone(), set.iter().map(|id| eid(id)).collect()))
-                    .collect(),
-                forward: (0..interner.to_eid.len() as u32)
-                    .filter_map(|id| k.keyword_at(id).map(|value| (eid(id), value)))
+                    .filter_map(|&id| k.keyword_at(id).map(|value| (eid(id), value)))
                     .collect(),
                 bytes: k.bytes,
             },
             FieldIndex::Number(n) => FieldIndexSnapshot::Number {
-                forward: (0..interner.to_eid.len() as u32)
-                    .filter_map(|id| n.live_number_at(id).map(|key| (eid(id), key.to_f64())))
+                forward: field_ids
+                    .iter()
+                    .filter_map(|&id| n.live_number_at(id).map(|key| (eid(id), key.to_f64())))
                     .collect(),
                 bytes: n.bytes,
             },
             FieldIndex::Set(s) => FieldIndexSnapshot::Set {
-                elements: s
-                    .elements
+                elements: LegacyInvertedIndex,
+                forward: field_ids
                     .iter()
-                    .map(|(el, set)| (el.clone(), set.iter().map(|id| eid(id)).collect()))
-                    .collect(),
-                forward: s
-                    .forward
-                    .iter()
-                    .map(|(id, set)| (eid(*id), set.clone()))
+                    .filter_map(|&id| s.live_set_members(id).map(|members| (eid(id), members)))
                     .collect(),
                 bytes: s.bytes,
             },
@@ -9670,18 +10228,20 @@ impl FieldIndex {
                     },
                 }
             }
-            FieldIndexSnapshot::Keyword {
-                terms,
-                forward,
-                bytes,
-            } => {
-                let mut t: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
-                for (v, set) in terms {
-                    t.insert(v, set.iter().map(|eid| interner.intern(eid)).collect());
-                }
+            // The inverted index is rebuilt from `forward`, the way the Number
+            // arm below rebuilds `values` from its own. `forward` was always
+            // complete — even in a format-1 snapshot written before this fix —
+            // so an on-disk snapshot whose persisted `terms` had been bricked
+            // self-heals on restore without a re-index. As of format 2 that map
+            // is no longer written at all; a format-1 document still carries
+            // it, and serde drops it here as an unknown field.
+            FieldIndexSnapshot::Keyword { forward, bytes, .. } => {
                 let mut fwd: FastHashMap<u32, String> = FastHashMap::default();
+                let mut t: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
                 for (eid, v) in forward {
-                    fwd.insert(interner.intern(&eid), v);
+                    let id = interner.intern(&eid);
+                    t.entry(v.clone()).or_default().insert(id);
+                    fwd.insert(id, v);
                 }
                 FieldIndex::Keyword(KeywordIndex {
                     dup_values: dup_values_of(&t),
@@ -9709,18 +10269,22 @@ impl FieldIndex {
                 idx.dup_values = dup_values_of(&idx.values);
                 FieldIndex::Number(idx)
             }
-            FieldIndexSnapshot::Set {
-                elements,
-                forward,
-                bytes,
-            } => {
-                let mut e: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
-                for (el, set) in elements {
-                    e.insert(el, set.iter().map(|eid| interner.intern(eid)).collect());
-                }
+            // Rebuilt from `forward`, for the reason the Keyword arm above
+            // states. Unlike Keyword, a Set snapshot written before the
+            // segment-aware gather landed cannot self-heal here — the seal
+            // emptied BOTH halves before the old `to_snapshot` ever read them,
+            // so `forward` in such a document is empty too, and the field
+            // restores empty. Nothing at this layer can invent the data back;
+            // finding which fields are in that state is a separate audit.
+            FieldIndexSnapshot::Set { forward, bytes, .. } => {
                 let mut fwd: FastHashMap<u32, BTreeSet<String>> = FastHashMap::default();
+                let mut e: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
                 for (eid, set) in forward {
-                    fwd.insert(interner.intern(&eid), set);
+                    let id = interner.intern(&eid);
+                    for el in &set {
+                        e.entry(el.clone()).or_default().insert(id);
+                    }
+                    fwd.insert(id, set);
                 }
                 FieldIndex::Set(SetIndex {
                     dup_values: dup_values_of(&e),
@@ -10021,12 +10585,24 @@ impl FieldIndex {
                 Ok(None)
             }
             FieldIndex::Vector { idx, bytes, .. } => {
-                // The flat-cpu backend seals + drops its data buffer and hands
-                // back the row→eid mapping; the collection persists it. A
-                // non-flat backend (HNSW) returns None and is left in RAM.
+                // Every backend seals its corpus into the SAME columnar
+                // vector-segment format and hands back the row→eid mapping;
+                // the collection persists that as the `<field>.eids.lseg`
+                // sidecar (issue #3951: `open_from_segments` requires it
+                // unconditionally for any `Vector` field, whatever backend
+                // sealed it, and reconstructs the field with the backend its
+                // schema declares — see `FieldIndex::open_from_segment`).
+                //
+                // Whether the seal also freed RAM is the INDEX's answer, not
+                // the schema's: ask `seal_releases_ram` rather than matching
+                // on `spec.backend`, so a backend added later reports its own
+                // footprint instead of silently inheriting whichever branch
+                // this match happened to have. A flat index hands its whole
+                // contiguous buffer to the mmap and keeps nothing; HNSW keeps
+                // its graph and raw vectors resident, which is exactly what
+                // the declared backend is asking for.
                 let row_eids = idx.seal_to_segment_prod(&path)?;
-                if row_eids.is_some() {
-                    // The contiguous scan buffer left RAM; reflect that in bytes.
+                if row_eids.is_some() && idx.seal_releases_ram() {
                     *bytes = 0;
                 }
                 Ok(row_eids)
@@ -10164,11 +10740,37 @@ impl FieldIndex {
                 let row_eids = vec_row_eids.ok_or_else(|| {
                     anyhow!("vector field `{field_name}` reopen needs its row→eid mapping")
                 })?;
-                let idx = FlatCpuIndex::open_from_segment(vs, reader, row_eids)?;
+                // Reopen with the backend the SCHEMA declares, not with
+                // whichever one is cheapest to rebuild. Every backend seals
+                // into the same columnar segment, so the segment does not
+                // record which one wrote it — `vs.backend` is the only record,
+                // and honouring it is what keeps a restarted node answering
+                // kNN the same way its unrestarted peers do.
+                let (idx, bytes): (Box<dyn VectorIndex>, u64) = match vs.backend {
+                    crate::types::VectorBackend::HnswCpu => {
+                        // The graph needs its vectors in RAM, so the field's
+                        // footprint comes back too. Account it exactly as the
+                        // live index path does (`dim * 4 + eid.len()` per row),
+                        // so a reopened field reports the same figure the
+                        // pre-checkpoint field reported.
+                        let bytes = row_eids
+                            .iter()
+                            .map(|eid| (vs.dim as u64) * 4 + eid.len() as u64)
+                            .sum();
+                        let idx = HnswCpuIndex::open_from_segment(vs, reader, row_eids)?;
+                        (Box::new(idx), bytes)
+                    }
+                    crate::types::VectorBackend::FlatCpu => {
+                        // The rows stay on the mmap and are read demand-paged,
+                        // so nothing is resident to report.
+                        let idx = FlatCpuIndex::open_from_segment(vs, reader, row_eids)?;
+                        (Box::new(idx), 0)
+                    }
+                };
                 Ok(FieldIndex::Vector {
                     spec: vs,
-                    idx: Box::new(idx),
-                    bytes: 0,
+                    idx,
+                    bytes,
                 })
             }
         }
@@ -10488,6 +11090,8 @@ impl Engine {
             max_seq = max_seq.max(sidecar.applied_seq);
             state.collections.insert(name, coll);
         }
+        drop(state);
+        self.report_reindex_needed("segment checkpoint");
         Ok(max_seq)
     }
 
@@ -17842,6 +18446,154 @@ mod tests {
         );
         assert_eq!(active.stats("new").unwrap().documents_indexed, 1);
         assert_eq!(active.metrics().storage_bytes.get(), expected_bytes);
+    }
+
+    // ---- #3953: create-over-tombstone supersede ------------------------
+
+    /// #3953(a) at the `Engine` layer: `create_collection` for a
+    /// soft-deleted id must not stay wedged behind `check_live` — it must
+    /// supersede the tombstone with a fresh, empty collection whose schema
+    /// comes from the new request alone (not merged with the deleted
+    /// predecessor's), and the pre-delete doc must not survive.
+    ///
+    /// Everything above is about CONTENTS. `version` is the one thing that
+    /// does cross the tombstone, because it is not content — it is the
+    /// number the caller keys cached schema state on, and a supersede that
+    /// re-answered 1 would move it backwards. See the supersede branch's own
+    /// comment, and `e2e/collection_version_never_moves_backwards.rs`.
+    #[test]
+    fn create_collection_supersedes_tombstone_with_fresh_empty_collection() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        index_kw(&e, "a", "old1");
+        assert_eq!(
+            e.drop_collection("a", false).unwrap(),
+            DropOutcome::Marked
+        );
+
+        // Live routes must still see the tombstone as 410 Gone before the
+        // recreate — this fix must not touch that behavior.
+        let stats_err = e.stats("a").unwrap_err();
+        assert!(
+            matches!(
+                stats_err.downcast_ref::<StorageError>(),
+                Some(StorageError::Gone(id)) if id == "a"
+            ),
+            "a soft-deleted collection must still answer 410 Gone on reads \
+             right up until it is recreated: {stats_err:?}"
+        );
+
+        let resp = e.create_collection("a", kw_only_schema()).unwrap();
+        assert_eq!(
+            resp.version, 2,
+            "a superseding create continues the id's version line from the \
+             tombstone rather than restarting it — the predecessor reached 1, \
+             so the supersede answers 2"
+        );
+
+        // The recreated collection is genuinely empty: the pre-delete doc
+        // must not be visible, and stats must report zero docs.
+        assert_eq!(e.stats("a").unwrap().documents_indexed, 0);
+        let hits = e
+            .search(
+                "a",
+                SearchRequest {
+                    query: QueryNode::Term(TermQuery {
+                        field: "email".into(),
+                        value: FieldValue::String("old1@x.com".into()),
+                    }),
+                    limit: 10,
+                    offset: 0,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            hits.total, 0,
+            "the recreated collection must not surface the deleted \
+             predecessor's documents"
+        );
+    }
+
+    /// #3953(a): a superseding create must not additive-merge the new
+    /// request's schema onto the deleted predecessor's — a field the
+    /// deleted collection had but the new request omits must be gone, not
+    /// carried forward.
+    #[test]
+    fn create_collection_supersede_does_not_inherit_deleted_schema() {
+        let e = Engine::new();
+        let mut wide_fields = BTreeMap::new();
+        wide_fields.insert(
+            "email".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        wide_fields.insert(
+            "extra".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        e.create_collection(
+            "a",
+            CreateCollectionRequest {
+                fields: wide_fields,
+            },
+        )
+        .unwrap();
+        e.drop_collection("a", false).unwrap();
+
+        let resp = e.create_collection("a", kw_only_schema()).unwrap();
+        assert_eq!(
+            resp.fields_count, 1,
+            "a superseding create must start from the new request's schema \
+             alone, not merge in the deleted predecessor's extra field"
+        );
+    }
+
+    /// #3953: `sweep_deleted`'s grace-window path must keep working for a
+    /// collection that is deleted and never recreated — this fix only
+    /// changes what an explicit `create_collection` (PUT) call does to a
+    /// tombstone; it must not remove or shortcut the background sweep.
+    #[test]
+    fn sweep_deleted_still_reclaims_a_tombstone_nobody_recreates() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        assert_eq!(
+            e.drop_collection("a", false).unwrap(),
+            DropOutcome::Marked
+        );
+
+        // Immediately: the grace window has not elapsed, sweep does nothing.
+        assert_eq!(e.sweep_deleted(Duration::from_secs(3600)).unwrap(), 0);
+        assert!(e.stats("a").is_err(), "still tombstoned, still 410");
+
+        // A zero grace window sweeps it away right away — proving the sweep
+        // path itself, independent of any PUT, still physically reclaims a
+        // tombstone that nobody recreated.
+        assert_eq!(e.sweep_deleted(Duration::from_secs(0)).unwrap(), 1);
+        assert!(
+            e.stats("a").is_err(),
+            "physically removed collection must still report not-found, \
+             not silently reappear as live"
+        );
     }
 
     /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte

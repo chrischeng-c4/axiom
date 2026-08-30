@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -217,21 +217,28 @@ fn collection(snapshot: &SnapshotV1) -> &lumen::storage::CollectionSnapshot {
         .expect("docs collection")
 }
 
-fn keyword_indexes<'a>(
-    snapshot: &'a SnapshotV1,
-    field: &str,
-) -> (
-    &'a BTreeMap<String, BTreeSet<String>>,
-    &'a HashMap<String, String>,
-) {
+/// The keyword field's forward column. As of snapshot format 2 it is the ONLY
+/// representation on the wire: `from_snapshot` rebuilds the inverted index from
+/// it, so the `terms` map this helper used to return alongside was a second
+/// copy the reader discarded on arrival.
+fn keyword_forward<'a>(snapshot: &'a SnapshotV1, field: &str) -> &'a HashMap<String, String> {
     let index = collection(snapshot)
         .fields
         .get(field)
         .expect("keyword field");
-    let FieldIndexSnapshot::Keyword { terms, forward, .. } = index else {
+    let FieldIndexSnapshot::Keyword { forward, .. } = index else {
         panic!("{field} must be keyword")
     };
-    (terms, forward)
+    forward
+}
+
+/// How many documents the snapshot puts under `value` — the posting count the
+/// restored index will hold, counted where it now lives.
+fn keyword_postings(snapshot: &SnapshotV1, field: &str, value: &str) -> usize {
+    keyword_forward(snapshot, field)
+        .values()
+        .filter(|held| *held == value)
+        .count()
 }
 
 fn number_forward<'a>(snapshot: &'a SnapshotV1, field: &str) -> &'a HashMap<String, f64> {
@@ -305,24 +312,24 @@ fn assert_index_invariants(engine: &Arc<Engine>) {
     let snap = snapshot(engine);
     let docs = collection(&snap);
     assert_eq!(docs.eid_fields.len(), DOCUMENTS);
-    let (terms, forward) = keyword_indexes(&snap, "kw");
-    if !terms.is_empty() {
-        assert_eq!(terms.get(COMMON).map(BTreeSet::len), Some(101));
-        assert_eq!(terms.get(RARE).map(BTreeSet::len), Some(1));
-        assert_eq!(terms.get(OTHER).map(BTreeSet::len), Some(6));
-    }
-    assert_eq!(
-        forward.values().filter(|value| *value == COMMON).count(),
-        466
-    );
-    assert_eq!(forward.values().filter(|value| *value == RARE).count(), 1);
-    assert_eq!(forward.values().filter(|value| *value == OTHER).count(), 6);
+    let forward = keyword_forward(&snap, "kw");
+    // #3957: the snapshot must carry every doc's keyword, sealed or not.
+    // `COMMON` is the only one of the three that straddles the seal boundary —
+    // 365 of its docs are sealed, 101 are in the live tail — and before the fix
+    // the persisted inverted index held exactly those 101 while `forward` held
+    // all 466. `RARE` and `OTHER` never disagreed, which is why the discrepancy
+    // read as a fixture detail rather than as data loss. The two maps were one
+    // field seen twice; format 2 ships `forward` alone, so the disagreement is
+    // now unrepresentable and these counts are the whole contract.
+    assert_eq!(keyword_postings(&snap, "kw", COMMON), 466);
+    assert_eq!(keyword_postings(&snap, "kw", RARE), 1);
+    assert_eq!(keyword_postings(&snap, "kw", OTHER), 6);
     assert_eq!(forward.get("doc-466"), Some(&"台北市/大安區".to_string()));
     assert_eq!(forward.get("doc-468"), Some(&"🙂".to_string()));
+    // doc-467 was deleted. With `forward` the only representation, its absence
+    // here is the whole statement — there is no second map left to hold a
+    // posting the forward column no longer backs.
     assert!(!forward.contains_key("doc-467"));
-    if let Some(other) = terms.get(OTHER) {
-        assert!(!other.contains("doc-467"));
-    }
 
     let numbers = number_forward(&snap, "num");
     assert_eq!(numbers.get("doc-466"), Some(&9001.0));
@@ -525,10 +532,9 @@ async fn run_history(field_major: bool) -> Value {
     post_index(&fixture.server, corpus_items(field_major, PREFIX_DOCUMENTS)).await;
 
     let prefix_snapshot = snapshot(&fixture.engine);
-    let (prefix_terms, _) = keyword_indexes(&prefix_snapshot, "kw");
     assert_eq!(
-        prefix_terms.get(COMMON).map(BTreeSet::len),
-        Some(PREFIX_DOCUMENTS)
+        keyword_postings(&prefix_snapshot, "kw", COMMON),
+        PREFIX_DOCUMENTS
     );
     let first_sequence = fixture.writer.applied_seq();
     checkpoint(&fixture.server).await;
@@ -543,10 +549,21 @@ async fn run_history(field_major: bool) -> Value {
         PREFIX_DOCUMENTS
     );
     let first_snapshot = snapshot(&first.engine);
-    let (first_terms, _) = keyword_indexes(&first_snapshot, "kw");
-    assert!(
-        first_terms.is_empty(),
-        "sealed postings move out of the RAM snapshot"
+    // This asserted the postings map was EMPTY until #3957, under the reading
+    // that a sealed field's postings "move out of the RAM snapshot". They do
+    // move out of RAM — that is what the seal is for, and the reopened engine
+    // below still answers because it holds the `.lseg`. But `to_snapshot` is
+    // not a view of RAM: it is the self-contained document `GET /admin/backup`
+    // returns, that `raft_sm` ships to a follower on another host, and that
+    // `reshard` moves between shards. None of those readers has this node's
+    // segment files, and `from_snapshot` sets `segment: None` — so a snapshot
+    // truncated to the post-seal tail silently loses every sealed doc's
+    // postings on the far side. This line is where that was pinned as intended.
+    assert_eq!(
+        keyword_postings(&first_snapshot, "kw", COMMON),
+        PREFIX_DOCUMENTS,
+        "#3957: the snapshot is self-contained, so a SEALED field's documents \
+         must be in it and not only in the `.lseg` its reader may not have"
     );
     assert_keyword_total(&first.engine, COMMON, PREFIX_DOCUMENTS as u64);
 

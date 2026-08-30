@@ -41,7 +41,26 @@ use crate::types::{FieldValue, IndexItem, IndexRequest};
 /// Current on-the-wire record format version.
 pub const WAL_FORMAT_VERSION: u8 = 1;
 const WAL_FAST_MAGIC: &[u8; 4] = b"LWAL";
+/// Legacy fast-Index tag: `(external_id, field, value)` triples only, no
+/// `IndexItem.version`. Every fast record written before #3952 used this tag.
+/// The decode branch for it is frozen byte-for-byte so those records keep
+/// replaying — `version` is reconstructed as `None`, matching what the writer
+/// actually put on the wire at the time.
 const WAL_FAST_INDEX: u8 = 1;
+/// #3952: fast-Index tag carrying each item's optional external LWW
+/// `version` (#184) on the wire.
+///
+/// Emitted ONLY when at least one item in the record actually carries a
+/// `version`. A record with nothing to say beyond the legacy layout is still
+/// written with [`WAL_FAST_INDEX`], byte-for-byte as before #3952, and that
+/// asymmetry is deliberate: [`WAL_FORMAT_VERSION`] is still 1, so a pre-#3952
+/// binary's version check waves every record through and then fails on the
+/// tag. Emitting tag 2 unconditionally therefore made a single appended
+/// `Index` record — even one from a deployment that never sets `version` —
+/// enough to break replay on a rollback. Choosing the tag by content keeps the
+/// downgrade path open for exactly the records an older binary could have
+/// read correctly, and closes it, loudly, for the ones it could not.
+const WAL_FAST_INDEX_VERSIONED: u8 = 2;
 const WAL_VALUE_STRING: u8 = 1;
 const WAL_VALUE_NUMBER: u8 = 2;
 const WAL_VALUE_VECTOR: u8 = 3;
@@ -99,10 +118,19 @@ impl WalRecord {
         let RaftLogEntry::Index { collection_id, req } = &self.entry else {
             return None;
         };
-        let mut bytes = Vec::with_capacity(estimate_fast_index_len(collection_id, req));
+        // Choose the tag by CONTENT, not unconditionally: a record none of
+        // whose items carries a `version` is expressible on the legacy wire,
+        // and writing it there is what keeps a rollback to a pre-#3952 binary
+        // readable (see `WAL_FAST_INDEX_VERSIONED`).
+        let versioned = req.items.iter().any(|item| item.version.is_some());
+        let mut bytes = Vec::with_capacity(estimate_fast_index_len(collection_id, req, versioned));
         bytes.extend_from_slice(WAL_FAST_MAGIC);
         bytes.push(self.version);
-        bytes.push(WAL_FAST_INDEX);
+        bytes.push(if versioned {
+            WAL_FAST_INDEX_VERSIONED
+        } else {
+            WAL_FAST_INDEX
+        });
         put_str(&mut bytes, collection_id)?;
         match &req.request_id {
             Some(request_id) => {
@@ -115,6 +143,20 @@ impl WalRecord {
         for item in &req.items {
             put_str(&mut bytes, &item.external_id)?;
             put_str(&mut bytes, &item.field)?;
+            // #3952: carry the external LWW version (#184) on the wire so
+            // replay reconstructs the same `cell_versions` ceiling the live
+            // apply path enforced. Present only under the versioned tag — the
+            // legacy layout has no per-item version byte at all, and writing
+            // one under tag 1 would desynchronize every reader, old and new.
+            if versioned {
+                match item.version {
+                    Some(v) => {
+                        bytes.push(1);
+                        bytes.extend_from_slice(&v.to_le_bytes());
+                    }
+                    None => bytes.push(0),
+                }
+            }
             match &item.value {
                 FieldValue::String(s) => {
                     bytes.push(WAL_VALUE_STRING);
@@ -144,13 +186,20 @@ impl WalRecord {
     }
 }
 
-fn estimate_fast_index_len(collection_id: &str, req: &IndexRequest) -> usize {
+/// `versioned` must be the same predicate `encode_fast_index` used to pick the
+/// tag — under the legacy tag there is no per-item version byte to reserve, and
+/// over-reserving one byte per item is a silent per-record allocation tax on
+/// every write in a deployment that never sets `version`.
+fn estimate_fast_index_len(collection_id: &str, req: &IndexRequest, versioned: bool) -> usize {
     let mut len = WAL_FAST_MAGIC.len() + 2 + 4 + collection_id.len() + 1 + 4;
     if let Some(request_id) = &req.request_id {
         len += 4 + request_id.len();
     }
     for item in &req.items {
         len += 4 + item.external_id.len() + 4 + item.field.len() + 1;
+        if versioned {
+            len += if item.version.is_some() { 9 } else { 1 };
+        }
         match &item.value {
             FieldValue::String(s) => len += 4 + s.len(),
             FieldValue::Number(_) => len += 8,
@@ -190,7 +239,7 @@ fn decode_fast_record(bytes: &[u8]) -> Result<WalRecord> {
     );
     let tag = cur.read_u8()?;
     anyhow::ensure!(
-        tag == WAL_FAST_INDEX,
+        tag == WAL_FAST_INDEX || tag == WAL_FAST_INDEX_VERSIONED,
         "unsupported WAL fast record tag {tag}"
     );
     let collection_id = cur.read_string()?;
@@ -204,32 +253,27 @@ fn decode_fast_record(bytes: &[u8]) -> Result<WalRecord> {
     for _ in 0..item_count {
         let external_id = cur.read_string()?;
         let field = cur.read_string()?;
-        let value = match cur.read_u8()? {
-            WAL_VALUE_STRING => FieldValue::String(cur.read_string()?),
-            WAL_VALUE_NUMBER => FieldValue::Number(cur.read_f64()?),
-            WAL_VALUE_VECTOR => {
-                let len = cur.read_u32()? as usize;
-                let mut v = Vec::with_capacity(len);
-                for _ in 0..len {
-                    v.push(cur.read_f32()?);
-                }
-                FieldValue::Vector(v)
+        // `WAL_FAST_INDEX` (legacy, pre-#3952) never wrote a version on the
+        // wire at all — every item it produced reconstructs as `None`,
+        // unchanged from before this fix, so an AOF/WAL segment written by an
+        // older binary keeps decoding exactly as it always did.
+        // `WAL_FAST_INDEX_VERSIONED` carries an explicit presence byte per
+        // item.
+        let version = if tag == WAL_FAST_INDEX_VERSIONED {
+            match cur.read_u8()? {
+                0 => None,
+                1 => Some(cur.read_u64()?),
+                other => return Err(anyhow!("invalid WAL fast item version tag {other}")),
             }
-            WAL_VALUE_STRING_LIST => {
-                let len = cur.read_u32()? as usize;
-                let mut values = Vec::with_capacity(len);
-                for _ in 0..len {
-                    values.push(cur.read_string()?);
-                }
-                FieldValue::StringList(values)
-            }
-            other => return Err(anyhow!("invalid WAL fast field value tag {other}")),
+        } else {
+            None
         };
+        let value = cur.read_field_value()?;
         items.push(IndexItem {
             external_id,
             field,
             value,
-            version: None,
+            version,
         });
     }
     cur.expect_eof()?;
@@ -301,10 +345,42 @@ impl<'a> FastCursor<'a> {
         Ok(f64::from_le_bytes(raw))
     }
 
+    fn read_u64(&mut self) -> Result<u64> {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(self.read_exact(8)?);
+        Ok(u64::from_le_bytes(raw))
+    }
+
     fn read_string(&mut self) -> Result<String> {
         let len = self.read_u32()? as usize;
         let bytes = self.read_exact(len)?;
         String::from_utf8(bytes.to_vec()).map_err(|e| anyhow!("invalid WAL fast utf8: {e}"))
+    }
+
+    /// Shared `FieldValue` decode for both fast-Index tags — identical wire
+    /// shape in each, only the item prefix (per-item version) differs.
+    fn read_field_value(&mut self) -> Result<FieldValue> {
+        match self.read_u8()? {
+            WAL_VALUE_STRING => Ok(FieldValue::String(self.read_string()?)),
+            WAL_VALUE_NUMBER => Ok(FieldValue::Number(self.read_f64()?)),
+            WAL_VALUE_VECTOR => {
+                let len = self.read_u32()? as usize;
+                let mut v = Vec::with_capacity(len);
+                for _ in 0..len {
+                    v.push(self.read_f32()?);
+                }
+                Ok(FieldValue::Vector(v))
+            }
+            WAL_VALUE_STRING_LIST => {
+                let len = self.read_u32()? as usize;
+                let mut values = Vec::with_capacity(len);
+                for _ in 0..len {
+                    values.push(self.read_string()?);
+                }
+                Ok(FieldValue::StringList(values))
+            }
+            other => Err(anyhow!("invalid WAL fast field value tag {other}")),
+        }
     }
 }
 
@@ -607,6 +683,104 @@ mod tests {
             &req.items[3].value,
             FieldValue::StringList(values) if values == &["rust".to_string(), "search".to_string()]
         ));
+        assert!(
+            req.items.iter().all(|item| item.version.is_none()),
+            "no item in this record carried a version; decode must not invent one"
+        );
+    }
+
+    /// #3952: `IndexItem.version` (#184 external LWW) must survive the fast
+    /// codec round trip — this is the exact gap the AOF replay bug (#3952)
+    /// came from: the wire never carried it, so every replayed item looked
+    /// unversioned and LWW silently degraded to arrival order.
+    #[test]
+    fn fast_index_record_round_trips_versioned_items() {
+        let rec = WalRecord::new(RaftLogEntry::Index {
+            collection_id: "docs".into(),
+            req: IndexRequest {
+                request_id: None,
+                items: vec![
+                    IndexItem {
+                        external_id: "d1".into(),
+                        field: "kw".into(),
+                        value: FieldValue::String("v5".into()),
+                        version: Some(5),
+                    },
+                    IndexItem {
+                        external_id: "d1".into(),
+                        field: "kw".into(),
+                        value: FieldValue::String("v3".into()),
+                        version: Some(3),
+                    },
+                    IndexItem {
+                        external_id: "d2".into(),
+                        field: "kw".into(),
+                        value: FieldValue::String("unversioned".into()),
+                        version: None,
+                    },
+                ],
+            },
+        });
+        let bytes = rec.encode().unwrap();
+        assert!(bytes.starts_with(WAL_FAST_MAGIC));
+        assert_eq!(
+            bytes[5], WAL_FAST_INDEX_VERSIONED,
+            "a record carrying versions must be written with the versioned tag \
+             (byte layout: 4-byte magic, then a 1-byte format version, then this tag)"
+        );
+
+        let back = WalRecord::decode(&bytes).unwrap();
+        let RaftLogEntry::Index { req, .. } = back.entry else {
+            panic!("expected index record");
+        };
+        assert_eq!(req.items[0].version, Some(5));
+        assert_eq!(req.items[1].version, Some(3));
+        assert_eq!(
+            req.items[2].version, None,
+            "an item with no version must decode back to None, not 0 or Some(anything)"
+        );
+    }
+
+    /// #3952 negative control: an AOF/WAL segment written by a binary before
+    /// this fix used tag `WAL_FAST_INDEX` (1) and never wrote a version byte
+    /// per item at all. That decode branch must stay byte-for-byte readable.
+    ///
+    /// Today's encoder still emits that tag — it picks the tag from the content,
+    /// and a batch where no item carries a version is written unversioned, which
+    /// is what keeps a segment readable by a peer that has not been upgraded
+    /// yet. So this test does not bypass the encoder to reach an unreachable
+    /// shape; it hand-builds the bytes so the branch is measured against a
+    /// literal layout rather than against whatever the encoder currently emits
+    /// — the encoder is the thing under suspicion in a compatibility case.
+    /// It confirms decode still succeeds with every item's version
+    /// reconstructed as `None`, matching the pre-fix behavior exactly.
+    #[test]
+    fn decode_fast_record_still_reads_legacy_unversioned_tag() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(WAL_FAST_MAGIC);
+        bytes.push(WAL_FORMAT_VERSION);
+        bytes.push(WAL_FAST_INDEX); // legacy tag — no per-item version byte
+        put_str(&mut bytes, "docs").unwrap();
+        bytes.push(0); // no request_id
+        put_u32(&mut bytes, 1).unwrap(); // one item
+        put_str(&mut bytes, "d1").unwrap();
+        put_str(&mut bytes, "kw").unwrap();
+        bytes.push(WAL_VALUE_STRING);
+        put_str(&mut bytes, "v3").unwrap();
+
+        let back = WalRecord::decode(&bytes).expect("legacy fast-Index record must still decode");
+        let RaftLogEntry::Index { collection_id, req } = back.entry else {
+            panic!("expected index record");
+        };
+        assert_eq!(collection_id, "docs");
+        assert_eq!(req.items.len(), 1);
+        assert_eq!(req.items[0].external_id, "d1");
+        assert!(matches!(&req.items[0].value, FieldValue::String(s) if s == "v3"));
+        assert_eq!(
+            req.items[0].version, None,
+            "a pre-#3952 record never had a version on the wire; it must decode as None, \
+             exactly as it did before this fix — never fabricated from thin air"
+        );
     }
 
     #[test]

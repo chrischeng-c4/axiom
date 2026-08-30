@@ -60,10 +60,13 @@ fn activated(fingerprint: Option<String>) -> RuntimeReport {
 }
 
 #[test]
-fn rbac_verbs_are_exactly_get_and_patch() {
+fn rbac_verbs_are_exactly_create_get_and_patch() {
     assert_eq!(FIELD_MANAGER, "service-k8s-certificate");
-    assert_eq!(REQUIRED_RBAC_VERBS, &["get", "patch"]);
-    assert_eq!(RBAC_VERBS, &["get", "patch"]);
+    // `create` is not a wire method here — SSA always sends `PATCH` — but it is
+    // what the apiserver authorizes the first apply against. See
+    // `certificate_rbac_least_privilege.rs` for why, and for the live case.
+    assert_eq!(REQUIRED_RBAC_VERBS, &["create", "get", "patch"]);
+    assert_eq!(RBAC_VERBS, &["create", "get", "patch"]);
 }
 
 #[test]

@@ -177,6 +177,32 @@ main_cr_image="$(kubectl -n "$AUTH_NS" get lumen/lumen -o jsonpath='{.spec.image
 main_cr_raft_storage="$(kubectl -n "$AUTH_NS" get lumen/lumen -o jsonpath='{.spec.serving.raftStorage}')"
 [[ -n "$main_cr_raft_storage" ]] || fail "could not read the main lumen CR's serving.raftStorage"
 
+# Inherit `spec.placement` from the main CR verbatim, as JSON -- YAML is a
+# superset of JSON, so the block below embeds without enumerating keys and
+# cannot drift from what the placement leg already proved.
+#
+# This is load-bearing, not cosmetic. Since 0.4.26 the operator resolves a
+# machine profile out of the `lumen-system/lumen-capacity-catalog` ConfigMap
+# that `apps/lumen/terraform/modules/lumen-capacity/catalog.tf` publishes, and
+# nothing in this harness applies that module -- the ConfigMap has never
+# existed in the acceptance cluster. 0.4.28 added the escape hatch that makes
+# every other leg work anyway (apps/lumen/src/operator/reconcile.rs:815): a
+# NON-EMPTY `placement.nodeSelector` with the default `initialMachineType`
+# takes the self-contained Kubernetes-native path and never reads the catalog.
+# `render-manifests.sh:55` renders the main CR with `--profile dev`, and the
+# dev renderer supplies `kubernetes.io/os: linux` (apps/lumen/src/bin/lumen.rs:2723),
+# so the main instance qualifies. A CR authored here without a placement block
+# does not: it falls to the legacy catalog path, every reconcile fails with
+# `configmaps "lumen-capacity-catalog" not found`, no StatefulSet is ever
+# created, and the leg dies as `never reached Ready` with the actual reason
+# only in the operator log.
+main_cr_placement="$(kubectl -n "$AUTH_NS" get lumen/lumen -o jsonpath='{.spec.placement}')"
+[[ -n "$main_cr_placement" ]] || fail "could not read the main lumen CR's spec.placement"
+# An empty selector is the exact condition that drops this CR onto the catalog
+# path, so refuse it here by name rather than 10 minutes later as a timeout.
+echo "$main_cr_placement" | jq -e '.nodeSelector | length > 0' > /dev/null \
+  || fail "the main lumen CR's spec.placement.nodeSelector is empty; $INSTANCE would fall to the legacy capacity-catalog path this harness never provisions"
+
 echo ">> applying $INSTANCE with auth: required"
 cat <<EOF | kubectl apply -f - > "$AUTH_EVIDENCE/cr-apply.txt"
 apiVersion: lumen.dev/v1alpha1
@@ -195,6 +221,7 @@ spec:
   # as \`disabled\`, never \`off\` — YAML 1.1 would read the latter as boolean
   # false — and \`required\` is the default the other legs override.
   auth: required
+  placement: ${main_cr_placement}
   serving:
     cpu: 500m
     memory: 1Gi
@@ -689,6 +716,12 @@ jq -n \
   --arg gsa_user "$GSA_USER" \
   --arg gsa_cluster_admin "$GSA_ADMIN" \
   --argjson sibling_refusals "$sibling_refusals" \
+  --argjson identity_observations "$identity_observations" \
+  --argjson non_ksa_rejections "$non_ksa_rejections" \
+  --argjson authorization "$authorization" \
+  --argjson revocations "$revocations" \
+  --argjson redaction "$redaction" \
+  --argjson teardown "$teardown" \
   --argjson issuer_revocation_seconds "$issuer_revoke_seconds" \
   --argjson lumen_revocation_seconds "$lumen_revoke_seconds" \
   --argjson revocation_bound_seconds "$REVOCATION_BOUND_SECONDS" \

@@ -174,7 +174,10 @@ wait_lumen_ready() {
 # real dependency closure. The repo-root .dockerignore keeps the context to
 # source-only (~MBs, not the 35G of target/). The deployment pins
 # imagePullPolicy: IfNotPresent, so once `kind load` has injected the image
-# into the node it is used without a registry pull.
+# into the node it is used without a registry pull -- but only for a container
+# that actually names $IMAGE_TAG. Every deploy path below has to repoint its
+# workload at it; `kind load` alone does not, because the manifests ship the
+# released tag and IfNotPresent matches on the whole reference, not the digest.
 build_and_load_image() {
   if [[ "$IMAGE_MODE" == "prebuilt" ]]; then
     echo "   prebuilt mode: skipping docker build and kind load for $IMAGE_TAG"
@@ -190,7 +193,28 @@ deploy_lumen() {
     deploy_via_operator
   else
     kubectl apply -k "${LUMEN_DIR}/k8s/overlays/dev"
+    # The overlay inherits base/deployment.yaml verbatim, and that manifest
+    # pins the released `ghcr.io/chrischeng-c4/lumen:<version>`. `kind load`
+    # injected the build under test under a different name, so IfNotPresent
+    # matched nothing and the node pulled the PREVIOUS RELEASE from GHCR --
+    # a run that looked green while serving code this branch never built.
+    # Repoint the Deployment the same way the local operator path does.
+    kubectl -n "$NAMESPACE" set image deploy/lumen lumen="$IMAGE_TAG"
+    assert_serving_deployment_runs_image_under_test
   fi
+}
+
+# `assert_cluster_identity` returns early unless IMAGE_MODE=prebuilt, so in the
+# default local mode nothing else observes which image the serving workload
+# actually names. Without this row the substitution above can silently stop
+# applying -- a renamed container, a reordered patch -- and the run still reads
+# as a pass.
+assert_serving_deployment_runs_image_under_test() {
+  local observed
+  observed="$(kubectl -n "$NAMESPACE" get deploy/lumen \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="lumen")].image}')"
+  [[ "$observed" == "$IMAGE_TAG" ]] || \
+    die "serving Deployment runs '$observed', not the image under test $IMAGE_TAG"
 }
 
 # Operator path: install the CRD + RBAC + operator (same image as serving),
@@ -407,7 +431,32 @@ assert_operator_topology() {
 
 # Create the kind cluster with a host→node port mapping so the host can
 # reach the NodePort service directly (no port-forward tunnel to stall).
+# One SCHEDULABLE node per storage pod. The operator renders a HARD pod
+# anti-affinity -- `requiredDuringSchedulingIgnoredDuringExecution` on
+# kubernetes.io/hostname, libs/service-k8s/src/render.rs:129 -- so two storage
+# owners can never share a node. On a single-node cluster every
+# EXPECTED_STORAGE_PODS>1 run therefore stalls at `wait_lumen_ready` with
+# lumen-1 Pending and FailedScheduling, which reads as a product hang rather
+# than as a cluster this harness built too small. Growing the cluster is the
+# fix; relaxing the anti-affinity would delete the production rule the topology
+# assertions exist to prove.
+#
+# Workers are EXPECTED_STORAGE_PODS, not EXPECTED_STORAGE_PODS-1, because the
+# control-plane node does not count: kind drops the
+# `node-role.kubernetes.io/control-plane:NoSchedule` taint only on a cluster
+# that has no workers at all. Adding the first worker re-taints it, so a
+# 2-shard run built as control-plane + 1 worker has exactly ONE schedulable
+# node and fails identically to the single-node case it was meant to fix. Keep
+# the zero-worker shape for EXPECTED_STORAGE_PODS=1 so that path stays on the
+# untainted single node it already passes on.
 create_cluster() {
+  local workers=""
+  local i
+  if (( EXPECTED_STORAGE_PODS > 1 )); then
+    for (( i = 0; i < EXPECTED_STORAGE_PODS; i++ )); do
+      workers+="${workers:+$'\n'}  - role: worker"
+    done
+  fi
   kind create cluster --name "$CLUSTER_NAME" --wait 120s --config - <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -417,6 +466,7 @@ nodes:
       - containerPort: ${NODE_PORT}
         hostPort: ${PORT_LOCAL}
         protocol: TCP
+${workers}
 EOF
 }
 
@@ -492,6 +542,16 @@ api_search() {
 
 api_duplicates() {
   curl -fsS --max-time 30 -X POST "$(base_url)/collections/users/duplicates" \
+    -H 'content-type: application/json' \
+    -d '{"field": "email", "min_group_size": 2, "limit": 100}'
+}
+
+# Same request without --fail, so a refusal is a body to read rather than a bare
+# `curl: (22)`. Prints the body, then the HTTP status on a final line of its own;
+# curl's own diagnostics stay on stderr so they cannot corrupt that split.
+api_duplicates_status() {
+  curl -sS --max-time 30 -w '\n%{http_code}' \
+    -X POST "$(base_url)/collections/users/duplicates" \
     -H 'content-type: application/json' \
     -d '{"field": "email", "min_group_size": 2, "limit": 100}'
 }
@@ -654,13 +714,36 @@ if [[ "$SEARCH_HITS" -le 0 ]]; then
   exit 1
 fi
 
-DUP_RESP="$(api_duplicates)"
-DUP_GROUPS="$(echo "$DUP_RESP" | jq '.groups | length')"
-echo "   duplicate groups: $DUP_GROUPS"
-if [[ "$DUP_GROUPS" -le 0 ]]; then
-  echo "!! expected at least one duplicate group, got $DUP_GROUPS" >&2
-  echo "   raw: $DUP_RESP" >&2
-  exit 1
+# `POST /collections/{id}/duplicates` is NOT a routed verb. In routed
+# multi-shard mode the router rejects it outright with `501
+# duplicates_not_routed` -- duplicate detection filters by `min_group_size`
+# on one shard, before any cross-shard merge could happen, so answering it
+# across shards would be answering it wrong (apps/lumen/src/spec.rs:788,
+# apps/lumen/src/api.rs:1990). Asserting "at least one duplicate group"
+# against a 2-shard cluster therefore demands the product break its own
+# documented contract, and `curl -fsS` turned that into a bare `curl: (22)`
+# with no step name attached. Assert the refusal itself instead; the single
+# shard path keeps the original assertion, which is where duplicates is real.
+if (( SHARD_COUNT > 1 )); then
+  DUP_RAW="$(api_duplicates_status)"
+  DUP_CODE="${DUP_RAW##*$'\n'}"
+  DUP_BODY="${DUP_RAW%$'\n'*}"
+  echo "   routed duplicates refusal: HTTP $DUP_CODE"
+  if [[ "$DUP_CODE" != "501" ]] || [[ "$(echo "$DUP_BODY" | jq -r '.error')" != "duplicates_not_routed" ]]; then
+    echo "!! routed mode must refuse duplicates with 501 duplicates_not_routed" >&2
+    echo "   status: $DUP_CODE" >&2
+    echo "   raw: $DUP_BODY" >&2
+    exit 1
+  fi
+else
+  DUP_RESP="$(api_duplicates)"
+  DUP_GROUPS="$(echo "$DUP_RESP" | jq '.groups | length')"
+  echo "   duplicate groups: $DUP_GROUPS"
+  if [[ "$DUP_GROUPS" -le 0 ]]; then
+    echo "!! expected at least one duplicate group, got $DUP_GROUPS" >&2
+    echo "   raw: $DUP_RESP" >&2
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------------------
