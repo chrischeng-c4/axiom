@@ -765,6 +765,17 @@ fn findings(source: &str) -> Vec<&'static str> {
         ("CANDIDATE", "(.jobs|all(.[]; . == \"success\"))"),
         (
             "CANDIDATE",
+            "CANDIDATE_TAG=\"lumen@$CANDIDATE_VERSION\"",
+        ),
+        (
+            "CANDIDATE",
+            "CANDIDATE_DEFAULT_IMAGE=\"ghcr.io/chrischeng-c4/lumen:$CANDIDATE_VERSION\"",
+        ),
+        ("CANDIDATE", ".version == $version and .tag == $tag"),
+        ("CANDIDATE", "--arg version \"$CANDIDATE_VERSION\""),
+        ("CANDIDATE", "--arg tag \"$CANDIDATE_TAG\""),
+        (
+            "CANDIDATE",
             "candidate image is not the exact receipt root digest",
         ),
         (
@@ -801,15 +812,17 @@ fn findings(source: &str) -> Vec<&'static str> {
         ),
         (
             "PUBLIC_IMAGE",
-            "v2-public.json\" >/dev/null || die \"public runtime is not the fixed 0.4.29 serving image\"",
+            "v2-public.json\" >/dev/null || die \"public runtime is not the candidate-version serving image\"",
         ),
         ("PATCH", "patch_statefulset_image \"$statefulset\" \"$label\""),
         ("PATCH", "patch_statefulset_image \"$V2_APPLY_ROOT/runtime/statefulset.yaml\" v2"),
         ("PATCH", "yaml_json \"$statefulset\" \"$canonical\""),
         ("PATCH", ".spec.template.spec.containers | length == 1"),
-        ("PATCH", "(.spec.template.spec.containers | length == 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\""),
+        ("PATCH", "--arg expected_image \"$CANDIDATE_DEFAULT_IMAGE\""),
+        ("PATCH", "(.spec.template.spec.containers | length == 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == $expected_image"),
+        ("PATCH", ".spec.template.spec.containers[0].image == $expected_image"),
+        ("PATCH", ".spec.template.spec.containers[0].image != $expected_image"),
         ("PATCH", ".spec.template.spec.containers[0].name == \"serving\""),
-        ("PATCH", ".spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\""),
         ("PATCH", ".spec.template.spec.containers[0].image = $image"),
         ("PATCH", "mv -f -- \"$patched\" \"$statefulset\""),
         ("PATCH", "cmp -s \"$original_canonical\" \"$patched_canonical\""),
@@ -1006,6 +1019,7 @@ fn findings(source: &str) -> Vec<&'static str> {
             "required-projected-unlisted unlisted projected POST /collections/gke/search '{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"first\"}},\"limit\":10}' 403 none none",
         ),
         ("RECEIPT", "lumen.standalone-gke-receipt/v2"),
+        ("RECEIPT", "--arg version \"$CANDIDATE_VERSION\""),
         ("RECEIPT", "cluster_identity_retained:false"),
         ("RECEIPT", "command_output_retained:false"),
         ("RECEIPT", "canary_scan:true"),
@@ -2721,9 +2735,24 @@ fn negative_mutations_remove_real_gate_obligations() {
             "candidate-v2",
             "CANDIDATE",
         ),
+        (
+            "CANDIDATE_TAG=\"lumen@$CANDIDATE_VERSION\"",
+            "CANDIDATE_TAG=\"lumen@0.4.29\"",
+            "CANDIDATE",
+        ),
+        (
+            "CANDIDATE_DEFAULT_IMAGE=\"ghcr.io/chrischeng-c4/lumen:$CANDIDATE_VERSION\"",
+            "CANDIDATE_DEFAULT_IMAGE=\"ghcr.io/chrischeng-c4/lumen:0.4.29\"",
+            "CANDIDATE",
+        ),
+        (
+            ".version == $version and .tag == $tag",
+            ".tag == $tag",
+            "CANDIDATE",
+        ),
         ("tar -xOf", "tar -xzf", "ARCHIVE"),
         (
-            "v2-public.json\" >/dev/null || die \"public runtime is not the fixed 0.4.29 serving image\"",
+            "v2-public.json\" >/dev/null || die \"public runtime is not the candidate-version serving image\"",
             "v2-public.json\" >/dev/null || true",
             "PUBLIC_IMAGE",
         ),
@@ -2738,8 +2767,8 @@ fn negative_mutations_remove_real_gate_obligations() {
             "PATCH",
         ),
         (
-            "(.spec.template.spec.containers | length == 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\"",
-            "(.spec.template.spec.containers | length >= 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == \"ghcr.io/chrischeng-c4/lumen:0.4.29\"",
+            "(.spec.template.spec.containers | length == 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == $expected_image",
+            "(.spec.template.spec.containers | length >= 1)\n    and .spec.template.spec.containers[0].name == \"serving\"\n    and .spec.template.spec.containers[0].image == $expected_image",
             "PATCH",
         ),
         (

@@ -32,6 +32,8 @@ EXPECTED_COMMIT=''
 EXPECTED_RUN_ID=''
 EXPECTED_RUN_ATTEMPT=''
 EXPECTED_MANIFEST_SHA256=''
+CANDIDATE_VERSION=''
+CANDIDATE_TAG=''
 RECEIPT_OUT_DIR=''
 CONFIRM_CREATE=''
 CONFIRM_DESTROY=''
@@ -173,6 +175,24 @@ validate_repo_inputs() {
   for path in "$MODULE_DIR/scripts/check.sh" "$REPO_ROOT/kustomize/lumen-standalone-acceptance/tests/contract.sh" "$REPO_ROOT/apps/lumen/scripts/standalone-gke-acceptance.sh" "$REPO_ROOT/apps/lumen/scripts/verify-release-artifacts.sh"; do
     [[ -f "$path" && ! -L "$path" ]] || die 'required repository gate is missing or unsafe'
   done
+}
+
+validate_candidate_identity() {
+  local manifest="$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json" sidecar="${CANDIDATE_RECEIPT_DIR}/final-candidate-manifest.json.sha256" actual root_digest
+  safe_private_file "$manifest" || die 'candidate manifest path is unsafe'
+  safe_private_file "$sidecar" || die 'candidate manifest sidecar path is unsafe'
+  actual=$(sha256_file "$manifest") || die 'candidate manifest cannot be hashed'
+  [[ "$actual" == "$EXPECTED_MANIFEST_SHA256" ]] || die 'candidate manifest hash differs from the expected hash'
+  cmp -s "$sidecar" <(printf '%s  final-candidate-manifest.json\n' "$actual") || die 'candidate manifest sidecar is not exact'
+  if ! CANDIDATE_VERSION=$(jq -er '.version | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$manifest"); then
+    die 'candidate manifest version is invalid'
+  fi
+  CANDIDATE_TAG="lumen@$CANDIDATE_VERSION"
+  root_digest="${IMAGE#ghcr.io/chrischeng-c4/lumen@}"
+  jq -e --arg version "$CANDIDATE_VERSION" --arg tag "$CANDIDATE_TAG" --arg commit "$EXPECTED_COMMIT" --arg run "$EXPECTED_RUN_ID" --arg attempt "$EXPECTED_RUN_ATTEMPT" --arg root "$root_digest" '
+    .version == $version and .tag == $tag and .commit == $commit and
+    .run_id == $run and .run_attempt == $attempt and .image.root_digest == $root
+  ' "$manifest" >/dev/null || die 'candidate manifest tag, identity, or image is inconsistent'
 }
 
 write_run_contract() {
@@ -446,7 +466,7 @@ validate_private_receipt() {
   candidate_dir=$CANDIDATE_RECEIPT_DIR
   inventory=$(find "$RUN_ROOT/private-receipt" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort) || die 'cannot inspect private receipt'
   [[ "$inventory" == $'lumen-standalone-gke-receipt.json\nlumen-standalone-gke-receipt.json.sha256' ]] || die 'inner gate produced an unexpected receipt inventory'
-  ( REPO='chrischeng-c4/axiom'; TAG='lumen@0.4.29'; COMMIT="$EXPECTED_COMMIT"; CANDIDATE_RUN_ID="$EXPECTED_RUN_ID"; CANDIDATE_RECEIPT_DIR="$candidate_dir"; STANDALONE_GKE_RECEIPT="$receipt"; STANDALONE_GKE_RECEIPT_SIDECAR="$sidecar"; source "$REPO_ROOT/apps/lumen/scripts/verify-release-artifacts.sh"; validate_receipt "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json" "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json.sha256" "$CANDIDATE_RECEIPT_DIR"; CANDIDATE_ATTEMPT="$EXPECTED_RUN_ATTEMPT"; validate_standalone_gke_receipt ) >"$RUN_ROOT/control/receipt-verify.log" 2>"$RUN_ROOT/control/receipt-verify.err" || die 'private standalone GKE receipt failed verification'
+  ( REPO='chrischeng-c4/axiom'; TAG="$CANDIDATE_TAG"; COMMIT="$EXPECTED_COMMIT"; CANDIDATE_RUN_ID="$EXPECTED_RUN_ID"; CANDIDATE_RECEIPT_DIR="$candidate_dir"; STANDALONE_GKE_RECEIPT="$receipt"; STANDALONE_GKE_RECEIPT_SIDECAR="$sidecar"; source "$REPO_ROOT/apps/lumen/scripts/verify-release-artifacts.sh"; validate_receipt "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json" "$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json.sha256" "$CANDIDATE_RECEIPT_DIR"; CANDIDATE_ATTEMPT="$EXPECTED_RUN_ATTEMPT"; validate_standalone_gke_receipt ) >"$RUN_ROOT/control/receipt-verify.log" 2>"$RUN_ROOT/control/receipt-verify.err" || die 'private standalone GKE receipt failed verification'
 }
 
 destroy_cluster() { terraform_plan_destroy "$RUN_ROOT/destroy.tfplan" "$RUN_ROOT/control/destroy-plan.json" destroy || die 'Terraform destroy plan changed the fixed resource set'; apply_saved_destroy "$RUN_ROOT/destroy.tfplan" destroy || die 'Terraform destroy or absence proof failed'; }
@@ -475,6 +495,7 @@ main() {
   validate_inputs
   require_tools
   validate_repo_inputs
+  validate_candidate_identity
   prepare_run_root
   trap on_exit EXIT
   trap 'exit 130' INT

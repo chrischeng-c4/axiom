@@ -17,7 +17,7 @@ const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
     "fa75bdd081f17ef4557465c073e816f942c0b57bc96e4c43d218803a5438f36a";
 const PROMOTION_VERIFIER_BYTES_SHA256: &str =
-    "8307d8a5d0eaac8931fb04f947a772a833fc203336026494e8642a41900335d2";
+    "c5e1101e537479be12c9bbfb7a6fc9e8a356dd42b13909a2b5fe9a14895b0ed5";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const COSIGN_INSTALLER: &str = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6";
 const SETUP_BUILDX: &str = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f";
@@ -327,16 +327,22 @@ struct GkeReceiptFixture {
     release: ReleaseFixture,
     receipt: PathBuf,
     sidecar: PathBuf,
+    tag: String,
 }
 
 fn gke_receipt_fixture() -> GkeReceiptFixture {
+    gke_receipt_fixture_for("0.4.29")
+}
+
+fn gke_receipt_fixture_for(version: &str) -> GkeReceiptFixture {
     let release = release_fixture();
     let manifest_path = release.candidate.join("final-candidate-manifest.json");
     let mut manifest =
         serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&manifest_path).unwrap())
             .unwrap();
-    manifest["version"] = serde_json::Value::String("0.4.29".to_owned());
-    manifest["tag"] = serde_json::Value::String("lumen@0.4.29".to_owned());
+    let tag = format!("lumen@{version}");
+    manifest["version"] = serde_json::Value::String(version.to_owned());
+    manifest["tag"] = serde_json::Value::String(tag.clone());
     for target in [
         "aarch64-apple-darwin",
         "x86_64-unknown-linux-gnu",
@@ -345,7 +351,7 @@ fn gke_receipt_fixture() -> GkeReceiptFixture {
         "aarch64-unknown-linux-musl",
     ] {
         let (archive, archive_sha, sidecar, sidecar_sha) =
-            write_archive_pair_for_version(&release.candidate, target, "0.4.29");
+            write_archive_pair_for_version(&release.candidate, target, version);
         fs::copy(
             &release.candidate.join(&archive),
             release.public.join(&archive),
@@ -379,7 +385,7 @@ fn gke_receipt_fixture() -> GkeReceiptFixture {
         "complete": true,
         "candidate": {
             "repository": "chrischeng-c4/axiom",
-            "version": "0.4.29",
+            "version": version,
             "commit": COMMIT,
             "workflow_ref": "chrischeng-c4/axiom/.github/workflows/lumen-release-candidate.yml@refs/heads/main",
             "run_id": RUN_ID,
@@ -453,17 +459,21 @@ fn gke_receipt_fixture() -> GkeReceiptFixture {
         release,
         receipt,
         sidecar,
+        tag,
     }
 }
 
 fn run_gke_receipt_fixture(fixture: &GkeReceiptFixture) -> Output {
-    Command::new("bash")
+    let mut command = Command::new("bash");
+    command
         .arg(release_script())
         .args([
             "--repo",
             "chrischeng-c4/axiom",
             "--tag",
-            "lumen@0.4.29",
+        ])
+        .arg(&fixture.tag)
+        .args([
             "--commit",
             COMMIT,
             "--candidate-run-id",
@@ -478,9 +488,8 @@ fn run_gke_receipt_fixture(fixture: &GkeReceiptFixture) -> Output {
         .arg("--standalone-gke-receipt")
         .arg(&fixture.receipt)
         .arg("--standalone-gke-receipt-sidecar")
-        .arg(&fixture.sidecar)
-        .output()
-        .unwrap()
+        .arg(&fixture.sidecar);
+    command.output().unwrap()
 }
 
 fn run_public_receipt_decoder(
@@ -3031,6 +3040,52 @@ fn fixture_mode_accepts_root_or_matching_scheduled_child_in_the_0_4_29_receipt()
         arm64_output.status.success(),
         "matching arm64 child receipt was rejected: {}",
         String::from_utf8_lossy(&arm64_output.stderr)
+    );
+}
+
+#[test]
+fn fixture_mode_accepts_0_4_30_and_rejects_manifest_or_receipt_version_drift() {
+    let fixture = gke_receipt_fixture_for("0.4.30");
+    let output = run_gke_receipt_fixture(&fixture);
+    assert!(
+        output.status.success(),
+        "0.4.30 receipt fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let receipt_drift = gke_receipt_fixture_for("0.4.30");
+    let mut receipt = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&receipt_drift.receipt).unwrap(),
+    )
+    .unwrap();
+    receipt["candidate"]["version"] = json!("0.4.29");
+    rewrite_receipt(&receipt_drift, &receipt);
+    assert!(
+        !run_gke_receipt_fixture(&receipt_drift).status.success(),
+        "0.4.30 accepted a 0.4.29 standalone GKE receipt version"
+    );
+
+    let manifest_drift = gke_receipt_fixture_for("0.4.30");
+    let manifest_path = manifest_drift
+        .release
+        .candidate
+        .join("final-candidate-manifest.json");
+    let mut manifest = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&manifest_path).unwrap(),
+    )
+    .unwrap();
+    manifest["version"] = json!("0.4.29");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    refresh_sha256_sidecar(&manifest_path);
+    let mut receipt = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&manifest_drift.receipt).unwrap(),
+    )
+    .unwrap();
+    receipt["candidate"]["manifest_sha256"] = json!(sha256(&manifest_path));
+    rewrite_receipt(&manifest_drift, &receipt);
+    assert!(
+        !run_gke_receipt_fixture(&manifest_drift).status.success(),
+        "0.4.30 tag accepted a 0.4.29 candidate manifest version"
     );
 }
 
