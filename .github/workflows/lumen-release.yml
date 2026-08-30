@@ -120,7 +120,7 @@ jobs:
           jq -e --arg commit "$GITHUB_SHA" --arg run "${{ inputs.candidate_run_id }}" --arg receipt "${{ inputs.standalone_gke_receipt_sha256 }}" '
             .commit == $commit and .candidate_run_id == $run and
             .standalone_gke_receipt_sha256 == $receipt and
-            [.root_digest,.amd64_digest,.arm64_digest] | all(test("^sha256:[0-9a-f]{64}$"))
+            ([.root_digest,.amd64_digest,.arm64_digest] | all(test("^sha256:[0-9a-f]{64}$")))
           ' promotion-contract.json >/dev/null
           {
             echo "root_digest=$(jq -r .root_digest promotion-contract.json)"
