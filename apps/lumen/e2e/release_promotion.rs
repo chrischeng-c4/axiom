@@ -17,7 +17,7 @@ const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
     "fa75bdd081f17ef4557465c073e816f942c0b57bc96e4c43d218803a5438f36a";
 const PROMOTION_VERIFIER_BYTES_SHA256: &str =
-    "08a21bb4b62db5b09d0371e52eb0f2ea88edbd5ed99dbe170355e2af32e8526a";
+    "8307d8a5d0eaac8931fb04f947a772a833fc203336026494e8642a41900335d2";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const COSIGN_INSTALLER: &str = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6";
 const SETUP_BUILDX: &str = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f";
@@ -101,6 +101,8 @@ const RECOVERY_0429_SIDECAR_SHA256: &str =
     "e398531ba1b06c621f3484b2d25cdc9e4c88047a7af5dea0a6af4c877f40c9d4";
 const RECOVERY_0429_WORKFLOW_SHA256: &str =
     "4fea5141ee55e4f674d37e065115bbe85b2fbbfc7bab99c236c8b7b177d727a9";
+const PUBLIC_VERIFY_0429_WORKFLOW_SHA256: &str =
+    "dfcb0a7f5b3bd6e396604625fde83f2386c7a191dc97e81c246901ec40837cb7";
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -764,6 +766,45 @@ fn execute_verifier_function_with_arg(
         .arg(function)
         .arg(argument)
         .arg(&input_path)
+        .output()
+        .unwrap()
+}
+
+fn execute_public_release_note_binding(verifier: &str, release_json: &serde_json::Value) -> Output {
+    let temp = TempDir::new("public-release-note-binding");
+    let script_path = temp.0.join("verifier.sh");
+    let gh_path = temp.0.join("gh");
+    let candidate = temp.0.join("candidate");
+    fs::create_dir_all(&candidate).unwrap();
+    fs::write(
+        candidate.join("final-candidate-manifest.json"),
+        r#"{"image":{"root_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","amd64_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","arm64_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"},"pr":{"url":"https://github.com/chrischeng-c4/axiom/pull/1"},"run_url":"https://github.com/chrischeng-c4/axiom/actions/runs/123/attempts/1"}"#,
+    )
+    .unwrap();
+    let bounded = verifier.replacen(
+        "  expected_assets=\"$({ while IFS= read -r target; do",
+        "  return 0\n  expected_assets=\"$({ while IFS= read -r target; do",
+        1,
+    );
+    assert_ne!(bounded, verifier, "public release note guard must be present");
+    fs::write(&script_path, bounded).unwrap();
+    fs::write(
+        &gh_path,
+        format!("#!/usr/bin/env bash\nprintf '%s\\n' '{}'\n", release_json),
+    )
+    .unwrap();
+    fs::set_permissions(&gh_path, fs::Permissions::from_mode(0o755)).unwrap();
+    Command::new("bash")
+        .args(["-c", "source \"$1\"; verify_public_release"])
+        .arg("bash")
+        .arg(&script_path)
+        .current_dir(&temp.0)
+        .env("PATH", format!("{}:{}", temp.0.display(), std::env::var("PATH").unwrap()))
+        .env("REPO", "chrischeng-c4/axiom")
+        .env("TAG", "lumen@0.4.29")
+        .env("COMMIT", COMMIT)
+        .env("CANDIDATE_RECEIPT_DIR", candidate)
+        .env("STANDALONE_GKE_RECEIPT_SHA256", RECOVERY_0429_RECEIPT_SHA256)
         .output()
         .unwrap()
 }
@@ -2082,6 +2123,67 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_public_verify_0429_workflow(workflow: &str) -> Result<(), String> {
+    let document: Value = serde_yaml::from_str(workflow)
+        .map_err(|error| format!("0.4.29 public verify workflow is not valid YAML: {error}"))?;
+    let top = yaml_mapping(&document, "0.4.29 public verify workflow")?;
+    exact_keys(top, &["name", "on", "permissions", "jobs"], "0.4.29 public verify workflow")?;
+    expect_text(top, "name", "lumen-release-0.4.29-public-verify", "0.4.29 public verify workflow")?;
+    let trigger = yaml_mapping(yaml_field(top, "on", "0.4.29 public verify workflow")?, "0.4.29 public verify workflow.on")?;
+    exact_keys(trigger, &["workflow_dispatch"], "0.4.29 public verify workflow.on")?;
+    if !yaml_field(trigger, "workflow_dispatch", "0.4.29 public verify workflow.on")?.is_null() {
+        return Err("0.4.29 public verify workflow_dispatch must have no inputs".to_owned());
+    }
+    validate_permissions(top, &[("actions", "read"), ("attestations", "read"), ("contents", "read"), ("packages", "read"), ("pull-requests", "read")], "0.4.29 public verify workflow")?;
+    let jobs = yaml_mapping(yaml_field(top, "jobs", "0.4.29 public verify workflow")?, "0.4.29 public verify workflow.jobs")?;
+    exact_keys(jobs, &["verify"], "0.4.29 public verify workflow.jobs")?;
+    let job = yaml_mapping(yaml_field(jobs, "verify", "0.4.29 public verify workflow.jobs")?, "0.4.29 public verify workflow.jobs.verify")?;
+    exact_keys(job, &["name", "runs-on", "steps"], "0.4.29 public verify workflow.jobs.verify")?;
+    expect_text(job, "name", "public verify lumen@0.4.29 from frozen candidate", "0.4.29 public verify workflow.jobs.verify")?;
+    expect_text(job, "runs-on", "ubuntu-latest", "0.4.29 public verify workflow.jobs.verify")?;
+    let steps = yaml_sequence(yaml_field(job, "steps", "0.4.29 public verify workflow.jobs.verify")?, "0.4.29 public verify workflow.jobs.verify.steps")?;
+    if steps.len() != 9 { return Err(format!("0.4.29 public verify step count changed: {}", steps.len())); }
+    validate_action_step(&steps[0], "0.4.29 public verify.steps[0]", CHECKOUT, &[("ref", "${{ github.sha }}"), ("path", "controller")], Some(("fetch-depth", 1)))?;
+    validate_action_step(&steps[1], "0.4.29 public verify.steps[1]", CHECKOUT, &[("ref", RECOVERY_0429_COMMIT), ("path", "product")], Some(("fetch-depth", 1)))?;
+    validate_action_step(&steps[3], "0.4.29 public verify.steps[3]", COSIGN_INSTALLER, &[("cosign-release", "v3.1.3")], None)?;
+    validate_action_step(&steps[4], "0.4.29 public verify.steps[4]", SETUP_BUILDX, &[], None)?;
+    validate_action_step(&steps[5], "0.4.29 public verify.steps[5]", DOCKER_LOGIN, &[("registry", "ghcr.io"), ("username", "${{ github.actor }}"), ("password", "${{ github.token }}")], None)?;
+    validate_run_step(&steps[6], "0.4.29 public verify.steps[6]", "Bind controller and frozen product candidate verifier bytes", &["name", "shell", "run"], &["verify-release-candidate.sh", "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7", "cmp -s controller/apps/lumen/scripts/verify-release-candidate.sh product/apps/lumen/scripts/verify-release-candidate.sh"], None, None, false)?;
+    validate_run_step(&steps[7], "0.4.29 public verify.steps[7]", "Download and bind the sanitized public receipt", &["name", "working-directory", "env", "shell", "run"], &["gh release download lumen@0.4.29", RECOVERY_0429_RECEIPT_SHA256, RECOVERY_0429_SIDECAR_SHA256], None, None, true)?;
+    validate_run_step(&steps[8], "0.4.29 public verify.steps[8]", "Publicly verify the frozen release from the product checkout", &["name", "working-directory", "env", "shell", "run"], &["../controller/apps/lumen/scripts/verify-release-artifacts.sh", "--mode public", RECOVERY_0429_ROOT, RECOVERY_0429_AMD64, RECOVERY_0429_ARM64], None, None, true)?;
+    for (index, path) in [(7, "0.4.29 public verify.steps[7]"), (8, "0.4.29 public verify.steps[8]")] {
+        let step = yaml_mapping(&steps[index], path)?;
+        expect_text(step, "working-directory", "product", path)?;
+    }
+    for required in [
+        "git -C controller fetch --no-tags origin main",
+        "$(git -C controller rev-parse origin/main)",
+        "lumen-release-0.4.29-public-verify.yml@refs/heads/main",
+        "verify-release-candidate.sh",
+        "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7",
+        RECOVERY_0429_RECEIPT_SHA256,
+        RECOVERY_0429_SIDECAR_SHA256,
+        "working-directory: product",
+        "../controller/apps/lumen/scripts/verify-release-artifacts.sh",
+        "--tag lumen@0.4.29",
+        "--candidate-run-id 33277878629",
+        "--mode public",
+        RECOVERY_0429_ROOT,
+        RECOVERY_0429_AMD64,
+        RECOVERY_0429_ARM64,
+        "--standalone-gke-receipt public-receipt/lumen-standalone-gke-receipt.json",
+        "--standalone-gke-receipt-sidecar public-receipt/lumen-standalone-gke-receipt.json.sha256",
+        "--output public-contract.json",
+    ] {
+        if !workflow.contains(required) { return Err(format!("0.4.29 public verify lost required binding: {required}")); }
+    }
+    let lower = workflow.to_ascii_lowercase();
+    for forbidden in ["contents: write", "packages: write", "id-token: write", "git tag", "git push", "git update-ref", "git/refs", "--method patch", "gh release create", "gh release edit", "docker buildx imagetools create", "gcloud", "kubectl", "kind", "actions/upload-artifact", "gh run upload"] {
+        if lower.contains(forbidden) { return Err(format!("0.4.29 public verify contains forbidden write: {forbidden}")); }
+    }
+    Ok(())
+}
+
 fn replace_last(text: &str, needle: &str, replacement: &str) -> String {
     let index = text.rfind(needle).expect("mutation needle must exist");
     format!(
@@ -2443,6 +2545,42 @@ fn recovery_0429_workflow_is_frozen_and_rejects_high_risk_mutations() {
 }
 
 #[test]
+fn public_verify_0429_workflow_is_frozen_and_rejects_write_or_identity_mutations() {
+    let workflow = include_str!("../../../.github/workflows/lumen-release-0.4.29-public-verify.yml");
+    validate_public_verify_0429_workflow(workflow)
+        .expect("0.4.29 public verifier workflow must satisfy its frozen read-only contract");
+    assert_eq!(
+        sha256(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../.github/workflows/lumen-release-0.4.29-public-verify.yml")
+                .as_path(),
+        ),
+        PUBLIC_VERIFY_0429_WORKFLOW_SHA256,
+        "0.4.29 public verifier workflow bytes changed; review the semantic validator before changing this digest",
+    );
+    for (name, mutation) in [
+        ("extra trigger", workflow.replace("workflow_dispatch:\n", "push:\n    branches: [main]\n  workflow_dispatch:\n")),
+        ("caller input", workflow.replace("workflow_dispatch:\n", "workflow_dispatch:\n    inputs:\n      mutable:\n        required: true\n")),
+        ("write permission", workflow.replace("contents: read", "contents: write")),
+        ("mutable product checkout", workflow.replace(RECOVERY_0429_COMMIT, "${{ github.sha }}")),
+        ("missing main fetch", workflow.replace("git -C controller fetch --no-tags origin main\n", "")),
+        ("origin main bypass", workflow.replace("$(git -C controller rev-parse origin/main)", "$(git -C controller rev-parse HEAD)")),
+        ("candidate verifier drift", workflow.replace("verify-release-candidate.sh", "verify-release-artifacts.sh")),
+        ("candidate verifier hash drift", workflow.replace("4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("candidate verifier equality removed", workflow.replace("          cmp -s controller/apps/lumen/scripts/verify-release-candidate.sh product/apps/lumen/scripts/verify-release-candidate.sh\n", "")),
+        ("receipt drift", workflow.replace(RECOVERY_0429_RECEIPT_SHA256, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+        ("registry write", workflow.replace("--mode public", "docker buildx imagetools create --tag ghcr.io/chrischeng-c4/lumen:0.4.29 x\n            --mode public")),
+        ("release write", workflow.replace("--mode public", "gh release create lumen@0.4.29\n            --mode public")),
+        ("artifact upload", workflow.replace("--mode public", "actions/upload-artifact\n            --mode public")),
+    ] {
+        assert!(
+            validate_public_verify_0429_workflow(&mutation).is_err(),
+            "0.4.29 public verifier validator accepted mutation: {name}"
+        );
+    }
+}
+
+#[test]
 fn public_release_notes_are_bound_to_candidate_and_promotion_evidence() {
     let workflow = include_str!("../../../.github/workflows/lumen-release.yml");
     let verifier = include_str!("../scripts/verify-release-artifacts.sh");
@@ -2623,6 +2761,47 @@ fn public_release_note_body_helper_is_hermetic_and_fail_closed() {
             "compatibility body helper accepted {name} variant"
         );
     }
+}
+
+#[test]
+fn public_release_note_binding_passes_and_missing_tag_argument_fails() {
+    let verifier = include_str!("../scripts/verify-release-artifacts.sh");
+    let release_json = json!({
+        "tagName": "lumen@0.4.29",
+        "isDraft": false,
+        "targetCommitish": COMMIT,
+        "body": format!(
+            "- Source commit: {COMMIT}\n- Pull request: https://github.com/chrischeng-c4/axiom/pull/1\n- Candidate run: https://github.com/chrischeng-c4/axiom/actions/runs/123/attempts/1\n- Promotion run: https://github.com/chrischeng-c4/axiom/actions/runs/456/attempts/1\n- Root index digest: sha256:{}\n- linux/amd64 digest: sha256:{}\n- linux/arm64 digest: sha256:{}\n- Standalone GKE receipt SHA-256: {}\n{}\n{}\n{}\n{}",
+            "1".repeat(64),
+            "2".repeat(64),
+            "3".repeat(64),
+            RECOVERY_0429_RECEIPT_SHA256,
+            PUBLIC_RELEASE_NOTE_STATEMENTS[0],
+            PUBLIC_RELEASE_NOTE_STATEMENTS[1],
+            PUBLIC_RELEASE_NOTE_STATEMENTS[2],
+            PUBLIC_COMPATIBILITY_NOTE,
+        )
+    });
+    let output = execute_public_release_note_binding(verifier, &release_json);
+    assert!(
+        output.status.success(),
+        "full 0.4.29 release-note JSON was rejected: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mutated = verifier.replacen(
+        "--arg tag \"$TAG\" --arg commit \"$COMMIT\" --arg pr_url",
+        "--arg commit \"$COMMIT\" --arg pr_url",
+        1,
+    );
+    assert_ne!(mutated, verifier, "tag-argument mutation must change source");
+    let output = execute_public_release_note_binding(&mutated, &release_json);
+    assert!(!output.status.success(), "missing tag argument passed");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("$tag is not defined"),
+        "missing tag argument did not expose jq undefined-variable evidence: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
