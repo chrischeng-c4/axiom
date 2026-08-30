@@ -213,7 +213,7 @@ llm_protocol:
     - id: verify-release
       use_when: "prepare, verify, and publish one Lumen release through its canonical candidate-to-promotion lifecycle"
       requires: ["A clean release worktree at the exact candidate commit.", "The project toolchains, Docker, and kind for the maintained release gates."]
-      reads: ["apps/lumen/CONTRIBUTING.md", ".github/workflows/lumen-release-candidate.yml", "apps/lumen/scripts/verify-release-candidate.sh", "apps/lumen/e2e/release_candidate.rs", ".github/workflows/lumen-release.yml", ".github/workflows/lumen-release-recovery.yml", ".github/workflows/lumen-release-0.4.29-recovery.yml", "apps/lumen/scripts/verify-release-artifacts.sh", "apps/lumen/e2e/release_promotion.rs", "apps/lumen/e2e/release_artifacts.rs", "apps/lumen/install.sh", "apps/lumen/scripts/kind-e2e.sh", ".agents/skills/lumen-build-release/SKILL.md", "libs/raft-runtime/CONTRIBUTING.md"]
+      reads: ["apps/lumen/CONTRIBUTING.md", ".github/workflows/lumen-release-candidate.yml", "apps/lumen/scripts/verify-release-candidate.sh", "apps/lumen/e2e/release_candidate.rs", ".github/workflows/lumen-release.yml", ".github/workflows/lumen-release-recovery.yml", ".github/workflows/lumen-release-0.4.29-recovery.yml", ".github/workflows/lumen-release-0.4.29-public-verify.yml", "apps/lumen/scripts/verify-release-artifacts.sh", "apps/lumen/e2e/release_promotion.rs", "apps/lumen/e2e/release_artifacts.rs", "apps/lumen/install.sh", "apps/lumen/scripts/kind-e2e.sh", ".agents/skills/lumen-build-release/SKILL.md", "libs/raft-runtime/CONTRIBUTING.md"]
       produces: ["commit-bound local, kind, and public artifact evidence"]
       providers: ["raft-runtime"]
       risk: remote_write

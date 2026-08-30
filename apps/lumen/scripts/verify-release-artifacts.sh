@@ -314,7 +314,7 @@ verify_public_release() {
   fi
   manifest="$CANDIDATE_RECEIPT_DIR/final-candidate-manifest.json"
   root="$(jq -er '.image.root_digest' "$manifest")"; amd64="$(jq -er '.image.amd64_digest' "$manifest")"; arm64="$(jq -er '.image.arm64_digest' "$manifest")"; pr_url="$(jq -er '.pr.url' "$manifest")"; candidate_url="$(jq -er '.run_url' "$manifest")"
-  jq -e --arg repo "$REPO" --arg commit "$COMMIT" --arg pr_url "$pr_url" --arg candidate_url "$candidate_url" --arg root "$root" --arg amd64 "$amd64" --arg arm64 "$arm64" --arg receipt_sha256 "$STANDALONE_GKE_RECEIPT_SHA256" '
+  jq -e --arg repo "$REPO" --arg tag "$TAG" --arg commit "$COMMIT" --arg pr_url "$pr_url" --arg candidate_url "$candidate_url" --arg root "$root" --arg amd64 "$amd64" --arg arm64 "$arm64" --arg receipt_sha256 "$STANDALONE_GKE_RECEIPT_SHA256" '
     (.body | if type == "string" then split("\n") else error("release body is not a string") end) as $lines |
     ($lines | index("- Source commit: " + $commit) != null) and
     ($lines | index("- Pull request: " + $pr_url) != null) and
