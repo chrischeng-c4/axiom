@@ -15,7 +15,7 @@ const VERSION: &str = "0.4.28";
 const COMMIT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
-    "14cbd1d902c2961ff2efae64a11a68fe82aeb9ee767e56b338acd8ea76b6a2b4";
+    "fa75bdd081f17ef4557465c073e816f942c0b57bc96e4c43d218803a5438f36a";
 const PROMOTION_VERIFIER_BYTES_SHA256: &str =
     "08a21bb4b62db5b09d0371e52eb0f2ea88edbd5ed99dbe170355e2af32e8526a";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
@@ -79,6 +79,28 @@ const RECOVERY_COMMIT: &str = "b1cbee3fcee0bfff54c425fe0f605b54125f4740";
 const RECOVERY_RUN: &str = "32974297012";
 const RECOVERY_WORKFLOW_SHA256: &str =
     "4fadd9fdae2f0db6f408424db19982f837274a549b0af22cce226e2a78839ca2";
+const RECOVERY_0429_TAG: &str = "lumen@0.4.29";
+const RECOVERY_0429_VERSION: &str = "0.4.29";
+const RECOVERY_0429_TAG_OBJECT: &str = "fda6cf765f2f58bec75f4fe3a4086fc1df62ced5";
+const RECOVERY_0429_COMMIT: &str = "dc7596a57d88e1d7925f5e3599c6c8c992fd2eb4";
+const RECOVERY_0429_RUN: &str = "33277878629";
+const RECOVERY_0429_FAILED_PROMOTION_RUN: &str = "33283293722";
+const RECOVERY_0429_ROOT: &str =
+    "sha256:3d05b74f665f7ffbfabfc7d50a06c5a4de22ca881d373d433142c83692e7f6e5";
+const RECOVERY_0429_AMD64: &str =
+    "sha256:cf6ee1bd1c2547287ae93e601a6fa462be7c741dd82ca0bfa6833db26adb9463";
+const RECOVERY_0429_ARM64: &str =
+    "sha256:5c84c723bf46c165a141341b3cf46690b1ae47bcf06c91fe73220f50fd1d57b4";
+const RECOVERY_0429_MANIFEST_SHA256: &str =
+    "3a3d9b521bd1f1d223afa4aea4c69e157078659be63c8e6762053e230c741ac2";
+const RECOVERY_0429_OLD_LATEST: &str =
+    "sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
+const RECOVERY_0429_RECEIPT_SHA256: &str =
+    "8ee8a506952d116bc842c57fc86898ff15f7660a6074146c2b8ffb89a1fca374";
+const RECOVERY_0429_SIDECAR_SHA256: &str =
+    "e398531ba1b06c621f3484b2d25cdc9e4c88047a7af5dea0a6af4c877f40c9d4";
+const RECOVERY_0429_WORKFLOW_SHA256: &str =
+    "4fea5141ee55e4f674d37e065115bbe85b2fbbfc7bab99c236c8b7b177d727a9";
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -1264,6 +1286,7 @@ fn validate_promotion_workflow(workflow: &str) -> Result<(), String> {
             ".commit == $commit",
             "candidate_run_id",
             ".standalone_gke_receipt_sha256 == $receipt",
+            "([.root_digest,.amd64_digest,.arm64_digest] | all(test(\"^sha256:[0-9a-f]{64}$\")))",
             "root_digest=$(jq -r",
         ],
         None,
@@ -1701,6 +1724,364 @@ fn validate_recovery_workflow(workflow: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
+    let document: Value = serde_yaml::from_str(workflow)
+        .map_err(|error| format!("0.4.29 recovery workflow is not valid YAML: {error}"))?;
+    let top = yaml_mapping(&document, "0.4.29 recovery workflow")?;
+    exact_keys(
+        top,
+        &["name", "on", "concurrency", "permissions", "jobs"],
+        "0.4.29 recovery workflow",
+    )?;
+    expect_text(
+        top,
+        "name",
+        "lumen-release-0.4.29-recovery",
+        "0.4.29 recovery workflow",
+    )?;
+    let trigger = yaml_mapping(
+        yaml_field(top, "on", "0.4.29 recovery workflow")?,
+        "0.4.29 recovery workflow.on",
+    )?;
+    exact_keys(trigger, &["workflow_dispatch"], "0.4.29 recovery workflow.on")?;
+    if !yaml_field(trigger, "workflow_dispatch", "0.4.29 recovery workflow.on")?.is_null() {
+        return Err("0.4.29 recovery workflow_dispatch must have no inputs".to_owned());
+    }
+    let concurrency = yaml_mapping(
+        yaml_field(top, "concurrency", "0.4.29 recovery workflow")?,
+        "0.4.29 recovery workflow.concurrency",
+    )?;
+    exact_keys(
+        concurrency,
+        &["group", "cancel-in-progress"],
+        "0.4.29 recovery workflow.concurrency",
+    )?;
+    expect_text(
+        concurrency,
+        "group",
+        "lumen-release-promotion-0.4.29",
+        "0.4.29 recovery workflow.concurrency",
+    )?;
+    expect_bool(
+        concurrency,
+        "cancel-in-progress",
+        false,
+        "0.4.29 recovery workflow.concurrency",
+    )?;
+    validate_permissions(
+        top,
+        &[
+            ("actions", "read"),
+            ("attestations", "read"),
+            ("contents", "write"),
+            ("packages", "write"),
+            ("pull-requests", "read"),
+        ],
+        "0.4.29 recovery workflow",
+    )?;
+    let jobs = yaml_mapping(
+        yaml_field(top, "jobs", "0.4.29 recovery workflow")?,
+        "0.4.29 recovery workflow.jobs",
+    )?;
+    exact_keys(jobs, &["recover"], "0.4.29 recovery workflow.jobs")?;
+    let job = yaml_mapping(
+        yaml_field(jobs, "recover", "0.4.29 recovery workflow.jobs")?,
+        "0.4.29 recovery workflow.jobs.recover",
+    )?;
+    exact_keys(
+        job,
+        &["name", "runs-on", "steps"],
+        "0.4.29 recovery workflow.jobs.recover",
+    )?;
+    expect_text(
+        job,
+        "name",
+        "recover lumen@0.4.29 from frozen candidate",
+        "0.4.29 recovery workflow.jobs.recover",
+    )?;
+    expect_text(
+        job,
+        "runs-on",
+        "ubuntu-latest",
+        "0.4.29 recovery workflow.jobs.recover",
+    )?;
+    let steps = yaml_sequence(
+        yaml_field(job, "steps", "0.4.29 recovery workflow.jobs.recover")?,
+        "0.4.29 recovery workflow.jobs.recover.steps",
+    )?;
+    if steps.len() != 13 {
+        return Err(format!("0.4.29 recovery step count changed: {}", steps.len()));
+    }
+    validate_action_step(
+        &steps[0],
+        "0.4.29 recovery.steps[0]",
+        CHECKOUT,
+        &[("ref", RECOVERY_0429_COMMIT)],
+        Some(("fetch-depth", 0)),
+    )?;
+    validate_run_step(
+        &steps[1],
+        "0.4.29 recovery.steps[1]",
+        "Refuse non-main or workflow-identity dispatch",
+        &["name", "shell", "run"],
+        &[
+            "$GITHUB_REF\" == refs/heads/main",
+            "lumen-release-0.4.29-recovery.yml@refs/heads/main",
+            "$(git rev-parse origin/main)",
+            "git merge-base --is-ancestor dc7596a57d88e1d7925f5e3599c6c8c992fd2eb4 origin/main",
+        ],
+        None,
+        None,
+        false,
+    )?;
+    validate_action_step(
+        &steps[2],
+        "0.4.29 recovery.steps[2]",
+        COSIGN_INSTALLER,
+        &[("cosign-release", "v3.1.3")],
+        None,
+    )?;
+    validate_action_step(&steps[3], "0.4.29 recovery.steps[3]", SETUP_BUILDX, &[], None)?;
+    validate_action_step(
+        &steps[4],
+        "0.4.29 recovery.steps[4]",
+        DOCKER_LOGIN,
+        &[
+            ("registry", "ghcr.io"),
+            ("username", "${{ github.actor }}"),
+            ("password", "${{ github.token }}"),
+        ],
+        None,
+    )?;
+    let receipt_step = yaml_mapping(&steps[5], "0.4.29 recovery.steps[5]")?;
+    exact_keys(
+        receipt_step,
+        &["name", "id", "shell", "env", "run"],
+        "0.4.29 recovery.steps[5]",
+    )?;
+    expect_text(
+        receipt_step,
+        "name",
+        "Decode and bind frozen standalone GKE receipt",
+        "0.4.29 recovery.steps[5]",
+    )?;
+    expect_text(receipt_step, "id", "gke_receipt", "0.4.29 recovery.steps[5]")?;
+    let receipt_env = yaml_mapping(
+        yaml_field(receipt_step, "env", "0.4.29 recovery.steps[5]")?,
+        "0.4.29 recovery.steps[5].env",
+    )?;
+    exact_keys(
+        receipt_env,
+        &["RECEIPT_B64", "SIDECAR_B64"],
+        "0.4.29 recovery.steps[5].env",
+    )?;
+    let receipt_b64 = yaml_text(
+        yaml_field(receipt_env, "RECEIPT_B64", "0.4.29 recovery.steps[5].env")?,
+        "0.4.29 recovery.steps[5].env.RECEIPT_B64",
+    )?;
+    let sidecar_b64 = yaml_text(
+        yaml_field(receipt_env, "SIDECAR_B64", "0.4.29 recovery.steps[5].env")?,
+        "0.4.29 recovery.steps[5].env.SIDECAR_B64",
+    )?;
+    let receipt_bytes = base64::engine::general_purpose::STANDARD
+        .decode(receipt_b64)
+        .map_err(|error| format!("frozen receipt base64 is invalid: {error}"))?;
+    let sidecar_bytes = base64::engine::general_purpose::STANDARD
+        .decode(sidecar_b64)
+        .map_err(|error| format!("frozen receipt sidecar base64 is invalid: {error}"))?;
+    if sha256_bytes(&receipt_bytes) != RECOVERY_0429_RECEIPT_SHA256
+        || sha256_bytes(&sidecar_bytes) != RECOVERY_0429_SIDECAR_SHA256
+        || sidecar_bytes
+            != format!("{RECOVERY_0429_RECEIPT_SHA256}  lumen-standalone-gke-receipt.json\n").as_bytes()
+    {
+        return Err("frozen 0.4.29 receipt bytes do not bind the public snapshot".to_owned());
+    }
+    let receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+        .map_err(|error| format!("frozen receipt JSON is invalid: {error}"))?;
+    if receipt.pointer("/candidate/commit").and_then(|value| value.as_str()) != Some(RECOVERY_0429_COMMIT)
+        || receipt.pointer("/candidate/run_id").and_then(|value| value.as_str()) != Some(RECOVERY_0429_RUN)
+        || receipt.pointer("/candidate/run_attempt").and_then(|value| value.as_str()) != Some("1")
+        || receipt.pointer("/candidate/manifest_sha256").and_then(|value| value.as_str()) != Some(RECOVERY_0429_MANIFEST_SHA256)
+        || receipt.pointer("/candidate/root_digest").and_then(|value| value.as_str()) != Some(RECOVERY_0429_ROOT)
+        || receipt.pointer("/candidate/amd64_digest").and_then(|value| value.as_str()) != Some(RECOVERY_0429_AMD64)
+        || receipt.pointer("/candidate/arm64_digest").and_then(|value| value.as_str()) != Some(RECOVERY_0429_ARM64)
+    {
+        return Err("frozen receipt does not bind the 0.4.29 candidate identity".to_owned());
+    }
+    let decoder = yaml_text(
+        yaml_field(receipt_step, "run", "0.4.29 recovery.steps[5]")?,
+        "0.4.29 recovery.steps[5].run",
+    )?;
+    for required in [
+        "canonical_b64",
+        "base64 --decode",
+        RECOVERY_0429_RECEIPT_SHA256,
+        RECOVERY_0429_SIDECAR_SHA256,
+        "lumen-standalone-gke-receipt.json.sha256",
+    ] {
+        if !decoder.contains(required) {
+            return Err(format!("0.4.29 receipt decoder lost required binding: {required}"));
+        }
+    }
+    validate_run_step(
+        &steps[6],
+        "0.4.29 recovery.steps[6]",
+        "Revalidate frozen tag candidate receipt and failed promotion proof",
+        &["name", "env", "shell", "run"],
+        &[
+            "verify-release-artifacts.sh",
+            "--mode candidate",
+            RECOVERY_0429_TAG_OBJECT,
+            RECOVERY_0429_FAILED_PROMOTION_RUN,
+            "Verify tag ruleset, candidate receipt, and supply chain",
+            "Export immutable candidate contract",
+        ],
+        None,
+        None,
+        true,
+    )?;
+    validate_run_step(
+        &steps[7],
+        "0.4.29 recovery.steps[7]",
+        "Inspect existing release",
+        &["name", "id", "env", "shell", "run"],
+        &["release(tagName", "exists=true", "exists=false"],
+        None,
+        Some("state"),
+        true,
+    )?;
+    validate_run_step(
+        &steps[8],
+        "0.4.29 recovery.steps[8]",
+        "Public-verify existing release only",
+        &["name", "if", "env", "shell", "run"],
+        &["verify-release-artifacts.sh", "--mode public", "--standalone-gke-receipt"],
+        Some("steps.state.outputs.exists == 'true'"),
+        None,
+        true,
+    )?;
+    validate_run_step(
+        &steps[9],
+        "0.4.29 recovery.steps[9]",
+        "Download exact candidate release bytes",
+        &["name", "if", "env", "shell", "run"],
+        &["gh run download", "lumen-release-candidate-33277878629-1", "candidate/spdx-arm64.json"],
+        Some("steps.state.outputs.exists == 'false'"),
+        None,
+        true,
+    )?;
+    validate_run_step(
+        &steps[10],
+        "0.4.29 recovery.steps[10]",
+        "Re-query and promote only exact frozen root",
+        &["name", "if", "env", "shell", "run"],
+        &[
+            "promotion-contract-before-write.json",
+            "--mode candidate",
+            "--arg commit dc7596a57d88e1d7925f5e3599c6c8c992fd2eb4",
+            "--arg run 33277878629",
+            ".commit == $commit",
+            ".candidate_run_id == $run",
+            RECOVERY_0429_ROOT,
+            RECOVERY_0429_OLD_LATEST,
+            "[[ -z \"$(digest_or_absent ghcr.io/chrischeng-c4/lumen:0.4.29)\" ]]",
+            "digest_or_absent ghcr.io/chrischeng-c4/lumen:0.4.28",
+            "docker buildx imagetools create",
+        ],
+        Some("steps.state.outputs.exists == 'false'"),
+        None,
+        true,
+    )?;
+    validate_run_step(
+        &steps[11],
+        "0.4.29 recovery.steps[11]",
+        "Create exact GitHub Release",
+        &["name", "if", "env", "shell", "run"],
+        &[
+            "gh release create lumen@0.4.29",
+            "--target dc7596a57d88e1d7925f5e3599c6c8c992fd2eb4",
+            RECOVERY_0429_RECEIPT_SHA256,
+            "Recovery note: promotion run 33283293722 failed before public writes",
+            PUBLIC_RELEASE_NOTE_STATEMENTS[0],
+            PUBLIC_RELEASE_NOTE_STATEMENTS[1],
+            PUBLIC_RELEASE_NOTE_STATEMENTS[2],
+            PUBLIC_COMPATIBILITY_NOTE,
+            "gke-receipt/lumen-standalone-gke-receipt.json.sha256",
+        ],
+        Some("steps.state.outputs.exists == 'false'"),
+        None,
+        true,
+    )?;
+    validate_run_step(
+        &steps[12],
+        "0.4.29 recovery.steps[12]",
+        "Publicly verify recovered release",
+        &["name", "if", "env", "shell", "run"],
+        &["verify-release-artifacts.sh", "--mode public", "--standalone-gke-receipt-sidecar"],
+        Some("steps.state.outputs.exists == 'false'"),
+        None,
+        true,
+    )?;
+    let lower = workflow.to_ascii_lowercase();
+    for forbidden in [
+        "inputs.",
+        "id-token: write",
+        "cargo build",
+        "docker/build-push-action",
+        "cosign sign",
+        "cosign attest",
+        "actions/attest",
+        "git tag",
+        "git push",
+        "git update-ref",
+        "git/refs",
+        "--method patch",
+        "gcloud",
+        "kubectl",
+        "kind create",
+        "gh run upload",
+        "actions/upload-artifact",
+    ] {
+        if lower.contains(forbidden) {
+            return Err(format!("0.4.29 recovery has forbidden control: {forbidden}"));
+        }
+    }
+    for exact in [
+        RECOVERY_0429_TAG,
+        RECOVERY_0429_VERSION,
+        RECOVERY_0429_TAG_OBJECT,
+        RECOVERY_0429_COMMIT,
+        RECOVERY_0429_RUN,
+        RECOVERY_0429_FAILED_PROMOTION_RUN,
+        RECOVERY_0429_ROOT,
+        RECOVERY_0429_AMD64,
+        RECOVERY_0429_ARM64,
+        RECOVERY_0429_MANIFEST_SHA256,
+        RECOVERY_0429_OLD_LATEST,
+        RECOVERY_0429_RECEIPT_SHA256,
+        RECOVERY_0429_SIDECAR_SHA256,
+    ] {
+        if !workflow.contains(exact) && exact != RECOVERY_0429_MANIFEST_SHA256 {
+            return Err(format!("0.4.29 recovery lost frozen binding: {exact}"));
+        }
+    }
+    if count(workflow, "docker buildx imagetools create") != 2
+        || count(workflow, "gh release create") != 1
+        || count(workflow, "--mode candidate") != 2
+        || count(workflow, "--mode public") != 2
+        || count(workflow, "--standalone-gke-receipt ") != 4
+        || count(workflow, "--standalone-gke-receipt-sidecar ") != 4
+    {
+        return Err("0.4.29 recovery stable write or verifier inventory changed".to_owned());
+    }
+    if !workflow.contains(&format!(
+        "root=ghcr.io/chrischeng-c4/lumen@{RECOVERY_0429_ROOT}"
+    )) {
+        return Err("0.4.29 recovery promotion source is not the frozen root digest".to_owned());
+    }
+    Ok(())
+}
+
 fn replace_last(text: &str, needle: &str, replacement: &str) -> String {
     let index = text.rfind(needle).expect("mutation needle must exist");
     format!(
@@ -1854,6 +2235,14 @@ fn promotion_workflow_rejects_high_risk_source_mutations() {
                 1,
             ),
         ),
+        (
+            "jq precedence bypass",
+            workflow.replacen(
+                "([.root_digest,.amd64_digest,.arm64_digest] | all(test(\"^sha256:[0-9a-f]{64}$\")))",
+                "[.root_digest,.amd64_digest,.arm64_digest] | all(test(\"^sha256:[0-9a-f]{64}$\"))",
+                1,
+            ),
+        ),
     ];
     for (name, mutation) in mutations {
         assert!(
@@ -1899,6 +2288,156 @@ fn recovery_workflow_is_frozen_and_rejects_high_risk_mutations() {
         assert!(
             validate_recovery_workflow(&mutation).is_err(),
             "validator accepted recovery mutation: {name}"
+        );
+    }
+}
+
+#[test]
+fn recovery_0429_workflow_is_frozen_and_rejects_high_risk_mutations() {
+    let workflow = include_str!("../../../.github/workflows/lumen-release-0.4.29-recovery.yml");
+    validate_recovery_0429_workflow(workflow)
+        .expect("0.4.29 recovery workflow must satisfy its frozen contract");
+    assert_eq!(
+        sha256(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../.github/workflows/lumen-release-0.4.29-recovery.yml")
+                .as_path(),
+        ),
+        RECOVERY_0429_WORKFLOW_SHA256,
+        "0.4.29 recovery workflow bytes changed; review the semantic validator before changing this digest",
+    );
+    let mutations = [
+        (
+            "extra trigger",
+            workflow.replace(
+                "workflow_dispatch:\n",
+                "push:\n    branches: [main]\n  workflow_dispatch:\n",
+            ),
+        ),
+        (
+            "caller input",
+            workflow.replace(
+                "workflow_dispatch:\n",
+                "workflow_dispatch:\n    inputs:\n      version:\n        required: true\n        type: string\n",
+            ),
+        ),
+        (
+            "controller branch drift",
+            workflow.replace("$GITHUB_REF\" == refs/heads/main", "$GITHUB_REF\" == refs/heads/release"),
+        ),
+        (
+            "mutable controller checkout",
+            workflow.replace(
+                "ref: dc7596a57d88e1d7925f5e3599c6c8c992fd2eb4",
+                "ref: ${{ github.sha }}",
+            ),
+        ),
+        (
+            "tag object drift",
+            workflow.replace(RECOVERY_0429_TAG_OBJECT, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+        (
+            "product commit drift",
+            workflow.replace(RECOVERY_0429_COMMIT, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+        ("candidate run drift", workflow.replace(RECOVERY_0429_RUN, "33277878630")),
+        (
+            "failed promotion drift",
+            workflow.replace(RECOVERY_0429_FAILED_PROMOTION_RUN, "33283293723"),
+        ),
+        (
+            "root digest drift",
+            workflow.replace(RECOVERY_0429_ROOT, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+        (
+            "receipt hash drift",
+            workflow.replace(RECOVERY_0429_RECEIPT_SHA256, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+        (
+            "receipt bytes drift",
+            workflow.replacen("RECEIPT_B64: e", "RECEIPT_B64: a", 1),
+        ),
+        (
+            "skipped candidate recheck",
+            replace_last(workflow, "--mode candidate", "--mode public"),
+        ),
+        (
+            "pre-write contract loses commit and candidate run",
+            replace_last(
+                workflow,
+                ".commit == $commit and .candidate_run_id == $run and ",
+                "",
+            ),
+        ),
+        (
+            "mutable promotion source",
+            workflow.replace(
+                "root=ghcr.io/chrischeng-c4/lumen@sha256:3d05b74f665f7ffbfabfc7d50a06c5a4de22ca881d373d433142c83692e7f6e5",
+                "root=ghcr.io/chrischeng-c4/lumen:release-candidate",
+            ),
+        ),
+        (
+            "semver absence recheck removed",
+            workflow.replace(
+                "            [[ -z \"$(digest_or_absent ghcr.io/chrischeng-c4/lumen:0.4.29)\" ]]\n",
+                "",
+            ),
+        ),
+        (
+            "old latest provenance removed",
+            workflow.replace(
+                "            [[ \"$(digest_or_absent ghcr.io/chrischeng-c4/lumen:0.4.28)\" == sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d ]]\n",
+                "",
+            ),
+        ),
+        (
+            "mutable release target",
+            workflow.replace(
+                "--target dc7596a57d88e1d7925f5e3599c6c8c992fd2eb4",
+                "--target $GITHUB_SHA",
+            ),
+        ),
+        (
+            "unsafe tag write",
+            workflow.replacen(
+                "git/ref/tags/lumen%400.4.29",
+                "git/refs/tags/lumen%400.4.29 --method PATCH",
+                1,
+            ),
+        ),
+        (
+            "rebuild",
+            workflow.replacen(
+                "root=ghcr.io/chrischeng-c4/lumen@sha256:3d05b74f665f7ffbfabfc7d50a06c5a4de22ca881d373d433142c83692e7f6e5",
+                "cargo build --release\n          root=ghcr.io/chrischeng-c4/lumen@sha256:3d05b74f665f7ffbfabfc7d50a06c5a4de22ca881d373d433142c83692e7f6e5",
+                1,
+            ),
+        ),
+        (
+            "re-sign",
+            workflow.replacen(
+                "root=ghcr.io/chrischeng-c4/lumen@sha256:3d05b74f665f7ffbfabfc7d50a06c5a4de22ca881d373d433142c83692e7f6e5",
+                "cosign sign image\n          root=ghcr.io/chrischeng-c4/lumen@sha256:3d05b74f665f7ffbfabfc7d50a06c5a4de22ca881d373d433142c83692e7f6e5",
+                1,
+            ),
+        ),
+        (
+            "asset drift",
+            workflow.replace("candidate/spdx-arm64.json", "candidate/extra.json"),
+        ),
+        (
+            "release note drift",
+            workflow.replace("Recovery note: promotion run 33283293722 failed before public writes", "Changed note"),
+        ),
+        (
+            "missing public verifier",
+            workflow.replace("Publicly verify recovered release", "Verify recovered release"),
+        ),
+    ];
+    for (name, mutation) in mutations {
+        assert!(
+            validate_recovery_0429_workflow(&mutation).is_err(),
+            "0.4.29 recovery validator accepted forbidden mutation: {name}"
         );
     }
 }
