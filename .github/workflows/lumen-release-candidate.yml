@@ -387,6 +387,31 @@ jobs:
         with:
           ref: ${{ needs.identity.outputs.commit }}
           fetch-depth: 0
+      - name: Reclaim runner disk before the cargo gates
+        # The gate step below runs nine cargo invocations -- five feature
+        # combinations plus a --release perf gate -- into one target directory,
+        # and its `cargo clean` is the LAST line of that step. On 0.4.30 the e2e
+        # tree crossed the point where that no longer fits: run 33311330220 died
+        # mid-step with the runner itself unable to write its own diagnostic log
+        # ("No space left on device"), which surfaces as an unexplained job crash
+        # rather than as a disk failure. Delete the preinstalled toolchains this
+        # job never touches, before the artifact downloads and before anything
+        # installs into hostedtoolcache -- only CodeQL is removed from there,
+        # because setup-uv and setup-ruby put their runtimes in that same tree a
+        # few steps below. The two `df -h` lines are the evidence: without them a
+        # step that silently reclaimed nothing looks identical to one that worked.
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /usr/share/swift \
+            /usr/local/share/boost \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.1.3
