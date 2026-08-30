@@ -20,7 +20,8 @@
 //!
 //! | Case | What it pins |
 //! |---|---|
-//! | ships no inverted index | the serialised document has no `terms` / `elements` key |
+//! | ships no inverted index | the `terms` / `elements` keys are present but EMPTY — no posting travels |
+//! | a released 0.4.29 can still parse it | the document deserialises into a replica of 0.4.29's wire type, so that build refuses it by version rather than by serde |
 //! | a v1 snapshot still restores | an older document that DOES carry them is still read, and its `forward` still wins |
 //! | round trip preserves answers | the rebuild from `forward` alone is complete, sparse fields and explicit empties included |
 //! | merge leaves no stale posting | `forward`'s last-writer-wins is the only surviving authority after a shard merge |
@@ -111,22 +112,124 @@ async fn a_keyword_and_set_snapshot_ship_no_inverted_index() {
     let doc = serde_json::to_value(engine.snapshot().expect("snapshot")).expect("serialise");
     let fields = &doc["collections"][COLLECTION]["fields"];
 
-    assert!(
-        fields["kw"].get("terms").is_none(),
-        "the Keyword arm still ships its inverted index; `from_snapshot` rebuilds \
-         `terms` from `forward` and never reads this map, so every byte of it is \
-         written, shipped to a Raft follower, and discarded. Got: {}",
+    // The key survives as an empty map, and ONLY as an empty map. It is there
+    // so a released 0.4.29 — whose `terms` is a required field — can parse this
+    // document and refuse it by version instead of failing inside serde on a
+    // file that is intact; `a_released_0_4_29_reader_can_still_parse_this`
+    // below is the case that pins that. What must not come back is the
+    // dictionary: `from_snapshot` rebuilds it from `forward` and never reads
+    // this map, so every posting written here is shipped to a Raft follower and
+    // discarded.
+    assert_eq!(
+        fields["kw"]["terms"],
+        json!({}),
+        "the Keyword arm's inverted index must travel EMPTY — an absent key breaks \
+         a released 0.4.29 reader, and a populated one is bytes nobody reads. Got: {}",
         fields["kw"]
     );
-    assert!(
-        fields["tags"].get("elements").is_none(),
-        "the Set arm still ships its inverted index, same as Keyword above. Got: {}",
+    assert_eq!(
+        fields["tags"]["elements"],
+        json!({}),
+        "the Set arm's inverted index, same as Keyword above. Got: {}",
         fields["tags"]
     );
     // The forward column is what the reader needs, so it must still be there.
     assert!(
         fields["kw"]["forward"].is_object() && fields["tags"]["forward"]["d0"].is_array(),
         "the forward column is the surviving representation and must be complete"
+    );
+}
+
+/// A replica of the wire type `lumen@0.4.29` compiled — `terms` and
+/// `elements` are required fields there, with no `#[serde(default)]`. Nothing
+/// in this crate can be substituted for it: the point is to fail the way a
+/// binary we can no longer edit fails.
+mod v0_4_29 {
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+    #[derive(serde::Deserialize)]
+    pub struct KeywordArm {
+        #[allow(dead_code)]
+        pub terms: BTreeMap<String, BTreeSet<String>>,
+        pub forward: HashMap<String, String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct SetArm {
+        #[allow(dead_code)]
+        pub elements: BTreeMap<String, BTreeSet<String>>,
+        pub forward: HashMap<String, BTreeSet<String>>,
+    }
+}
+
+/// 0.4.29 is released, so a format-2 document WILL meet one: a rollback reads
+/// its own `rdb.rs` data directory, a reshard delta lands on an un-upgraded
+/// shard, a Raft catch-up reaches a peer mid-rolling-upgrade.
+///
+/// That reader must refuse by VERSION. It cannot, if it never finishes
+/// deserialising — `version` is a field of the same struct, so serde runs
+/// first and a missing `terms` reports a missing field on a file that is
+/// intact. This case pins that the document still parses as 0.4.29 declares
+/// it, which is the whole of what stands between an operator mid-incident and
+/// a decode error that reads like corruption.
+#[tokio::test]
+async fn a_released_0_4_29_reader_can_still_parse_this() {
+    let (s, engine) = server();
+    seed(&s, 9, |i| format!("v{i}")).await;
+
+    let doc = serde_json::to_value(engine.snapshot().expect("snapshot")).expect("serialise");
+    let fields = &doc["collections"][COLLECTION]["fields"];
+
+    let kw: v0_4_29::KeywordArm = serde_json::from_value(fields["kw"].clone()).expect(
+        "0.4.29 requires a `terms` key; dropping it from the wire makes that build fail \
+         inside serde, before its own version check can name the real problem",
+    );
+    let tags: v0_4_29::SetArm = serde_json::from_value(fields["tags"].clone())
+        .expect("0.4.29 requires an `elements` key, same as `terms` above");
+
+    // And it parses the part that actually matters, so the refusal it goes on
+    // to print is a version refusal over a document it read, not a lucky one.
+    assert_eq!(
+        kw.forward.get("d0").map(String::as_str),
+        Some("v0"),
+        "the forward column an 0.4.29 reader sees must be the real one"
+    );
+    assert!(
+        tags.forward.get("d0").is_some_and(|s| s.contains("shared")),
+        "same for the Set arm"
+    );
+}
+
+/// The same claim on the format the ROLLBACK actually reads.
+///
+/// `rdb.rs` writes the data directory as CBOR, not JSON, so the JSON case
+/// above proves the placeholder reaches serde's data model but not that it
+/// reaches the bytes on disk. This decodes the encoded snapshot with the same
+/// decoder 0.4.29 links, into the same replica type.
+#[tokio::test]
+async fn a_released_0_4_29_reader_can_still_parse_the_on_disk_cbor() {
+    let (s, engine) = server();
+    seed(&s, 9, |i| format!("v{i}")).await;
+
+    let mut cbor = Vec::new();
+    ciborium::into_writer(&engine.snapshot().expect("snapshot"), &mut cbor).expect("cbor encode");
+    let doc: Value = ciborium::from_reader(cbor.as_slice()).expect("cbor decode");
+    let fields = &doc["collections"][COLLECTION]["fields"];
+
+    let kw: v0_4_29::KeywordArm = serde_json::from_value(fields["kw"].clone()).expect(
+        "0.4.29 requires `terms` in the CBOR data directory too; without it the rollback \
+         fails to decode its own snapshot file and reads as corruption",
+    );
+    assert_eq!(
+        kw.forward.get("d0").map(String::as_str),
+        Some("v0"),
+        "the forward column survives the CBOR round trip"
+    );
+    let tags: v0_4_29::SetArm = serde_json::from_value(fields["tags"].clone())
+        .expect("0.4.29 requires `elements` in CBOR, same as `terms` above");
+    assert!(
+        tags.forward.get("d0").is_some_and(|s| s.contains("shared")),
+        "same for the Set arm"
     );
 }
 

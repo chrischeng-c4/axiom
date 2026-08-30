@@ -198,6 +198,12 @@ release = [
 
 [dev-dependencies]
 axum-test = "17"
+# The on-disk snapshot is CBOR, and CBOR is the ROLLBACK path — a 0.4.30 node
+# writes `rdb.rs`'s data directory, the operator rolls back to 0.4.29, and that
+# build decodes it. `e2e/snapshot_ships_only_the_forward_column.rs` reads the
+# encoded bytes with the same decoder 0.4.29 uses, so the compat claim is
+# measured on the format that actually carries it rather than only on JSON.
+ciborium = "0.2"
 criterion = "0.5"
 proptest = "1"
 rand = "0.8"

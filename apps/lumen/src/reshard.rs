@@ -641,10 +641,11 @@ fn merge_field_index_delta(base: &mut FieldIndexSnapshot, delta: FieldIndexSnaps
         // term — except that `from_snapshot` rebuilds from `forward` and threw
         // the union away, so the bug was latent rather than live.
         (
-            FieldIndexSnapshot::Keyword { forward, bytes },
+            FieldIndexSnapshot::Keyword { forward, bytes, .. },
             FieldIndexSnapshot::Keyword {
                 forward: delta_forward,
                 bytes: delta_bytes,
+                ..
             },
         ) => {
             forward.extend(delta_forward);
@@ -661,10 +662,11 @@ fn merge_field_index_delta(base: &mut FieldIndexSnapshot, delta: FieldIndexSnaps
             *bytes = bytes.saturating_add(delta_bytes);
         }
         (
-            FieldIndexSnapshot::Set { forward, bytes },
+            FieldIndexSnapshot::Set { forward, bytes, .. },
             FieldIndexSnapshot::Set {
                 forward: delta_forward,
                 bytes: delta_bytes,
+                ..
             },
         ) => {
             forward.extend(delta_forward);
@@ -749,7 +751,8 @@ fn field_index_subset(index: &FieldIndexSnapshot, wanted: &BTreeSet<String>) -> 
                 bytes: *bytes,
             }
         }
-        FieldIndexSnapshot::Keyword { forward, bytes } => FieldIndexSnapshot::Keyword {
+        FieldIndexSnapshot::Keyword { forward, bytes, .. } => FieldIndexSnapshot::Keyword {
+            terms: crate::storage::LegacyInvertedIndex,
             forward: forward
                 .iter()
                 .filter(|(external_id, _)| wanted.contains(*external_id))
@@ -765,7 +768,8 @@ fn field_index_subset(index: &FieldIndexSnapshot, wanted: &BTreeSet<String>) -> 
                 .collect(),
             bytes: *bytes,
         },
-        FieldIndexSnapshot::Set { forward, bytes } => FieldIndexSnapshot::Set {
+        FieldIndexSnapshot::Set { forward, bytes, .. } => FieldIndexSnapshot::Set {
+            elements: crate::storage::LegacyInvertedIndex,
             forward: forward
                 .iter()
                 .filter(|(external_id, _)| wanted.contains(*external_id))

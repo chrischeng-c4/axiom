@@ -9512,26 +9512,31 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 /// The format this build WRITES. Readers accept `1..=SNAPSHOT_VERSION`; see
 /// [`SnapshotV1::version`].
 ///
-/// 2 dropped the `terms` / `elements` inverted maps from the Keyword and Set
-/// arms. Reading forward is unaffected — serde ignores a format-1 document's
-/// extra field, and `e2e/snapshot_ships_only_the_forward_column.rs` pins that.
+/// 2 dropped the CONTENTS of the `terms` / `elements` inverted maps from the
+/// Keyword and Set arms. Reading forward is unaffected — a format-1 document's
+/// populated map is dropped on arrival and `forward` restores the field, which
+/// `e2e/snapshot_ships_only_the_forward_column.rs` pins.
 ///
-/// Reading BACKWARD, the bump does not do what a version gate looks like it
-/// does, and it is worth being exact about that rather than assuming a safety
-/// net that is not there. An 0.4.29 reader declares `terms` as a required
-/// field, so a format-2 document fails inside `serde_json` — with a message
-/// about a missing field — before that build's own `1..=1` check ever runs.
-/// `version` is a field of the same struct being deserialised; there is no
-/// point at which it is read first. The refusal is real either way, and the
-/// removal is safe for that reason; what the bump buys is a clear message for
-/// the NEXT reader, not for the ones already shipped.
+/// Reading BACKWARD needed care, because 0.4.29 is released and a version gate
+/// does not work the way it looks like it does. `version` is a field of the
+/// same struct being deserialised; there is no point at which it is read
+/// first. So an 0.4.29 build, whose `terms` is a required field with no
+/// `#[serde(default)]`, would fail inside serde on the missing key before its
+/// own `!= 1` check ever ran — reporting a missing field on a file that is
+/// perfectly intact. The sharp case is a ROLLBACK: `rdb.rs` writes a
+/// format-2 snapshot to the data directory in CBOR, the operator rolls the
+/// node back to 0.4.29 mid-incident, and 0.4.29 fails to decode its own data
+/// directory with a message that reads like corruption.
 ///
-/// Making an old reader refuse *by version* would have meant keeping the two
-/// maps on the wire as empty placeholders for one release, and that is exactly
-/// what the e2e above refuses. So the ordering constraint is the operational
-/// one: upgrade readers before writers. A rolling upgrade that starts a reshard
-/// or a Raft catch-up into a not-yet-upgraded peer surfaces this as a decode
-/// error naming `terms`, not as a version mismatch.
+/// [`LegacyInvertedIndex`] is why that does not happen: the two keys stay on
+/// the wire as empty maps, so a released 0.4.29 parses the document and
+/// refuses it by version, in its own words, with the remedy (upgrade the
+/// binary) named. The payload saving is unchanged — what cost bytes was the
+/// dictionary, not the key.
+///
+/// The same applies to every other boundary these documents cross:
+/// `/admin/restore`, a reshard delta between shards, and a Raft catch-up into
+/// a peer that has not been upgraded yet. All of them now refuse by version.
 const SNAPSHOT_VERSION: u32 = 2;
 
 /// Top-level snapshot document. JSON-serialisable.
@@ -9741,6 +9746,38 @@ pub struct ReshardPruneOutcome {
     pub documents_pruned: u32,
 }
 
+/// A field that exists only so a format-1 READER can parse a format-2
+/// document and reach its own version check.
+///
+/// 0.4.29 is released. Its `FieldIndexSnapshot::Keyword` requires a `terms`
+/// key and its `Set` requires `elements`, neither carrying `#[serde(default)]`
+/// — so a 0.4.29 build fails inside serde on the missing key BEFORE
+/// `Engine::restore` ever compares versions. The operator then reads
+/// `missing field \`terms\`` (or, from `rdb.rs`'s CBOR, something less legible
+/// still) off a file that is not damaged, on a rollback where the only thing
+/// wrong is that the binary is too old to say so. Emitting `{}` here costs two
+/// bytes per field and hands 0.4.29 back the version error it already knows
+/// how to print.
+///
+/// It is written and never read: `skip_deserializing` drops a format-1
+/// document's populated map on arrival, which is what
+/// `FieldIndexSnapshot::from_snapshot` wants anyway — the inverted index is
+/// rebuilt from `forward` in both formats, so the map on the wire never had a
+/// reader.
+///
+/// Delete this, and bump the format again, once no supported release still
+/// requires the key. `e2e/snapshot_ships_only_the_forward_column.rs` pins that
+/// it stays empty; nothing else may put a value in it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LegacyInvertedIndex;
+
+impl Serialize for LegacyInvertedIndex {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        serializer.serialize_map(Some(0))?.end()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum FieldIndexSnapshot {
@@ -9761,9 +9798,14 @@ pub enum FieldIndexSnapshot {
     /// segment at snapshot time, written to disk, shipped to a Raft follower
     /// mid-catch-up, and dropped on arrival.
     ///
-    /// A format-1 document still carries it; serde ignores the unknown field,
-    /// and `forward` — always complete, even there — is what restores.
+    /// A format-1 document still carries a populated one; `terms` below drops
+    /// it on arrival, and `forward` — always complete, even there — is what
+    /// restores. The key itself stays on the wire, empty, so a released 0.4.29
+    /// can still parse this document and refuse it by version rather than by
+    /// serde; see [`LegacyInvertedIndex`].
     Keyword {
+        #[serde(default, skip_deserializing)]
+        terms: LegacyInvertedIndex,
         forward: HashMap<String, String>,
         bytes: u64,
     },
@@ -9773,8 +9815,11 @@ pub enum FieldIndexSnapshot {
         forward: HashMap<String, f64>,
         bytes: u64,
     },
-    /// Forward column only, for the reason the Keyword arm above states.
+    /// Forward column only, for the reason the Keyword arm above states, with
+    /// the same empty [`LegacyInvertedIndex`] under the key 0.4.29 requires.
     Set {
+        #[serde(default, skip_deserializing)]
+        elements: LegacyInvertedIndex,
         forward: HashMap<String, BTreeSet<String>>,
         bytes: u64,
     },
@@ -10055,6 +10100,7 @@ impl FieldIndex {
             // the post-seal tail — but over the ids that carry the field rather
             // than over every id the interner has ever issued.
             FieldIndex::Keyword(k) => FieldIndexSnapshot::Keyword {
+                terms: LegacyInvertedIndex,
                 forward: field_ids
                     .iter()
                     .filter_map(|&id| k.keyword_at(id).map(|value| (eid(id), value)))
@@ -10069,6 +10115,7 @@ impl FieldIndex {
                 bytes: n.bytes,
             },
             FieldIndex::Set(s) => FieldIndexSnapshot::Set {
+                elements: LegacyInvertedIndex,
                 forward: field_ids
                     .iter()
                     .filter_map(|&id| s.live_set_members(id).map(|members| (eid(id), members)))
@@ -10188,7 +10235,7 @@ impl FieldIndex {
             // self-heals on restore without a re-index. As of format 2 that map
             // is no longer written at all; a format-1 document still carries
             // it, and serde drops it here as an unknown field.
-            FieldIndexSnapshot::Keyword { forward, bytes } => {
+            FieldIndexSnapshot::Keyword { forward, bytes, .. } => {
                 let mut fwd: FastHashMap<u32, String> = FastHashMap::default();
                 let mut t: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
                 for (eid, v) in forward {
@@ -10229,7 +10276,7 @@ impl FieldIndex {
             // so `forward` in such a document is empty too, and the field
             // restores empty. Nothing at this layer can invent the data back;
             // finding which fields are in that state is a separate audit.
-            FieldIndexSnapshot::Set { forward, bytes } => {
+            FieldIndexSnapshot::Set { forward, bytes, .. } => {
                 let mut fwd: FastHashMap<u32, BTreeSet<String>> = FastHashMap::default();
                 let mut e: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
                 for (eid, set) in forward {
