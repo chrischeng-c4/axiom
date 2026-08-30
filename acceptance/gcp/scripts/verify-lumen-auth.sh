@@ -716,6 +716,12 @@ jq -n \
   --arg gsa_user "$GSA_USER" \
   --arg gsa_cluster_admin "$GSA_ADMIN" \
   --argjson sibling_refusals "$sibling_refusals" \
+  --argjson identity_observations "$identity_observations" \
+  --argjson non_ksa_rejections "$non_ksa_rejections" \
+  --argjson authorization "$authorization" \
+  --argjson revocations "$revocations" \
+  --argjson redaction "$redaction" \
+  --argjson teardown "$teardown" \
   --argjson issuer_revocation_seconds "$issuer_revoke_seconds" \
   --argjson lumen_revocation_seconds "$lumen_revoke_seconds" \
   --argjson revocation_bound_seconds "$REVOCATION_BOUND_SECONDS" \
