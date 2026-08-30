@@ -29,7 +29,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "5d8cf1ac6a455e7a2b695f058cfa1eca282fcfe500905118f73641886e1a294c";
+    "15773dfc479290ea61048dbee01e36ce8ad02adea603c91e9f0c010bda29a6d7";
 const RELEASE_PERF_GATE: &str =
     "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
@@ -866,6 +866,7 @@ fn validate_gate_step_inventory(workflow: &Yaml) -> Result<(), Finding> {
             "verify-candidate",
             &[
                 "uses:actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "Reclaim runner disk before the cargo gates",
                 "uses:sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
                 "uses:docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
                 "Log in to GHCR with read-only job access",
