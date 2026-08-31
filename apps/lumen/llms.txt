@@ -32,7 +32,7 @@
 ## Commands
 
 - Build debug: `./build.sh debug`.
-- Prepare and verify a release: `./build.sh release`, then use `lumen llm --topic verify-release` for the canonical candidate-to-promotion lifecycle. If the tag-pinned promotion fails before public writes, do not rerun that broken route: use the authoritative `.github/workflows/lumen-release-recovery.yml`. It is a fixed-identity, one-time recovery for `lumen@0.4.28`, not a generic escape hatch. It cannot rebuild or move the tag, choose another identity, or bypass verification. Recovery tooling may land separately on `main`, but cannot change the frozen release commit, tag, candidate, or product bytes.
+- Prepare and verify a release: `./build.sh release`, then use `lumen llm --topic verify-release` for the canonical candidate-to-promotion lifecycle. If the tag-pinned promotion fails before public writes, do not rerun that broken route. Use only its fixed-identity, one-time recovery controller: `.github/workflows/lumen-release-recovery.yml` for `lumen@0.4.28`, `.github/workflows/lumen-release-0.4.29-recovery.yml` for `lumen@0.4.29`, or `.github/workflows/lumen-release-0.4.30-recovery.yml` for `lumen@0.4.30`. These are not generic escape hatches. They cannot rebuild or move the tag, choose another identity, or bypass verification. Recovery tooling may land separately on `main`, but cannot change the frozen release commit, tag, candidate, or product bytes.
 - Install: repo root `install.sh --project=lumen` dispatches to `./install.sh`.
 - Test: `cargo test -p lumen`.
 

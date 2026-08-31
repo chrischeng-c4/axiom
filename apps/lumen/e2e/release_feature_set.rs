@@ -11,7 +11,7 @@ const EXPECTED_DIRECT_FEATURES: &[&str] = &[
     "self-update",
 ];
 const RELEASE_SKILL_SHA256: &str =
-    "cf6fe67d1dddd6880faba54a7e9888cccc3e9c46a3cc2339b7e2b540b551369f";
+    "8abe9d7e25ccc5c001cd0b51621b1817172889f57301d5a3db72475b4546a65b";
 
 fn validate_release_skill_order(content: &str) -> Result<(), String> {
     let markers = [
