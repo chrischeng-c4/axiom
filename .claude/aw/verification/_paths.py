@@ -76,13 +76,13 @@ SKILLS_DIR = REPO / ".claude/skills"
 # literally `aw-<skill>` and is invoked as `/aw-<skill>`, while the frontmatter
 # `name:` carries the label `aw:<skill>` that the skill list displays. Two
 # prefixes, one namespace: the dash form is what a human types, the colon form
-# is what they read. Naming the six here rather than globbing keeps a stray
+# is what they read. Naming the seven here rather than globbing keeps a stray
 # directory from silently joining the population under test.
 NAMESPACE = "aw"
 SKILL_PREFIX = f"{NAMESPACE}-"      # directory and invocation: aw-<skill>/ -> /aw-<skill>
 DISPLAY_PREFIX = f"{NAMESPACE}:"    # frontmatter name: the listed label aw:<skill>
 SKILLS = ("ask-user", "e2e-for-wi", "grill-me-to-meta", "grill-meta-to-wis",
-          "impl-for-wi", "prepare-goal")
+          "impl-for-wi", "maint-for-wi", "prepare-goal")
 
 
 def skill_dir(skill: str) -> pathlib.Path:
@@ -155,7 +155,7 @@ def skill_label(skill: str) -> str:
 # The two lists are asserted exhaustive and disjoint over SKILLS, so a new skill
 # cannot join without someone deciding which kind it is.
 #
-# `e2e-for-wi` and `impl-for-wi` are procedural despite the phases they drive
+# `e2e-for-wi`, `impl-for-wi`, and `maint-for-wi` are procedural despite the phases they drive
 # being model work rather than command work. The line is not "does a model
 # write something", it is whether the skill has anything left to ask. By the
 # time either phase starts, the work item has already said what the change
@@ -183,7 +183,7 @@ def skill_label(skill: str) -> str:
 # guessed the human meant.
 INTERVIEWING = ("ask-user", "grill-me-to-meta", "grill-meta-to-wis",
                 "prepare-goal")
-PROCEDURAL = ("e2e-for-wi", "impl-for-wi")
+PROCEDURAL = ("e2e-for-wi", "impl-for-wi", "maint-for-wi")
 
 # The nine scripts sit in one directory, not inside a skill. They were under
 # `wi-epic-grill/scripts/` (then `grill-me-to-epic`, now folded into
@@ -193,7 +193,7 @@ PROCEDURAL = ("e2e-for-wi", "impl-for-wi")
 # one's directory. A shared dependency belongs beside the skills, not inside
 # whichever one happened to need it first.
 #
-# They also cannot be split across the six skill directories, which is what
+# They also cannot be split across the seven skill directories, which is what
 # the plugin deletion had to decide. `e2e.py` and `impl.py` each load `leg.py`
 # by `Path(__file__).parent / "leg.py"`, `impl.py` loads `e2e.py` the same way,
 # and `leg.change_module()` loads `change.py` the same way. One directory is a
@@ -204,6 +204,7 @@ SCRIPT = SCRIPTS / "epic.py"
 CHANGE_SCRIPT = SCRIPTS / "change.py"
 LEG_SCRIPT = SCRIPTS / "leg.py"
 ENGINE = SCRIPTS / "workitem.py"
+WI_TYPES_SCRIPT = SCRIPTS / "wi_types.py"
 
 # The two phases that replaced `ec -> td -> cb`. They were named here before
 # they existed on disk, because the gate that drives them was written first and
@@ -222,6 +223,7 @@ ENGINE = SCRIPTS / "workitem.py"
 # exists.
 E2E_SCRIPT = SCRIPTS / "e2e.py"
 IMPL_SCRIPT = SCRIPTS / "impl.py"
+MAINT_SCRIPT = SCRIPTS / "maint.py"
 
 # The META-doc validator, which is not on the ladder and owns no work item. It
 # is named here for the same reason the three phases were: the gate goes red

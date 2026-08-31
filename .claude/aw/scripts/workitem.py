@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Work-item engine: everything that does not know which type it is serving.
+"""Issue work-item engine: everything that does not know which type it serves.
 
-Split out of `epic.py`, which is now the epic-bound facade over this module.
+Split out of `epic.py`, which is now a read-compatible legacy facade.
+`milestone.py` owns release epics, versions, membership, and order.
 The split follows one line: a name belongs here if adding a second work-item
 type would otherwise copy it. That is 60% of the original file -- checkout
 resolution, the section-schema machinery, the `gh` layer, staging paths, and
@@ -14,10 +15,9 @@ outside every checkout) and now has a dedicated gate on it,
 `verification/probe_offtree_root.py`. A second copy would be a second thing that
 gate does not watch.
 
-What is *not* here: any section, label, or rule that names a type. Those live
-with their type -- `epic.py` holds the epic's sections, its cross-rules, its
-`epic:` ownership prefix, and the four verbs that only mean something for an
-epic (`show`'s child readout, `children`, `reconcile`, `close`).
+What is *not* here: any section, label, or rule that names an issue type. Those
+live with their issue facade. `epic.py` retains the retired issue-epic schema
+for reads. Its CLI refuses create, update, and close.
 
 The generic verbs read `args.wi_type`, which the facade's `main()` binds before
 dispatch. They take it from `args` rather than as a parameter so that argparse
@@ -34,6 +34,9 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
+
+import wi_types
 
 
 def _checkout_boundary(start: Path) -> Path | None:
@@ -135,7 +138,12 @@ WORKITEMS_DIR_REL = ".aw/workitems"
 # The closed work-item type enum. argparse consumes it as `choices`, so a
 # plural typo like `--type changes` goes red at parse time instead of quietly
 # creating a directory nothing ever reads.
-WORK_ITEM_TYPES = ("epic", "change", "spike", "report")
+# `epic` remains only so legacy staged bodies and read probes still resolve.
+# New delivery writes use one registry delivery type. `spike` and `report`
+# remain intake types. Releases use `milestone.py` and are not issue work-item
+# types.
+WORK_ITEM_TYPES = (*wi_types.DELIVERY_TYPES, *wi_types.INTAKE_TYPES)
+LEGACY_WORK_ITEM_TYPES = ("epic",)
 
 
 # --------------------------------------------------------------------------
@@ -340,10 +348,19 @@ def fetch_issue(iid: str, repo: str) -> dict:
         "--repo",
         repo,
         "--json",
-        "number,title,body,state,labels,url",
+        "number,title,body,state,labels,url,milestone,updatedAt",
     )
     issue = json.loads(raw)
     issue["labels"] = [label["name"] for label in issue.get("labels", [])]
+    issue["updated_at"] = issue.get("updatedAt")
+    milestone = issue.get("milestone")
+    if milestone:
+        issue["milestone"] = {
+            "number": milestone.get("number"),
+            "title": milestone.get("title"),
+            "state": milestone.get("state"),
+            "url": milestone.get("url"),
+        }
     return issue
 
 
@@ -352,25 +369,36 @@ def fetch_issues_by_label(label: str, repo: str) -> list[dict]:
 
     What the label *means* is the caller's business: this returns the set, and
     reading `epic:<iid>` as an ownership claim is the epic type's rule, not
-    a property of labels in general.
+    a property of labels in general. REST pagination is required here because
+    the former `gh issue list --limit 200` silently truncated G2 coverage.
     """
     raw = gh(
-        "issue",
-        "list",
-        "--repo",
-        repo,
-        "--label",
-        label,
-        "--state",
-        "all",
-        "--limit",
-        "200",
-        "--json",
-        "number,title,state,labels,url",
+        "api",
+        "--paginate",
+        "--slurp",
+        f"repos/{repo}/issues?state=all&labels={quote(label, safe='')}&per_page=100",
     )
-    issues = json.loads(raw)
-    for issue in issues:
-        issue["labels"] = [lbl["name"] for lbl in issue.get("labels", [])]
+    loaded = json.loads(raw)
+    rows = ([row for page in loaded for row in page]
+            if loaded and isinstance(loaded[0], list) else loaded)
+    issues: list[dict] = []
+    for issue in rows:
+        if "pull_request" in issue:
+            continue
+        milestone = issue.get("milestone")
+        issues.append({
+            "number": issue["number"],
+            "title": issue["title"],
+            "state": issue["state"].upper(),
+            "labels": [lbl["name"] for lbl in issue.get("labels", [])],
+            "url": issue["html_url"],
+            "milestone": None if not milestone else {
+                "number": milestone.get("number"),
+                "title": milestone.get("title"),
+                "state": milestone.get("state"),
+                "url": milestone.get("html_url") or milestone.get("url"),
+            },
+        })
     return issues
 
 
@@ -383,6 +411,71 @@ def require_type(issue: dict, verb: str, wi_type: WorkItemType) -> None:
         f"{wi_type.type_label}. The work-item type enum converges by spawn-and-link, never by "
         "changing a type in place."
     )
+
+
+def require_delivery_type(issue: dict, verb: str) -> str:
+    """Return the one live delivery type for an issue.
+
+    The generic engine is the lowest common consumer of the registry.  It
+    deliberately does not select a schema; the change facade maps this result
+    to the shared GHAN schema after this guard succeeds.
+    """
+    try:
+        return wi_types.delivery_type(issue.get("labels", []), subject=f"work-item #{issue['number']}")
+    except wi_types.TypeError as exc:
+        raise GhError(f"`change.py {verb}` refuses: {exc}") from exc
+
+
+def reject_type_label_mutation(add: list[str] | None, remove: list[str] | None) -> None:
+    """Normal update never changes the immutable executable type."""
+    proposed = [
+        label.strip()
+        for value in (add or []) + (remove or [])
+        for label in value.split(",")
+        if label.strip().startswith(wi_types.TYPE_PREFIX)
+    ]
+    if proposed:
+        raise GhError(
+            "normal update cannot add, remove, or replace `type:*` labels; "
+            "use `change.py retype` only before delivery starts"
+        )
+
+
+def replace_issue_labels(iid: str, repo: str, labels: list[str], dry_run: bool) -> str:
+    """Set the complete issue label set with one tracker operation."""
+    argv_prefix = ["api", "--method", "PUT", f"repos/{repo}/issues/{iid}/labels"]
+    if dry_run:
+        print("[dry-run] gh " + " ".join(argv_prefix) + " <complete-label-set>")
+        return ""
+    with tempfile.TemporaryDirectory() as scratch:
+        payload = Path(scratch) / "labels.json"
+        payload.write_text(json.dumps({"labels": labels}), encoding="utf-8")
+        return gh(*argv_prefix, "--input", str(payload))
+
+
+def refs_commits(iid: str) -> list[str]:
+    """Commit ids whose own trailer records delivery evidence for this issue."""
+    completed = subprocess.run(
+        ["git", "-c", "core.fsmonitor=false", "log", "--format=%H",
+         "--extended-regexp", f"--grep=^Refs #{iid}$"],
+        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+    )
+    if completed.returncode != 0:
+        raise GhError(f"cannot inspect delivery commits for #{iid}: {completed.stderr.strip()}")
+    return [line for line in completed.stdout.splitlines() if line]
+
+
+def commit_message(commit: str) -> str:
+    """The exact message of one recorded delivery commit."""
+    completed = subprocess.run(
+        ["git", "-c", "core.fsmonitor=false", "show", "-s", "--format=%B", commit],
+        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+    )
+    if completed.returncode != 0:
+        raise GhError(
+            f"cannot read delivery commit {commit}: {completed.stderr.strip()}"
+        )
+    return completed.stdout
 
 
 def project_label(project: str) -> str:
@@ -415,7 +508,11 @@ def staging_dir(wi_type: str, create: bool = True) -> Path:
     One owner for the location. Directories are created lazily, so a type
     nobody has staged for leaves no empty directory behind.
     """
-    directory = REPO_ROOT / WORKITEMS_DIR_REL / f"{wi_type}s"
+    # Delivery phases consume a staged body before they can read tracker state.
+    # They need one stable location because the phase scripts receive an iid,
+    # not a type selector. Intake and legacy facades retain their own folders.
+    leaf = "deliveries" if wi_type in wi_types.DELIVERY_TYPES else f"{wi_type}s"
+    directory = REPO_ROOT / WORKITEMS_DIR_REL / leaf
     if create:
         directory.mkdir(parents=True, exist_ok=True)
     return directory
@@ -599,6 +696,9 @@ def cmd_create(args) -> int:
     ]
     for label in labels:
         argv += ["--label", label]
+    milestone_title = getattr(args, "milestone_title", None)
+    if milestone_title:
+        argv += ["--milestone", milestone_title]
 
     out = run_or_show(argv, args.dry_run)
     if args.dry_run:
@@ -611,6 +711,7 @@ def cmd_create(args) -> int:
     # dry run that renamed would leave an `<id>.md` naming an issue nobody
     # opened.
     number = issue_number_from_create_output(out)
+    args.created_iid = number
     if number:
         renamed, message = rename_to_iid(Path(args.body_file), number)
         print(f"staged body -> {message}" if renamed else f"staged body: {message}")
@@ -639,9 +740,14 @@ def cmd_update(args) -> int:
         argv += ["--add-label", label]
     for label in args.remove_label or []:
         argv += ["--remove-label", label]
+    milestone_title = getattr(args, "milestone_title", None)
+    if milestone_title:
+        argv += ["--milestone", milestone_title]
+    if getattr(args, "remove_milestone", False):
+        argv += ["--remove-milestone"]
     if len(argv) == 5:
         raise GhError("update needs at least one of --body-file, --title, --add-label, "
-                      "--remove-label")
+                      "--remove-label, --milestone, or --remove-milestone")
 
     out = run_or_show(argv, args.dry_run)
     if not args.dry_run:
@@ -694,7 +800,7 @@ LIFECYCLE_NOTE = ("*Written by `aw` as each leg lands. Not authored content, and
 # are the same tree, edited together -- and what the split bought (a named red
 # measured before the green) is bought instead by `impl.py`'s `red` verb, which
 # records the failing names mid-phase.
-LEGS = ("e2e", "impl")
+LEGS = ("e2e", "impl", "maint")
 
 
 def lifecycle_rows(body: str) -> dict:
@@ -709,6 +815,45 @@ def lifecycle_rows(body: str) -> dict:
         if len(cells) == 3 and cells[0] in LEGS:
             rows[cells[0]] = cells
     return rows
+
+
+def lifecycle_errors(body: str, required: tuple[str, ...]) -> list[str]:
+    """Reject malformed lifecycle evidence before it can authorize closure."""
+    start = body.find(LIFECYCLE_BEGIN)
+    end = body.find(LIFECYCLE_END)
+    if start == -1 and end == -1:
+        return [f"missing {leg} lifecycle evidence" for leg in required]
+    if start == -1 or end == -1 or end < start:
+        return ["lifecycle marker block is malformed"]
+    seen: set[str] = set()
+    errors: list[str] = []
+    for line in body[start:end].splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = row_cells(line)
+        if cells in (["leg", "commit", "digest"], ["---", "---", "---"]):
+            continue
+        if len(cells) != 3 or cells[0] not in LEGS:
+            errors.append("lifecycle table has an invalid row")
+            continue
+        if cells[0] not in required:
+            errors.append(
+                f"lifecycle table records {cells[0]} outside this issue's required flow"
+            )
+        if cells[0] in seen:
+            errors.append(f"lifecycle table records {cells[0]} more than once")
+        seen.add(cells[0])
+        if not re.fullmatch(r"`[0-9a-f]{40,64}`", cells[1]):
+            errors.append(f"lifecycle {cells[0]} has an invalid full commit id")
+        if not re.fullmatch(r"`[0-9a-f]{64}`", cells[2]):
+            errors.append(f"lifecycle {cells[0]} has a missing or invalid digest")
+    errors.extend(f"missing {leg} lifecycle evidence" for leg in required if leg not in seen)
+    return errors
+
+
+def has_lifecycle_evidence(body: str) -> bool:
+    """Any lifecycle marker blocks the pre-delivery retype escape hatch."""
+    return LIFECYCLE_BEGIN in body or LIFECYCLE_END in body
 
 
 def lifecycle_upsert(body: str, leg: str, commit: str, digest: str) -> str:
@@ -794,14 +939,15 @@ def cmd_lifecycle(args) -> int:
     return 0
 
 
-def dispatch(args, wi_type: WorkItemType, local_verbs: tuple[str, ...]) -> int:
+def dispatch(args, wi_type: WorkItemType | None, local_verbs: tuple[str, ...]) -> int:
     """Resolve the tracker repo, bind the type, and run the parsed verb.
 
     `local_verbs` are the verbs that never reach the tracker, so a missing
     `[agentic_workflow.issue_platform]` must not stop them: they are pure
     local output, a local rename, or have a file mode.
     """
-    args.wi_type = wi_type
+    if wi_type is not None:
+        args.wi_type = wi_type
     if not getattr(args, "repo", None):
         try:
             args.repo = default_repo()

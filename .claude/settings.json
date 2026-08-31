@@ -160,6 +160,24 @@
       "Bash(reboot *)"
     ]
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/require_agent_effort.py"
+            ],
+            "timeout": 5,
+            "statusMessage": "Checking Agent effort"
+          }
+        ]
+      }
+    ]
+  },
   "enableAllProjectMcpServers": true,
   "statusLine": {
     "type": "command",

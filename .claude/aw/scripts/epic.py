@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Epic work-item surface, prototyped in Python over the `gh` CLI.
+"""Read-compatible facade for legacy issue-based epics.
 
-This is the surface `/aw-grill-meta-to-wis` drives. It exists so the epic
-type axis can be proven -- section schema, terminal-state rule, reconciliation
-findings -- before any of it is spent on a Rust verb axis. It deliberately
-does not call `aw`: the tracker is GitHub, and `gh` reaches it directly.
+New epics are GitHub Milestones and are managed through `milestone.py`. This
+module remains importable while existing `type:epic` issues and verification
+snapshots are migrated. Its write verbs refuse, so it cannot create or extend
+the old ownership model.
+
+No current skill drives this surface. It stays importable so the legacy epic
+schema, terminal-state rule, reconciliation findings, snapshots, and migration
+reports remain readable.
 
 Everything that does not know it is serving an epic lives in `workitem.py`
 beside this file. What stays here is the epic itself: its sections, its
@@ -23,12 +27,12 @@ Verbs
   show       one epic: body, labels, state
   children   the epic's owned child set
   reconcile  read-only findings: structural (computed) and semantic (to ask)
-  create     open a new epic
-  update     edit an existing epic's body, title, or labels
-  close      close an epic, refusing while any owned child is still open
+  create     refused; create a release Milestone instead
+  update     refused; update a release Milestone instead
+  close      refused; close a release Milestone instead
 
-Every write verb accepts --dry-run and prints the exact `gh` command it would
-run. Deciding *whether* to write is the caller's job, not this script's.
+Every write verb refuses before tracker access. The old functions remain below
+only because legacy pure-function checks import them while migration is open.
 """
 
 from __future__ import annotations
@@ -48,11 +52,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import workitem  # noqa: E402
+import wi_types  # noqa: E402
 from workitem import (  # noqa: E402,F401
     AW_TOML,
     PRIORITIES,
     REPO_ROOT,
-    WORK_ITEM_TYPES,
+    LEGACY_WORK_ITEM_TYPES,
     WORKITEMS_DIR_REL,
     GhError,
     Section,
@@ -612,8 +617,8 @@ def reconcile_findings(epic: dict, children: list[dict], repo: str) -> list[Find
 
     # -- structural: a child that is not an executable work-item type --------
     for child in children:
-        types = [lbl for lbl in child["labels"] if lbl.startswith("type:")]
-        if types and types[0] not in ("type:change", "type:epic"):
+        types = wi_types.type_labels(child["labels"])
+        if types and types[0] not in (*wi_types.DELIVERY_LABELS, "type:change", "type:epic"):
             findings.append(
                 Finding(
                     tier="structural",
@@ -927,7 +932,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=workitem.cmd_skeleton)
 
     p = sub.add_parser("bodydir", help="print (and create) the directory bodies are staged in")
-    p.add_argument("--type", default="epic", choices=WORK_ITEM_TYPES)
+    p.add_argument("--type", default="epic", choices=LEGACY_WORK_ITEM_TYPES)
     p.set_defaults(func=workitem.cmd_bodydir)
 
     p = sub.add_parser("fetch", help="stage the tracker's current body, overwriting the local copy")
@@ -995,7 +1000,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    return workitem.dispatch(build_parser().parse_args(argv), EPIC, LOCAL_VERBS)
+    args = build_parser().parse_args(argv)
+    if args.verb in {"create", "update", "close"}:
+        print(
+            "error: issue-based epics are retired; use `milestone.py create|update|close` "
+            "and assign change issues through GitHub's native milestone field",
+            file=sys.stderr,
+        )
+        return 2
+    return workitem.dispatch(args, EPIC, LOCAL_VERBS)
 
 
 if __name__ == "__main__":

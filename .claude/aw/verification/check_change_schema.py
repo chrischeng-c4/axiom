@@ -64,7 +64,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from _paths import (CHANGE_SCRIPT, HERE,  # noqa: E402
-                    load_change_module, load_epic_module)
+                    load_change_module)
 
 FIXTURES = HERE / "_fixtures"
 
@@ -253,7 +253,7 @@ def case_change_points_empty():
     body = (GOOD_BODY
             .replace("- `apps/agentic-workflow/src/cli/issues.rs` — route by body shape.\n", "")
             .replace("- `apps/agentic-workflow/src/issues/ghan.rs` — the validator itself.\n", ""))
-    return has(body, "--type spike"), ""
+    return has(body, "type:spike"), ""
 
 
 def case_gate_cannot_discriminate():
@@ -461,22 +461,15 @@ check("every refusal site in the validators is reached by some case",
       f"{len(reached)}/{len(REFUSAL_SITES)} reached; "
       f"unreached={[f'{ln} in {REFUSAL_SITES[ln]}' for ln in unreached]}")
 
-# --------------------------------------------------------------------------
-# The one thing the two facades must agree about
-#
-# A change names its epic with `epic:<iid>`; an epic reads exactly that label
-# to find its children. The two spellings are written out independently -- the
-# alternative is one facade importing the other, which would make the epic
-# surface a dependency of a type that exists with or without any epic. So the
-# duplication is deliberate, and this is what keeps it from being a divergence
-# waiting to happen: rename either side alone and the link goes silently dead,
-# with `create --epic` writing a label `children` does not look for.
-# --------------------------------------------------------------------------
-
-epic_mod = load_epic_module()
-check("the ownership label prefix agrees with the epic facade",
-      mod.PARENT_LABEL_PREFIX == epic_mod.CHILD_LABEL_PREFIX,
-      f"change={mod.PARENT_LABEL_PREFIX!r} epic={epic_mod.CHILD_LABEL_PREFIX!r}")
+# Native Milestone ownership replaced the old writable `epic:<iid>` coupling.
+# The legacy prefix remains readable, while these helpers own preflight and
+# readback for every new assignment.
+check("native Milestone assignment has preflight and readback helpers",
+      callable(mod.resolve_assignment)
+      and callable(mod.require_assignment_labels)
+      and callable(mod.verify_assignment))
+check("the legacy epic label is read-compatible only",
+      mod.PARENT_LABEL_PREFIX == "epic:")
 
 # Control: the case machinery must be able to report a failure. Every case
 # above runs through `has`/`errors`, so a validator that returned `[]` for

@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib.util
+import json
 import re
 import shutil
 import subprocess
@@ -47,15 +48,17 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import workitem  # noqa: E402
+import wi_types  # noqa: E402
 
 # `git` in this checkout is run with fsmonitor disabled: a stalled fsmonitor
 # daemon blocks every command that reads the index, indefinitely and silently.
 GIT = ("git", "-c", "core.fsmonitor=false")
 
-# The ladder, and its order, come from `workitem.py` -- which already owns them
-# because it renders the lifecycle block in a change body from them. Re-listing
-# them here would be a second copy of a closed enum, and the two could disagree
-# about what the order *is* without anything comparing them.
+# The behavior ladder and its order come from the one type registry. The
+# generic work-item engine renders all possible lifecycle rows, including the
+# maintenance row, but this module serves only the behavior phase scripts.
+# Binding to the flow-specific tuple prevents `maint` from becoming a write
+# root here and prevents either behavior script from serving maintenance work.
 #
 # They did disagree, for exactly that reason. This module used to bind two
 # names: `LEGS = workitem.LEGS` for the retiring `ec -> td -> cb`, and a
@@ -65,10 +68,10 @@ GIT = ("git", "-c", "core.fsmonitor=false")
 # one imported from the engine still named the dead ladder, and it is the one
 # `change.py --leg` validates against.
 #
-# So there is one name now, and it is an alias rather than a tuple: a phase
-# renamed in the engine cannot leave this module still spelling it the old way,
-# because there is nothing here left to spell.
-PHASES = workitem.LEGS
+# So there is one name now, and it is an alias rather than a local tuple: a
+# behavior phase renamed in the registry cannot leave this module spelling it
+# the old way.
+PHASES = wi_types.FLOW_LEGS["behavior"]
 
 # The one directory each leg may write. This is a lookup table rather than a
 # second enum: it decides nothing about which legs exist or what order they run
@@ -219,7 +222,12 @@ def repo_root(start: Path | None = None) -> Path:
 
 def wi_body_path(repo: Path, iid: int) -> Path:
     """Where `change.py fetch <iid>` stages the work item's body."""
-    return repo / ".aw" / "workitems" / "changes" / f"{iid}.md"
+    return repo / ".aw" / "workitems" / "deliveries" / f"{iid}.md"
+
+
+def wi_receipt_path(repo: Path, iid: int) -> Path:
+    """Where `change.py fetch <iid>` records the live delivery route."""
+    return wi_body_path(repo, iid).with_suffix(".json")
 
 
 def sibling(name: str, key: str) -> Any:
@@ -521,7 +529,65 @@ class Check:
 # --------------------------------------------------------------------------
 # the preconditions every leg shares
 # --------------------------------------------------------------------------
-def p1_work_item(chk: Check, repo: Path, iid: int) -> None:
+def p0_delivery_flow(chk: Check, repo: Path, iid: int,
+                     expected_flow: str) -> str | None:
+    """Refuse a phase unless a fresh fetch selected its exact delivery flow."""
+    path = wi_receipt_path(repo, iid)
+    body_path = wi_body_path(repo, iid)
+    if not path.is_file():
+        chk.add("FAIL", "P0 delivery flow",
+                f"no live type receipt at {path}\nrun: change.py fetch {iid}")
+        return None
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        chk.add("FAIL", "P0 delivery flow", f"cannot read {path}: {exc}")
+        return None
+    if not isinstance(receipt, dict):
+        chk.add("FAIL", "P0 delivery flow", "the fetch receipt is not a JSON object")
+        return None
+    try:
+        kind = wi_types.delivery_type(
+            receipt.get("labels", []), subject=f"fetch receipt for #{iid}"
+        )
+        actual_flow = wi_types.flow_for(kind)
+    except wi_types.TypeError as exc:
+        chk.add("FAIL", "P0 delivery flow", str(exc))
+        return None
+    failures: list[str] = []
+    if receipt.get("iid") != iid:
+        failures.append(f"receipt iid is {receipt.get('iid')!r}, expected {iid}")
+    if receipt.get("type") != kind:
+        failures.append(
+            f"receipt type is {receipt.get('type')!r}, labels resolve to {kind!r}"
+        )
+    if receipt.get("flow") != actual_flow:
+        failures.append(
+            f"receipt flow is {receipt.get('flow')!r}, type resolves to {actual_flow!r}"
+        )
+    if actual_flow != expected_flow:
+        failures.append(
+            f"type:{kind} uses the {actual_flow} flow, not the {expected_flow} flow"
+        )
+    if str(receipt.get("state", "")).upper() != "OPEN":
+        failures.append(f"receipt state is {receipt.get('state')!r}, expected OPEN")
+    if not receipt.get("updated_at"):
+        failures.append("receipt has no live updated_at marker")
+    if not body_path.is_file():
+        failures.append(f"no staged body at {body_path}")
+    else:
+        actual_digest = hashlib.sha256(body_path.read_bytes()).hexdigest()
+        if receipt.get("body_sha256") != actual_digest:
+            failures.append("staged body digest differs from the fetch receipt")
+    if failures:
+        chk.add("FAIL", "P0 delivery flow", "\n".join(failures))
+        return None
+    chk.add("PASS", "P0 delivery flow",
+            f"type:{kind} selects the {actual_flow} flow from {path}")
+    return kind
+
+
+def p1_work_item(chk: Check, repo: Path, iid: int, kind: str) -> None:
     """The work item exists locally and is an admissible change body.
 
     A leg script never reads the tracker. The skill runs `change.py fetch
@@ -534,7 +600,10 @@ def p1_work_item(chk: Check, repo: Path, iid: int) -> None:
         chk.add("FAIL", "P1 work item",
                 f"no staged body at {path}\nrun: change.py fetch {iid}")
         return
-    errors = [e for e in change_module().validate_body(path.read_text(encoding="utf-8"))
+    facade = change_module()
+    errors = [e for e in facade.validate_body(
+        path.read_text(encoding="utf-8"), facade.CHANGE_TYPES[kind]
+    )
               if not e.startswith("note:")]
     if errors:
         chk.add("FAIL", "P1 work item",

@@ -151,9 +151,12 @@ from the repository root as
 `python3 scripts/agy_dispatch.py ...`. Do not use an installed, skill-local, or
 legacy dispatcher copy.
 
-One thing that will otherwise waste your time: `aw` names the scripts at
-`.claude/aw/scripts/` and the skills at `.claude/skills/aw-*/`, and nothing
-else. The Rust application that used to carry the name
+One thing that will otherwise waste your time: `aw` names the one script engine
+at `.claude/aw/scripts/`. Codex skills live at `.agents/skills/aw-*/`. Their
+byte-identical Claude Code mirrors live at `.claude/skills/aw-*/`. Release
+Milestones own epic grouping, development order, and version identity.
+`epic.py` is a read-compatible legacy facade and refuses issue-epic writes.
+The Rust application that used to carry the name
 is deleted and its binary is uninstalled, so an `aw` verb you reach for fails
 with "command not found" — correct, but it tells you nothing about what to
 reach for instead.

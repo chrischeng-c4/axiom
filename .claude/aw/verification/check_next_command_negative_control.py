@@ -41,13 +41,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _paths import SCRIPTS, load_script_module, pinned_interpreter  # noqa: E402
+from _paths import SCRIPTS, WI_TYPES_SCRIPT, load_script_module, pinned_interpreter  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 CHECK = HERE / "check_next_command.py"
 LAUNCH = pinned_interpreter()
 
-WORKITEM = SCRIPTS / "workitem.py"
 IMPL = SCRIPTS / "impl.py"
 E2E = SCRIPTS / "e2e.py"
 
@@ -115,7 +114,8 @@ MUTATIONS = [
     # not notice the assertion being deleted -- the first row would keep passing,
     # since it repairs the table it would otherwise trip.
     ("phase-table-drift-refused-at-import",
-     [(WORKITEM, 'LEGS = ("e2e", "impl")', 'LEGS = ("ec", "td", "cb")')],
+     [(WI_TYPES_SCRIPT, '    "behavior": ("e2e", "impl"),',
+       '    "behavior": ("ec", "td", "cb"),')],
      set(),
      "a phase table names something the ladder does not"),
 ]

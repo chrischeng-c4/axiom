@@ -12,8 +12,7 @@ The **negative controls** ask whether a checker can be seen to fail at all.
 That question is about the gate rather than the tree, so its answer only
 changes when a gate changes -- and answering it is expensive by construction:
 each control mutates the thing under test once per declared defect and re-runs
-the *whole* checker for each mutation. `check_plugin_negative_control.py` alone
-is eleven such rounds and nearly all of what the flag adds.
+the checker. `check_plugin_negative_control.py` plants five isolated defects.
 
 So the controls are opt-in, and the thing that makes the split safe is that the
 default mode is not allowed to sound like the full one. A run that skipped
@@ -63,6 +62,9 @@ SUITE = [
     # rather than by the next session.
     ("check_next_command.py", "check_next_command_negative_control.py"),
     ("check_plugin.py", "check_plugin_negative_control.py"),
+    ("check_type_registry.py", None),
+    ("check_milestone.py", None),
+    ("check_type_migration.py", None),
     ("check_coverage_rule.py", "check_coverage_rule_negative_control.py"),
     ("check_engine_split.py", "check_engine_split_negative_control.py"),
     ("check_change_schema.py", "check_change_schema_negative_control.py"),
@@ -137,6 +139,7 @@ SUITE = [
     # The `e2e -> unit -> logic` ladder, and the slowest of the lot: its
     # fixture is a real cargo crate, so every row that runs `test` pays a
     # compile.
+    ("check_maint_flow.py", "check_maint_flow_negative_control.py"),
     ("check_tdd_flow.py", None),
 ]
 

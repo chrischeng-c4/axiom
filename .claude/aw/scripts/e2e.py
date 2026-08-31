@@ -376,7 +376,10 @@ def _wi_checks(args: argparse.Namespace, *, require_clean: bool,
     repo = leg.repo_root()
     root = e2e_root(repo, args.project)
 
-    leg.p1_work_item(chk, repo, args.wi)
+    kind = leg.p0_delivery_flow(chk, repo, args.wi, "behavior")
+    if chk.failed:
+        return chk, repo, root, [], []
+    leg.p1_work_item(chk, repo, args.wi, kind)
     if chk.failed:
         return chk, repo, root, [], []
 
