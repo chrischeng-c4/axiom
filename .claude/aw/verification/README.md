@@ -1,6 +1,7 @@
 # Verification
 
-Gates for the `aw` plugin and the two work-item schemas its scripts enforce.
+Gates for the two seven-skill AW mirrors, the release Milestone contract, and
+the remaining work-item schemas.
 
 ```
 uv run --python 3.13 --no-project .claude/aw/verification/run_all.py                          # ~38s
@@ -20,8 +21,8 @@ different question: can each checker be seen to fail at all? That one is about
 the gate rather than the tree, so its answer only changes when a gate changes,
 and it is expensive by construction — a control mutates the thing under test
 once per declared defect and re-runs the whole checker for each mutation.
-`check_plugin_negative_control.py` is eleven such rounds, ~23s of the ~39s the
-flag adds. The other big number is in the default run and is cargo:
+`check_plugin_negative_control.py` plants five mirror and contract defects.
+The other big number in the default run is cargo:
 `check_tdd_flow.py` builds and tests a synthetic crate through both phases,
 ~29s of the ~38s there.
 
@@ -47,21 +48,30 @@ The shape under test:
 
 ```
 .claude/aw/
-  scripts/        epic.py, change.py — the type-bound facades — and workitem.py, the engine
+  scripts/        milestone.py — release epic, version, ownership, and order
+                  change.py — typed delivery facade; epic.py — legacy read facade
+                  wi_types.py — closed type and flow registry
+                  type_migration.py — manifest-led legacy cutover
+                  workitem.py — shared issue engine
                   leg.py, and the two phases it is shared by: e2e.py, impl.py
+                  maint.py — the maintenance phase and its four profiles
                   meta.py    — read-only META-doc check (M1..M7), not on the ladder
                   metadoc.py — the allowlisted README/STATUS/ROADMAP/docs write + commit
                   wis.py     — read-only work-item/promise gap reader (G1..G7)
   verification/   this directory
 .claude/skills/
   aw-ask-user/            aw-e2e-for-wi/          aw-grill-me-to-meta/
-  aw-grill-meta-to-wis/   aw-impl-for-wi/         aw-prepare-goal/
+  aw-grill-meta-to-wis/   aw-impl-for-wi/         aw-maint-for-wi/
+  aw-prepare-goal/
+.agents/skills/
+  the same seven SKILL.md files, byte-identical for Codex
 ```
 
 This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why
 several sections below are written about one. That tree is deleted — scripts
 and this directory moved under `.claude/aw/`, the skills load as project
-skills out of `.claude/skills/`, and `plugin.json`, `marketplace.json` and the
+skills out of `.claude/skills/`, with byte-identical Codex mirrors under
+`.agents/skills/`. `plugin.json`, `marketplace.json` and the
 `enabledPlugins` entry in `.claude/settings.json` went with it. Two sections
 are kept as measurement rather than as instruction, and each says so where it
 starts: **Registration is the directory name** and **The installed copy is a
@@ -69,11 +79,10 @@ copy**. What they measured is a property of Claude Code, and the conclusion
 that outlived the plugin is the one `check_plugin.py` still asserts — a
 directory name registers as itself. Until 2026-08-26 that meant the `aw:`
 namespace survived only because it was literally in each directory's name;
-since the rename it means the directory `aw-<skill>` *is* the command
-`/aw-<skill>`, and the frontmatter `name: aw:<skill>` is only the label the
-skill list shows.
+since the rename it means the directory and frontmatter name are both
+`aw-<skill>`.
 
-The nine scripts cannot be split across the six skill directories, and that
+The thirteen scripts cannot be split across the seven skill directories, and that
 is not a preference: `e2e.py` and `impl.py` each load `leg.py` by
 `Path(__file__).parent / "leg.py"`, and `leg.change_module()` loads `change.py`
 the same way. One directory is load-bearing.
@@ -104,7 +113,7 @@ that used to open and shape work items — `grill-me-to-epic`, `grill-me-to-chan
 and `grill-epic-to-changes` — are folded into the single `grill-meta-to-wis`,
 which runs `wis.py gap <project>` for the seven `G1..G7` rows of what a
 project's META-docs promise and its work-item set disagree about, then closes
-the gap through `epic.py create|update` and `change.py create|update`.
+the gap through `milestone.py create|update` and `change.py create|update`.
 `check-meta` folded into `grill-me-to-meta`'s three-step landing sequence
 instead of surviving as its own skill.
 
@@ -120,11 +129,16 @@ directory for a file none of them owns.
 |---|---|
 | `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
-| `check_plugin.py` | a manifest, bundled path, or skill cross-reference that does not resolve — a skill that has grown its own copy of a shared script, or one that reaches past its facade to `aw` or `gh` |
-| `check_plugin_negative_control.py` | a checker that cannot be seen to fail |
+| `check_plugin.py` | a missing or drifted seven-skill mirror, missing script, legacy issue-epic writer, or incomplete type and Milestone contract |
+| `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that skips Plan mode |
+| `check_milestone.py` | a version title outside the 0..63 rule, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
+| `check_type_registry.py` | a missing, duplicate, unknown, intake, or legacy executable type; wrong flow; unsafe retype; or lifecycle close without matching commit evidence |
+| `check_type_migration.py` | an incomplete or drifted manifest, wrong fixed mapping, partial replacement hidden as complete, unsafe readback, or resume without the same receipt |
+| `check_maint_flow.py` | a maintenance profile that writes outside its type boundary, accepts incomplete gate evidence, executes issue text, or commits without its evidence trailers |
+| `check_maint_flow_negative_control.py` | a maintenance gate that cannot see one of those boundary or evidence defects |
 | `check_coverage_rule.py` | a requirement with no `## Verification Inventory` row — and a rule that reddens epics which were already green |
 | `check_coverage_rule_negative_control.py` | a coverage gate that measures the population instead of the rule |
-| `check_engine_split.py` | an engine that has learned which work-item type it is serving |
+| `check_engine_split.py` | an engine that copies or branches on type literals instead of using `wi_types.py` |
 | `check_engine_split_negative_control.py` | a split gate whose extractor reports "clean" because it found nothing |
 | `check_change_schema.py` | a change schema that has narrowed, widened, or grown a rule nothing is ever seen refusing |
 | `check_change_schema_negative_control.py` | a schema gate that stays green while one rule quietly stops firing |
@@ -135,7 +149,7 @@ directory for a file none of them owns.
 | `check_meta_clean.py` | a META-doc in *this* checkout that has rotted — and a certification issued over a population that was never read |
 | `check_meta_clean_negative_control.py` | a ratchet that reports zero because a rule stopped running |
 | `check_metadoc_scope.py` | a `metadoc.py` run that wrote outside its four-path allowlist, or a rule that fires on everything or nothing |
-| `check_tdd_flow.py` | an `e2e → impl` phase whose green is not attributable to a named red measured before it |
+| `check_tdd_flow.py` | an `e2e → impl` phase whose green is not attributable to a named red measured before it, or whose fetch receipt selects the wrong flow |
 
 `check_manifests_cli.py` and its control are historical: they shelled out to
 `claude plugin validate`, the only oracle here this repository did not own, and
@@ -183,7 +197,7 @@ Five of these encode defects that actually shipped and were caught late:
   only reading of that rule that cannot drift from it.
 - **`check_next_command.py`.** The ladder is driven by its own output — every
   verb ends by printing the command that follows it, and an agent runs that line
-  verbatim. `workitem.LEGS` still read `("ec", "td", "cb")` one commit past the
+  verbatim. The lifecycle enum still read `("ec", "td", "cb")` one commit past the
   changeover that deleted those three scripts, and `change.py` takes its `--leg`
   choices from there, so all three phases ended `commit` by printing a line
   `change.py` exits 2 on: the step that records a landed commit on the work item
@@ -195,8 +209,8 @@ Five of these encode defects that actually shipped and were caught late:
   each half reads as consistent on its own and the flow gates construct argv
   themselves rather than reading the line that gets printed. The first half of
   that is now refused earlier than any gate: `leg.py` asserts at import that its
-  two phase-keyed tables name the phases `workitem.LEGS` declares, so the
-  vocabulary cannot drift at all. What the gate still owns is the drift no table
+  phase-keyed tables name the behavior phases `wi_types.FLOW_LEGS` declares,
+  so the vocabulary cannot drift at all. What the gate still owns is the drift no table
   can see — a phase script's own `PHASE`, a flag the receiver requires, a script
   name that is not on disk.
 
@@ -206,8 +220,8 @@ Five of these encode defects that actually shipped and were caught late:
 rule the ladder exists to enforce is unchanged across both collapses: a green
 is only evidence when a **named** red was measured immediately before it, in
 the same tree, by the phase that had reason to predict it. `check_tdd_flow.py`
-is 22 declared mutations against that rule, run against `e2e.py` and `impl.py`
-directly.
+is 26 declared controls against that rule and the type receipt, run against
+`e2e.py` and `impl.py` directly.
 
 Three-phase ladder had two commits to prove that with — the `unit` commit's
 `Unit-Red:` trailer was the evidence `logic` read back. `impl` is one phase, so
@@ -258,33 +272,86 @@ writes `E2E-Red` and `E2E-Change-Digest`; `impl` writes `Impl-Red`,
 `git worktree add --detach`, never a stash — a stash mutates the tree it is
 supposed to be measuring against.
 
-## Where an epic's order comes from
+Maintenance uses a separate one-phase gate. It does not manufacture a red.
+`maint.py start` freezes a clean baseline, the typed fetch receipt, and the
+GHAN change points. The controller reviews and runs each accepted gate outside
+the script. `maint.py record` stores only the exact command, exit code, and
+output digest. Refactor requires the same gates before and after. Test, docs,
+and chore require after evidence. Scope is checked independently for all four
+profiles. The commit carries `Maint-Type:`, `Maint-Base:`, `Maint-Gates:`,
+`Maint-Contract:`, and `Maint-Change-Digest:`. `check_maint_flow.py` and its
+negative control hold these rules.
 
-`epic.py order` composes two sections that were already in every epic body and
-had no consumer: `## Verification Inventory` partially orders the requirements
-through its `Depends On` column, and `## Child Work Items` maps each child to
-the requirements it covers. A child inherits the position of the *deepest*
-requirement it covers — taking the shallowest would place it before work it
-needs — and equal positions break by `priority:` then by issue number.
+## Where a release order comes from
 
-Measured over the 255-epic snapshot: 45 epics carry the `Depends On` column and
-14 do not, so its absence is a shape rather than a defect; 32 have at least one
-real `R → R` edge; and there are **0 cycles and 0 dangling references** today.
+One GitHub Milestone is one versioned epic. Its title is
+`<project>@<major>.<minor>.<patch>`. Minor and patch are each 0..63. GitHub's
+native issue `milestone` field is the only membership relation.
 
-A baseline of zero is also what a detector that never fires reports, so
-`check_epic_order.py` seeds one cycle and one dangling reference into a copy of
-the corpus and requires both counts to move to one. The row that carries real
-weight is the fourth finding: **10 epics fill a `Depends On` with an issue
-number (`#2403`) or with prose (`shared harness WI`)**, and on 4 of them there
-are real edges alongside — so reading those cells as "no dependency" produced
-an order that looked complete and had silently lost a constraint. They are
-reported as `unreadable-dependency` rather than interpreted, because reading
-`#2403` as an edge means guessing whether the author meant that issue or the
-requirement it covers.
+The Milestone description has exactly three H2 sections: `## Goal`,
+`## Development Order`, and `## Acceptance`. The order section contains only
+contiguous rows such as `1. #2403`. Each assigned issue appears exactly once.
+Every assigned delivery issue must carry exactly one of `type:feat`,
+`type:fix`, `type:refactor`, `type:perf`, `type:test`, `type:docs`, or
+`type:chore`, and the Milestone project's one `app:*` or `lib:*` label.
+`type:spike` and `type:report` are intake. `type:change` and every other legacy
+type are rejected. Creation uses `--draft` and the skeleton's exact draft line.
+A draft cannot survive after the first issue is assigned. The first non-draft
+update must equal native membership.
 
-The order refuses rather than guesses. A cycle yields *no* order at all, not a
-declaration-ordered fallback — a fallback would be indistinguishable from a
-computed answer, and the finding printed beside it would read as advisory.
+`milestone.py order` compares the numbered list with native membership.
+`milestone.py next` runs that full comparison before it emits the first open
+row, its type, flow, and next phase. It refuses missing, extra, duplicate,
+wrong-type, and wrong-project issues. Execution skills must process only that
+queue head. It also refuses a bare number because issue and
+Milestone numbers are separate namespaces. `change.py` assigns only to an open
+release Milestone, checks the project label before writing, and reads the issue
+back after the write. `wis.py` reads the complete paginated label population;
+it does not stop at 200 issues. `check_milestone.py` holds these rules as pure
+cases and isolated writer fakes.
+
+`epic.py order` remains only for reading and measuring the legacy issue-epic
+population. New skills do not call it. Its historical graph checks remain in
+the suite until the legacy records are migrated or retired.
+
+## How the legacy type cutover stays resumable
+
+The versioned manifest freezes every open legacy issue before a write. Each
+row names the issue, source and target type, classification reason, evidence,
+complete labels digest, live `updatedAt`, Milestone number, and state.
+`type:bug` maps only to `type:fix`. `type:enhancement` maps only to
+`type:feat`. Each `type:change` row is classified from its body, Milestone, and
+product promise.
+
+`type_migration.py` verifies the complete live legacy cohort and every frozen
+field before its first write. Apply uses one complete-label replacement per
+issue. It reads back title, body, state, Milestone, target type, and every
+non-type label. The receipt starts as `INCOMPLETE` and is updated after each
+readback. A retry uses only `--resume <receipt>`. It never starts a new batch
+over partial state. `check_type_migration.py` injects a mid-batch failure and
+proves that the same receipt resumes to `COMPLETE`.
+
+The cutover order is fixed:
+
+1. Prepare the scripts, seven mirrored skills, versioned manifest, and green
+   full verification suite in one reviewed change. Do not publish it yet.
+2. Create every missing canonical GitHub label, then verify that all seven
+   delivery labels and both intake labels exist.
+3. Stop every AW session that can write tracker state. This is an operator
+   pause. A local file cannot lock writers on another host.
+4. Land the strict legacy-type refusals before changing any live issue label.
+5. Run one apply with a durable receipt path:
+
+   ```text
+   uv run --python 3.13 --no-project ".claude/aw/scripts/type_migration.py" --repo chrischeng-c4/axiom --manifest .claude/aw/migrations/open-legacy-types-2026-08-31.json --apply --receipt <durable-receipt.json>
+   ```
+
+6. If it stops, keep the pause and run only
+   `type_migration.py --resume <durable-receipt.json>`. Never start a second
+   apply over partial state.
+7. Release the pause only after the receipt is `COMPLETE`, live readback finds
+   no open legacy type, and every migrated issue still has its frozen non-type
+   labels, Milestone, title, body, and state.
 
 ## What the META-docs are measured against
 
@@ -382,19 +449,16 @@ own reading of what a dead command looks like.
 
 ## The engine/facade split
 
-`epic.py` is the epic-bound facade; `workitem.py` beside it is the engine that
-does not know which type it is serving. The split is what makes a second type —
-change, spike, report — a thin facade rather than a copied file, and
-`check_engine_split.py` is what keeps it that way: the engine's *code* may not
-name a work-item type, in a string literal or an identifier.
+`workitem.py` is the shared issue engine. `change.py` binds the seven delivery
+types to the GHAN schema. `epic.py` keeps the retired issue-epic schema readable
+but refuses every write. `milestone.py` is the active release facade; it owns
+version identity, native membership, development order, and the queue head.
 
-Docstrings and comments are excluded on purpose. Explaining what the epic
-facade does with a label is documentation; embedding `type:epic` in a branch is
-behavior, and a gate that cannot tell them apart forces the engine to be
-undocumented in order to stay green. The one exemption inside code is the
-closed enum `WORK_ITEM_TYPES`, which is the axis itself — and the exemption is
-measured, not trusted: widening the enum by one member turns the gate red, so a
-leak cannot walk in through the exit.
+`check_engine_split.py` keeps the shared engine below those facades. Type and
+flow vocabulary comes from `wi_types.py`; the engine may consume that registry,
+but it may not copy delivery, intake, or legacy literals into a second private
+registry. Docstrings and comments are excluded on purpose. Explaining a legacy
+label is documentation; branching on a copied label is behavior.
 
 The extraction was accepted by pinning the acceptance before writing it: every
 gate's output byte-identical before and after. Seven of the eight were, and the
@@ -407,57 +471,46 @@ equal each other and equal the file's real digest.
 
 `check_plugin.py` holds a required-verb set per script and resolves every verb
 a skill names against the real script, so a documented verb that no longer
-exists is refused rather than discovered at use. The two sets differ on purpose:
-an epic owns children and can be closed against them, a change has neither, so a
-change facade exposing `children` would mean the engine's epic shape had leaked
-into the wrong type.
+exists is refused rather than discovered at use. The active sets differ on
+purpose. A release Milestone exposes `children`, `order`, `next`, `reconcile`,
+and release closure. A delivery issue exposes typed body and lifecycle verbs.
+The legacy epic parser still exposes its old command names for compatibility,
+but `epic.py` refuses `create`, `update`, and `close` before tracker access.
 
 The interesting half is the gap in the other direction — a verb the script
 exposes that no skill drives. Left silent, that is how a verb rots: nothing
-documents it, nothing runs it, and it stays in the file looking supported. So
-each one is declared with its reason, and the declaration is itself checked: the
-verb must still resolve, **and** no skill may have quietly started naming it.
+documents it, nothing runs it, and it stays in the file looking supported. Any
+such recovery verb therefore needs a focused probe even when it is absent from
+the normal skill path.
 
-`adopt` is the declaration on both facades, and it got there by being used and
-then stopping. `create` renames the staged body itself, so `adopt` only ever
-answered the case of an iid arriving from outside the script — which is what
-reconcile's hand-rolled `gh issue create` produced. Once child creation moved to
-the change grill, nothing named it. That is the moment a verb usually rots
-quietly; here it became a written claim instead, and `probe_local_verbs.py` still
-exercises the behaviour. A declaration exempts a verb from being *named*, never
-from being tested, which is the difference between a documented recovery path
-and dead code with an alibi.
+`adopt` remains a recovery verb for a staged body whose issue number arrived
+outside `change.py create`. No skill uses that path in the normal flow.
+`probe_local_verbs.py` still exercises it, so the recovery behavior cannot rot
+silently.
 
-## Who opens a child
+## Who opens a delivery issue
 
-Reconcile decides **which** children an epic is missing; the change grill decides
-what each one says. That line is enforced, not merely described: no SKILL.md may
-name a `gh issue|pr create|edit|close|comment|delete|reopen` command, and the
-positive control for that detector is the literal block reconcile carried until
-this split — `gh issue create` with four `--label` flags — so the assertion is
-pinned to the defect that was really there rather than to a caricature of it.
+`aw-grill-meta-to-wis` settles the complete issue set, each issue type, and the
+global order with the human in Plan mode. It then uses `milestone.py` and
+`change.py`; no SKILL.md may name a direct
+`gh issue|pr create|edit|close|comment|delete|reopen` command. The positive
+control for that detector is the former hand-written `gh issue create` block,
+so the assertion stays pinned to a defect that actually existed.
 
-The defect it refuses is not "a shortcut". A hand-opened child gets a real issue
-number and the right labels; what it does not get is a body any validator has
-seen. Reconcile described that body in prose ("its body is Goal / How /
-Acceptance / Never"), which is a second reading of a schema `change.py` owns
-outright and is the sole enforcement of. Routing
-creation through `/aw-grill-me-to-change` means every child passes
-`change.py validate` before it is reported, and the prose summary disappears
-rather than being kept correct.
-
-The handoff is two rounds, and the order is the reasoning: the whole set of
-missing children is settled in one `AskUserQuestion` round, because completeness
-and duplication are judgements about the *set* and asking child-by-child hides
-both; then each accepted child is grilled and landed before the next begins, so
-an interrupted reconcile leaves whole work items behind rather than fragments.
+The defect it refuses is not only a shortcut. A hand-opened issue can have a
+real number and plausible labels while carrying a body no validator has seen.
+Routing creation through `change.py create --type <delivery-type>` binds the
+canonical type and validates the one GHAN schema. Native Milestone assignment
+then supplies the only parent relation. The final `milestone.py reconcile`
+compares the complete assigned set with `## Development Order` instead of
+trusting creation order or a filtered child list.
 
 ## The change schema was ported, and now it is owned
 
-The two schemas here arrived by different routes, and the difference still
-decides how each is verified. The epic schema is this plugin's own invention, so
-`epic.py` holds it as declarative `Section` data and the gates check that data
-against live epics. The change schema was not ours: it was written in
+The two historical issue schemas arrived by different routes. The retired epic
+schema was this plugin's own invention, so `epic.py` still holds it as
+declarative `Section` data for read compatibility. It no longer authorizes an
+executable flow. The change schema was not ours: it was written in
 `apps/agentic-workflow/src/issues/ghan.rs`, `aw wi validate` enforced it, and
 640 live work items were judged by it. While that crate existed, `change.py` was
 a **port**, and every gate on it read the crate as the oracle through three
@@ -569,16 +622,14 @@ Two rules follow, and both are load-bearing:
   before the colon. Without a plugin there is no separator at all: a project
   skill's command is its bare directory name, which is what made the
   2026-08-26 rename a naming decision — directories `aw-<skill>` give the
-  command `/aw-<skill>`, and the `aw:` form survives only as the frontmatter
-  label.
+  command `/aw-<skill>`.
 - **The frontmatter `name:` is inert.** `zeta-mismatch` declared `zeta-other`
   and registered under its directory anyway. The field cannot change the
   invocation, so its only remaining job is to be the label the skill list
   shows without lying about the command — which is precisely what it did when
-  this shipped broken. `check_plugin.py` pinned it to the directory name until
-  2026-08-26; since the rename it pins it to `aw:<skill>` beside a directory
-  `aw-<skill>`, so the two deliberately differ and each is checked against
-  the one thing it decides.
+  this shipped broken. The Codex skill schema also requires a hyphen-case
+  frontmatter name. `check_plugin.py` therefore pins the field to the same
+  `aw-<skill>` string as the directory in both runtime mirrors.
 
 The registration probe is deliberately not a gate: it costs an API call per
 run, and what it measures is a property of Claude Code rather than of this
@@ -619,7 +670,9 @@ was three renames behind.
 
 ## Measurement
 
-These hit the tracker and produce evidence, not a verdict. Run them in order:
+These legacy issue-epic measurements hit the tracker and produce evidence, not
+a verdict. They do not define the new Milestone flow. Run them only when
+auditing the legacy population:
 
 | Script | Question |
 |---|---|

@@ -539,9 +539,10 @@ with tempfile.TemporaryDirectory() as raw:
     repo = build(tmp / "unbound")
     edit_promise(repo)
     got = metadoc.unbound_count(repo, PROJECT, changed)
-    check("unbound_count counts the sections carrying no issue number",
+    check("unbound_count counts the sections carrying no Milestone binding",
           got == 2, str(got))
-    write_area(repo, area_text(repo).replace("## Future thing", "## Future thing (#7)"))
+    write_area(repo, area_text(repo).replace(
+        "## Future thing", "## Future thing (Milestone #7)"))
     got = metadoc.unbound_count(repo, PROJECT, changed)
     check("unbound_count stops counting a section once it is bound",
           got == 1, str(got))

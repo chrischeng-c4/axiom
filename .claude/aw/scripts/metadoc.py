@@ -155,12 +155,14 @@ VALIDATOR = "scripts/meta/project_docs_contract.py"
 PINNED = ("uv", "run", "--python", "3.13", "--no-project")
 
 SECTION = re.compile(r"^##[ \t]+(?P<title>.+?)[ \t]*$", re.M)
-IID = re.compile(r"\s*\(#(\d+)\)$")
+LEGACY_IID = re.compile(r"\s*\(#(\d+)\)$")
+MILESTONE = re.compile(r"\s*\(Milestone[ \t]+#(\d+)\)$")
+BINDING = re.compile(r"(?:\s*\(#\d+\)|\s*\(Milestone[ \t]+#\d+\))$")
 BULLET = re.compile(r"^-[ \t]+(?P<key>Promise, for now|[A-Z][A-Za-z -]*?)"
                     r":[ \t]*(?P<rest>.*)$")
 BACKTICKED = re.compile(r"`([^`]+)`")
 TRAILER = re.compile(r"^[A-Za-z][A-Za-z-]*: .+$")
-TRACKING_LINK = re.compile(r"Tracking:[ \t]*\[#\d+\]")
+TRACKING_LINK = re.compile(r"Tracking:[ \t]*\[(?:Milestone[ \t]+#|#)\d+\]")
 
 
 @dataclass(frozen=True)
@@ -179,7 +181,7 @@ CHECKS = {
     "P1": "the project carries README.md, STATUS.md, ROADMAP.md and docs/",
     "P2": "every changed path is one of the project's four document paths",
     "P3": "one of those four actually changed",
-    "P4": "no heading or Tracking: line gained an issue number",
+    "P4": "no heading or Tracking: line gained a tracker binding",
     "P5": "every touched section carries its own kind's bullets, in order",
     "P6": "an Outcome: bullet keeps its Tracking: on the same line",
     "P7": "every STATUS row id and ROADMAP outcome id resolves",
@@ -230,8 +232,8 @@ def sections(text: str) -> list[tuple[str, str]]:
 
 
 def bare(title: str) -> str:
-    """A section title with its ` (#<iid>)` binding removed."""
-    return IID.sub("", title).strip()
+    """A section title with its current or legacy tracker binding removed."""
+    return BINDING.sub("", title).strip()
 
 
 def bullets(body: str) -> list[tuple[str, str]]:
@@ -404,22 +406,22 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
     for path, text in sorted(texts.items()):
         parsed = sections(text)
 
-        # -- P4: binding is the epic grill's, not this one's ---------------
+        # -- P4: binding is the tracker grill's, not this one's ------------
         # Measured as a delta against HEAD rather than as an absolute. A file
         # that already carries a bound section is the normal case -- the whole
         # point of a brownfield META-doc run -- and refusing it outright would
         # make this check unusable on every project past its first epic.
         before = git_show(repo, path)
-        gained_bound = ({bare(t) for t, _ in parsed if IID.search(t)}
-                        - {bare(t) for t, _ in sections(before) if IID.search(t)})
+        gained_bound = ({bare(t) for t, _ in parsed if BINDING.search(t)}
+                        - {bare(t) for t, _ in sections(before) if BINDING.search(t)})
         for title in sorted(gained_bound):
-            out.append(Finding("P4", path, f"section `{title}` gained a `(#<iid>)` "
+            out.append(Finding("P4", path, f"section `{title}` gained a tracker "
                                "binding; that is /aw-grill-meta-to-wis's write, "
-                               "made in the same run that opens the work item"))
+                               "made in the same run that opens the milestone"))
         gained_links = (len(TRACKING_LINK.findall(text))
                         - len(TRACKING_LINK.findall(before)))
         if gained_links > 0:
-            out.append(Finding("P4", path, f"{gained_links} `Tracking: [#<iid>]` "
+            out.append(Finding("P4", path, f"{gained_links} `Tracking:` tracker "
                                "link(s) appeared; a section this skill writes "
                                "ends `Tracking: not assigned.`"))
 
@@ -588,7 +590,7 @@ def section_modes(repo: Path, project: str, changed: list[str]) -> list[str]:
 
 
 def unbound_count(repo: Path, project: str, changed: list[str]) -> int:
-    """Touched sections still carrying no `(#<iid>)`.
+    """Touched sections still carrying no Milestone binding.
 
     What `/aw-grill-meta-to-wis` reads to know how much of this commit is still
     waiting for a work item -- and what its `unbound promise` gap row starts
@@ -599,7 +601,7 @@ def unbound_count(repo: Path, project: str, changed: list[str]) -> int:
         if not is_area(repo, project, path) or not (repo / path).is_file():
             continue
         for raw, _ in sections((repo / path).read_text(encoding="utf-8")):
-            if bare(raw) != FOOTER and not IID.search(raw):
+            if bare(raw) != FOOTER and not MILESTONE.search(raw):
                 total += 1
     return total
 

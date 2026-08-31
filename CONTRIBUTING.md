@@ -248,7 +248,7 @@ headers, the CPython oracle, and the perf-baseline flow.
 
 ## Authoring convention: every agent instruction is Goal / How / Acceptance / Never
 
-> A `type=change` work item, a `SKILL.md`, and a dispatch injection are the same
+> A typed delivery issue, a `SKILL.md`, and a dispatch injection are the same
 > artifact wearing three costumes: **an instruction telling an agent to do one
 > thing.** They get one structure — **GHAN** — so an author learns it once and a
 > validator checks it everywhere.
@@ -256,8 +256,8 @@ headers, the CPython oracle, and the perf-baseline flow.
 ### Why a structure at all
 
 Sections without a machine consumer get filled with boilerplate. This is
-measured, not asserted. Across the 143 open `type=change` work items this rule
-was written against:
+measured, not asserted. This rule was written against a historical set of open
+delivery work items:
 
 | Section | Filled with a pure title echo |
 |---|---|
@@ -287,10 +287,9 @@ A section with no refusal condition is decoration and MUST NOT be added.
 
 ### The layering GHAN sits in
 
-GHAN is the **authored** layer only. Phase progress — which of `e2e` and
-`impl` has landed, and what each was measured against — is the **machine**
-layer and lives in the trailers those phase commits carry, never in authored
-prose:
+GHAN is the **authored** layer only. Phase progress — which behavior or
+maintenance phase has landed, and what it was measured against — is the
+**machine** layer and lives in commit trailers, never in authored prose:
 
 - *landed?* → the phase's `Refs #<iid>` commit exists in the tree, which is what
   the next phase's predecessor check looks for.
@@ -307,6 +306,8 @@ prose:
 - *reviewed against which bytes?* → `E2E-Change-Digest:`, which carries
   `leg.change_digest` — one sha256 over the work-item body **and** every path
   under review (`.claude/aw/scripts/leg.py:331`).
+- *which maintenance evidence?* → `Maint-Contract:` and
+  `Maint-Change-Digest:` name the maintenance contract and its measured bytes.
 
 Two properties of that layer are load-bearing. The digest covers the work item
 as well as the code because the question a reviewer answers is "does this change
@@ -376,7 +377,8 @@ repository script builds or enforces this write contract.
 
 **Refused when** a file path appears without a line or symbol; the current state
 is described with "should"/"probably"/"appears to"; there are zero premises; or
-the change-point list is empty (that is a `spike`, not a `change`).
+the change-point list is empty (that is an intake `spike`, not a delivery
+issue).
 
 ---
 
@@ -1706,9 +1708,11 @@ names required gates. It does not claim they ran in the current session.
 Each outcome is one flat H3 section. Its fields are `ID`, `Outcome`,
 `Boundary`, `Completion evidence`, and `Tracking`. Each non-goal has `ID` and
 `Reason`. The ID must match the H3 Markdown anchor so STATUS links stay stable.
-Use `Tracking: Not assigned.` until a real tracker link exists. The issue
-tracker owns work state, assignees, schedules, and delivery history. Do not copy
-those fields or completion percentages into ROADMAP.
+Use `Tracking: Not assigned.` until a real tracker link exists. A release
+Milestone owns the epic grouping, development order, and version identity.
+Atomic issues own work state and assignees. The tracker owns schedules and
+delivery history. Do not copy those fields or completion percentages into
+ROADMAP.
 
 A project can also adopt conventional supporting guides. They are optional.
 When a conventional protocol, client, indexing, querying, GKE, or

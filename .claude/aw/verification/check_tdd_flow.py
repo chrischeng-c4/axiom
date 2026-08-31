@@ -127,7 +127,8 @@ NEIGHBOUR_TESTS_REL = "apps/demo/src/extra/tests.rs"
 NEIGHBOUR_TEST = "extra::tests::twice_doubles"
 
 WI = 1
-WI_BODY_REL = f".aw/workitems/changes/{WI}.md"
+WI_BODY_REL = f".aw/workitems/deliveries/{WI}.md"
+WI_RECEIPT_REL = f".aw/workitems/deliveries/{WI}.json"
 
 # Where `red` writes what it measured. Under `.aw/`, which the fixture's
 # `.gitignore` names for the same reason the real checkout does: a record that
@@ -574,6 +575,16 @@ def build(root: Path) -> Path:
     body = fixture / WI_BODY_REL
     body.parent.mkdir(parents=True)
     body.write_text(WI_BODY)
+    (fixture / WI_RECEIPT_REL).write_text(json.dumps({
+        "iid": WI,
+        "type": "feat",
+        "flow": "behavior",
+        "state": "OPEN",
+        "milestone": 7,
+        "labels": ["app:demo", "phase:created", "type:feat"],
+        "updated_at": "2026-08-31T00:00:00Z",
+        "body_sha256": hashlib.sha256(WI_BODY.encode("utf-8")).hexdigest(),
+    }, indent=2) + "\n")
 
     # Generated rather than written out, and committed with the scaffold. A
     # real crate has a lockfile under version control; this fixture would
@@ -828,6 +839,32 @@ def main() -> int:
             h.record("start refuses a dirty tree", "FAIL on P2",
                      "red on it" if hit else r.stdout.strip()[-200:],
                      hit and r.returncode != 0)
+
+        def behavior_phase_refuses_maintenance_receipt() -> None:
+            w = h.fresh()
+            receipt_path = w / WI_RECEIPT_REL
+            receipt = json.loads(receipt_path.read_text())
+            receipt.update({"type": "docs", "flow": "maintenance"})
+            receipt["labels"] = ["app:demo", "phase:created", "type:docs"]
+            receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+            r = h.e2e(w, "start", str(WI))
+            hit = h.red_on(r, "P0")
+            named = "maintenance flow" in h.row_block(r, "P0")
+            h.record("behavior phases refuse a maintenance type receipt",
+                     "FAIL on P0 naming maintenance flow",
+                     f"P0 red: {hit}; names maintenance: {named}",
+                     hit and named and r.returncode != 0)
+
+        def behavior_phase_refuses_stale_fetch_body() -> None:
+            w = h.fresh()
+            (w / WI_BODY_REL).write_text(WI_BODY + "\n<!-- drift -->\n")
+            r = h.impl(w, "start", str(WI))
+            hit = h.red_on(r, "P0")
+            named = "digest" in h.row_block(r, "P0")
+            h.record("behavior phases refuse a stale fetch receipt",
+                     "FAIL on P0 naming the body digest",
+                     f"P0 red: {hit}; names digest: {named}",
+                     hit and named and r.returncode != 0)
 
         def impl_before_e2e() -> None:
             """The write order, and the name of what is missing.
@@ -1343,6 +1380,8 @@ def main() -> int:
             # -- the ladder ----------------------------------------------------
             start_clean,
             start_dirty,
+            behavior_phase_refuses_maintenance_receipt,
+            behavior_phase_refuses_stale_fetch_body,
             impl_before_e2e,
             phase_already_landed,
             e2e_phase_writes_src,
