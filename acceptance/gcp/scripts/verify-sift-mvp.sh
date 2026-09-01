@@ -947,7 +947,7 @@ create_load_job() {
     --from-file="$scenario_file" \
     --dry-run=client -o yaml \
     > "$EVIDENCE_DIR/load/${phase}/${signal}/configmap.yaml"
-  kubectl apply -f "$EVIDENCE_DIR/load/${phase}/${signal}/configmap.yaml"
+  kubectl create -f "$EVIDENCE_DIR/load/${phase}/${signal}/configmap.yaml"
   cat > "$EVIDENCE_DIR/load/${phase}/${signal}/job.yaml" <<EOF
 apiVersion: batch/v1
 kind: Job
