@@ -244,6 +244,96 @@ fn histogram_exemplars_and_gauge_delta_semantics_survive_snapshot() {
 }
 
 #[test]
+fn a_time_range_filters_raw_points_but_keeps_overlapping_full_bucket_rollups() {
+    let projection = MetricProjection::new();
+    for row in [
+        metric(
+            1,
+            "range-1",
+            "range.total",
+            2.0,
+            MetricTemporality::Delta,
+            "2026-07-14T00:00:00Z",
+            "/range",
+            serde_json::json!({}),
+        ),
+        metric(
+            2,
+            "range-2",
+            "range.total",
+            3.0,
+            MetricTemporality::Delta,
+            "2026-07-14T00:00:30Z",
+            "/range",
+            serde_json::json!({}),
+        ),
+    ] {
+        Projection::apply_idempotent(&projection, &row).unwrap();
+    }
+    let mut query = MetricQuery::for_project("project-a");
+    query.start_time = Some("2026-07-14T00:00:20Z".into());
+    let page = projection.query(&query).unwrap();
+    assert_eq!(page.series[0].points.len(), 1);
+    assert!(page.series[0]
+        .rollups
+        .iter()
+        .all(|rollup| rollup.point_count == 2));
+}
+
+#[test]
+fn restore_canonicalizes_legacy_cached_rollups_for_rebuild_digest_parity() {
+    let projection = MetricProjection::new();
+    for row in [
+        metric(
+            1,
+            "legacy-rollup-1",
+            "legacy.total",
+            2.0,
+            MetricTemporality::Delta,
+            "2026-07-14T00:00:00Z",
+            "/legacy",
+            serde_json::json!({}),
+        ),
+        metric(
+            2,
+            "legacy-rollup-2",
+            "legacy.total",
+            3.0,
+            MetricTemporality::Delta,
+            "2026-07-14T00:00:30Z",
+            "/legacy",
+            serde_json::json!({}),
+        ),
+    ] {
+        Projection::apply_idempotent(&projection, &row).unwrap();
+    }
+    let cached_rollups = serde_json::to_value(
+        &projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap()
+            .series[0]
+            .rollups,
+    )
+    .unwrap();
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&Projection::snapshot(&projection).unwrap()).unwrap();
+    for series in legacy["state"]["series"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        series["rollups"] = cached_rollups.clone();
+    }
+
+    let restored = MetricProjection::new();
+    Projection::restore(&restored, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(
+        Projection::semantic_digest(&projection).unwrap(),
+        Projection::semantic_digest(&restored).unwrap()
+    );
+}
+
+#[test]
 fn cardinality_overflow_is_deterministic_and_diagnostic() {
     let projection = MetricProjection::with_limits(2, 100).unwrap();
     for (cursor, route) in ["/a", "/b", "/c", "/d"].into_iter().enumerate() {

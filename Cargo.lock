@@ -11704,6 +11704,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "cli-std",
+ "crc32fast",
  "peer-tls",
  "raft-core",
  "rcgen",

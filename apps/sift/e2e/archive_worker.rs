@@ -37,7 +37,7 @@ async fn leader_lifecycle_worker_commits_gcs_before_compacting_wal() {
 
     let data = tempfile::tempdir().unwrap();
     let state = ServiceState::open(data.path()).unwrap();
-    state.journal().append(log()).unwrap();
+    state.append_events(vec![log()]).await.unwrap();
     let worker =
         state.start_archive_worker("gs://sift-worker/archive-worker", Duration::from_millis(10));
     let commit = data.path().join("control/archive-commit.json");
@@ -69,7 +69,7 @@ async fn leader_lifecycle_worker_commits_gcs_before_compacting_wal() {
 async fn local_mode_commits_a_segment_manifest_before_compacting_wal() {
     let data = tempfile::tempdir().unwrap();
     let state = ServiceState::open(data.path()).unwrap();
-    state.journal().append(log()).unwrap();
+    state.append_events(vec![log()]).await.unwrap();
     let worker = state.start_local_archive_worker(Duration::from_millis(10));
     let commit = data.path().join("control/local-segment-commit.json");
     for _ in 0..500 {
@@ -88,6 +88,7 @@ async fn local_mode_commits_a_segment_manifest_before_compacting_wal() {
             .is_empty(),
         "local WAL must compact only after the local commit exists"
     );
+    state.finish_drain().await.unwrap();
     drop(state);
 
     let reopened = DurableJournal::open(data.path()).unwrap();
@@ -118,6 +119,49 @@ async fn local_compaction_reconciles_the_shared_capacity_guard() {
         reported,
         directory_bytes(data.path()),
         "a successful compaction must replace estimates with measured bytes"
+    );
+}
+
+#[tokio::test]
+async fn committed_receipt_retries_a_late_wal_compaction_failure() {
+    let data = tempfile::tempdir().unwrap();
+    let state = ServiceState::open(data.path()).unwrap();
+    state.append_events(vec![log()]).await.unwrap();
+    let wal = data.path().join("wal/logs/events.framed");
+    let archived_wal = std::fs::read(&wal).unwrap();
+    assert!(!archived_wal.is_empty());
+
+    sift::storage::archive::archive_journal_local(state.journal()).unwrap();
+    assert!(storage_durable::FramedLogReader::read_frames(&wal, 0)
+        .unwrap()
+        .is_empty());
+
+    // Simulate a process that committed the receipt but failed before the
+    // authorized WAL truncate reached disk.
+    std::fs::write(&wal, archived_wal).unwrap();
+    assert_eq!(
+        storage_durable::FramedLogReader::read_frames(&wal, 0)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let worker = state.start_local_archive_worker(Duration::from_millis(10));
+    for _ in 0..500 {
+        if storage_durable::FramedLogReader::read_frames(&wal, 0)
+            .unwrap()
+            .is_empty()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    worker.stop().await;
+    assert!(
+        storage_durable::FramedLogReader::read_frames(&wal, 0)
+            .unwrap()
+            .is_empty(),
+        "the next lifecycle tick must finish receipt-authorized WAL compaction"
     );
 }
 

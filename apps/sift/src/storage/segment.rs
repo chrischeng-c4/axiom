@@ -413,6 +413,27 @@ impl SegmentStore {
         source_segment_id: &str,
         retained: &[StoredEvent],
     ) -> Result<Option<SegmentManifest>> {
+        self.write_derived_segment(source_segment_id, retained, true)
+    }
+
+    /// Materialize a prefix taken from a hash-verified archive checkpoint.
+    /// The archive is authoritative, so its row can replace a conflicting row
+    /// at the same local cursor. Normal retention continues to use the stricter
+    /// `write_retained_segment` path above.
+    pub(crate) fn write_reconciled_segment(
+        &self,
+        source_segment_id: &str,
+        retained: &[StoredEvent],
+    ) -> Result<Option<SegmentManifest>> {
+        self.write_derived_segment(source_segment_id, retained, false)
+    }
+
+    fn write_derived_segment(
+        &self,
+        source_segment_id: &str,
+        retained: &[StoredEvent],
+        require_source_match: bool,
+    ) -> Result<Option<SegmentManifest>> {
         if retained.is_empty() {
             bail!("retained local segment cannot be empty");
         }
@@ -428,25 +449,27 @@ impl SegmentStore {
             return Ok(None);
         };
         verify_segment(&source)?;
-        let source_events = read_events(&source.local_path)?;
-        let mut source_index = source_events
-            .iter()
-            .map(|event| (event.cursor, event))
-            .collect::<HashMap<_, _>>();
-        for event in retained {
-            let Some(source_event) = source_index.remove(&event.cursor) else {
-                bail!(
-                    "retained cursor {} is absent from local segment {}",
-                    event.cursor,
-                    source.segment_id
-                );
-            };
-            if source_event != event {
-                bail!(
-                    "retained cursor {} disagrees with local segment {}",
-                    event.cursor,
-                    source.segment_id
-                );
+        if require_source_match {
+            let source_events = read_events(&source.local_path)?;
+            let mut source_index = source_events
+                .iter()
+                .map(|event| (event.cursor, event))
+                .collect::<HashMap<_, _>>();
+            for event in retained {
+                let Some(source_event) = source_index.remove(&event.cursor) else {
+                    bail!(
+                        "retained cursor {} is absent from local segment {}",
+                        event.cursor,
+                        source.segment_id
+                    );
+                };
+                if source_event != event {
+                    bail!(
+                        "retained cursor {} disagrees with local segment {}",
+                        event.cursor,
+                        source.segment_id
+                    );
+                }
             }
         }
 

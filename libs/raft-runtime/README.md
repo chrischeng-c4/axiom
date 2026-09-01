@@ -75,18 +75,21 @@ own assignment keys, domain commands, capacity policy, and external effects.
 
 Restarting a replica restores the committed watermark and applies every durable
 committed entry before accepting fresh proposals. A cold bootstrap may seed an
-empty store with an exact state-machine snapshot, while services with their own
-durable data plane can share the small fsynced applied-index floor instead of
-forking marker logic. `RaftStore` skips byte-identical hard-state writes so
-idle ticks do not create avoidable fsync pressure.
+empty store with an exact state-machine snapshot. A durable data-plane service
+can use `snapshot_at` and `snapshot_and_compact_through` after it proves that an
+older applied prefix is recoverable. `RaftStore` skips byte-identical hard-state
+writes so idle ticks do not create avoidable fsync pressure.
 
 - Root WI: #1854
-- Surfaces: Rust API: `RaftStore::seed_snapshot`, `AppliedIndexStore`;
+- Surfaces: Rust API: `RaftStore::seed_snapshot`, `AppliedIndexStore`,
+  `RaftStateMachine::snapshot_at`, `RaftHost::snapshot_and_compact_through`;
   persisted `raft_core::PersistedState::commit_index`.
 - Gate — stability: `cargo test -p raft-core -p raft-runtime` - committed
   entries replay before new proposals, snapshot seed refuses overwrite, and
   unchanged ticks do not rewrite hard state
 - Gate: `cargo test -p raft-core -p raft-runtime`
+- Gate: `cargo test -p raft-runtime --test snapshot_at_index`
+- Gate: `cargo test -p raft-runtime --test snapshot_install_safety`
 - Source: `libs/raft-runtime/src/store.rs`,
   `libs/raft-runtime/src/applied_index_store.rs`
 - Evidence: raft-core/runtime restart, seed, and store tests

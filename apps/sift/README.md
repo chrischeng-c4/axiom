@@ -313,18 +313,22 @@ below is an explicit Cargo test target under `apps/sift/e2e`.
   - `libs/peer-tls` supplies required mutual TLS for dedicated peer traffic.
 - Gate: `bash apps/sift/test.sh --test raft_batch`
 - Gate: `bash apps/sift/test.sh --test raft_failover`
+- Gate: `bash apps/sift/test.sh --test bounded_raft_state`
+- Gate: `bash apps/sift/test.sh --test raft_archive_checkpoint`
 
 ### Archive and restore
 
 - ID: `archive-and-restore`
-- Promise: Write immutable signal segments before the manifest and preserve WAL on archive failure.
+- Promise: Write immutable signal segments before the manifest, preserve WAL on archive failure, and make every voter adopt the same retained prefix before Raft compaction.
 - Sources:
   - `apps/sift` owns archive manifests, segment hashes, commit order, WAL compaction, and restore checks.
+  - `libs/service-projection` rebuilds typed projections when the retained source generation changes.
   - `libs/service-backup` supplies destination, upload, fetch, and retention behavior.
   - `external:apache-parquet` defines the immutable columnar segment file format.
 - Gate: `bash apps/sift/test.sh --test gcs_archive`
 - Gate: `bash apps/sift/test.sh --test cold_query_archive`
 - Gate: `bash apps/sift/test.sh --test retention_lifecycle`
+- Gate: `bash apps/sift/test.sh --test raft_archive_checkpoint`
 - Gate: `bash apps/sift/test.sh --test live_backup`
 
 ### Agent and CLI access

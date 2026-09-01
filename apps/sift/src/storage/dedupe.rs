@@ -5,7 +5,7 @@
 //! fixed-record shard files, so resident memory does not grow with ingest.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::PermissionsExt,
@@ -24,6 +24,7 @@ const DEFAULT_BLOOM_BYTES: usize = 32 * 1024 * 1024;
 
 pub struct DedupeIndex {
     root: PathBuf,
+    files: RwLock<()>,
     bloom: RwLock<Vec<u8>>,
 }
 
@@ -41,6 +42,7 @@ impl DedupeIndex {
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
         let index = Self {
             root,
+            files: RwLock::new(()),
             bloom: RwLock::new(vec![0; DEFAULT_BLOOM_BYTES]),
         };
         let stats = match index.load_existing() {
@@ -55,6 +57,7 @@ impl DedupeIndex {
     }
 
     pub fn lookup(&self, event_id: &str) -> Result<Option<u64>> {
+        let _files = self.files.read().expect("dedupe file lock poisoned");
         let digest = event_digest(event_id);
         if !self.bloom_contains(&digest) {
             return Ok(None);
@@ -90,6 +93,7 @@ impl DedupeIndex {
     }
 
     pub fn reset(&self) -> Result<()> {
+        let _files = self.files.write().expect("dedupe file lock poisoned");
         for entry in fs::read_dir(&self.root)? {
             let path = entry?.path();
             if path.extension().and_then(|value| value.to_str()) == Some("idx") {
@@ -104,7 +108,134 @@ impl DedupeIndex {
         Ok(())
     }
 
+    /// Remove expired IDs without replaying the complete archive. Only shards
+    /// touched by this retention batch are rewritten. Bloom bits can stay set:
+    /// a stale positive only causes a bounded shard lookup and cannot claim a
+    /// deleted ID exists.
+    pub(crate) fn remove_event_ids<'a>(
+        &self,
+        event_ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<u64> {
+        let mut removals = BTreeMap::<usize, BTreeSet<[u8; 32]>>::new();
+        for event_id in event_ids {
+            let digest = event_digest(event_id);
+            removals
+                .entry(shard_for(&digest))
+                .or_default()
+                .insert(digest);
+        }
+        if removals.is_empty() {
+            return Ok(0);
+        }
+
+        let _files = self.files.write().expect("dedupe file lock poisoned");
+        let mut removed = 0_u64;
+        for (shard, digests) in removals {
+            let path = self.root.join(format!("{shard:03x}.idx"));
+            if !path.exists() {
+                continue;
+            }
+            let bytes = fs::read(&path)
+                .with_context(|| format!("read dedupe index shard {}", path.display()))?;
+            if bytes.len() % ENTRY_BYTES != 0 {
+                bail!("dedupe index shard {} has a torn record", path.display());
+            }
+            let mut retained = Vec::with_capacity(bytes.len());
+            for entry in bytes.chunks_exact(ENTRY_BYTES) {
+                let digest: [u8; 32] = entry[..32].try_into().expect("fixed digest bytes");
+                if digests.contains(&digest) {
+                    removed = removed.saturating_add(1);
+                } else {
+                    retained.extend_from_slice(entry);
+                }
+            }
+            storage_durable::atomic_write(&path, &retained, storage_durable::FsyncPolicy::Always)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(removed)
+    }
+
+    /// Replace this rebuildable index with a verified staged index. The source
+    /// belongs to an isolated snapshot directory, so copying its fixed-record
+    /// shards avoids replaying the complete remote archive a second time.
+    pub(crate) fn replace_from(&self, source: &DedupeIndex) -> Result<DedupeStats> {
+        let _source_files = source
+            .files
+            .read()
+            .expect("source dedupe file lock poisoned");
+        let _target_files = self.files.write().expect("dedupe file lock poisoned");
+        for entry in fs::read_dir(&self.root)? {
+            let path = entry?.path();
+            if path.extension().and_then(|value| value.to_str()) == Some("idx") {
+                fs::remove_file(&path)?;
+            }
+        }
+
+        let mut source_paths = fs::read_dir(&source.root)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("idx"))
+            .collect::<Vec<_>>();
+        source_paths.sort();
+        let mut bloom = vec![0; DEFAULT_BLOOM_BYTES];
+        let mut stats = DedupeStats::default();
+        for source_path in source_paths {
+            let bytes = fs::read(&source_path)?;
+            if bytes.len() % ENTRY_BYTES != 0 {
+                bail!(
+                    "staged dedupe index shard {} has a torn record",
+                    source_path.display()
+                );
+            }
+            for entry in bytes.chunks_exact(ENTRY_BYTES) {
+                let digest: [u8; 32] = entry[..32].try_into().expect("fixed digest bytes");
+                let cursor =
+                    u64::from_le_bytes(entry[32..40].try_into().expect("fixed cursor bytes"));
+                bloom_insert(&mut bloom, &digest);
+                stats.count = stats.count.saturating_add(1);
+                stats.last_cursor = stats.last_cursor.max(cursor);
+            }
+            let file_name = source_path
+                .file_name()
+                .context("staged dedupe shard has no file name")?;
+            let target_path = self.root.join(file_name);
+            storage_durable::atomic_write(
+                &target_path,
+                &bytes,
+                storage_durable::FsyncPolicy::Always,
+            )?;
+            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o600))?;
+        }
+        storage_durable::sync_parent_dir(&self.root)?;
+        *self.bloom.write().expect("dedupe Bloom lock poisoned") = bloom;
+        Ok(stats)
+    }
+
+    /// Refuse an archive rewrite before it changes canonical metadata when the
+    /// rebuildable index target cannot be reset and populated.
+    pub(crate) fn preflight_rebuild(&self) -> Result<()> {
+        let metadata = fs::symlink_metadata(&self.root)
+            .with_context(|| format!("inspect dedupe index root {}", self.root.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            bail!(
+                "dedupe index root {} is not a real directory",
+                self.root.display()
+            );
+        }
+        let probe = self.root.join(".rebuild-probe");
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let file = options
+            .open(&probe)
+            .with_context(|| format!("write dedupe rebuild probe {}", probe.display()))?;
+        file.sync_all()?;
+        drop(file);
+        fs::remove_file(&probe)?;
+        storage_durable::sync_parent_dir(&probe)?;
+        Ok(())
+    }
+
     fn append_entries(&self, entries: &[([u8; 32], u64)]) -> Result<()> {
+        let _files = self.files.write().expect("dedupe file lock poisoned");
         let mut shards = BTreeMap::<usize, Vec<([u8; 32], u64)>>::new();
         for (digest, cursor) in entries {
             shards
@@ -133,6 +264,7 @@ impl DedupeIndex {
     }
 
     fn load_existing(&self) -> Result<(u64, u64)> {
+        let _files = self.files.write().expect("dedupe file lock poisoned");
         let mut count = 0u64;
         let mut last = 0u64;
         let mut bloom = self.bloom.write().expect("dedupe Bloom lock poisoned");

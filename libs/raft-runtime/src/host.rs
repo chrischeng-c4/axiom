@@ -39,6 +39,7 @@ use crate::store::RaftStore;
 /// The maximum size of a snapshot chunk streamed during snapshot generation.
 pub const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
 const PUBLISH_BODY_LIMIT: usize = 2 * 1024 * 1024;
+const DEFAULT_MAX_RESIDENT_LOG_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
 /// A bounded chunk sink that consumes streaming writes in chunks of up to `SNAPSHOT_CHUNK_SIZE`.
 pub struct ChunkSink<F = Box<dyn FnMut(&[u8]) -> std::io::Result<()> + Send>> {
@@ -165,6 +166,23 @@ pub(crate) struct SnapEnvelope {
     pub(crate) req: InstallSnapshotReq,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct CapableSnapEnvelope {
+    pub(crate) group_id: String,
+    pub(crate) from: NodeId,
+    pub(crate) req: InstallSnapshotReq,
+    pub(crate) snapshot_capability: String,
+    pub(crate) snapshot_nonce: u64,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct CapableSnapshotResp {
+    pub(crate) term: u64,
+    #[serde(default)]
+    pub(crate) accepted: bool,
+    pub(crate) snapshot_index: u64,
+    pub(crate) snapshot_capability: String,
+    pub(crate) snapshot_nonce: u64,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct TimeoutNowEnvelope {
     pub(crate) group_id: String,
     pub(crate) from: NodeId,
@@ -211,6 +229,19 @@ pub struct RaftStatus {
     pub proposal_rejected_before_append: u64,
     pub proposal_admission_closed: bool,
     pub lifecycle_generation: u64,
+    #[serde(default)]
+    pub snapshot_capability: Option<String>,
+    #[serde(default)]
+    pub resident_log_bytes: u64,
+    #[serde(default)]
+    pub max_resident_log_bytes: u64,
+}
+
+/// Result of one externally coordinated snapshot attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotCompactionOutcome {
+    pub snapshot_index: Index,
+    pub installed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -393,6 +424,10 @@ pub(crate) struct Shared {
     pub(crate) proposal_rejected_before_routing: AtomicU64,
     pub(crate) proposal_rejected_before_append: AtomicU64,
     pub(crate) lifecycle_generation: AtomicU64,
+    pub(crate) snapshot_nonce: AtomicU64,
+    pub(crate) snapshot_rpc_timeout: Duration,
+    pub(crate) snapshot_install: Mutex<()>,
+    pub(crate) max_resident_log_bytes: usize,
     pub(crate) shutdown_started: AtomicBool,
     pub(crate) shutdown_tx: watch::Sender<Option<HostShutdownReport>>,
 }
@@ -486,7 +521,7 @@ pub(crate) fn apply_ready(
         return Ok(());
     }
     let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
-    match sm.snapshot(&mut sink) {
+    match sm.snapshot_at(applied, &mut sink) {
         Ok(()) => node.compact(applied, sink.into_bytes()),
         Err(e) if strict => return Err(e),
         Err(e) => tracing::warn!(error = %e, "raft: snapshot capture failed; skip compaction"),
@@ -714,16 +749,9 @@ impl Shared {
                 .and_then(|r| serde_json::from_slice::<AppendResp>(&r).ok())
                 .map(RaftMsg::AppendResp),
             RaftMsg::InstallSnapshot(req) => self
-                .post(
-                    &format!("{base}/raft/install-snapshot"),
-                    &SnapEnvelope {
-                        group_id: self.group_id.0.clone(),
-                        from: self.id,
-                        req,
-                    },
-                )
+                .request_snapshot(to, req, self.sm.snapshot_capability())
                 .await
-                .and_then(|r| serde_json::from_slice::<InstallSnapshotResp>(&r).ok())
+                .ok()
                 .map(RaftMsg::InstallSnapshotResp),
             RaftMsg::TimeoutNow(req) => {
                 self.post(
@@ -751,10 +779,20 @@ impl Shared {
     }
 
     async fn post<T: Serialize>(&self, url: &str, body: &T) -> Option<Vec<u8>> {
+        self.post_with_timeout(url, body, self.cfg.rpc_timeout)
+            .await
+    }
+
+    async fn post_with_timeout<T: Serialize>(
+        &self,
+        url: &str,
+        body: &T,
+        timeout: Duration,
+    ) -> Option<Vec<u8>> {
         match self
             .http_client()
             .post(url)
-            .timeout(self.cfg.rpc_timeout)
+            .timeout(timeout)
             .json(body)
             .send()
             .await
@@ -762,6 +800,94 @@ impl Shared {
             Ok(r) => r.bytes().await.ok().map(|b| b.to_vec()),
             Err(_) => None,
         }
+    }
+
+    async fn request_snapshot(
+        &self,
+        to: NodeId,
+        req: InstallSnapshotReq,
+        required_capability: Option<&'static str>,
+    ) -> Result<InstallSnapshotResp> {
+        let base = self
+            .peers
+            .read()
+            .unwrap_or_else(|peers| peers.into_inner())
+            .get(&to)
+            .cloned()
+            .ok_or_else(|| anyhow!("raft: voter {to} has no registered peer address"))?;
+        if let Some(required) = required_capability {
+            let nonce = self.snapshot_nonce.fetch_add(1, Ordering::AcqRel);
+            let bytes = self
+                .post_with_timeout(
+                    &format!("{base}/raft/install-snapshot-capable"),
+                    &CapableSnapEnvelope {
+                        group_id: self.group_id.0.clone(),
+                        from: self.id,
+                        req,
+                        snapshot_capability: required.to_string(),
+                        snapshot_nonce: nonce,
+                    },
+                    self.snapshot_rpc_timeout,
+                )
+                .await
+                .ok_or_else(|| {
+                    anyhow!("raft: voter {to} did not answer capable snapshot install")
+                })?;
+            let response: CapableSnapshotResp =
+                serde_json::from_slice(&bytes).map_err(|error| {
+                    anyhow!("raft: voter {to} returned an invalid capable snapshot reply: {error}")
+                })?;
+            if response.snapshot_capability != required || response.snapshot_nonce != nonce {
+                return Err(anyhow!(
+                    "raft: voter {to} did not echo snapshot capability {required}"
+                ));
+            }
+            return Ok(InstallSnapshotResp {
+                term: response.term,
+                accepted: response.accepted,
+                snapshot_index: response.snapshot_index,
+            });
+        }
+        let bytes = self
+            .post_with_timeout(
+                &format!("{base}/raft/install-snapshot"),
+                &SnapEnvelope {
+                    group_id: self.group_id.0.clone(),
+                    from: self.id,
+                    req,
+                },
+                self.snapshot_rpc_timeout,
+            )
+            .await
+            .ok_or_else(|| anyhow!("raft: voter {to} did not answer snapshot install"))?;
+        serde_json::from_slice(&bytes).map_err(|error| {
+            anyhow!("raft: voter {to} returned an invalid snapshot reply: {error}")
+        })
+    }
+
+    async fn request_status(&self, to: NodeId) -> Result<RaftStatus> {
+        let base = self
+            .peers
+            .read()
+            .unwrap_or_else(|peers| peers.into_inner())
+            .get(&to)
+            .cloned()
+            .ok_or_else(|| anyhow!("raft: voter {to} has no registered peer address"))?;
+        let bytes = match self
+            .http_client()
+            .get(format!("{base}/raftz"))
+            .timeout(self.cfg.rpc_timeout)
+            .send()
+            .await
+        {
+            Ok(response) => response
+                .bytes()
+                .await
+                .map_err(|error| anyhow!("raft: voter {to} returned an invalid status: {error}"))?,
+            Err(error) => return Err(anyhow!("raft: voter {to} did not answer status: {error}")),
+        };
+        serde_json::from_slice(&bytes)
+            .map_err(|error| anyhow!("raft: voter {to} returned an invalid status: {error}"))
     }
 
     /// Try a leader-side proposal and return its index once the **state machine
@@ -779,6 +905,14 @@ impl Shared {
         }
         let index = {
             let mut n = self.node.lock().await;
+            if n.resident_log_bytes().saturating_add(command.len()) > self.max_resident_log_bytes {
+                return Some(ProposalOutcome::RejectedBeforeAdmission {
+                    reason: format!(
+                        "raft: resident log memory limit reached ({} bytes); retry after snapshot compaction",
+                        self.max_resident_log_bytes
+                    ),
+                });
+            }
             let Some(idx) = n.propose(command) else {
                 return None;
             };
@@ -931,7 +1065,13 @@ impl RaftHost {
         cfg: HostConfig,
         peer_transport: Option<PeerTransport>,
     ) -> RaftHost {
-        let mut node = match store.load().ok().flatten() {
+        let loaded = store.load().unwrap_or_else(|error| {
+            panic!(
+                "raft: refuse to start node {id}; durable state {} is invalid: {error}",
+                store.path().display()
+            )
+        });
+        let mut node = match loaded {
             Some(state) => RaftNode::from_persisted(id, &membership, state),
             None => RaftNode::new(id, &membership),
         };
@@ -948,6 +1088,32 @@ impl RaftHost {
             .copied()
             .map(|peer| (peer, Arc::new(PeerLane::default())))
             .collect();
+        let max_resident_log_bytes = std::env::var("RAFT_RUNTIME_MAX_RESIDENT_LOG_BYTES")
+            .ok()
+            .map(|value| {
+                value.parse::<usize>().unwrap_or_else(|error| {
+                    panic!(
+                        "RAFT_RUNTIME_MAX_RESIDENT_LOG_BYTES must be a positive integer: {error}"
+                    )
+                })
+            })
+            .unwrap_or(DEFAULT_MAX_RESIDENT_LOG_BYTES);
+        let snapshot_rpc_timeout = std::env::var("RAFT_RUNTIME_SNAPSHOT_RPC_TIMEOUT_SECONDS")
+            .ok()
+            .map(|value| {
+                value.parse::<u64>().unwrap_or_else(|error| {
+                    panic!(
+                        "RAFT_RUNTIME_SNAPSHOT_RPC_TIMEOUT_SECONDS must be a positive integer: {error}"
+                    )
+                })
+            })
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(600))
+            .max(cfg.rpc_timeout);
+        assert!(
+            max_resident_log_bytes > 0,
+            "RAFT_RUNTIME_MAX_RESIDENT_LOG_BYTES must be greater than zero"
+        );
         let shared = Arc::new(Shared {
             id,
             group_id,
@@ -967,6 +1133,10 @@ impl RaftHost {
             proposal_rejected_before_routing: AtomicU64::new(0),
             proposal_rejected_before_append: AtomicU64::new(0),
             lifecycle_generation: AtomicU64::new(0),
+            snapshot_nonce: AtomicU64::new(1),
+            snapshot_rpc_timeout,
+            snapshot_install: Mutex::new(()),
+            max_resident_log_bytes,
             shutdown_started: AtomicBool::new(false),
             shutdown_tx,
         });
@@ -1572,17 +1742,233 @@ impl RaftHost {
     /// Capture a state-machine snapshot and compact the log up to the applied
     /// index (for `SnapshotPolicy::External` consumers driving their own cadence).
     pub async fn snapshot_and_compact(&self) -> Result<Index> {
-        let mut n = self.shared.node.lock().await;
         let applied = self.shared.sm.applied_index();
         if applied == 0 {
             return Ok(0);
         }
-        let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
-        self.shared.sm.snapshot(&mut sink)?;
-        let bytes = sink.into_bytes();
-        n.compact(applied, bytes);
+        self.snapshot_and_compact_through(applied).await
+    }
+
+    /// Return the durable local snapshot index without changing Raft state.
+    pub async fn snapshot_index(&self) -> Index {
+        self.shared.node.lock().await.snapshot_index()
+    }
+
+    /// Verify that every voter advertises the local state machine's snapshot
+    /// capability before a product performs a snapshot-dependent mutation.
+    pub async fn require_snapshot_capability_on_all_voters(&self) -> Result<()> {
+        let (term, voters) = {
+            let node = self.shared.node.lock().await;
+            if !node.is_leader() && node.conf_state().membership.voters.len() > 1 {
+                return Err(anyhow!(
+                    "only the Raft leader can verify voter snapshot capabilities"
+                ));
+            }
+            (
+                node.current_term(),
+                node.conf_state().membership.voters.clone(),
+            )
+        };
+        let required = self
+            .shared
+            .sm
+            .snapshot_capability()
+            .ok_or_else(|| anyhow!("state machine does not advertise a snapshot capability"))?;
+        for voter in voters
+            .iter()
+            .copied()
+            .filter(|voter| *voter != self.shared.id)
+        {
+            let status = self.shared.request_status(voter).await?;
+            if status.snapshot_capability.as_deref() != Some(required) {
+                return Err(anyhow!(
+                    "raft: voter {voter} does not advertise snapshot capability {required}"
+                ));
+            }
+        }
+        let node = self.shared.node.lock().await;
+        if node.current_term() != term
+            || (!node.is_leader() && node.conf_state().membership.voters.len() > 1)
+        {
+            return Err(anyhow!(
+                "raft leadership changed while verifying snapshot capabilities"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Capture a product-defined checkpoint and compact only the requested
+    /// applied prefix.
+    ///
+    /// This is for durable data-plane products that can prove an older Raft
+    /// prefix is already recoverable from their own committed storage. The
+    /// state machine receives the exact prefix through `snapshot_at` and can
+    /// refuse when that proof is not available.
+    pub async fn snapshot_and_compact_through(&self, up_to: Index) -> Result<Index> {
+        Ok(self
+            .snapshot_and_compact_through_outcome(up_to)
+            .await?
+            .snapshot_index)
+    }
+
+    /// Coordinate a product snapshot and report whether voters installed new
+    /// bytes. `installed` is false when `up_to` was already compacted.
+    pub async fn snapshot_and_compact_through_outcome(
+        &self,
+        up_to: Index,
+    ) -> Result<SnapshotCompactionOutcome> {
+        self.snapshot_and_compact_with_policy(up_to, true).await
+    }
+
+    /// Compact after a voting quorum installs a self-contained snapshot.
+    ///
+    /// The caller must keep every external object referenced by the snapshot
+    /// until lagging voters have installed it. This method bounds the leader's
+    /// resident log during one voter outage, but it does not authorize product
+    /// data or archive garbage collection.
+    pub async fn snapshot_and_compact_through_quorum_outcome(
+        &self,
+        up_to: Index,
+    ) -> Result<SnapshotCompactionOutcome> {
+        self.snapshot_and_compact_with_policy(up_to, false).await
+    }
+
+    async fn snapshot_and_compact_with_policy(
+        &self,
+        up_to: Index,
+        require_every_voter: bool,
+    ) -> Result<SnapshotCompactionOutcome> {
+        let (term, snapshot_term, voters, bytes) = {
+            let n = self.shared.node.lock().await;
+            let applied = self.shared.sm.applied_index();
+            if up_to == 0 {
+                return Ok(SnapshotCompactionOutcome {
+                    snapshot_index: n.snapshot_index(),
+                    installed: false,
+                });
+            }
+            if up_to > applied {
+                return Err(anyhow!(
+                    "cannot compact unapplied Raft prefix {up_to}; state machine applied index is {applied}"
+                ));
+            }
+            if up_to <= n.snapshot_index() {
+                return Ok(SnapshotCompactionOutcome {
+                    snapshot_index: n.snapshot_index(),
+                    installed: false,
+                });
+            }
+            if !n.is_leader() && n.conf_state().membership.voters.len() > 1 {
+                return Err(anyhow!(
+                    "only the Raft leader can coordinate voter compaction"
+                ));
+            }
+            let snapshot_term = n.term_at_index(up_to).ok_or_else(|| {
+                anyhow!("Raft prefix {up_to} has no term and cannot be compacted")
+            })?;
+            let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
+            self.shared.sm.snapshot_at(up_to, &mut sink)?;
+            (
+                n.current_term(),
+                snapshot_term,
+                n.conf_state().membership.voters.clone(),
+                sink.into_bytes(),
+            )
+        };
+
+        let mut replies = Vec::new();
+        let required_capability = self.shared.sm.snapshot_capability();
+        if require_every_voter {
+            if let Some(required) = required_capability {
+                for voter in voters
+                    .iter()
+                    .copied()
+                    .filter(|voter| *voter != self.shared.id)
+                {
+                    let status = self.shared.request_status(voter).await?;
+                    if status.snapshot_capability.as_deref() != Some(required) {
+                        return Err(anyhow!(
+                            "raft: voter {voter} does not advertise snapshot capability {required}"
+                        ));
+                    }
+                }
+            }
+        }
+        let quorum = voters.len() / 2 + 1;
+        let mut refusals = Vec::new();
+        for voter in voters.into_iter().filter(|voter| *voter != self.shared.id) {
+            let response = match self
+                .shared
+                .request_snapshot(
+                    voter,
+                    InstallSnapshotReq {
+                        term,
+                        leader: self.shared.id,
+                        snapshot_index: up_to,
+                        snapshot_term,
+                        data: bytes.clone(),
+                    },
+                    required_capability,
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(error) if require_every_voter => return Err(error),
+                Err(error) => {
+                    refusals.push(format!("voter {voter}: {error}"));
+                    continue;
+                }
+            };
+            if response.term > term {
+                let mut node = self.shared.node.lock().await;
+                node.handle(voter, RaftMsg::InstallSnapshotResp(response.clone()));
+                self.shared.persist(&node)?;
+                return Err(anyhow!(
+                    "raft: voter {voter} advanced the term while refusing snapshot {up_to}"
+                ));
+            }
+            if response.term != term || !response.accepted || response.snapshot_index < up_to {
+                let refusal = anyhow!(
+                    "raft: voter {voter} refused snapshot {up_to} at term {term}; replied term {} accepted {} index {}",
+                    response.term,
+                    response.accepted,
+                    response.snapshot_index
+                );
+                if require_every_voter {
+                    return Err(refusal);
+                }
+                refusals.push(refusal.to_string());
+                continue;
+            }
+            replies.push((voter, response));
+        }
+
+        if replies.len() + 1 < quorum {
+            return Err(anyhow!(
+                "raft: snapshot {up_to} reached {} of {} required voters; {}",
+                replies.len() + 1,
+                quorum,
+                refusals.join("; ")
+            ));
+        }
+
+        let mut n = self.shared.node.lock().await;
+        if n.current_term() != term
+            || (!n.is_leader() && n.conf_state().membership.voters.len() > 1)
+        {
+            return Err(anyhow!(
+                "raft leadership changed while coordinating snapshot {up_to}"
+            ));
+        }
+        for (voter, response) in replies {
+            n.handle(voter, RaftMsg::InstallSnapshotResp(response));
+        }
+        n.compact(up_to, bytes);
         self.shared.persist(&n)?;
-        Ok(applied)
+        Ok(SnapshotCompactionOutcome {
+            snapshot_index: up_to,
+            installed: true,
+        })
     }
 
     /// The leader-side write target. The direct router, registry router, and
@@ -1596,6 +1982,10 @@ impl RaftHost {
             .route("/raft/request-vote", post(request_vote))
             .route("/raft/append-entries", post(append_entries))
             .route("/raft/install-snapshot", post(install_snapshot))
+            .route(
+                "/raft/install-snapshot-capable",
+                post(install_snapshot_capable),
+            )
             .route("/raft/timeout-now", post(timeout_now))
             .route(Self::PUBLISH_PATH, post(publish_handler))
             .route("/raftz", get(raftz))
@@ -1682,24 +2072,122 @@ pub(crate) async fn install_snapshot(
     if env.group_id != s.group_id.0 {
         return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
     }
-    let mut n = s.node.lock().await;
-    n.handle(env.from, RaftMsg::InstallSnapshot(env.req));
-    if s.persist(&n).is_err() {
-        return Json(InstallSnapshotResp {
-            term: 0,
-            snapshot_index: 0,
-        })
-        .into_response();
+    Json(install_snapshot_response(&s, env.from, env.req).await).into_response()
+}
+
+pub(crate) async fn install_snapshot_capable(
+    State(s): State<Arc<Shared>>,
+    Json(env): Json<CapableSnapEnvelope>,
+) -> axum::response::Response {
+    if env.group_id != s.group_id.0 {
+        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
     }
-    s.apply_ready(&mut n); // restores the SM from the installed snapshot
-    Json(match take_reply(&mut n, env.from) {
+    if env.snapshot_nonce == 0
+        || s.sm.snapshot_capability() != Some(env.snapshot_capability.as_str())
+    {
+        return (
+            StatusCode::CONFLICT,
+            "snapshot capability is not supported by this voter",
+        )
+            .into_response();
+    }
+    let response = install_snapshot_response(&s, env.from, env.req).await;
+    Json(CapableSnapshotResp {
+        term: response.term,
+        accepted: response.accepted,
+        snapshot_index: response.snapshot_index,
+        snapshot_capability: env.snapshot_capability,
+        snapshot_nonce: env.snapshot_nonce,
+    })
+    .into_response()
+}
+
+async fn install_snapshot_response(
+    s: &Arc<Shared>,
+    from: NodeId,
+    req: InstallSnapshotReq,
+) -> InstallSnapshotResp {
+    let _snapshot_install = s.snapshot_install.lock().await;
+    let validation_required = {
+        let n = s.node.lock().await;
+        req.term >= n.current_term() && req.snapshot_index > n.snapshot_index()
+    };
+    if validation_required {
+        let mut reader = std::io::Cursor::new(req.data.as_slice());
+        if let Err(error) = s.sm.validate_snapshot(&mut reader) {
+            tracing::warn!(
+                %error,
+                snapshot_index = req.snapshot_index,
+                "raft: state-machine rejected incoming snapshot before durable install"
+            );
+            let mut n = s.node.lock().await;
+            n.reject_install_snapshot(req);
+            if s.persist(&n).is_err() {
+                return InstallSnapshotResp {
+                    term: 0,
+                    accepted: false,
+                    snapshot_index: 0,
+                };
+            }
+            return match take_reply(&mut n, from) {
+                Some(RaftMsg::InstallSnapshotResp(response)) => response,
+                _ => InstallSnapshotResp {
+                    term: n.current_term(),
+                    accepted: false,
+                    snapshot_index: n.snapshot_index(),
+                },
+            };
+        }
+    }
+    let mut n = s.node.lock().await;
+    let restore_required = req.term >= n.current_term() && req.snapshot_index > n.snapshot_index();
+    n.handle(from, RaftMsg::InstallSnapshot(req));
+    if s.persist(&n).is_err() {
+        let _ = take_reply(&mut n, from);
+        return InstallSnapshotResp {
+            term: 0,
+            accepted: false,
+            snapshot_index: 0,
+        };
+    }
+    if restore_required {
+        let Some(bytes) = n.take_installed_snapshot() else {
+            return InstallSnapshotResp {
+                term: n.current_term(),
+                accepted: false,
+                snapshot_index: n.snapshot_index(),
+            };
+        };
+        let mut reader = std::io::Cursor::new(bytes);
+        if let Err(error) = s.sm.restore(&mut reader) {
+            tracing::error!(
+                %error,
+                snapshot_index = n.snapshot_index(),
+                "raft: durable snapshot restore failed; latch node until restart"
+            );
+            *s.latched_failure.lock().unwrap() = Some(StorageFailed {
+                node_id: s.id,
+                operation: "state-machine-restore",
+                path: s.store.path().to_path_buf(),
+                kind: std::io::ErrorKind::InvalidData,
+            });
+            let _ = take_reply(&mut n, from);
+            return InstallSnapshotResp {
+                term: n.current_term(),
+                accepted: false,
+                snapshot_index: n.snapshot_index(),
+            };
+        }
+    }
+    s.apply_ready(&mut n);
+    match take_reply(&mut n, from) {
         Some(RaftMsg::InstallSnapshotResp(r)) => r,
         _ => InstallSnapshotResp {
             term: 0,
+            accepted: false,
             snapshot_index: 0,
         },
-    })
-    .into_response()
+    }
 }
 
 pub(crate) async fn timeout_now(
@@ -1860,6 +2348,9 @@ pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
         proposal_rejected_before_append: s.proposal_rejected_before_append.load(Ordering::Relaxed),
         proposal_admission_closed: s.lifecycle_generation.load(Ordering::Acquire) > 0,
         lifecycle_generation: s.lifecycle_generation.load(Ordering::Acquire),
+        snapshot_capability: s.sm.snapshot_capability().map(str::to_string),
+        resident_log_bytes: n.resident_log_bytes() as u64,
+        max_resident_log_bytes: s.max_resident_log_bytes as u64,
     }
 }
 
@@ -2018,6 +2509,7 @@ mod tests {
             }
             (RaftMsg::InstallSnapshotResp(actual), RaftMsg::InstallSnapshotResp(expected)) => {
                 assert_eq!(actual.term, expected.term);
+                assert_eq!(actual.accepted, expected.accepted);
                 assert_eq!(actual.snapshot_index, expected.snapshot_index);
             }
             (RaftMsg::TimeoutNow(actual), RaftMsg::TimeoutNow(expected)) => {
@@ -2090,6 +2582,7 @@ mod tests {
             }),
             RaftMsg::InstallSnapshotResp(InstallSnapshotResp {
                 term: 50,
+                accepted: true,
                 snapshot_index: 8,
             }),
             timeout_now(60),

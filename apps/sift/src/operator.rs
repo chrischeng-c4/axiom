@@ -597,6 +597,10 @@ fn role_env(cx: &RenderCtx<'_>, spec: &SiftSpec, role: &str) -> Vec<Value> {
         json!({"name":"SIFT_INGEST_QUOTA_WINDOW_SECS", "value":"60"}),
     ];
     if role == STORE_COMPONENT {
+        env.push(json!({
+            "name":"SIFT_ARCHIVE_INTERVAL_SECS",
+            "value":"60"
+        }));
         if let Some(archive) = &spec.archive {
             env.push(json!({
                 "name":"SIFT_ARCHIVE_DESTINATION",

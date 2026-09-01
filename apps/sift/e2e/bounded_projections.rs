@@ -95,6 +95,22 @@ fn metric_projection_evicts_dedupe_rows_with_old_points() {
 }
 
 #[test]
+fn monotonic_metric_ingest_does_not_rewrite_the_retained_series_per_point() {
+    let projection = MetricProjection::with_limits(10, 1_000).unwrap();
+    for cursor in 1..=10_000 {
+        let mut row = stored(cursor, SignalKind::Metric);
+        row.event.occurred_at = "2026-07-14T00:00:00Z".into();
+        row.event.observed_at.clone_from(&row.event.occurred_at);
+        projection.apply_idempotent(&row).unwrap();
+    }
+
+    assert!(
+        projection.maintenance_work_points() <= 20_000,
+        "the monotonic write path must touch only the new point and bounded eviction work"
+    );
+}
+
+#[test]
 fn logging_projection_deletes_evicted_documents_from_shared_text_index() {
     let projection = LoggingProjection::with_max_records(10).unwrap();
     for cursor in 1..=100 {

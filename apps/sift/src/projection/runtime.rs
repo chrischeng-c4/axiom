@@ -86,6 +86,10 @@ impl service_projection::ProjectionSource<StoredEvent> for JournalProjectionSour
             limit,
         })
     }
+
+    fn generation(&self) -> u64 {
+        self.journal.projection_generation()
+    }
 }
 
 pub struct ProjectionRuntime {
@@ -133,18 +137,22 @@ impl ProjectionRuntime {
     }
 
     pub fn query_logs(&self, query: &LogQuery) -> Result<LogPage> {
+        self.logging.catch_up()?;
         self.logging.projection().query(query)
     }
 
     pub fn get_trace(&self, project: &str, trace_id: &str) -> Result<Option<TraceResultV1>> {
+        self.traces.catch_up()?;
         self.traces.projection().get_trace(project, trace_id)
     }
 
     pub fn query_traces(&self, query: &TraceQuery) -> Result<TracePage> {
+        self.traces.catch_up()?;
         self.traces.projection().query(query)
     }
 
     pub fn query_metrics(&self, query: &MetricQuery) -> Result<MetricPage> {
+        self.metrics.catch_up()?;
         self.metrics.projection().query(query)
     }
 

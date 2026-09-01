@@ -1,7 +1,10 @@
 // HANDWRITE-BEGIN gap="sift-metric-projection" tracker="1667" reason="Define series identity, chunks, temporality, histograms, exemplars, overflow, rollups, typed query, snapshot, and rebuild."
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::RwLock,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        RwLock,
+    },
 };
 
 use anyhow::{bail, Context, Result};
@@ -298,6 +301,8 @@ struct StoredMetricSeries {
     attributes: BTreeMap<String, AttributeValue>,
     overflow: bool,
     chunks: Vec<MetricChunkV1>,
+    #[serde(default)]
+    point_count: usize,
     rollups: Vec<MetricRollupV1>,
 }
 
@@ -327,6 +332,7 @@ pub struct MetricProjection {
     state: RwLock<MetricState>,
     cardinality_limit: usize,
     retained_points_per_series: usize,
+    maintenance_work_points: AtomicU64,
 }
 
 impl MetricProjection {
@@ -349,7 +355,13 @@ impl MetricProjection {
             state: RwLock::new(MetricState::default()),
             cardinality_limit,
             retained_points_per_series,
+            maintenance_work_points: AtomicU64::new(0),
         })
+    }
+
+    #[doc(hidden)]
+    pub fn maintenance_work_points(&self) -> u64 {
+        self.maintenance_work_points.load(Ordering::Relaxed)
     }
 
     pub fn query(&self, query: &MetricQuery) -> Result<MetricPage> {
@@ -378,10 +390,12 @@ impl MetricProjection {
             {
                 continue;
             }
-            let points = flatten_points(series)
-                .into_iter()
+            let all_points = flatten_points(series);
+            let points = all_points
+                .iter()
                 .filter(|point| start.is_none_or(|start| point.time_unix_nano >= start))
                 .filter(|point| end.is_none_or(|end| point.time_unix_nano < end))
+                .cloned()
                 .collect::<Vec<_>>();
             if points.is_empty() {
                 continue;
@@ -402,12 +416,10 @@ impl MetricProjection {
                     merge_histograms(&numeric_points)?,
                 )
             };
-            let rollups = series
-                .rollups
-                .iter()
+            let rollups = make_rollups(&all_points)?
+                .into_iter()
                 .filter(|rollup| start.is_none_or(|start| rollup.end_time_unix_nano > start))
                 .filter(|rollup| end.is_none_or(|end| rollup.start_time_unix_nano < end))
-                .cloned()
                 .collect();
             results.push(MetricSeriesResultV1 {
                 series_id: series.series_id.clone(),
@@ -497,7 +509,7 @@ impl Projection for MetricProjection {
         {
             return Ok(());
         }
-        state.cursor_by_event_id.remove(&event.event_id);
+        let replaces_existing = state.cursor_by_event_id.remove(&event.event_id).is_some();
         let known = state.series.contains_key(&exact_id);
         let current_count = state
             .exact_identities
@@ -536,7 +548,7 @@ impl Projection for MetricProjection {
             histogram: payload.histogram,
             exemplars: metric.exemplars.clone(),
         };
-        let (removed_event_ids, current_retained) = {
+        let (removed_event_ids, current_retained, touched) = {
             let series =
                 state
                     .series
@@ -560,35 +572,56 @@ impl Projection for MetricProjection {
                         },
                         overflow,
                         chunks: Vec::new(),
+                        point_count: 0,
                         rollups: Vec::new(),
                     });
             if series.temporality != metric.temporality {
                 bail!("metric series temporality changed without changing identity");
             }
-            let mut points = flatten_points(series);
-            points.retain(|existing| existing.event_id != event.event_id);
-            points.push(point);
-            points.sort_by(|left, right| {
-                left.time_unix_nano
-                    .cmp(&right.time_unix_nano)
-                    .then_with(|| left.cursor.cmp(&right.cursor))
-                    .then_with(|| left.event_id.cmp(&right.event_id))
-            });
-            let removed = if points.len() > self.retained_points_per_series {
-                points
-                    .drain(..points.len() - self.retained_points_per_series)
-                    .map(|point| point.event_id)
-                    .collect::<Vec<_>>()
+            if series.point_count == 0 && !series.chunks.is_empty() {
+                series.point_count = series.chunks.iter().map(|chunk| chunk.points.len()).sum();
+            }
+            let append_in_order = !replaces_existing
+                && last_point(series).is_none_or(|last| point_order(last, &point).is_le());
+            let (removed, current_retained, touched) = if append_in_order {
+                push_metric_point(series, point);
+                let mut removed = Vec::new();
+                while series.point_count > self.retained_points_per_series {
+                    if let Some(event_id) = pop_oldest_metric_point(series) {
+                        removed.push(event_id);
+                    } else {
+                        break;
+                    }
+                }
+                series.rollups.clear();
+                let touched = 1_u64.saturating_add(removed.len() as u64);
+                (removed, true, touched)
             } else {
-                Vec::new()
+                let mut points = flatten_points(series);
+                points.retain(|existing| existing.event_id != event.event_id);
+                points.push(point);
+                points.sort_by(point_order);
+                let removed = if points.len() > self.retained_points_per_series {
+                    points
+                        .drain(..points.len() - self.retained_points_per_series)
+                        .map(|point| point.event_id)
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                let current_retained = points
+                    .iter()
+                    .any(|retained| retained.event_id == event.event_id);
+                let touched = points.len() as u64 + removed.len() as u64;
+                series.chunks = make_chunks(&points);
+                series.point_count = points.len();
+                series.rollups.clear();
+                (removed, current_retained, touched)
             };
-            series.chunks = make_chunks(&points);
-            series.rollups = make_rollups(&points)?;
-            let current_retained = points
-                .iter()
-                .any(|retained| retained.event_id == event.event_id);
-            (removed, current_retained)
+            (removed, current_retained, touched)
         };
+        self.maintenance_work_points
+            .fetch_add(touched, Ordering::Relaxed);
         for event_id in removed_event_ids {
             state.cursor_by_event_id.remove(&event_id);
         }
@@ -621,7 +654,12 @@ impl Projection for MetricProjection {
         {
             bail!("metric projection snapshot limits do not match configured limits");
         }
-        *self.state.write().expect("metric projection lock poisoned") = snapshot.state;
+        let mut state = snapshot.state;
+        for series in state.series.values_mut() {
+            series.point_count = series.chunks.iter().map(|chunk| chunk.points.len()).sum();
+            series.rollups.clear();
+        }
+        *self.state.write().expect("metric projection lock poisoned") = state;
         Ok(())
     }
 
@@ -657,6 +695,49 @@ fn flatten_points(series: &StoredMetricSeries) -> Vec<MetricPointV1> {
         .iter()
         .flat_map(|chunk| chunk.points.iter().cloned())
         .collect()
+}
+
+fn last_point(series: &StoredMetricSeries) -> Option<&MetricPointV1> {
+    series.chunks.last()?.points.last()
+}
+
+fn point_order(left: &MetricPointV1, right: &MetricPointV1) -> std::cmp::Ordering {
+    left.time_unix_nano
+        .cmp(&right.time_unix_nano)
+        .then_with(|| left.cursor.cmp(&right.cursor))
+        .then_with(|| left.event_id.cmp(&right.event_id))
+}
+
+fn push_metric_point(series: &mut StoredMetricSeries, point: MetricPointV1) {
+    let needs_chunk = series
+        .chunks
+        .last()
+        .is_none_or(|chunk| chunk.points.len() == METRIC_CHUNK_POINTS);
+    if needs_chunk {
+        series.chunks.push(MetricChunkV1 {
+            start_time_unix_nano: point.time_unix_nano,
+            end_time_unix_nano: point.time_unix_nano,
+            points: Vec::with_capacity(METRIC_CHUNK_POINTS),
+        });
+    }
+    let chunk = series.chunks.last_mut().expect("metric chunk was created");
+    if chunk.points.is_empty() {
+        chunk.start_time_unix_nano = point.time_unix_nano;
+    }
+    chunk.end_time_unix_nano = point.time_unix_nano;
+    chunk.points.push(point);
+    series.point_count = series.point_count.saturating_add(1);
+}
+
+fn pop_oldest_metric_point(series: &mut StoredMetricSeries) -> Option<String> {
+    let point = series.chunks.first_mut()?.points.remove(0);
+    series.point_count = series.point_count.saturating_sub(1);
+    if series.chunks[0].points.is_empty() {
+        series.chunks.remove(0);
+    } else {
+        series.chunks[0].start_time_unix_nano = series.chunks[0].points[0].time_unix_nano;
+    }
+    Some(point.event_id)
 }
 
 fn make_chunks(points: &[MetricPointV1]) -> Vec<MetricChunkV1> {

@@ -19,6 +19,10 @@ pub struct JournalHead {
     format_version: u16,
     pub last_cursor: u64,
     pub retained_events: u64,
+    #[serde(default)]
+    pub projection_generation: u64,
+    #[serde(default)]
+    pub retention_generation: u64,
 }
 
 impl JournalHead {
@@ -27,7 +31,19 @@ impl JournalHead {
             format_version: JOURNAL_HEAD_FORMAT_VERSION,
             last_cursor,
             retained_events,
+            projection_generation: 0,
+            retention_generation: 0,
         }
+    }
+
+    pub fn with_projection_generation(mut self, projection_generation: u64) -> Self {
+        self.projection_generation = projection_generation;
+        self
+    }
+
+    pub fn with_retention_generation(mut self, retention_generation: u64) -> Self {
+        self.retention_generation = retention_generation;
+        self
     }
 
     pub fn load(root: &Path) -> Result<Option<Self>> {

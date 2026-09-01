@@ -1091,7 +1091,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             .ok()
             .filter(|value| !value.trim().is_empty());
         let interval = std::env::var("SIFT_ARCHIVE_INTERVAL_SECS")
-            .unwrap_or_else(|_| "300".to_string())
+            .unwrap_or_else(|_| "60".to_string())
             .parse::<u64>()
             .context("SIFT_ARCHIVE_INTERVAL_SECS must be a positive integer")?;
         if interval == 0 {

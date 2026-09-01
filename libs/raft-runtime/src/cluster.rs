@@ -89,7 +89,10 @@ impl ClusterDims {
             .rsplit_once('-')
             .context("POD_NAME has no '-<ordinal>' suffix")?;
         if prefix.is_empty() {
-            bail!("POD_NAME '{}' has an empty StatefulSet prefix", self.pod_name);
+            bail!(
+                "POD_NAME '{}' has an empty StatefulSet prefix",
+                self.pod_name
+            );
         }
         Ok(prefix)
     }
@@ -375,8 +378,7 @@ mod tests {
         std::env::set_var("POD_NAME", "quorum-0");
         std::env::remove_var("LUMEN_PEERS");
 
-        let t =
-            ClusterTopology::from_env("lumen", "quorum-headless", 7373, "LUMEN_PEERS").unwrap();
+        let t = ClusterTopology::from_env("lumen", "quorum-headless", 7373, "LUMEN_PEERS").unwrap();
         assert_eq!(t.node_id, 0);
         assert_eq!(
             t.peers.get(&1).unwrap(),
@@ -395,7 +397,12 @@ mod tests {
             "http://lumen-1.lumen-headless:7373"
         );
 
-        for k in ["SHARD_COUNT", "REPLICAS_PER_SHARD", "VOTER_COUNT", "POD_NAME"] {
+        for k in [
+            "SHARD_COUNT",
+            "REPLICAS_PER_SHARD",
+            "VOTER_COUNT",
+            "POD_NAME",
+        ] {
             std::env::remove_var(k);
         }
     }

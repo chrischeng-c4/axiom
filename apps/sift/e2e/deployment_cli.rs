@@ -939,6 +939,7 @@ fn mvp_crd_and_operator_render_archive_restore_limits_and_role_storage() {
         .expect("store env");
     for (name, value) in [
         ("SIFT_ARCHIVE_DESTINATION", "gs://sift-mvp/archive"),
+        ("SIFT_ARCHIVE_INTERVAL_SECS", "60"),
         (
             "SIFT_BOOTSTRAP_ARCHIVE_MANIFEST_URI",
             "gs://sift-mvp/archive/manifest.json",

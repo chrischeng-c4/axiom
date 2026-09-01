@@ -14,7 +14,8 @@ use raft_runtime::{FsyncPolicy, RaftStore};
 
 const MAGIC_V1: &[u8; 8] = b"RAFTST01";
 const MAGIC_V2: &[u8; 8] = b"RAFTST02";
-const MAGIC_V3: &[u8; 8] = b"RAFTST03";
+const MAGIC_V4: &[u8; 8] = b"RAFTST04";
+const LOG_MAGIC_V1: &[u8; 8] = b"RAFTLG01";
 
 /// One log entry as every format before this change wrote it: term, index,
 /// length-prefixed command, and nothing else.
@@ -227,14 +228,35 @@ fn the_record_carries_the_configuration_as_the_canonical_encoder_writes_it() {
         bytes.len()
     );
 
-    // The log length begins where the encoder stopped. A writer emitting a
-    // different number of bytes than the canonical encoder accounts for leaves
-    // everything after the configuration at the wrong offset.
+    // The V4 log-artifact tag begins where the encoder stopped. A writer
+    // emitting a different number of bytes than the canonical encoder accounts
+    // for leaves everything after the configuration at the wrong offset.
     let after = matches[0] + encoded.len();
     assert_eq!(
-        &bytes[after..after + 8],
-        &(state.log.len() as u64).to_le_bytes(),
-        "the log length must begin immediately after the bytes the canonical encoder wrote"
+        bytes[after], 1,
+        "the log-artifact tag must begin immediately after the bytes the canonical encoder wrote"
+    );
+
+    let log_artifacts = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("raft-7-log-") && name.ends_with(".artifact"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        log_artifacts.len(),
+        1,
+        "the current record must reference exactly one immutable log artifact"
+    );
+    assert!(
+        std::fs::read(&log_artifacts[0])
+            .unwrap()
+            .starts_with(LOG_MAGIC_V1),
+        "the split log must use the checksummed log-artifact format"
     );
 
     assert_eq!(
@@ -261,7 +283,7 @@ fn saving_after_loading_an_older_record_upgrades_the_file_in_place() {
 
     let bytes_after = std::fs::read(store.path()).unwrap();
     assert!(
-        bytes_after.starts_with(MAGIC_V3),
+        bytes_after.starts_with(MAGIC_V4),
         "the first save after loading an older record must write the current format, but the file still starts with {:?}",
         &bytes_after[..8]
     );
@@ -405,12 +427,6 @@ fn a_voters_length_claiming_one_slot_past_the_bound_is_refused() {
         .expect("the record must carry the configuration");
 
     let body_len = bytes.len() - at;
-    assert_eq!(
-        body_len % 8,
-        0,
-        "the decoder's buffer must end on an eight-byte boundary"
-    );
-
     // Compute the claim from the record that was just written: exactly one slot
     // past what the bound permits ((body_len - 16 - 8) / 8).
     let bound = (body_len - 16 - 8) / 8;

@@ -1,5 +1,5 @@
 // HANDWRITE-BEGIN gap="sift-vat-gcs-archive-tests" tracker="1659" reason="Run Vat Cloud Storage emulator with real service-backup GCS requests and verify archive/restore hash equality."
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use sha2::Digest;
 use sift::{
@@ -79,7 +79,7 @@ async fn vat_gcs_archive_manifest_is_written_last_and_cold_restore_is_equal() {
 
         let receipt = archive::archive_journal_gcs(&journal, "gs://sift-test/domain-v1").unwrap();
         assert!(receipt.manifest_uri.ends_with("manifest.json"));
-        assert_eq!(receipt.manifest.format_version, 4);
+        assert_eq!(receipt.manifest.format_version, 6);
         let manifest_json = serde_json::to_value(&receipt.manifest).unwrap();
         assert_eq!(
             manifest_json["source_cluster_id"],
@@ -217,6 +217,37 @@ async fn vat_gcs_archive_manifest_is_written_last_and_cold_restore_is_equal() {
             service_backup::BackupDestination::from_uri("gs://sift-test/domain-v1").unwrap();
         let sink = service_backup::GcsSink::from_destination(&destination).unwrap();
         assert!(service_backup::BackupSink::prune(&sink, 0).unwrap() >= 4);
+
+        let concurrent_dir = tempfile::tempdir().unwrap();
+        let concurrent = Arc::new(DurableJournal::open(concurrent_dir.path()).unwrap());
+        concurrent.append(stored(1).event).unwrap();
+        let writer_journal = concurrent.clone();
+        let writer = std::thread::spawn(move || {
+            for cursor in 2..=120 {
+                writer_journal.append(stored(cursor).event).unwrap();
+            }
+        });
+        for _ in 0..4 {
+            archive::archive_journal_gcs(&concurrent, "gs://sift-test/concurrent-prefix").unwrap();
+        }
+        writer.join().unwrap();
+        let final_receipt =
+            archive::archive_journal_gcs(&concurrent, "gs://sift-test/concurrent-prefix").unwrap();
+        assert_eq!(final_receipt.manifest.raft_snapshot_index, 120);
+        assert_eq!(final_receipt.manifest.event_count, 120);
+        let concurrent_restore = tempfile::tempdir().unwrap();
+        archive::restore_gcs(&final_receipt.manifest_uri, concurrent_restore.path()).unwrap();
+        let restored_concurrent = DurableJournal::open(concurrent_restore.path()).unwrap();
+        assert_eq!(
+            restored_concurrent
+                .query(EventQuery {
+                    limit: 200,
+                    ..EventQuery::default()
+                })
+                .unwrap()
+                .len(),
+            120
+        );
     })
     .await
     .unwrap();

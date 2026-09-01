@@ -1462,9 +1462,6 @@ archive_manifest_before="$(jq -r '.storage.archive.manifest_uri' \
   "$EVIDENCE_DIR/gcs/integrity-before-iam-outage.json")"
 archive_hash_before="$(jq -r '.storage.archive.manifest_sha256' \
   "$EVIDENCE_DIR/gcs/integrity-before-iam-outage.json")"
-archive_wal_before="$(jq -r '.storage.wal_bytes.logs' \
-  "$EVIDENCE_DIR/gcs/integrity-before-iam-outage.json")"
-
 echo ">> Sift MVP: GCS outage preserves local WAL"
 gcloud storage buckets remove-iam-policy-binding "gs://${BACKUP_BUCKET}" \
   --member="serviceAccount:${BACKUP_GSA_EMAIL}" \
@@ -1474,7 +1471,10 @@ gcloud storage buckets remove-iam-policy-binding "gs://${BACKUP_BUCKET}" \
 archive_iam_removed=1
 printf '%s\n' archive-iam-disabled \
   > "$EVIDENCE_DIR/gcs/archive-iam-disabled"
-sleep 15
+sleep 1
+archive_outage_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s\n' "$archive_outage_started_at" \
+  > "$EVIDENCE_DIR/gcs/archive-outage-started-at.txt"
 outage_nanos="$((now_seconds * 1000000000 + 9000000))"
 jq -nc --arg ts "$outage_nanos" '
   {resourceLogs:[{
@@ -1491,9 +1491,30 @@ jq -nc --arg ts "$outage_nanos" '
 auth_curl -X POST "${sift_url}/v1/logs" \
   -H 'content-type: application/json' \
   --data-binary "@$EVIDENCE_DIR/gcs/archive-outage-log.json" >/dev/null
-# The normal archive period is 300 seconds. Waiting 330 seconds proves at
-# least one complete worker opportunity happened while GCS access was absent.
-sleep 330
+store_integrity_to "$archive_leader" \
+  "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json"
+archive_wal_after_ack="$(jq -r '.storage.wal_bytes.logs' \
+  "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json")"
+jq -e '
+  .storage.wal_bytes.logs > 0
+  and .storage.archive.watermarks.logs < .signals.logs.watermark
+' "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json" >/dev/null \
+  || die "the acknowledged outage event did not create unarchived WAL"
+# Wait for direct proof that a lifecycle attempt happened after IAM was
+# removed. A fixed sleep alone cannot prove that the worker reached GCS.
+archive_failure_deadline=$((SECONDS + 150))
+while (( SECONDS < archive_failure_deadline )); do
+  kubectl -n "$NAMESPACE" logs "pod/sift-store-${archive_leader}" \
+    --since-time="$archive_outage_started_at" \
+    > "$EVIDENCE_DIR/gcs/archive-worker-outage.log" 2>&1 || true
+  if rg -F "archive attempt failed" \
+      "$EVIDENCE_DIR/gcs/archive-worker-outage.log" >/dev/null; then
+    break
+  fi
+  sleep 5
+done
+rg -F "archive attempt failed" "$EVIDENCE_DIR/gcs/archive-worker-outage.log" >/dev/null \
+  || die "the leader did not report an archive failure after IAM removal"
 [[ "$(wait_store_leader)" == "$archive_leader" ]] \
   || die "archive leadership changed during the isolated GCS outage"
 store_integrity_to "$archive_leader" \
@@ -1501,17 +1522,45 @@ store_integrity_to "$archive_leader" \
 jq -e \
   --arg manifest "$archive_manifest_before" \
   --arg hash "$archive_hash_before" \
-  --argjson wal "$archive_wal_before" '
+  --argjson wal "$archive_wal_after_ack" '
   .storage.archive.manifest_uri == $manifest
   and .storage.archive.manifest_sha256 == $hash
   and .storage.wal_bytes.logs >= $wal
   and .storage.archive.watermarks.logs < .signals.logs.watermark
 ' "$EVIDENCE_DIR/gcs/integrity-during-iam-outage.json" >/dev/null \
   || die "GCS outage changed the manifest, compacted WAL, or hid archive lag"
-kubectl -n "$NAMESPACE" logs "pod/sift-store-${archive_leader}" \
-  --since=7m > "$EVIDENCE_DIR/gcs/archive-worker-outage.log"
-rg -F "archive attempt failed" "$EVIDENCE_DIR/gcs/archive-worker-outage.log" >/dev/null \
-  || die "the leader did not report its failed archive attempt"
+
+outage_restart_voter="$(((archive_leader + 1) % 3))"
+stop_forwards
+kubectl -n "$NAMESPACE" delete "pod/sift-store-${outage_restart_voter}" \
+  --wait=true --timeout=240s
+wait_role_ready statefulset sift-store 3
+start_gateway_forward
+start_store_forwards
+refresh_token
+outage_restart_deadline=$((SECONDS + 300))
+while (( SECONDS < outage_restart_deadline )); do
+  if store_integrity_to "$outage_restart_voter" \
+      "$EVIDENCE_DIR/gcs/integrity-after-outage-voter-restart.json" 2>/dev/null \
+      && jq -e \
+        --slurpfile expected "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json" '
+        .event_count == $expected[0].event_count
+        and .event_id_sha256 == $expected[0].event_id_sha256
+        and .watermark == $expected[0].watermark
+      ' "$EVIDENCE_DIR/gcs/integrity-after-outage-voter-restart.json" >/dev/null; then
+    break
+  fi
+  sleep 3
+done
+jq -e \
+  --slurpfile expected "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json" '
+  .event_count == $expected[0].event_count
+  and .event_id_sha256 == $expected[0].event_id_sha256
+  and .watermark == $expected[0].watermark
+' "$EVIDENCE_DIR/gcs/integrity-after-outage-voter-restart.json" >/dev/null \
+  || die "a voter did not recover acknowledged WAL during the GCS outage"
+[[ "$(wait_store_leader)" == "$archive_leader" ]] \
+  || die "archive leadership changed after the isolated follower restart"
 
 cold_query_start="$(jq -nr --argjson epoch "$((now_seconds - 32 * 86400))" \
   '$epoch | strftime("%Y-%m-%dT%H:%M:%SZ")')"

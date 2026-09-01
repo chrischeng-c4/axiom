@@ -809,8 +809,10 @@ fn promoting_on_a_node_that_is_not_the_leader_names_that_and_not_a_transition() 
         .get_mut(&leader)
         .unwrap()
         .promote_learner(3)
-        .expect("the same promotion on the leader must succeed, or the refusal \
-                 above was about the request rather than the node asked");
+        .expect(
+            "the same promotion on the leader must succeed, or the refusal \
+                 above was about the request rather than the node asked",
+        );
     bus.settle();
     assert_eq!(
         bus.voters_of(leader),

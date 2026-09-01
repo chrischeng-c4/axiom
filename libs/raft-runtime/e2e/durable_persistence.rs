@@ -1,9 +1,9 @@
+use raft_runtime::{
+    group::LEGACY_GROUP_ID, FsyncPolicy, HostConfig, Membership, RaftHost, RaftStateMachine,
+    RaftStore,
+};
 use std::io::ErrorKind;
 use std::sync::Arc;
-use raft_runtime::{
-    group::LEGACY_GROUP_ID, FsyncPolicy, HostConfig, Membership, RaftHost,
-    RaftStateMachine, RaftStore,
-};
 
 #[path = "support/cluster.rs"]
 mod cluster;
@@ -25,21 +25,28 @@ async fn test_1_propose_refusal_and_restart() {
     let mut nodes = cluster(1).await;
     let node = nodes.pop().unwrap();
     let host = node.host.clone();
-    
+
     let idx1 = host.propose(to_command(1)).await.unwrap();
     assert_eq!(idx1, 1);
-    
-    host.store().inject_next_save_failure_with_kind(ErrorKind::StorageFull);
-    
+
+    host.store()
+        .inject_next_save_failure_with_kind(ErrorKind::StorageFull);
+
     let err = host.propose(to_command(2)).await.unwrap_err();
     assert_eq!(node.sm.applied_index(), 1);
-    
+
     // Propose 3 (Measurement 2)
     let err2 = host.propose(to_command(3)).await.unwrap_err();
     assert_eq!(err.to_string(), err2.to_string());
     assert_eq!(node.sm.applied_index(), 1);
 
-    let cluster::Node { host, sm: _sm, url: _url, _serve, _dir } = node;
+    let cluster::Node {
+        host,
+        sm: _sm,
+        url: _url,
+        _serve,
+        _dir,
+    } = node;
     let dir_path = _dir.into_path();
     drop(host);
 
@@ -47,7 +54,10 @@ async fn test_1_propose_refusal_and_restart() {
     let store2 = RaftStore::open(dir_path.to_str().unwrap(), 0, FsyncPolicy::Os).unwrap();
     let _host2 = RaftHost::spawn(
         0,
-        Membership { voters: vec![0], learners: vec![] },
+        Membership {
+            voters: vec![0],
+            learners: vec![],
+        },
         std::collections::HashMap::new(),
         store2,
         sm2.clone() as Arc<dyn RaftStateMachine>,
@@ -61,9 +71,11 @@ async fn test_1_propose_refusal_and_restart() {
 async fn test_2_request_vote_refusal() {
     let mut nodes = cluster(1).await;
     let node = nodes.pop().unwrap();
-    
+
     node.host.propose(to_command(1)).await.unwrap();
-    node.host.store().inject_next_save_failure_with_kind(ErrorKind::StorageFull);
+    node.host
+        .store()
+        .inject_next_save_failure_with_kind(ErrorKind::StorageFull);
     let _ = node.host.propose(to_command(2)).await;
 
     let client = h2c_client();
@@ -85,7 +97,7 @@ async fn test_2_request_vote_refusal() {
         .json()
         .await
         .unwrap();
-    
+
     assert_eq!(vote_resp.get("granted").unwrap().as_bool().unwrap(), false);
 }
 
@@ -93,9 +105,11 @@ async fn test_2_request_vote_refusal() {
 async fn test_3_append_entries_refusal() {
     let mut nodes = cluster(1).await;
     let node = nodes.pop().unwrap();
-    
+
     node.host.propose(to_command(1)).await.unwrap();
-    node.host.store().inject_next_save_failure_with_kind(ErrorKind::StorageFull);
+    node.host
+        .store()
+        .inject_next_save_failure_with_kind(ErrorKind::StorageFull);
     let _ = node.host.propose(to_command(2)).await;
 
     let client = h2c_client();
@@ -119,8 +133,11 @@ async fn test_3_append_entries_refusal() {
         .json()
         .await
         .unwrap();
-    
-    assert_eq!(append_resp.get("success").unwrap().as_bool().unwrap(), false);
+
+    assert_eq!(
+        append_resp.get("success").unwrap().as_bool().unwrap(),
+        false
+    );
 }
 
 #[tokio::test]
@@ -128,16 +145,17 @@ async fn test_4_error_value_and_raftz() {
     let mut nodes = cluster(1).await;
     let node = nodes.pop().unwrap();
     let host = node.host.clone();
-    
+
     host.propose(to_command(1)).await.unwrap();
-    host.store().inject_next_save_failure_with_kind(ErrorKind::StorageFull);
+    host.store()
+        .inject_next_save_failure_with_kind(ErrorKind::StorageFull);
     let err = host.propose(to_command(2)).await.unwrap_err();
-    
+
     let err_str = err.to_string();
     assert!(err_str.contains("StorageFull"));
     assert!(err_str.contains("save"));
     assert!(err_str.contains("raft-0.state"));
-    
+
     let client = h2c_client();
     let raftz_resp: serde_json::Value = client
         .get(&format!("{}/raftz", node.url))
@@ -147,8 +165,12 @@ async fn test_4_error_value_and_raftz() {
         .json()
         .await
         .unwrap();
-    
-    let durability_error = raftz_resp.get("durability_error").unwrap().as_str().unwrap();
+
+    let durability_error = raftz_resp
+        .get("durability_error")
+        .unwrap()
+        .as_str()
+        .unwrap();
     assert!(durability_error.contains("StorageFull"));
 }
 
@@ -157,13 +179,19 @@ async fn test_5_healthy_host() {
     let mut nodes = cluster(1).await;
     let node = nodes.pop().unwrap();
     let host = node.host.clone();
-    
+
     host.propose(to_command(1)).await.unwrap();
     host.propose(to_command(2)).await.unwrap();
     host.propose(to_command(3)).await.unwrap();
     assert_eq!(node.sm.applied_index(), 3);
 
-    let cluster::Node { host, sm: _sm, url: _url, _serve, _dir } = node;
+    let cluster::Node {
+        host,
+        sm: _sm,
+        url: _url,
+        _serve,
+        _dir,
+    } = node;
     let dir_path = _dir.into_path();
     drop(host);
 
@@ -171,7 +199,10 @@ async fn test_5_healthy_host() {
     let store2 = RaftStore::open(dir_path.to_str().unwrap(), 0, FsyncPolicy::Os).unwrap();
     let _host2 = RaftHost::spawn(
         0,
-        Membership { voters: vec![0], learners: vec![] },
+        Membership {
+            voters: vec![0],
+            learners: vec![],
+        },
         std::collections::HashMap::new(),
         store2,
         sm2.clone() as Arc<dyn RaftStateMachine>,
@@ -185,9 +216,11 @@ async fn test_5_healthy_host() {
 async fn test_6_install_snapshot_refusal() {
     let mut nodes = cluster(1).await;
     let node = nodes.pop().unwrap();
-    
+
     node.host.propose(to_command(1)).await.unwrap();
-    node.host.store().inject_next_save_failure_with_kind(ErrorKind::StorageFull);
+    node.host
+        .store()
+        .inject_next_save_failure_with_kind(ErrorKind::StorageFull);
     let _ = node.host.propose(to_command(2)).await;
 
     let client = h2c_client();
@@ -210,16 +243,19 @@ async fn test_6_install_snapshot_refusal() {
         .json()
         .await
         .unwrap();
-    
+
     // An install snapshot on a latched host fails and returns a dummy response like index 0
-    assert_eq!(snap_resp.get("snapshot_index").unwrap().as_u64().unwrap(), 0);
+    assert_eq!(
+        snap_resp.get("snapshot_index").unwrap().as_u64().unwrap(),
+        0
+    );
 }
 
 #[tokio::test]
 async fn test_7_peer_requests_healthy_vs_latched() {
     let mut nodes = cluster(1).await;
     let node = nodes.pop().unwrap();
-    
+
     // Propose one command so the log reaches index 1 at term 1.
     node.host.propose(to_command(1)).await.unwrap();
 
@@ -239,7 +275,12 @@ async fn test_7_peer_requests_healthy_vs_latched() {
     let vote_resp: serde_json::Value = client
         .post(&format!("{}/raft/request-vote", node.url))
         .json(&vote_req)
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(vote_resp.get("granted").unwrap().as_bool().unwrap(), true);
 
     // 2. Healthy host accepts append_entries
@@ -258,7 +299,12 @@ async fn test_7_peer_requests_healthy_vs_latched() {
     let append_resp: serde_json::Value = client
         .post(&format!("{}/raft/append-entries", node.url))
         .json(&append_req)
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(append_resp.get("success").unwrap().as_bool().unwrap(), true);
 
     // 3. Healthy host accepts install_snapshot
@@ -276,11 +322,21 @@ async fn test_7_peer_requests_healthy_vs_latched() {
     let snap_resp: serde_json::Value = client
         .post(&format!("{}/raft/install-snapshot", node.url))
         .json(&snap_req)
-        .send().await.unwrap().json().await.unwrap();
-    assert_eq!(snap_resp.get("snapshot_index").unwrap().as_u64().unwrap(), 1);
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        snap_resp.get("snapshot_index").unwrap().as_u64().unwrap(),
+        1
+    );
 
     // Now latch the host!
-    node.host.store().inject_next_save_failure_with_kind(ErrorKind::StorageFull);
+    node.host
+        .store()
+        .inject_next_save_failure_with_kind(ErrorKind::StorageFull);
     // propose to trigger the save failure
     let _ = node.host.propose(to_command(2)).await;
 
@@ -298,8 +354,16 @@ async fn test_7_peer_requests_healthy_vs_latched() {
     let vote_resp_latched: serde_json::Value = client
         .post(&format!("{}/raft/request-vote", node.url))
         .json(&vote_req_latched)
-        .send().await.unwrap().json().await.unwrap();
-    assert_eq!(vote_resp_latched.get("granted").unwrap().as_bool().unwrap(), false);
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        vote_resp_latched.get("granted").unwrap().as_bool().unwrap(),
+        false
+    );
 
     // 2b. Latched host refuses append_entries
     let append_req_latched = serde_json::json!({
@@ -317,8 +381,20 @@ async fn test_7_peer_requests_healthy_vs_latched() {
     let append_resp_latched: serde_json::Value = client
         .post(&format!("{}/raft/append-entries", node.url))
         .json(&append_req_latched)
-        .send().await.unwrap().json().await.unwrap();
-    assert_eq!(append_resp_latched.get("success").unwrap().as_bool().unwrap(), false);
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        append_resp_latched
+            .get("success")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        false
+    );
 
     // 3b. Latched host refuses install_snapshot
     let snap_req_latched = serde_json::json!({
@@ -335,8 +411,20 @@ async fn test_7_peer_requests_healthy_vs_latched() {
     let snap_resp_latched: serde_json::Value = client
         .post(&format!("{}/raft/install-snapshot", node.url))
         .json(&snap_req_latched)
-        .send().await.unwrap().json().await.unwrap();
-    assert_eq!(snap_resp_latched.get("snapshot_index").unwrap().as_u64().unwrap(), 0);
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        snap_resp_latched
+            .get("snapshot_index")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -351,7 +439,10 @@ async fn test_8_latched_follower_refuses_proposal() {
     let follower = &nodes[follower_idx];
 
     // Latch the follower
-    follower.host.store().inject_next_save_failure_with_kind(ErrorKind::StorageFull);
+    follower
+        .host
+        .store()
+        .inject_next_save_failure_with_kind(ErrorKind::StorageFull);
 
     // Trigger the save failure on the follower by proposing on the leader.
     // The leader sends append_entries, the follower receives it and tries to persist.
@@ -361,7 +452,12 @@ async fn test_8_latched_follower_refuses_proposal() {
     for _ in 0..50 {
         let raftz_resp: serde_json::Value = client
             .get(&format!("{}/raftz", follower.url))
-            .send().await.unwrap().json().await.unwrap();
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         if !raftz_resp.get("durability_error").unwrap().is_null() {
             break;
         }
@@ -374,7 +470,7 @@ async fn test_8_latched_follower_refuses_proposal() {
 
     // The leader still accepts and applies commands.
     let _idx = leader.host.propose(to_command(3)).await.unwrap();
-    
+
     // Wait for the healthy follower to apply it to prove the cluster is still healthy.
     for _ in 0..50 {
         if nodes[other_follower_idx].sm.applied_index() >= 2 {

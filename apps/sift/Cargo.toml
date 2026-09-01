@@ -152,6 +152,14 @@ name = "raft_batch"
 path = "e2e/raft_batch.rs"
 
 [[test]]
+name = "bounded_raft_state"
+path = "e2e/bounded_raft_state.rs"
+
+[[test]]
+name = "raft_archive_checkpoint"
+path = "e2e/raft_archive_checkpoint.rs"
+
+[[test]]
 name = "raft_failover"
 path = "e2e/raft_failover.rs"
 

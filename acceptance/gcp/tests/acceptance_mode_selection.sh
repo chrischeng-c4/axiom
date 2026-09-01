@@ -109,6 +109,12 @@ present "the Sift verifier lost its 30-minute load" 'LOAD_SECONDS=1800' "$SIFT_V
 present "the Sift verifier lost the 10k/s rate" 'ITEMS_PER_SECOND=10000' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost its 18M exact count" 'EXPECTED_ITEMS=18000000' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost GCS outage testing" 'archive-iam-disabled' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier does not timestamp the real GCS outage" \
+  'archive_outage_started_at=' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier does not restrict logs to the real outage" \
+  '--since-time="$archive_outage_started_at"' "$SIFT_VERIFY_SCRIPT"
+absent "the Sift verifier can reuse a stale archive failure" \
+  '--since=7m' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost fresh-PVC restore" 'fresh-pvc-restore' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier no longer emits acceptance.json" 'acceptance.json' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost its authenticated non-2xx status helper" \
