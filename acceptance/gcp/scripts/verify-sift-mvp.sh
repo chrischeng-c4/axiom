@@ -132,6 +132,13 @@ auth_curl() {
     "$@"
 }
 
+auth_curl_status() {
+  curl --silent --show-error \
+    -H "authorization: Bearer $(sed -n '1p' "$token_file")" \
+    -H "x-sift-project: ${PROJECT}" \
+    "$@"
+}
+
 start_gateway_forward() {
   local deadline
   kubectl -n "$NAMESPACE" port-forward service/sift "${SIFT_PORT}:7380" \
@@ -678,7 +685,7 @@ wait_for_integrity_count "$((smoke_start + 9))" \
   "$EVIDENCE_DIR/kubernetes/integrity-after-smoke.json"
 metric_before_v2="$(jq -r '.signals.metrics.count' \
   "$EVIDENCE_DIR/kubernetes/integrity-after-smoke.json")"
-remote_write_v2_status="$(auth_curl --output "$EVIDENCE_DIR/kubernetes/remote-write-v2-response.json" \
+remote_write_v2_status="$(auth_curl_status --output "$EVIDENCE_DIR/kubernetes/remote-write-v2-response.json" \
   --write-out '%{http_code}' \
   -X POST "${sift_url}/prometheus/api/v1/write" \
   -H 'content-type: application/x-protobuf;proto=io.prometheus.write.v2.Request' \
