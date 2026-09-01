@@ -139,6 +139,13 @@ auth_curl_status() {
     "$@"
 }
 
+extract_sse_json() {
+  local input="$1"
+  local output="$2"
+  sed -n 's/^data: //p' "$input" > "$output"
+  [[ -s "$output" ]] || die "MCP response did not contain an SSE data event"
+}
+
 start_gateway_forward() {
   local deadline
   kubectl -n "$NAMESPACE" port-forward service/sift "${SIFT_PORT}:7380" \
@@ -457,7 +464,9 @@ EOF
 run_mcp_smoke() {
   local init_headers="$EVIDENCE_DIR/kubernetes/mcp-init.headers"
   local init_body="$EVIDENCE_DIR/kubernetes/mcp-init.json"
+  local init_sse="$EVIDENCE_DIR/kubernetes/mcp-init.sse"
   local list_body="$EVIDENCE_DIR/kubernetes/mcp-tools.json"
+  local list_sse="$EVIDENCE_DIR/kubernetes/mcp-tools.sse"
   local session
   local allowed_host="sift.sift.svc.cluster.local"
   local allowed_origin="http://sift.sift.svc.cluster.local:7380"
@@ -465,7 +474,7 @@ run_mcp_smoke() {
 
   curl --silent --show-error --fail-with-body \
     -D "$init_headers" \
-    -o "$init_body" \
+    -o "$init_sse" \
     -X POST "${sift_url}/mcp" \
     -H "host: ${allowed_host}" \
     -H "origin: ${allowed_origin}" \
@@ -473,6 +482,7 @@ run_mcp_smoke() {
     -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
     --data "$initialize"
+  extract_sse_json "$init_sse" "$init_body"
   jq -e '.jsonrpc == "2.0" and .id == 1 and .result != null' "$init_body" >/dev/null \
     || die "MCP initialize did not return a valid result"
   session="$(awk '
@@ -505,7 +515,8 @@ run_mcp_smoke() {
     -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
     --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-    > "$list_body"
+    > "$list_sse"
+  extract_sse_json "$list_sse" "$list_body"
   jq -e '
     [.result.tools[].name] | sort ==
     ["sift_correlate","sift_get_trace","sift_list_services","sift_query","sift_tail_logs"]
