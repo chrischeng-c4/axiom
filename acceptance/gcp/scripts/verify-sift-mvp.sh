@@ -363,22 +363,10 @@ jq -e --arg namespace "$NAMESPACE" --arg instance sift \
 
 kubectl -n "$NAMESPACE" get fqdnnetworkpolicy \
   -o json > "$EVIDENCE_DIR/kubernetes/fqdn-network-policies.json"
-jq -e '
-  [.items[]
-    | select(.metadata.name == "sift-store-google-apis"
-          or .metadata.name == "sift-backup-google-apis")
-    | .spec.podSelector.matchLabels]
-  | length == 2
-  and all(
-    .["app.kubernetes.io/name"] == "sift"
-    and .["app.kubernetes.io/instance"] == "sift"
-    and ((.["app.kubernetes.io/component"] == "store"
-          and .["sift.axiom.dev/role"] == "store")
-      or (.["app.kubernetes.io/component"] == "backup"
-          and .["sift.axiom.dev/role"] == "backup"))
-  )
-' "$EVIDENCE_DIR/kubernetes/fqdn-network-policies.json" >/dev/null \
-  || die "GCS FQDN policies are absent or select another Sift instance"
+jq -e --arg namespace "$NAMESPACE" --arg instance sift \
+  -f "$SCRIPT_DIR/sift-archive-fqdn-policy.jq" \
+  "$EVIDENCE_DIR/kubernetes/fqdn-network-policies.json" >/dev/null \
+  || die "GCS archive FQDN policy is absent, broad, or selects another Sift instance"
 
 refresh_token
 start_gateway_forward

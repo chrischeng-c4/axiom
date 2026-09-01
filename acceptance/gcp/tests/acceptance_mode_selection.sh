@@ -20,6 +20,7 @@ DEPLOY_SCRIPT="$ACCEPTANCE_ROOT/scripts/deploy.sh"
 BOOTSTRAP_SCRIPT="$ACCEPTANCE_ROOT/scripts/bootstrap-cluster.sh"
 SIFT_VERIFY_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-sift-mvp.sh"
 SIFT_AUTH_DELEGATOR_FILTER="$ACCEPTANCE_ROOT/scripts/sift-auth-delegator.jq"
+SIFT_ARCHIVE_FQDN_FILTER="$ACCEPTANCE_ROOT/scripts/sift-archive-fqdn-policy.jq"
 ENV_VARIABLES="$ACCEPTANCE_ROOT/environment/variables.tf"
 ENV_GKE="$ACCEPTANCE_ROOT/environment/gke.tf"
 CLUSTER_TF="$ACCEPTANCE_ROOT/cluster/main.tf"
@@ -151,6 +152,52 @@ wrong_namespace="$(jq '.subjects[1].namespace = "other"' <<<"$auth_binding")"
 if jq -e --arg namespace sift --arg instance sift \
   -f "$SIFT_AUTH_DELEGATOR_FILTER" >/dev/null <<<"$wrong_namespace"; then
   fail "Sift auth-delegator contract accepted the store subject from another namespace"
+fi
+[[ -f "$SIFT_ARCHIVE_FQDN_FILTER" ]] \
+  || fail "Sift archive FQDN policy contract filter is missing"
+archive_fqdn="$(jq -n '{items:[{
+  metadata:{
+    name:"sift-store-google-apis",
+    namespace:"sift",
+    labels:{
+      "app.kubernetes.io/name":"sift",
+      "app.kubernetes.io/instance":"sift",
+      "app.kubernetes.io/component":"store"
+    }
+  },
+  spec:{
+    podSelector:{matchLabels:{
+      "app.kubernetes.io/name":"sift",
+      "app.kubernetes.io/instance":"sift",
+      "app.kubernetes.io/component":"store",
+      "sift.axiom.dev/role":"store"
+    }},
+    egress:[{
+      matches:[{name:"storage.googleapis.com"}],
+      ports:[{port:443,protocol:"TCP"}]
+    }]
+  }
+}]}')"
+jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_ARCHIVE_FQDN_FILTER" >/dev/null <<<"$archive_fqdn" \
+  || fail "Sift archive FQDN contract rejected the exact store policy"
+extra_backup_policy="$(jq '.items += [{metadata:{name:"sift-backup-google-apis"},spec:{}}]' \
+  <<<"$archive_fqdn")"
+if jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_ARCHIVE_FQDN_FILTER" >/dev/null <<<"$extra_backup_policy"; then
+  fail "Sift archive FQDN contract accepted a policy for a disabled backup role"
+fi
+wrong_fqdn="$(jq '.items[0].spec.egress[0].matches[0].name = "*.googleapis.com"' \
+  <<<"$archive_fqdn")"
+if jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_ARCHIVE_FQDN_FILTER" >/dev/null <<<"$wrong_fqdn"; then
+  fail "Sift archive FQDN contract accepted broad Google API egress"
+fi
+wrong_selector="$(jq '.items[0].spec.podSelector.matchLabels["app.kubernetes.io/instance"] = "other"' \
+  <<<"$archive_fqdn")"
+if jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_ARCHIVE_FQDN_FILTER" >/dev/null <<<"$wrong_selector"; then
+  fail "Sift archive FQDN contract accepted another Sift instance"
 fi
 present "Sift verifier lost instance-scoped FQDN policy proof" \
   'fqdn-network-policies.json' "$SIFT_VERIFY_SCRIPT"
