@@ -30,8 +30,7 @@ const ACTIONS: &[&str] = &[
 ];
 const WORKFLOW_BYTES_SHA256: &str =
     "15773dfc479290ea61048dbee01e36ce8ad02adea603c91e9f0c010bda29a6d7";
-const RELEASE_PERF_GATE: &str =
-    "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
+const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
     "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7";
 
@@ -1075,14 +1074,105 @@ fn perf_gate_inventory(source: &str) -> Vec<(String, bool)> {
 
 fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
     require(
+        source.contains("const TRUNCATE_LARGE_DOCUMENTS: usize = 100_000;")
+            && source.contains("const READ_DOCUMENTS: usize = 100_000;")
+            && !source.contains("500_000")
+            && !source.contains("500k")
+            && source.contains("fn number_range_request(start: usize)")
+            && source.contains("gte: Some(RangeBound::Number(start as f64))")
+            && source
+                .contains("fn sorted_number_request(cursor: Option<String>, lower_bound: usize)")
+            && source.contains("gte: Some(RangeBound::Number(lower_bound as f64))")
+            && source.contains("let mut range_start = READ_RANGE_START;")
+            && source.contains("let mut sort_lower_bound = READ_SORT_LOWER_BOUND;")
+            && source.contains("let mut cursor_lower_bound = READ_CURSOR_LOWER_BOUND;"),
+        "PERF_GATE",
+    )?;
+    require(
         perf_gate_inventory(source)
             == vec![
                 ("index_throughput_floor".into(), true),
                 ("match_query_latency_floor".into(), true),
                 ("term_query_latency_floor".into(), true),
+                (
+                    "truncate_docs_cost_is_constant_from_10_to_100k_documents".into(),
+                    true,
+                ),
+                ("number_read_costs_on_100k_documents".into(), true),
                 ("median_statistic_and_ignored_inventory".into(), false),
             ],
         "PERF_GATE",
+    )
+}
+
+fn validate_scale_matrix_sources(
+    scale_source: &str,
+    scale_script: &str,
+    benchmark_doc: &str,
+) -> Result<(), Finding> {
+    require(
+        scale_source.contains("const DEFAULT_SCALE_ROWS: &[usize] = &[1_000, 10_000, 100_000];")
+            && scale_source.contains("const DEFAULT_SCALE_MAX_ROWS: usize = 100_000;")
+            && scale_source.contains(
+                "const SCALE_READ_CELLS: &[&str] = &[\"range\", \"filter_sort\", \"keyword_sort\", \"sorted_page_deep\"];",
+            )
+            && scale_source
+                .contains("`range` is deliberately a compound range + boolean filter cell")
+            && scale_source.contains("`filter_sort` is the required numeric-sort cell")
+            && scale_source
+                .contains("`keyword_sort` is a deterministic high-cardinality keyword sort")
+            && scale_source
+                .contains("`sorted_page_deep` is cursor pagination from a precomputed deep cursor")
+            && scale_source.contains("fn scale_precompute_mid_collection_cursor(")
+            && scale_source.contains("fn scale_preflight_fixture(")
+            && scale_source
+                .contains("fixture count differs from N={documents} before measurements")
+            && scale_source.contains(
+                "range filter result set/order changed from deterministic fixture document order",
+            )
+            && scale_source
+                .contains("age ascending with deterministic fixture document-order tie-break")
+            && scale_source.contains("sparse high-cardinality missing:last keyword sort changed")
+            && scale_source.contains("single-engine preflight requires HTTP client")
+            && scale_source.contains("precomputed mid-collection cursor")
+            && scale_source.contains("scale cursor preflight pages overlap")
+            && scale_source.contains("(cell == \"sorted_page_deep\")")
+            && scale_source.contains(".error_for_status()")
+            && scale_source.contains("read qps matrix had {request_errors} request errors")
+            && scale_source.contains("batch_ids: Vec<String> = (0..documents.min(1_000))")
+            && scale_source.contains("docs:unindex")
+            && scale_source.contains("docs:truncate")
+            && scale_source.contains("const SCALE_RECLAIMER_DRAIN_TIMEOUT: Duration")
+            && scale_source.contains("fn wait_for_scale_reclaimer_drain(")
+            && scale_source.contains("lumen::storage::collection_reclaimer_snapshot()")
+            && scale_source
+                .contains("snapshot.pending_generations == baseline.pending_generations")
+            && scale_source.contains("reclaimer_queue_high_water=")
+            && scale_source.contains("reclaimer_drain_from_truncate_start=")
+            && !scale_source.contains("reclaimer_backlog=unavailable"),
+        "SCALE_MATRIX",
+    )?;
+    require(
+        scale_script.contains("ROWS=\"${1:-1000,10000,100000}\"")
+            && scale_script.contains("LUMEN_SCALE_MAX_ROWS=\"${LUMEN_SCALE_MAX_ROWS:-100000}\"")
+            && scale_script
+                .contains("LUMEN_SCALE_QPS_TARGETS=\"${LUMEN_SCALE_QPS_TARGETS:-10,100,1000}\"")
+            && scale_script
+                .contains("cargo test --release --locked -p lumen --test perf_gate_vs_db"),
+        "SCALE_MATRIX",
+    )?;
+    require(
+        benchmark_doc.contains("LUMEN_SCALE_DISK=1 LUMEN_SCALE_QPS=1 LUMEN_SCALE_CELLS=range,filter_sort,keyword_sort,sorted_page_deep LUMEN_SCALE_QPS_TARGETS=10 apps/lumen/scripts/lumen_scale.sh 1000")
+            && benchmark_doc.contains("LUMEN_SCALE_DISK=1 LUMEN_SCALE_QPS=1 LUMEN_SCALE_CELLS=range,filter_sort,keyword_sort,sorted_page_deep LUMEN_SCALE_QPS_TARGETS=10,100,1000 apps/lumen/scripts/lumen_scale.sh 1000,10000,100000")
+            && benchmark_doc.contains("standard 100K cap")
+            && benchmark_doc.contains("QPS applies only to reads")
+            && benchmark_doc.contains("actual shared-queue high-water mark")
+            && benchmark_doc.contains("30 seconds for this truncate generation to complete")
+            && benchmark_doc.contains("`/stats.documents_indexed == N`")
+            && benchmark_doc.contains("fixture-document order for `range`")
+            && benchmark_doc.contains("age-then-fixture-document order for `filter_sort`")
+            && benchmark_doc.contains("`d0` to `d99` for the first `sorted_page_deep`"),
+        "SCALE_MATRIX",
     )
 }
 
@@ -1142,6 +1232,11 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
     validate_libraries_job(&workflow)?;
     validate_product_gate_partition(&workflow, source)?;
     validate_perf_gate_source(&perf_gate_source())?;
+    validate_scale_matrix_sources(
+        &perf_gate_vs_db_source(),
+        &lumen_scale_script(),
+        &benchmark_scale_doc(),
+    )?;
     validate_fail_closed_gate_conditions(&workflow)?;
     validate_gate_step_inventory(&workflow)?;
     validate_candidate_and_kind_commands(&workflow)?;
@@ -1245,28 +1340,41 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
         )?;
     }
     for needle in [
-        "candidate must dispatch main", "REQUESTED_COMMIT", "REQUESTED_VERSION",
-        "git merge-base --is-ancestor", "expected one merged main PR",
-        "git ls-remote --exit-code --tags origin", "the exact release tag already exists",
-        "release_query=\"query", "the exact GitHub Release already exists",
+        "candidate must dispatch main",
+        "REQUESTED_COMMIT",
+        "REQUESTED_VERSION",
+        "git merge-base --is-ancestor",
+        "expected one merged main PR",
+        "git ls-remote --exit-code --tags origin",
+        "the exact release tag already exists",
+        "release_query=\"query",
+        "the exact GitHub Release already exists",
         "cargo test -p lumen --features operator --test capacity_catalog_client",
         "cargo test -p lumen --features operator --test capacity_catalog_contract",
-        "cargo test -p lumen --test cli_convention", "cargo test -p lumen --test release_artifacts",
-        "cargo test -p lumen --test release_candidate", "cargo test -p lumen",
+        "cargo test -p lumen --test cli_convention",
+        "cargo test -p lumen --test release_artifacts",
+        "cargo test -p lumen --test release_candidate",
+        "cargo test -p lumen",
         "cargo test -p lumen --features \"operator delegated-auth\"",
         "cargo test -p lumen --locked --features release --test release_feature_set",
         "cargo clean",
         "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
         "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
         RELEASE_PERF_GATE,
-        "cargo test -p service-k8s", "cargo test -p raft-runtime",
-        "bash scripts/raft-implementor-build.sh", "git -c core.fsmonitor=false diff --check",
-        "python3 scripts/meta/test_readme_contract.py", "project_docs_contract.py check apps/lumen libs/service-k8s",
+        "cargo test -p service-k8s",
+        "cargo test -p raft-runtime",
+        "bash scripts/raft-implementor-build.sh",
+        "git -c core.fsmonitor=false diff --check",
+        "python3 scripts/meta/test_readme_contract.py",
+        "project_docs_contract.py check apps/lumen libs/service-k8s",
         "--image \"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\"",
-        "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST", "final-candidate-manifest.json",
-        "Verify final receipt as local fixture only", "--mode local",
+        "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST",
+        "final-candidate-manifest.json",
+        "Verify final receipt as local fixture only",
+        "--mode local",
         "ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b",
-        "ruby-version: '3.3.6'", "terraform/1.9.4/terraform_1.9.4_linux_amd64.zip",
+        "ruby-version: '3.3.6'",
+        "terraform/1.9.4/terraform_1.9.4_linux_amd64.zip",
         "6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c",
         "v1.37.0/bin/linux/amd64/kubectl",
         "6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f",
@@ -1396,16 +1504,25 @@ fn validate_verifier(source: &str, mode: u32) -> Result<(), Finding> {
     require(mode & 0o777 == 0o755, "MODE")?;
     for needle in [
         "`local` validates synthetic files only. It is not candidate acceptance.",
-        "`full` also validates the run-scoped GHCR image", "cclab.lumen.candidate-manifest.v3",
+        "`full` also validates the run-scoped GHCR image",
+        "cclab.lumen.candidate-manifest.v3",
         "run_url == (\"https://github.com/\" + $repo + \"/actions/runs/\" + $run_id + \"/attempts/\" + $attempt)",
-        ".source_ref == \"refs/heads/main\"", ".workflow_ref == $workflow_ref",
+        ".source_ref == \"refs/heads/main\"",
+        ".workflow_ref == $workflow_ref",
         ".jobs == {identity:\"success\",build:\"success\",manifest:\"success\",\"ghcr-image-and-attest\":\"success\",\"verify-candidate\":\"success\",\"verify-libraries\":\"success\",\"kind-amd64\":\"success\",\"kind-arm64\":\"success\",result:\"success\"}",
-        "archive members changed", "archive binary is not executable", "invalid SPDX 2.3 SBOM",
-        "predicate == $sbom[0]", "--certificate-identity \"$EXPECTED_CERT_ID\"",
+        "archive members changed",
+        "archive binary is not executable",
+        "invalid SPDX 2.3 SBOM",
+        "predicate == $sbom[0]",
+        "--certificate-identity \"$EXPECTED_CERT_ID\"",
         "--cert-oidc-issuer https://token.actions.githubusercontent.com",
         "expected_run_url=\"https://github.com/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}\"",
-        "org.opencontainers.image.url", "archive_sha256", "sidecar_sha256", "spdx-${sbom}.json",
-        "candidate tag is not scoped to this run attempt", "LOCAL FIXTURE ONLY: artifacts verified; this is not candidate acceptance.",
+        "org.opencontainers.image.url",
+        "archive_sha256",
+        "sidecar_sha256",
+        "spdx-${sbom}.json",
+        "candidate tag is not scoped to this run attempt",
+        "LOCAL FIXTURE ONLY: artifacts verified; this is not candidate acceptance.",
     ] {
         require(source.contains(needle), "VERIFIER")?;
     }
@@ -1442,6 +1559,15 @@ fn workflow() -> String {
 }
 fn perf_gate_source() -> String {
     fs::read_to_string(root().join("apps/lumen/e2e/perf_gate.rs")).unwrap()
+}
+fn perf_gate_vs_db_source() -> String {
+    fs::read_to_string(root().join("apps/lumen/e2e/perf_gate_vs_db.rs")).unwrap()
+}
+fn lumen_scale_script() -> String {
+    fs::read_to_string(root().join("apps/lumen/scripts/lumen_scale.sh")).unwrap()
+}
+fn benchmark_scale_doc() -> String {
+    fs::read_to_string(root().join("apps/lumen/docs/benchmarks-scale.md")).unwrap()
 }
 fn verifier() -> (String, u32) {
     let path = root().join("apps/lumen/scripts/verify-release-candidate.sh");
@@ -1557,13 +1683,34 @@ fn live_candidate_contract_is_fail_closed() {
     let source = workflow();
     const DURABLE_GATE: &str = "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable";
     for (replacement, finding) in [
-        ("# LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
-        ("echo 'LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable'", "GATES"),
-        ("if false; then LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable; fi", "GATES"),
-        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
-        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
-        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}:latest\" bash apps/lumen/scripts/standalone-container-smoke.sh durable", "GATES"),
-        ("LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh bind", "GATES"),
+        (
+            "# LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
+            "GATES",
+        ),
+        (
+            "echo 'LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable'",
+            "GATES",
+        ),
+        (
+            "if false; then LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable; fi",
+            "GATES",
+        ),
+        (
+            "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
+            "GATES",
+        ),
+        (
+            "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
+            "GATES",
+        ),
+        (
+            "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}:latest\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
+            "GATES",
+        ),
+        (
+            "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh bind",
+            "GATES",
+        ),
     ] {
         let changed = source.replace(DURABLE_GATE, replacement);
         assert_eq!(
@@ -1724,7 +1871,7 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         );
     }
     let perf_source = perf_gate_source();
-    for occurrence in 0..3 {
+    for occurrence in 0..5 {
         let changed = replace_occurrence(
             &perf_source,
             "#[ignore = \"coarse performance gate runs in the release candidate workflow\"]\n",
@@ -1754,13 +1901,67 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         validate_perf_gate_source(&statistic_ignored).unwrap_err(),
         Finding("PERF_GATE")
     );
-    let fourth_ignored = replace_once(
+    let extra_ignored = replace_once(
         &perf_source,
         "// CODEGEN-END",
         "#[test]\n#[ignore]\nfn extra_perf_row() {}\n// CODEGEN-END",
     );
     assert_eq!(
-        validate_perf_gate_source(&fourth_ignored).unwrap_err(),
+        validate_perf_gate_source(&extra_ignored).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let renamed_truncate = replace_once(
+        &perf_source,
+        "fn truncate_docs_cost_is_constant_from_10_to_100k_documents",
+        "fn renamed_truncate_docs_cost_is_constant_from_10_to_100k_documents",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&renamed_truncate).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let removed_read_test = replace_once(
+        &perf_source,
+        "#[test]\n#[ignore = \"coarse performance gate runs in the release candidate workflow\"]\nfn number_read_costs_on_100k_documents",
+        "fn number_read_costs_on_100k_documents",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&removed_read_test).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let unignored_read_test = replace_once(
+        &perf_source,
+        "#[ignore = \"coarse performance gate runs in the release candidate workflow\"]\nfn number_read_costs_on_100k_documents",
+        "fn number_read_costs_on_100k_documents",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&unignored_read_test).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let renamed_read_test = replace_once(
+        &perf_source,
+        "fn number_read_costs_on_100k_documents",
+        "fn renamed_number_read_costs_on_100k_documents",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&renamed_read_test).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let fixed_range_request = replace_once(
+        &perf_source,
+        "gte: Some(RangeBound::Number(start as f64))",
+        "gte: Some(RangeBound::Number(READ_RANGE_START as f64))",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&fixed_range_request).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+    let fixed_sorted_request = replace_once(
+        &perf_source,
+        "gte: Some(RangeBound::Number(lower_bound as f64))",
+        "gte: Some(RangeBound::Number(READ_SORT_LOWER_BOUND as f64))",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&fixed_sorted_request).unwrap_err(),
         Finding("PERF_GATE")
     );
     let comment_decoy = replace_occurrence(
@@ -1782,6 +1983,122 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     assert_eq!(
         validate_perf_gate_source(&block_comment_decoy).unwrap_err(),
         Finding("PERF_GATE")
+    );
+    let standard_500k = replace_once(
+        &perf_source,
+        "const READ_DOCUMENTS: usize = 100_000;",
+        "const READ_DOCUMENTS: usize = 500_000;",
+    );
+    assert_eq!(
+        validate_perf_gate_source(&standard_500k).unwrap_err(),
+        Finding("PERF_GATE")
+    );
+
+    let scale_source = perf_gate_vs_db_source();
+    let scale_script = lumen_scale_script();
+    let benchmark_doc = benchmark_scale_doc();
+    for (name, changed) in [
+        (
+            "500k standard cap",
+            replace_once(
+                &scale_source,
+                "const DEFAULT_SCALE_MAX_ROWS: usize = 100_000;",
+                "const DEFAULT_SCALE_MAX_ROWS: usize = 500_000;",
+            ),
+        ),
+        (
+            "cursor preflight",
+            replace_once(
+                &scale_source,
+                "fn scale_precompute_mid_collection_cursor(",
+                "fn removed_scale_precompute_mid_collection_cursor(",
+            ),
+        ),
+        (
+            "fixture/order preflight",
+            replace_once(
+                &scale_source,
+                "fn scale_preflight_fixture(",
+                "fn removed_scale_preflight_fixture(",
+            ),
+        ),
+        (
+            "range fixture-order preflight",
+            replace_once(
+                &scale_source,
+                "range filter result set/order changed from deterministic fixture document order",
+                "range filter result set checked without order",
+            ),
+        ),
+        (
+            "numeric-sort tie-break preflight",
+            replace_once(
+                &scale_source,
+                "age ascending with deterministic fixture document-order tie-break",
+                "age ascending without a deterministic tie-break",
+            ),
+        ),
+        (
+            "request error failure",
+            replace_once(
+                &scale_source,
+                "read qps matrix had {request_errors} request errors",
+                "read qps matrix status omitted",
+            ),
+        ),
+        (
+            "reclaimer drain wait",
+            replace_once(
+                &scale_source,
+                "fn wait_for_scale_reclaimer_drain(",
+                "fn removed_scale_reclaimer_drain_wait(",
+            ),
+        ),
+    ] {
+        assert_eq!(
+            validate_scale_matrix_sources(&changed, &scale_script, &benchmark_doc).unwrap_err(),
+            Finding("SCALE_MATRIX"),
+            "scale source mutation {name} passed",
+        );
+    }
+    let unlocked_scale_script = replace_once(
+        &scale_script,
+        "cargo test --release --locked -p lumen --test perf_gate_vs_db",
+        "cargo test --release -p lumen --test perf_gate_vs_db",
+    );
+    assert_eq!(
+        validate_scale_matrix_sources(&scale_source, &unlocked_scale_script, &benchmark_doc)
+            .unwrap_err(),
+        Finding("SCALE_MATRIX")
+    );
+    let wrong_dev_matrix = replace_once(
+        &benchmark_doc,
+        "LUMEN_SCALE_DISK=1 LUMEN_SCALE_QPS=1 LUMEN_SCALE_CELLS=range,filter_sort,keyword_sort,sorted_page_deep LUMEN_SCALE_QPS_TARGETS=10 apps/lumen/scripts/lumen_scale.sh 1000",
+        "LUMEN_SCALE_DISK=1 LUMEN_SCALE_QPS=1 LUMEN_SCALE_CELLS=range,filter_sort,keyword_sort,sorted_page_deep LUMEN_SCALE_QPS_TARGETS=100 apps/lumen/scripts/lumen_scale.sh 1000",
+    );
+    assert_eq!(
+        validate_scale_matrix_sources(&scale_source, &scale_script, &wrong_dev_matrix).unwrap_err(),
+        Finding("SCALE_MATRIX")
+    );
+    let wrong_sort_tie_break = replace_once(
+        &benchmark_doc,
+        "age-then-fixture-document order for `filter_sort`",
+        "age-then-external-ID order for `filter_sort`",
+    );
+    assert_eq!(
+        validate_scale_matrix_sources(&scale_source, &scale_script, &wrong_sort_tie_break)
+            .unwrap_err(),
+        Finding("SCALE_MATRIX")
+    );
+    let missing_range_order = replace_once(
+        &benchmark_doc,
+        "fixture-document order for `range`",
+        "result set for `range`",
+    );
+    assert_eq!(
+        validate_scale_matrix_sources(&scale_source, &scale_script, &missing_range_order)
+            .unwrap_err(),
+        Finding("SCALE_MATRIX")
     );
     let changed = replace_occurrence(
         &source,

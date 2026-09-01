@@ -132,7 +132,10 @@ fn llm_help_names_the_current_task_registry_and_library_composition() {
         "verify-release",
         "provider content stays owned by its library",
     ] {
-        assert!(help.contains(current), "LLM help missing `{current}`:\n{help}");
+        assert!(
+            help.contains(current),
+            "LLM help missing `{current}`:\n{help}"
+        );
     }
 
     for retired in ["workflow", "integration", "quickstart", "recipes"] {
@@ -285,6 +288,7 @@ fn issue_create_comment_and_upgrade_check_outputs_are_chainable() {
     for expected in [
         "repo:  chrischeng-c4/axiom",
         "title: lumen: test message",
+        "labels: app:lumen, type:report",
         "next: done",
     ] {
         assert!(
@@ -292,6 +296,15 @@ fn issue_create_comment_and_upgrade_check_outputs_are_chainable() {
             "missing `{expected}` in create preview:\n{created}"
         );
     }
+    let label_lines: Vec<_> = created
+        .lines()
+        .filter(|line| line.starts_with("labels: "))
+        .collect();
+    assert_eq!(
+        label_lines,
+        vec!["labels: app:lumen, type:report"],
+        "create preview must list each canonical label once:\n{created}"
+    );
 
     let commented =
         run_lumen_chainable(&["issue", "comment", "123", "--dry-run", "still", "broken"]);

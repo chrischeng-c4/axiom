@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use futures::future::try_join_all;
+use futures::future::{join_all, try_join_all};
 use rayon::prelude::*;
 
 use crate::api::{SearchBackend, WriteBackend};
@@ -23,9 +23,9 @@ use crate::coordinator::WriteCoordinator;
 use crate::log_entry::RaftLogEntry;
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, StorageError};
 use crate::types::{
-    CreateCollectionRequest, CreateCollectionResponse, IndexRequest, IndexResponse, ReplaceDocItem,
-    ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit, SearchRequest,
-    SearchResponse, SortOrder,
+    validate_batch_unindex_docs_request, BatchUnindexDocsRequest, CreateCollectionRequest,
+    CreateCollectionResponse, IndexRequest, IndexResponse, ReplaceDocItem, ReplaceDocResult,
+    ReplaceDocsRequest, ReplaceDocsResponse, SearchHit, SearchRequest, SearchResponse, SortOrder,
 };
 
 pub const DEFAULT_VIRTUAL_BUCKET_COUNT: u32 = 4096;
@@ -498,6 +498,104 @@ impl WriteBackend for EngineShardWrite {
             .map(|r| r.expect("every original index assigned exactly one shard result"))
             .collect();
         Ok(ReplaceDocsResponse { results })
+    }
+
+    async fn truncate_docs(&self, collection_id: String) -> Result<()> {
+        self.require_shards()?;
+        // Do not use `try_join_all`: a collection-wide command may already
+        // have committed on another physical shard when one reply fails.  Poll
+        // every proposal to completion, then surface a routed error with no
+        // rollback, which is the public per-shard atomicity contract.
+        let outcomes = join_all(self.writers.iter().map(|writer| {
+            let writer = writer.clone();
+            let collection_id = collection_id.clone();
+            async move {
+                writer
+                    .submit(RaftLogEntry::TruncateDocs { collection_id })
+                    .await
+            }
+        }))
+        .await;
+
+        let mut first_error = None;
+        for outcome in outcomes {
+            match outcome {
+                Ok(ApplyOutcome::DocsTruncated) => {}
+                Ok(other) => {
+                    if first_error.is_none() {
+                        first_error = Some(anyhow::anyhow!("unexpected apply outcome: {other:?}"));
+                    }
+                }
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    async fn unindex_docs(
+        &self,
+        collection_id: String,
+        req: BatchUnindexDocsRequest,
+    ) -> Result<()> {
+        validate_batch_unindex_docs_request(&req)?;
+        self.require_shards()?;
+
+        let mut shard_ids: Vec<Vec<String>> = (0..self.writers.len()).map(|_| Vec::new()).collect();
+        for external_id in req.external_ids {
+            let shard = self
+                .shard_map
+                .route_document(&collection_id, None, &external_id)
+                .shard as usize;
+            shard_ids[shard].push(external_id);
+        }
+
+        // The public bound gives every active physical shard at most one
+        // command.  Poll every nonempty shard to completion: a sibling may
+        // have committed before another replies with an error, and there is
+        // intentionally no unsafe cross-shard rollback.
+        let outcomes = join_all(
+            shard_ids
+                .into_iter()
+                .enumerate()
+                .filter_map(|(shard, ids)| {
+                    (!ids.is_empty()).then(|| {
+                        let writer = self.writers[shard].clone();
+                        let collection_id = collection_id.clone();
+                        async move {
+                            writer
+                                .submit(RaftLogEntry::UnindexDocs {
+                                    collection_id,
+                                    req: BatchUnindexDocsRequest { external_ids: ids },
+                                })
+                                .await
+                        }
+                    })
+                }),
+        )
+        .await;
+
+        let mut first_error = None;
+        for outcome in outcomes {
+            match outcome {
+                Ok(ApplyOutcome::DocsUnindexed) => {}
+                Ok(other) if first_error.is_none() => {
+                    first_error = Some(anyhow::anyhow!("unexpected apply outcome: {other:?}"));
+                }
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                _ => {}
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     async fn delete(

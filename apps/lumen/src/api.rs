@@ -12,7 +12,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -28,6 +28,7 @@ use axum::{
 use futures::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use service_http::{MetricsProvider, ReadinessHook};
+use tokio::sync::Semaphore;
 use utoipa::{
     openapi::{
         self,
@@ -51,7 +52,8 @@ use crate::routing::VirtualBucketShardMap;
 use crate::segment_restore::{RestoreNotCommitted, RestoreUnavailable};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
-    Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
+    validate_batch_unindex_docs_request, Analyzer, ApiError, BatchSearchRequest,
+    BatchSearchResponse, BatchSearchResult, BatchUnindexDocsRequest, CacheStats,
     CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup, DuplicatesRequest,
     DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue, IndexItem, IndexRequest,
     IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, ReplaceDocBody,
@@ -107,6 +109,57 @@ impl ReadinessHook for ServingReadiness {
 /// has to keep the cold case civil.
 const AUTHORIZATION_CONCURRENCY: usize = 16;
 
+/// One process-wide permit pool for all HTTP and routed synchronous search
+/// legs. `RoutedRouter` is constructed separately from `AppState`, so keeping
+/// this at the bridge seam prevents each router from silently multiplying the
+/// configured blocking-work budget.
+static SEARCH_EXECUTOR_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+/// Bounded bridge for the synchronous search engine. HTTP handlers must not
+/// run CPU-bound Engine work on Tokio's reactor workers: one long sort would
+/// otherwise prevent unrelated searches and readiness probes from being
+/// polled. The bound limits blocking work per serving component without
+/// adding a public configuration knob.
+#[derive(Clone)]
+pub(crate) struct BlockingSearchExecutor {
+    permits: Arc<Semaphore>,
+}
+
+impl BlockingSearchExecutor {
+    pub(crate) fn new() -> Self {
+        Self {
+            permits: SEARCH_EXECUTOR_PERMITS
+                .get_or_init(|| {
+                    let permits = std::thread::available_parallelism()
+                        .map(|parallelism| parallelism.get())
+                        .unwrap_or(1)
+                        .clamp(1, 8);
+                    Arc::new(Semaphore::new(permits))
+                })
+                .clone(),
+        }
+    }
+
+    pub(crate) async fn run<T, F>(&self, work: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T> + Send + 'static,
+    {
+        let permit = self
+            .permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| anyhow::anyhow!("search executor is closed"))?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            work()
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("search worker failed: {error}"))?
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub engine: Arc<Engine>,
@@ -116,6 +169,8 @@ pub struct AppState {
     /// Read/search backend. Defaults to the local engine; sharded serving can
     /// replace it with a fan-in router while keeping writes/stats local.
     pub search_backend: Arc<dyn SearchBackend>,
+    /// Shared bounded bridge for every local synchronous HTTP search path.
+    search_executor: BlockingSearchExecutor,
     /// Writes go through a [`WriteSink`]: the WAL-seam coordinator for
     /// embedded/nats, or the raft host for `--wal raft`. Reads use
     /// `engine` directly. See `coordinator` / `wal` / `raft_sm`.
@@ -304,6 +359,16 @@ impl WriteFence {
         fence.buckets.contains(&bucket).then_some(bucket)
     }
 
+    /// A collection-wide mutation has no document id from which to derive one
+    /// bucket.  During a reshard cutover it must therefore wait for every
+    /// active bucket fence, rather than slipping through a fenced subset.
+    fn blocks_any(&self) -> bool {
+        let guard = self.lock();
+        guard
+            .as_ref()
+            .is_some_and(|fence| Instant::now() < fence.deadline && !fence.buckets.is_empty())
+    }
+
     /// Poison-proof lock acquisition (#1443 R3), matching `segment_rdb.rs`'s
     /// `save_lock` precedent: a panic anywhere else in the process while
     /// holding this lock must never turn into a permanent write outage on
@@ -333,6 +398,11 @@ pub trait WriteBackend: Send + Sync {
         collection_id: String,
         req: ReplaceDocsRequest,
     ) -> Result<ReplaceDocsResponse>;
+
+    async fn truncate_docs(&self, collection_id: String) -> Result<()>;
+
+    async fn unindex_docs(&self, collection_id: String, req: BatchUnindexDocsRequest)
+        -> Result<()>;
 
     async fn delete(
         &self,
@@ -406,6 +476,15 @@ pub trait RoutedBackend: Send + Sync {
         req: ReplaceDocsRequest,
         headers: &HeaderMap,
     ) -> Result<ReplaceDocsResponse>;
+
+    async fn truncate_docs(&self, collection_id: String, headers: &HeaderMap) -> Result<()>;
+
+    async fn unindex_docs(
+        &self,
+        collection_id: String,
+        req: BatchUnindexDocsRequest,
+        headers: &HeaderMap,
+    ) -> Result<()>;
 
     async fn delete(
         &self,
@@ -495,6 +574,33 @@ impl WriteBackend for LocalWriteBackend {
         }
     }
 
+    async fn truncate_docs(&self, collection_id: String) -> Result<()> {
+        match self
+            .writer
+            .submit(RaftLogEntry::TruncateDocs { collection_id })
+            .await?
+        {
+            ApplyOutcome::DocsTruncated => Ok(()),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
+    async fn unindex_docs(
+        &self,
+        collection_id: String,
+        req: BatchUnindexDocsRequest,
+    ) -> Result<()> {
+        validate_batch_unindex_docs_request(&req)?;
+        match self
+            .writer
+            .submit(RaftLogEntry::UnindexDocs { collection_id, req })
+            .await?
+        {
+            ApplyOutcome::DocsUnindexed => Ok(()),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
     async fn delete(
         &self,
         collection_id: String,
@@ -549,6 +655,7 @@ impl AppState {
             search_backend: Arc::new(LocalEngineSearch {
                 engine: engine.clone(),
             }),
+            search_executor: BlockingSearchExecutor::new(),
             write_backend: Arc::new(LocalWriteBackend {
                 writer: writer.clone(),
             }),
@@ -681,6 +788,9 @@ impl AppState {
         delete_external_id,
         replace_docs,
         replace_doc,
+        delete_doc,
+        truncate_docs,
+        unindex_docs,
         reindex_stream,
         search,
         search_all,
@@ -716,6 +826,7 @@ impl AppState {
         ReplaceDocsResponse,
         ReplaceDocResult,
         ReplaceDocBody,
+        BatchUnindexDocsRequest,
         SearchRequest,
         QueryNode,
         MatchQuery,
@@ -831,6 +942,10 @@ pub fn router(state: AppState) -> Router {
 /// the route-class mapping and policy values; `service-http` owns enforcement.
 /// The established [`router`] entry point passes `None`, so admission remains
 /// disabled unless a serving adapter explicitly supplies policies.
+///
+/// Deprecated handlers remain registered as compatibility routes. Their Rust
+/// deprecation attributes generate the OpenAPI deprecation marker.
+#[allow(deprecated)]
 pub fn router_with_admission(
     state: AppState,
     admission: Option<service_http::AdmissionController>,
@@ -880,7 +995,15 @@ pub fn router_with_admission(
         )
         .route(
             "/collections/{collection_id}/docs/{external_id}",
-            put(replace_doc),
+            put(replace_doc).delete(delete_doc),
+        )
+        .route(
+            "/collections/{collection_id}/docs:truncate",
+            post(truncate_docs),
+        )
+        .route(
+            "/collections/{collection_id}/docs:unindex",
+            post(unindex_docs),
         )
         .route("/collections/{collection_id}/search", post(search))
         .route("/collections/{collection_id}/search:all", post(search_all))
@@ -1138,6 +1261,17 @@ fn enforce_write_fence(
     Ok(())
 }
 
+fn enforce_collection_write_fence(state: &AppState) -> Result<(), ApiErr> {
+    if state.write_fence.blocks_any() {
+        return Err(ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "bucket_write_paused",
+            "a collection-wide write is paused for an in-progress reshard cutover; retry shortly",
+        ));
+    }
+    Ok(())
+}
+
 /// #2516: sticky ENOSPC degraded read-only mode. Called first (before any
 /// other check) by every mutating admin/data-plane handler — `index`,
 /// `docs:replace` (both `replace_docs` and `replace_doc`), delete,
@@ -1374,7 +1508,7 @@ async fn drop_collection(
         DropOutcome::NotFound => {
             return Err(ApiErr::not_found(format!(
                 "collection not found: {collection_id}"
-            )))
+            )));
         }
         DropOutcome::Marked => "marked",
         DropOutcome::AlreadyMarked => "already_marked",
@@ -1401,6 +1535,7 @@ async fn drop_collection(
 
 /// At most [`MAX_INDEX_BATCH_SIZE`] items per request; a longer batch is
 /// rejected with 400 before any item runs.
+#[deprecated(note = "use PUT /collections/{collection_id}/docs:replace for complete indexed rows")]
 #[utoipa::path(
     post,
     path = "/collections/{collection_id}/index",
@@ -1457,6 +1592,9 @@ struct DeleteQuery {
     field: Option<String>,
 }
 
+#[deprecated(
+    note = "use DELETE /collections/{collection_id}/docs/{external_id} for complete indexed-row deletion"
+)]
 #[utoipa::path(
     delete,
     path = "/collections/{collection_id}/index/{external_id}",
@@ -1490,6 +1628,177 @@ async fn delete_external_id(
         state
             .write_backend
             .delete(collection_id.clone(), external_id, q.field)
+            .await
+            .map_err(ApiErr::from)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes the complete indexed row for one caller-owned external id. Lumen
+/// indexes caller-owned fields only; source-record hydration stays with the
+/// caller.
+#[utoipa::path(
+    delete,
+    operation_id = "delete_doc",
+    path = "/collections/{collection_id}/docs/{external_id}",
+    tag = "Index",
+    params(
+        ("collection_id" = String, Path, description = "Collection namespace"),
+        ("external_id"   = String, Path, description = "Caller-owned identifier")
+    ),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
+    )
+)]
+async fn delete_doc(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
+    Path((collection_id, external_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiErr> {
+    auth.ensure(&collection_id, Role::Write).await?;
+    enforce_storage_writable(&state)?;
+    enforce_write_fence(&state, &collection_id, &external_id)?;
+    if let Some(router) = &state.routed {
+        router
+            .delete(collection_id.clone(), external_id, None, &headers)
+            .await
+            .map_err(ApiErr::from)?;
+    } else {
+        state
+            .write_backend
+            .delete(collection_id.clone(), external_id, None)
+            .await
+            .map_err(ApiErr::from)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Empty all indexed documents while retaining the collection declaration.
+///
+/// A successful response means this physical shard has durably swapped to the
+/// empty document state.  In routed mode each shard has that same boundary,
+/// but callers can observe a mixed cross-shard window while the fan-out runs.
+#[utoipa::path(
+    post,
+    operation_id = "truncate_docs",
+    path = "/collections/{collection_id}/docs:truncate",
+    tag = "Index",
+    params(("collection_id" = String, Path, description = "Collection namespace")),
+    responses(
+        (status = 204, description = "Documents truncated; schema is unchanged"),
+        (status = 503, description = "Reshard fence or routed shard unavailable", body = ApiError),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
+    )
+)]
+async fn truncate_docs(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
+    Path(collection_id): Path<String>,
+    request: Request,
+) -> Result<StatusCode, ApiErr> {
+    auth.ensure(&collection_id, Role::Write).await?;
+    // A no-body custom method must not silently accept a stale `request_id`
+    // or another future selector.  Read at most one byte so a malformed large
+    // body cannot become an allocation-based denial of service.
+    let body = axum::body::to_bytes(request.into_body(), 1)
+        .await
+        .map_err(|_| {
+            ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "truncate takes no request body",
+            )
+        })?;
+    if !body.is_empty() {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "truncate takes no request body",
+        ));
+    }
+    enforce_storage_writable(&state)?;
+    // A truncate covers every document bucket.  It cannot safely pass a
+    // reshard cutover fence merely because it has no single external id.
+    enforce_collection_write_fence(&state)?;
+    if let Some(router) = &state.routed {
+        router
+            .truncate_docs(collection_id, &headers)
+            .await
+            .map_err(ApiErr::from)?;
+    } else {
+        state
+            .write_backend
+            .truncate_docs(collection_id)
+            .await
+            .map_err(ApiErr::from)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Remove complete indexed rows for a bounded caller-supplied id list.
+///
+/// Validation happens before storage admission, reshard fences, routing, and
+/// durable publish.  Routed requests partition the list by current ownership;
+/// each nonempty physical shard receives one atomic durable command.
+#[utoipa::path(
+    post,
+    operation_id = "batch_unindex_docs",
+    path = "/collections/{collection_id}/docs:unindex",
+    tag = "Index",
+    params(("collection_id" = String, Path, description = "Collection namespace")),
+    request_body = BatchUnindexDocsRequest,
+    responses(
+        (status = 204, description = "Documents unindexed"),
+        (status = 400, description = "Malformed body, empty/duplicate ids, or more than 1000 ids", body = ApiError),
+        (status = 503, description = "Reshard fence or routed shard unavailable", body = ApiError),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
+    )
+)]
+async fn unindex_docs(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
+    Path(collection_id): Path<String>,
+    request: Request,
+) -> Result<StatusCode, ApiErr> {
+    auth.ensure(&collection_id, Role::Write).await?;
+
+    // Axum's default JSON rejection may use several client-error statuses
+    // depending on the failure source.  This fixed command promises 400 for
+    // every malformed JSON/body-shape case, before any write fence or route.
+    let Json(req) = Json::<BatchUnindexDocsRequest>::from_request(request, &state)
+        .await
+        .map_err(|error| {
+            ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                format!("invalid docs:unindex body: {error}"),
+            )
+        })?;
+    validate_batch_unindex_docs_request(&req).map_err(|error| {
+        ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            format!("invalid docs:unindex body: {error}"),
+        )
+    })?;
+
+    enforce_storage_writable(&state)?;
+    for external_id in &req.external_ids {
+        enforce_write_fence(&state, &collection_id, external_id)?;
+    }
+    if let Some(router) = &state.routed {
+        router
+            .unindex_docs(collection_id, req, &headers)
+            .await
+            .map_err(ApiErr::from)?;
+    } else {
+        state
+            .write_backend
+            .unindex_docs(collection_id, req)
             .await
             .map_err(ApiErr::from)?;
     }
@@ -1721,10 +2030,25 @@ async fn search_core(
             .await
             .map_err(ApiErr::from);
     }
-    state
-        .search_backend
-        .search(collection_id, req)
+    run_local_search(state, collection_id, req)
+        .await
         .map_err(ApiErr::from)
+}
+
+/// Runs a local synchronous backend outside the Tokio reactor. Keep this one
+/// helper shared by single-search and batch-search handlers so batch items
+/// cannot bypass the readiness-preserving boundary.
+async fn run_local_search(
+    state: &AppState,
+    collection_id: &str,
+    req: SearchRequest,
+) -> Result<SearchResponse> {
+    let backend = Arc::clone(&state.search_backend);
+    let collection_id = collection_id.to_string();
+    state
+        .search_executor
+        .run(move || backend.search(&collection_id, req))
+        .await
 }
 
 /// msearch-style batch search: N independent `(collection, SearchRequest)`
@@ -1796,7 +2120,7 @@ async fn batch_search_core(
                         .search(&item.collection, item.request, &headers)
                         .await
                 } else {
-                    state.search_backend.search(&item.collection, item.request)
+                    run_local_search(&state, &item.collection, item.request).await
                 };
                 match result {
                     Ok(response) => BatchSearchResult::Ok { response },
@@ -3162,5 +3486,50 @@ mod restore_sink_tests {
             .unwrap();
         let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(envelope["error"], "restore_unavailable");
+    }
+}
+
+#[cfg(test)]
+mod local_write_backend_tests {
+    use super::*;
+    use crate::wal::WalLog;
+
+    #[tokio::test]
+    async fn invalid_batch_unindex_never_publishes_or_applies() {
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let writer = WriteCoordinator::start(wal.clone(), engine.clone());
+        let backend = LocalWriteBackend {
+            writer: writer.clone(),
+        };
+
+        let result = backend
+            .unindex_docs(
+                "documents".to_string(),
+                BatchUnindexDocsRequest {
+                    external_ids: Vec::new(),
+                },
+            )
+            .await;
+
+        assert!(result.is_err(), "an empty batch must be rejected");
+        assert_eq!(
+            wal.latest_seq().await.expect("read WAL sequence"),
+            0,
+            "invalid direct calls must not publish a WAL record"
+        );
+        assert_eq!(
+            writer.applied_seq(),
+            0,
+            "invalid direct calls must not reach Engine apply"
+        );
+        assert!(
+            engine
+                .snapshot()
+                .expect("read engine snapshot")
+                .collections
+                .is_empty(),
+            "invalid direct calls must not mutate engine state"
+        );
     }
 }

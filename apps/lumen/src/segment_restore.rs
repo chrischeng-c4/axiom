@@ -395,7 +395,7 @@ mod tests {
             .expect("seed old CURRENT");
         let old_current = current_bytes(dir.path());
         let aof = Arc::new(Mutex::new(
-            crate::aof::AofWriter::open(dir.path().join("aof")).unwrap(),
+            crate::aof::AofWriter::open(dir.path().join("aof.log")).unwrap(),
         ));
         let wal: SharedWal = Arc::new(MemWal::starting_at(WATERMARK));
         let writer = WriteCoordinator::start_from_with_aof(

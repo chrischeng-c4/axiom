@@ -324,6 +324,397 @@ async fn forward_replace_docs_and_delete_land_on_owning_shard() {
     assert_eq!(after_delete.json::<Value>()["total"], 0);
 }
 
+// #3992: truncate has no document owner.  The coordinating pod must issue one
+// command to each active physical shard, while a forwarded subrequest remains
+// a one-hop local apply and verifies the sender's map version.
+#[tokio::test]
+async fn routed_truncate_fans_out_and_rejects_a_stale_forwarded_map() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+    let id0 = external_id_for_shard("users", 0);
+    let id1 = external_id_for_shard("users", 1);
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": id0, "field": "email", "value": "old0@x.com" },
+                { "external_id": id1, "field": "email", "value": "old1@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    shard0
+        .server
+        .post("/collections/users/docs:truncate")
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    for shard in [&shard0, &shard1] {
+        let local = shard
+            .server
+            .post("/collections/users/search")
+            .add_header("x-lumen-forwarded", "1")
+            .add_header("x-lumen-map-version", "1")
+            .json(&json!({
+                "query": { "term": { "field": "email", "value": "old0@x.com" } },
+                "limit": 10
+            }))
+            .await;
+        local.assert_status_ok();
+        assert_eq!(local.json::<Value>()["total"], 0);
+    }
+
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [{ "external_id": id0, "field": "email", "value": "still-live@x.com" }]
+        }))
+        .await
+        .assert_status_ok();
+    let stale = shard0
+        .server
+        .post("/collections/users/docs:truncate")
+        .add_header("x-lumen-forwarded", "1")
+        .add_header("x-lumen-map-version", "999")
+        .await;
+    stale.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(stale.json::<Value>()["error"], "shard_map_version_mismatch");
+
+    let retained = shard0
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "still-live@x.com" } },
+            "routing_key": id0,
+            "limit": 10
+        }))
+        .await;
+    retained.assert_status_ok();
+    assert_eq!(retained.json::<Value>()["total"], 1);
+}
+
+// #3992: cross-shard atomicity is intentionally not a transaction.  A remote
+// failure returns 5xx but leaves a local shard that already applied truncate
+// empty.  This uses a real h2c peer that returns 502, not a mocked router.
+#[tokio::test]
+async fn routed_truncate_reports_remote_failure_without_rolling_back_local_shard() {
+    let local_port = reserve_port();
+    let remote_port = reserve_port();
+    let remote = TestServer::new_with_config(
+        axum::Router::new().fallback(|| async { axum::http::StatusCode::BAD_GATEWAY }),
+        TestServerConfig {
+            transport: Some(Transport::HttpIpPort {
+                ip: None,
+                port: Some(remote_port),
+            }),
+            ..TestServerConfig::default()
+        },
+    )
+    .expect("bind failing remote");
+
+    let engine = Arc::new(Engine::new());
+    engine
+        .create_collection(
+            "users",
+            CreateCollectionRequest {
+                fields: std::collections::BTreeMap::from([(
+                    "email".into(),
+                    FieldSpec {
+                        field_type: FieldType::Keyword,
+                        analyzer: None,
+                        multi: None,
+                        dim: None,
+                        metric: None,
+                        backend: None,
+                        quantize: None,
+                    },
+                )]),
+            },
+        )
+        .unwrap();
+    engine
+        .index(
+            "users",
+            lumen::types::IndexRequest {
+                items: vec![lumen::types::IndexItem {
+                    external_id: "local".into(),
+                    field: "email".into(),
+                    value: lumen::types::FieldValue::String("local@x.com".into()),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    let state = AppState::open(engine.clone());
+    let routed = RoutedRouter::new(
+        engine.clone(),
+        state.write_backend.clone(),
+        shard_map(),
+        0,
+        vec![
+            format!("http://127.0.0.1:{local_port}"),
+            format!("http://127.0.0.1:{remote_port}"),
+        ],
+    )
+    .unwrap();
+    let local = TestServer::new_with_config(
+        router(state.with_routed(Arc::new(routed))),
+        TestServerConfig {
+            transport: Some(Transport::HttpIpPort {
+                ip: None,
+                port: Some(local_port),
+            }),
+            ..TestServerConfig::default()
+        },
+    )
+    .expect("bind local routed shard");
+
+    let response = local.post("/collections/users/docs:truncate").await;
+    response.assert_status(axum::http::StatusCode::BAD_GATEWAY);
+    assert_eq!(engine.stats("users").unwrap().documents_indexed, 0);
+    drop(remote);
+}
+
+// #3994: an incoming id list is partitioned by the active map.  A forwarded
+// subrequest is still one hop only and must verify both map version and every
+// id's ownership before it may remove local state.
+#[tokio::test]
+async fn routed_batch_unindex_partitions_and_refuses_stale_or_misrouted_hops() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+
+    let id0 = external_id_for_shard("users", 0);
+    let id1 = external_id_for_shard("users", 1);
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": id0, "field": "email", "value": "old0@x.com" },
+                { "external_id": id1, "field": "email", "value": "old1@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    shard0
+        .server
+        .post("/collections/users/docs:unindex")
+        .json(&json!({ "external_ids": [id0, id1] }))
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    for (shard, id, value) in [(&shard0, &id0, "old0@x.com"), (&shard1, &id1, "old1@x.com")] {
+        let local = shard
+            .server
+            .post("/collections/users/search")
+            .add_header("x-lumen-forwarded", "1")
+            .add_header("x-lumen-map-version", "1")
+            .json(&json!({
+                "query": { "term": { "field": "email", "value": value } },
+                "routing_key": id,
+                "limit": 10
+            }))
+            .await;
+        local.assert_status_ok();
+        assert_eq!(local.json::<Value>()["total"], 0);
+    }
+
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": id0, "field": "email", "value": "retain0@x.com" },
+                { "external_id": id1, "field": "email", "value": "retain1@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    let stale = shard0
+        .server
+        .post("/collections/users/docs:unindex")
+        .add_header("x-lumen-forwarded", "1")
+        .add_header("x-lumen-map-version", "999")
+        .json(&json!({ "external_ids": [id0] }))
+        .await;
+    stale.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(stale.json::<Value>()["error"], "shard_map_version_mismatch");
+
+    let misrouted = shard0
+        .server
+        .post("/collections/users/docs:unindex")
+        .add_header("x-lumen-forwarded", "1")
+        .add_header("x-lumen-map-version", "1")
+        .json(&json!({ "external_ids": [id1] }))
+        .await;
+    misrouted.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        misrouted.json::<Value>()["error"],
+        "shard_forward_misrouted"
+    );
+
+    for (id, value) in [(&id0, "retain0@x.com"), (&id1, "retain1@x.com")] {
+        let retained = shard0
+            .server
+            .post("/collections/users/search")
+            .json(&json!({
+                "query": { "term": { "field": "email", "value": value } },
+                "routing_key": id,
+                "limit": 10
+            }))
+            .await;
+        retained.assert_status_ok();
+        assert_eq!(retained.json::<Value>()["total"], 1);
+    }
+}
+
+// #3994: a shard-local unindex is atomic, but a routed batch is not a
+// cross-shard transaction.  A failed remote still leaves the local shard's
+// already-applied removal visible and returns its 5xx without rollback.
+#[tokio::test]
+async fn routed_batch_unindex_reports_remote_failure_without_rolling_back_local_shard() {
+    let local_port = reserve_port();
+    let remote_port = reserve_port();
+    let remote = TestServer::new_with_config(
+        axum::Router::new().fallback(|| async { axum::http::StatusCode::BAD_GATEWAY }),
+        TestServerConfig {
+            transport: Some(Transport::HttpIpPort {
+                ip: None,
+                port: Some(remote_port),
+            }),
+            ..TestServerConfig::default()
+        },
+    )
+    .expect("bind failing remote");
+
+    let local_id = external_id_for_shard("users", 0);
+    let remote_id = external_id_for_shard("users", 1);
+    let engine = Arc::new(Engine::new());
+    engine
+        .create_collection(
+            "users",
+            CreateCollectionRequest {
+                fields: std::collections::BTreeMap::from([(
+                    "email".into(),
+                    FieldSpec {
+                        field_type: FieldType::Keyword,
+                        analyzer: None,
+                        multi: None,
+                        dim: None,
+                        metric: None,
+                        backend: None,
+                        quantize: None,
+                    },
+                )]),
+            },
+        )
+        .unwrap();
+    engine
+        .index(
+            "users",
+            lumen::types::IndexRequest {
+                items: vec![lumen::types::IndexItem {
+                    external_id: local_id.clone(),
+                    field: "email".into(),
+                    value: lumen::types::FieldValue::String("local@x.com".into()),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    let state = AppState::open(engine.clone());
+    let routed = RoutedRouter::new(
+        engine.clone(),
+        state.write_backend.clone(),
+        shard_map(),
+        0,
+        vec![
+            format!("http://127.0.0.1:{local_port}"),
+            format!("http://127.0.0.1:{remote_port}"),
+        ],
+    )
+    .unwrap();
+    let local = TestServer::new_with_config(
+        router(state.with_routed(Arc::new(routed))),
+        TestServerConfig {
+            transport: Some(Transport::HttpIpPort {
+                ip: None,
+                port: Some(local_port),
+            }),
+            ..TestServerConfig::default()
+        },
+    )
+    .expect("bind local routed shard");
+
+    let response = local
+        .post("/collections/users/docs:unindex")
+        .json(&json!({ "external_ids": [local_id, remote_id] }))
+        .await;
+    response.assert_status(axum::http::StatusCode::BAD_GATEWAY);
+    assert_eq!(engine.stats("users").unwrap().documents_indexed, 0);
+    drop(remote);
+}
+
+// #3994: every id must pass its own reshard fence before routing begins.  A
+// fenced id leaves the whole incoming batch untouched, including an unfenced
+// sibling that would route to a different physical shard.
+#[tokio::test]
+async fn routed_batch_unindex_rejects_any_fenced_id_before_partitioning() {
+    let (shard0, _shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+    let id0 = external_id_for_shard("users", 0);
+    let id1 = external_id_for_shard("users", 1);
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": id0, "field": "email", "value": "keep0@x.com" },
+                { "external_id": id1, "field": "email", "value": "keep1@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+    let bucket = shard_map().route_document("users", None, &id0).bucket;
+    shard0
+        .server
+        .post("/admin/reshard:fence")
+        .json(&json!({
+            "virtual_bucket_count": VIRTUAL_BUCKET_COUNT,
+            "buckets": [bucket],
+            "ttl_secs": 30
+        }))
+        .await
+        .assert_status_ok();
+
+    let rejected = shard0
+        .server
+        .post("/collections/users/docs:unindex")
+        .json(&json!({ "external_ids": [id0, id1] }))
+        .await;
+    rejected.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(rejected.json::<Value>()["error"], "bucket_write_paused");
+
+    let still_live = shard0
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "keep1@x.com" } },
+            "routing_key": id1,
+            "limit": 10
+        }))
+        .await;
+    still_live.assert_status_ok();
+    assert_eq!(still_live.json::<Value>()["total"], 1);
+}
+
 // #1398 AC2: routing-key-less search through the Service returns merged
 // results spanning both shards.
 #[tokio::test]

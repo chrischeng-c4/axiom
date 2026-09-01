@@ -71,16 +71,17 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::api::{
-    RoutedBackend, ShardForwardMisrouted, ShardForwardRemoteError, ShardForwardUnavailable,
-    ShardMapVersionMismatch, WriteBackend,
+    BlockingSearchExecutor, RoutedBackend, ShardForwardMisrouted, ShardForwardRemoteError,
+    ShardForwardUnavailable, ShardMapVersionMismatch, WriteBackend,
 };
 use crate::routing::{
     merge_shard_search_responses, search_request_offset, SearchShardTarget, VirtualBucketShardMap,
 };
 use crate::storage::{DropOutcome, Engine, StorageError};
 use crate::types::{
-    CreateCollectionRequest, CreateCollectionResponse, IndexItem, IndexRequest, IndexResponse,
-    ReplaceDocItem, ReplaceDocsRequest, ReplaceDocsResponse, SearchRequest, SearchResponse,
+    validate_batch_unindex_docs_request, BatchUnindexDocsRequest, CreateCollectionRequest,
+    CreateCollectionResponse, IndexItem, IndexRequest, IndexResponse, ReplaceDocItem,
+    ReplaceDocsRequest, ReplaceDocsResponse, SearchRequest, SearchResponse,
 };
 
 /// Internal one-hop guard header: present on every forwarded request. No
@@ -117,6 +118,9 @@ struct RemoteShard {
 /// stable per-shard DNS name (`routing::shard_host`).
 pub struct RoutedRouter {
     engine: Arc<Engine>,
+    /// The same bounded blocking bridge the direct HTTP API uses. Routed local
+    /// legs must not run CPU-bound Engine work on the forwarding task either.
+    search_executor: BlockingSearchExecutor,
     local_write: Arc<dyn WriteBackend>,
     shard_map: VirtualBucketShardMap,
     local_shard: u32,
@@ -165,6 +169,7 @@ impl RoutedRouter {
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             engine,
+            search_executor: BlockingSearchExecutor::new(),
             local_write,
             shard_map,
             local_shard,
@@ -334,6 +339,30 @@ impl RoutedRouter {
         }
     }
 
+    /// Send a JSON request whose successful response is intentionally empty.
+    /// `docs:unindex` is the only current write with that shape; keeping this
+    /// separate from `forward_json` prevents a 204 from being decoded as JSON.
+    async fn forward_json_empty<Req>(
+        &self,
+        shard: u32,
+        method: reqwest::Method,
+        path: &str,
+        body: Req,
+        headers: &HeaderMap,
+    ) -> Result<()>
+    where
+        Req: Serialize,
+    {
+        let resp = self.send(shard, method, path, Some(body), headers).await?;
+        let status = resp.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let body_text = resp.text().await.unwrap_or_default();
+            Err(Self::remote_error(status, body_text))
+        }
+    }
+
     /// #2496: like [`Self::forward_empty`], but a remote `404` is a
     /// legitimate [`DropOutcome::NotFound`] rather than a hard error — the
     /// `DELETE /collections/{id}` route conveys its outcome purely through
@@ -425,9 +454,14 @@ impl RoutedRouter {
         // #2489: `join_all`, not `try_join_all` — a single participant's
         // error (in particular a benign per-shard `CollectionNotFound`,
         // classified below) must not short-circuit before the other
-        // shards' real answers are collected.
-        let local_result = self.engine.search(collection_id, shard_req);
-        let remote_results = join_all(remote_futures).await;
+        // shards' real answers are collected. Poll the local blocking task and
+        // remote futures together: previously the synchronous local search ran
+        // first, so even opening the remote requests waited for one slow sort.
+        let engine = Arc::clone(&self.engine);
+        let executor = self.search_executor.clone();
+        let local_collection = collection_id.to_string();
+        let local_search = executor.run(move || engine.search(&local_collection, shard_req));
+        let (local_result, remote_results) = tokio::join!(local_search, join_all(remote_futures));
 
         let mut responses = Vec::with_capacity(1 + remote_results.len());
         let mut not_found_err = None;
@@ -703,14 +737,23 @@ impl RoutedBackend for RoutedRouter {
                     );
                 }
             }
-            return self.engine.search(collection_id, req);
+            let engine = Arc::clone(&self.engine);
+            let collection_id = collection_id.to_string();
+            return self
+                .search_executor
+                .run(move || engine.search(&collection_id, req))
+                .await;
         }
         match self
             .shard_map
             .search_target(collection_id, req.routing_key.as_deref())
         {
             SearchShardTarget::One(route) if route.shard == self.local_shard => {
-                self.engine.search(collection_id, req)
+                let engine = Arc::clone(&self.engine);
+                let collection_id = collection_id.to_string();
+                self.search_executor
+                    .run(move || engine.search(&collection_id, req))
+                    .await
             }
             SearchShardTarget::One(route) => {
                 // #1457 R3: percent-encode the caller-controlled collection
@@ -922,6 +965,116 @@ impl RoutedBackend for RoutedRouter {
         })
     }
 
+    async fn truncate_docs(&self, collection_id: String, headers: &HeaderMap) -> Result<()> {
+        if Self::already_forwarded(headers) {
+            // Unlike existing collection lifecycle fan-out, truncate's
+            // contract explicitly refuses an unstable map on the forwarded
+            // hop.  The sender's version is therefore validated before this
+            // physical shard receives its one durable command.
+            self.check_forwarded_map_version(headers)?;
+            return self.local_write.truncate_docs(collection_id).await;
+        }
+
+        let path = format!(
+            "/collections/{}/docs:truncate",
+            percent_encode_component(&collection_id)
+        );
+        let remote_futures = (0..self.shard_map.physical_shard_count())
+            .filter(|&shard| shard != self.local_shard)
+            .map(|shard| self.forward_empty(shard, reqwest::Method::POST, &path, headers));
+
+        // Start local and remote proposals together.  We intentionally wait
+        // for every remote result rather than short-circuiting after one
+        // error: another shard may have already committed its local truncate,
+        // and the frozen contract exposes that mixed window instead of trying
+        // an unsafe rollback.
+        let (local, remotes) = tokio::join!(
+            self.local_write.truncate_docs(collection_id),
+            join_all(remote_futures)
+        );
+        let mut first_error = local.err();
+        for remote in remotes {
+            if let Err(error) = remote {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    async fn unindex_docs(
+        &self,
+        collection_id: String,
+        req: BatchUnindexDocsRequest,
+        headers: &HeaderMap,
+    ) -> Result<()> {
+        // Keep the routed backend safe for direct callers too.  HTTP already
+        // validates before it reaches this point, but routing must never turn
+        // an invalid request into a forward or partial shard command.
+        validate_batch_unindex_docs_request(&req)?;
+        if Self::already_forwarded(headers) {
+            self.check_forwarded_map_version(headers)?;
+            for external_id in &req.external_ids {
+                self.assert_owns(&collection_id, external_id)?;
+            }
+            return self.local_write.unindex_docs(collection_id, req).await;
+        }
+
+        let shard_count = self.shard_map.physical_shard_count() as usize;
+        let mut shard_ids: Vec<Vec<String>> = (0..shard_count).map(|_| Vec::new()).collect();
+        for external_id in req.external_ids {
+            let shard = self
+                .shard_map
+                .route_document(&collection_id, None, &external_id)
+                .shard as usize;
+            shard_ids[shard].push(external_id);
+        }
+
+        let path = format!(
+            "/collections/{}/docs:unindex",
+            percent_encode_component(&collection_id)
+        );
+        // Start every nonempty shard request before awaiting any result.  A
+        // failure has no rollback: completed sibling shards retain their
+        // atomic local removal, and the caller gets a routed 5xx.
+        let mut futures = Vec::new();
+        for (shard, external_ids) in shard_ids.into_iter().enumerate() {
+            if external_ids.is_empty() {
+                continue;
+            }
+            let shard = shard as u32;
+            let collection_id = collection_id.clone();
+            let path = path.clone();
+            let sub_req = BatchUnindexDocsRequest { external_ids };
+            futures.push(async move {
+                if shard == self.local_shard {
+                    self.local_write.unindex_docs(collection_id, sub_req).await
+                } else {
+                    self.forward_json_empty(shard, reqwest::Method::POST, &path, sub_req, headers)
+                        .await
+                }
+            });
+        }
+
+        let outcomes = join_all(futures).await;
+        let mut first_error = None;
+        for outcome in outcomes {
+            if let Err(error) = outcome {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     async fn delete(
         &self,
         collection_id: String,
@@ -997,6 +1150,16 @@ mod tests {
             _collection_id: String,
             _req: ReplaceDocsRequest,
         ) -> Result<ReplaceDocsResponse> {
+            unimplemented!("construction-only test double")
+        }
+        async fn truncate_docs(&self, _collection_id: String) -> Result<()> {
+            unimplemented!("construction-only test double")
+        }
+        async fn unindex_docs(
+            &self,
+            _collection_id: String,
+            _req: BatchUnindexDocsRequest,
+        ) -> Result<()> {
             unimplemented!("construction-only test double")
         }
         async fn delete(

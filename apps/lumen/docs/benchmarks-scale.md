@@ -20,12 +20,16 @@ handoff for what the current numbers mean.
 | axis | standard |
 |---|---|
 | Engines | lumen by default; PostgreSQL/OpenSearch only for explicit calibration |
-| Data sizes | 1K smoke/trend; **10K routine regression**; 100K explicit release-local calibration; 1M soak/research |
+| Data sizes | **1K, 10K, and 100K standard scale matrix**; above 100K is explicit release-soak/research |
 | QPS targets | 10, 100, 1000 paced requests/sec |
 | Latency metrics | p50, p95, p99 |
 | Reliability | error rate / timeout / status / transport failures |
 | Resource metrics | CPU, memory/RSS, disk IO |
 | Footprint metric | **disk size**: on-disk MiB and bytes/doc |
+
+The standard 100K cap keeps local evidence bounded. The full standard matrix
+uses every row size and every QPS target. QPS applies only to reads. Batch
+unindex and truncate are one logical request each, never paced load tests.
 
 Disk size belongs in the official matrix. It is different from disk IO: disk IO
 captures runtime pressure during a load window, while disk size captures storage
@@ -58,9 +62,16 @@ cargo test --release -p lumen --test write_qps --no-run
 lumen-only disk scale bench:
 
 ```sh
-./scripts/lumen_scale.sh
+LUMEN_SCALE_DISK=1 LUMEN_SCALE_QPS=1 LUMEN_SCALE_CELLS=range,filter_sort,keyword_sort,sorted_page_deep LUMEN_SCALE_QPS_TARGETS=10 apps/lumen/scripts/lumen_scale.sh 1000
+
+LUMEN_SCALE_DISK=1 LUMEN_SCALE_QPS=1 LUMEN_SCALE_CELLS=range,filter_sort,keyword_sort,sorted_page_deep LUMEN_SCALE_QPS_TARGETS=10,100,1000 apps/lumen/scripts/lumen_scale.sh 1000,10000,100000
+
 LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1 LUMEN_GATE_WINDOW_S=0.2 LUMEN_SCALE_CHUNK_ROWS=100000 ./scripts/lumen_scale.sh 1000000
 ```
+
+The first command is the DEV command. It runs only `N=1,000` and QPS `10`.
+The second command is the full command. It runs `N=1,000`, `10,000`, and
+`100,000` with QPS `10`, `100`, and `1,000` for every fixed read cell.
 
 The bench stream-generates docs, so it no longer allocates a full corpus Vec.
 The single-segment path still builds the mutable Engine index in RAM before
@@ -70,15 +81,56 @@ release-soak/research run sets `LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1`. The point i
 operational: routine readiness should stay fast, while retained 1M probes remain
 available when scale evidence is actually needed.
 
+The four fixed selectors are `range`, `filter_sort`, `keyword_sort`, and
+`sorted_page_deep`. `range` combines range and boolean filtering. `filter_sort`
+uses an ascending number sort. `keyword_sort` uses a deterministic
+high-cardinality keyword sort with sparse values, `missing:last`,
+`track_total:true`, and limit 80. Nine out of ten rows have a unique sort
+value. `sorted_page_deep` uses cursor pagination.
+Before it measures a normal single-engine row, the bench uses HTTP to prove
+`/stats.documents_indexed == N`. It checks fixture-document order for `range`.
+It checks age-then-fixture-document order for `filter_sort`, the first 80
+present sort-key rows for `keyword_sort`, and `d0` to `d99` for the first `sorted_page_deep`
+page. Before the cursor QPS cell, the bench walks to a precomputed mid-collection
+cursor and proves two ordered, non-overlapping pages. It does
+not keep issuing page-one queries. Each report row contains documents, selector,
+target QPS, achieved QPS, p50/p95/p99, errors, error rate, and `ok`, `SVR`, or
+`HARN`. Any HTTP request error fails the test after the row is reported. These
+status values classify the observed target and `/healthz` ceiling. They are not
+latency or achieved-QPS thresholds. Before this warm matrix, `keyword_sort`
+also reports a response-cache-cold request for limits 1, 20, 80, 500, and
+2,000. After the batch reindex and temporary-survivor cleanup, it reports one
+more cache-invalidated cold request at limit 80. That request checks the exact
+page and total after sealed postings merge with the live write tail. These rows
+report timing only; they have no latency threshold.
+
+After all reads at each `N`, the normal single-engine HTTP path sends one atomic
+batch unindex for exactly `min(1000,N)` deterministic IDs. It checks that all
+removed IDs are absent and that an added temporary survivor is still present.
+The survivor is necessary at `N=1,000`, where the required batch removes every
+measured document. The bench reindexes the selected IDs, removes the temporary
+survivor, and then measures truncate with exactly `N` documents again. It
+records the two logical request latencies and immediate `/stats` visibility.
+For truncate, it takes read-only reclaimer snapshots before and after the
+request. The report includes pending generations, queued and active tasks,
+submitted and completed generations, the actual shared-queue high-water mark,
+and drain time from the truncate HTTP request start. The harness waits at most
+30 seconds for this truncate generation to complete and for pending generations
+to return to the baseline. A timeout fails the harness. The HTTP truncate
+acknowledgement remains a separate logical result. Chunked research mode has
+only a read router, so it reports the mutation probe as unavailable rather than
+claiming cross-shard atomicity.
+
 Chunked reopened mode remains useful for explicit 1M soaks. The smoke command above
 builds ten 100k-doc sealed chunks, reopens them as read shards, and runs the qps
 ladder through the real API search backend seam:
 `/collections/docs/search` dispatches to an injected `SearchBackend`, fan-ins
 with `lumen::routing::search_shards_parallel`, and serializes the normal HTTP
-JSON response. The latest 1M / 2 chunk smoke had qps1000 p50 **0.201-1.358 ms**
-across all cells with **27.62 MiB** on disk; the targeted selector smoke
-(`LUMEN_SCALE_CELLS=kw_term LUMEN_SCALE_QPS_TARGETS=1000`) completed in 9.30s
-with qps1000 p50 **0.192 ms**. `LUMEN_SCALE_CHUNK_WORKERS=N` parallelizes
+JSON response. The historical 1M / 2 chunk smoke had qps1000 p50
+**0.201-1.358 ms** across its former cells with **27.62 MiB** on disk. Its
+targeted `kw_term` selector is retired and is not a result for the fixed 0.4.31
+scale matrix. Use `LUMEN_SCALE_CELLS=range` for a current focused research
+selector. `LUMEN_SCALE_CHUNK_WORKERS=N` parallelizes
 chunk-level build/write/seal/reopen for these bounded 1M probes. This is
 chunk-level parallelism with independent Engines, not a multi-threaded write
 lock inside one collection.

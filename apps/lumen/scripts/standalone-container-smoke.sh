@@ -27,20 +27,26 @@ if [[ "$MODE" == "durable" ]]; then
   OLD_IMAGE="ghcr.io/chrischeng-c4/lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d"
   ID_SUFFIX="$(date +%s)_$$_${RANDOM}"
   VOLUME="lumen-smoke-durable-${ID_SUFFIX}"
+  REJECT_VOLUME="lumen-smoke-durable-reject-${ID_SUFFIX}"
   OLD_CONTAINER="lumen-smoke-durable-old-${ID_SUFFIX}"
   CANDIDATE_CONTAINER="lumen-smoke-durable-candidate-${ID_SUFFIX}"
   REPLACEMENT_CONTAINER="lumen-smoke-durable-replacement-${ID_SUFFIX}"
+  SEED_CONTAINER="lumen-smoke-durable-seed-${ID_SUFFIX}"
+  REJECTED_CONTAINER="lumen-smoke-durable-rejected-${ID_SUFFIX}"
   TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lumen-durable.XXXXXX")"
   CREATED_VOLUME=0
+  CREATED_REJECT_VOLUME=0
   CREATED_OLD=""
   CREATED_CANDIDATE=""
   CREATED_REPLACEMENT=""
+  CREATED_SEED=""
+  CREATED_REJECTED=""
   # shellcheck disable=SC2329 # invoked by the EXIT trap below
   cleanup_durable() {
     local exit_code=$?
     local cleanup_failed=0
     trap - EXIT
-    for container in "$CREATED_OLD" "$CREATED_CANDIDATE" "$CREATED_REPLACEMENT"; do
+    for container in "$CREATED_OLD" "$CREATED_CANDIDATE" "$CREATED_REPLACEMENT" "$CREATED_SEED" "$CREATED_REJECTED"; do
       if [[ -n "$container" ]]; then
         if ! docker rm -f "$container" >/dev/null 2>&1; then
           echo "ERROR: Failed to remove container $container" >&2
@@ -51,6 +57,12 @@ if [[ "$MODE" == "durable" ]]; then
     if [[ "$CREATED_VOLUME" == 1 ]]; then
       if ! docker volume rm "$VOLUME" >/dev/null 2>&1; then
         echo "ERROR: Failed to remove volume $VOLUME" >&2
+        cleanup_failed=1
+      fi
+    fi
+    if [[ "$CREATED_REJECT_VOLUME" == 1 ]]; then
+      if ! docker volume rm "$REJECT_VOLUME" >/dev/null 2>&1; then
+        echo "ERROR: Failed to remove volume $REJECT_VOLUME" >&2
         cleanup_failed=1
       fi
     fi
@@ -76,6 +88,12 @@ if [[ "$MODE" == "durable" ]]; then
   fi
   docker volume create "$VOLUME" >/dev/null
   CREATED_VOLUME=1
+  if docker volume inspect "$REJECT_VOLUME" >/dev/null 2>&1; then
+    echo "ERROR: reject volume unexpectedly preexists" >&2
+    exit 1
+  fi
+  docker volume create "$REJECT_VOLUME" >/dev/null
+  CREATED_REJECT_VOLUME=1
   wait_ready() {
     local container="$1" port="$2"
     for _ in $(seq 1 60); do
@@ -83,6 +101,22 @@ if [[ "$MODE" == "durable" ]]; then
       sleep 0.5
     done
     echo "ERROR: container failed /readyz" >&2
+    if ! docker logs "$container" >&2; then :; fi
+    return 1
+  }
+  wait_for_exit() {
+    local container="$1" running exit_status
+    for _ in $(seq 1 60); do
+      running="$(docker inspect --format '{{.State.Running}}' "$container")"
+      if [[ "$running" == false ]]; then
+        exit_status="$(docker inspect --format '{{.State.ExitCode}}' "$container")"
+        [[ "$exit_status" -ne 0 ]] && return 0
+        echo "ERROR: rejected container exited successfully" >&2
+        return 1
+      fi
+      sleep 0.5
+    done
+    echo "ERROR: rejected container did not exit" >&2
     if ! docker logs "$container" >&2; then :; fi
     return 1
   }
@@ -129,6 +163,8 @@ if [[ "$MODE" == "durable" ]]; then
   CANDIDATE_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$CANDIDATE_CONTAINER")"
   wait_ready "$CANDIDATE_CONTAINER" "$CANDIDATE_PORT"
   CANDIDATE_URL="http://127.0.0.1:${CANDIDATE_PORT}"
+  if ! docker logs "$CANDIDATE_CONTAINER" > "$TEMP_DIR/candidate.log" 2>&1; then :; fi
+  grep -Eq 'segment checkpoint startup decision.*decision=\"?adopted_legacy_0428\"?' "$TEMP_DIR/candidate.log"
   docker cp "$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT" "$TEMP_DIR/current-first"
   python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+\n",b) else 1)' "$TEMP_DIR/current-first"
   assert_search "$CANDIDATE_URL" first
@@ -147,10 +183,33 @@ if [[ "$MODE" == "durable" ]]; then
   REPLACEMENT_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$REPLACEMENT_CONTAINER")"
   wait_ready "$REPLACEMENT_CONTAINER" "$REPLACEMENT_PORT"
   REPLACEMENT_URL="http://127.0.0.1:${REPLACEMENT_PORT}"
+  if ! docker logs "$REPLACEMENT_CONTAINER" > "$TEMP_DIR/replacement.log" 2>&1; then :; fi
+  grep -Eq 'segment checkpoint startup decision.*decision=\"?restored_current_generation\"?' "$TEMP_DIR/replacement.log"
   docker cp "$REPLACEMENT_CONTAINER:/var/lib/lumen/data/CURRENT" "$TEMP_DIR/current-replacement"
   python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+-rev-[1-9][0-9]*\n",b) else 1)' "$TEMP_DIR/current-replacement"
   assert_search "$REPLACEMENT_URL" first
   assert_search "$REPLACEMENT_URL" second
+  mkdir -p "$TEMP_DIR/foreign-layout"
+  printf 'fail-closed unknown root\n' > "$TEMP_DIR/foreign-layout/sentinel"
+  CREATED_SEED="$SEED_CONTAINER"
+  docker create --name "$SEED_CONTAINER" --mount "type=volume,src=$REJECT_VOLUME,dst=/var/lib/lumen/data" "$LUMEN_STANDALONE_DURABLE_IMAGE" >/dev/null
+  docker cp "$TEMP_DIR/foreign-layout" "$SEED_CONTAINER:/var/lib/lumen/data/foreign-layout"
+  docker rm "$SEED_CONTAINER" >/dev/null
+  CREATED_SEED=""
+  CREATED_REJECTED="$REJECTED_CONTAINER"
+  docker run -d --name "$REJECTED_CONTAINER" --mount "type=volume,src=$REJECT_VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off \
+    -p 127.0.0.1::7373 "$LUMEN_STANDALONE_DURABLE_IMAGE" >/dev/null
+  REJECTED_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$REJECTED_CONTAINER")"
+  wait_for_exit "$REJECTED_CONTAINER"
+  if curl -fsS --noproxy '*' --connect-timeout 2 --max-time 5 "http://127.0.0.1:${REJECTED_PORT}/readyz" -o "$TEMP_DIR/rejected-ready" >/dev/null 2>&1; then
+    echo "ERROR: rejected container served /readyz" >&2
+    exit 1
+  fi
+  if ! docker logs "$REJECTED_CONTAINER" > "$TEMP_DIR/rejected.log" 2>&1; then :; fi
+  grep -Eq 'segment checkpoint root entry.*refusing to initialize CURRENT' "$TEMP_DIR/rejected.log"
+  docker cp "$REJECTED_CONTAINER:/var/lib/lumen/data" "$TEMP_DIR/rejected-data"
+  [[ ! -e "$TEMP_DIR/rejected-data/CURRENT" ]]
+  cmp -s "$TEMP_DIR/foreign-layout/sentinel" "$TEMP_DIR/rejected-data/foreign-layout/sentinel"
   echo "==> Standalone container smoke (durable) passed successfully."
   exit 0
   # DURABLE-CONTRACT-END
