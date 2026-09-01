@@ -41,6 +41,9 @@ const AOF_COMPACT_TEMP_FILE: &str = "aof.log.compact.tmp";
 // file so Docker recognizes a non-empty data directory. It carries no Lumen
 // state and is part of a semantically new root.
 const CONTAINER_VOLUME_SEED_FILE: &str = ".lumen-volume-seed";
+// ext-family filesystems create this direct child at the root of a fresh
+// volume. It is safe only when it remains an empty real directory.
+const EXT_FILESYSTEM_METADATA_DIR: &str = "lost+found";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -516,8 +519,36 @@ impl SegmentRdbStore {
             let regular_file = !metadata.file_type().is_symlink() && metadata.is_file();
             let real_directory = !metadata.file_type().is_symlink() && metadata.is_dir();
 
-            if raw != CONTAINER_VOLUME_SEED_FILE {
+            if raw != CONTAINER_VOLUME_SEED_FILE && raw != EXT_FILESYSTEM_METADATA_DIR {
                 inventory.non_seed_entries += 1;
+            }
+
+            if raw == EXT_FILESYSTEM_METADATA_DIR {
+                if !real_directory {
+                    violations.push(format!(
+                        "{EXT_FILESYSTEM_METADATA_DIR} must be a real empty directory: {}",
+                        path.display()
+                    ));
+                } else {
+                    match std::fs::read_dir(&path) {
+                        Ok(mut contents) => match contents.next() {
+                            None => {}
+                            Some(Ok(_)) => violations.push(format!(
+                                "{EXT_FILESYSTEM_METADATA_DIR} must be empty: {}",
+                                path.display()
+                            )),
+                            Some(Err(error)) => violations.push(format!(
+                                "cannot verify {EXT_FILESYSTEM_METADATA_DIR} is empty at {}: {error}",
+                                path.display()
+                            )),
+                        },
+                        Err(error) => violations.push(format!(
+                            "cannot inspect {EXT_FILESYSTEM_METADATA_DIR} at {}: {error}",
+                            path.display()
+                        )),
+                    }
+                }
+                continue;
             }
 
             if matches!(
@@ -1792,6 +1823,79 @@ mod tests {
                 .decision,
             SegmentStartupDecision::RestoredCurrentEmpty
         );
+    }
+
+    #[test]
+    fn empty_lost_found_is_accepted_beside_supported_root_layouts() {
+        fn create_lost_found(root: &Path) {
+            let lost_found = root.join(EXT_FILESYSTEM_METADATA_DIR);
+            std::fs::create_dir(&lost_found).unwrap();
+            assert!(std::fs::read_dir(&lost_found).unwrap().next().is_none());
+        }
+
+        let empty = tempfile::tempdir().unwrap();
+        create_lost_found(empty.path());
+        let store = SegmentRdbStore::new(empty.path()).unwrap();
+        assert_eq!(
+            store
+                .reopen_into_with_outcome(&Arc::new(Engine::new()))
+                .unwrap()
+                .decision,
+            SegmentStartupDecision::InitializedEmptyRoot
+        );
+        assert_eq!(
+            std::fs::read(empty.path().join(CURRENT_FILE)).unwrap(),
+            b"empty\n"
+        );
+
+        let aof = tempfile::tempdir().unwrap();
+        create_lost_found(aof.path());
+        std::fs::write(aof.path().join(AOF_FILE), b"").unwrap();
+        let store = SegmentRdbStore::new(aof.path()).unwrap();
+        assert_eq!(
+            store
+                .reopen_into_with_outcome(&Arc::new(Engine::new()))
+                .unwrap()
+                .decision,
+            SegmentStartupDecision::RecoveredUncommittedEmpty
+        );
+
+        let legacy = tempfile::tempdir().unwrap();
+        create_lost_found(legacy.path());
+        let legacy_generation = legacy.path().join("gen-42");
+        std::fs::create_dir(&legacy_generation).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&legacy_generation, 42).unwrap();
+        let store = SegmentRdbStore::new(legacy.path()).unwrap();
+        assert_eq!(
+            store
+                .reopen_into_with_outcome(&Arc::new(Engine::new()))
+                .unwrap()
+                .decision,
+            SegmentStartupDecision::AdoptedLegacy0428
+        );
+
+        let current = tempfile::tempdir().unwrap();
+        create_lost_found(current.path());
+        let first = SegmentRdbStore::new(current.path()).unwrap();
+        drop(first);
+        let reopened = SegmentRdbStore::new(current.path()).unwrap();
+        assert_eq!(
+            reopened
+                .reopen_into_with_outcome(&Arc::new(Engine::new()))
+                .unwrap()
+                .decision,
+            SegmentStartupDecision::RestoredCurrentEmpty
+        );
+
+        for root in [empty.path(), aof.path(), legacy.path(), current.path()] {
+            let lost_found = root.join(EXT_FILESYSTEM_METADATA_DIR);
+            let metadata = std::fs::symlink_metadata(&lost_found).unwrap();
+            assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+            assert!(std::fs::read_dir(lost_found).unwrap().next().is_none());
+        }
     }
 
     #[test]

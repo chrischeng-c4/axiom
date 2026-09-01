@@ -226,6 +226,21 @@ fn snapshot_root(root: &Path) -> Vec<(std::path::PathBuf, RootEntrySnapshot)> {
     snapshot
 }
 
+fn assert_empty_real_directory(path: &Path, case: &str) {
+    let metadata = std::fs::symlink_metadata(path).expect("inspect fixture directory");
+    assert!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "{case} must remain a real directory"
+    );
+    assert!(
+        std::fs::read_dir(path)
+            .expect("read fixture directory")
+            .next()
+            .is_none(),
+        "{case} must remain empty"
+    );
+}
+
 /// One failed startup must not bind a listener, create `CURRENT`, or change a
 /// single fixture path. The process is always reaped before this returns.
 fn assert_refuses_without_mutation(root: &Path, case: &str) -> String {
@@ -455,6 +470,103 @@ fn fresh_root_starts_and_logs_empty_initialization() {
         logs.contains("segment checkpoint startup decision")
             && logs.contains("initialized_empty_root"),
         "fresh root must log its explicit empty-root decision:\n{logs}"
+    );
+}
+
+#[test]
+fn empty_lost_found_starts_and_restarts_without_mutation() {
+    let root = tempfile::tempdir().expect("lost+found segment root");
+    let lost_found = root.path().join("lost+found");
+    std::fs::create_dir(&lost_found).expect("create empty lost+found");
+    let before = snapshot_root(&lost_found);
+
+    let mut process = LumenProcess::spawn(root.path());
+    process.wait_until_ready();
+    assert_eq!(
+        std::fs::read(root.path().join("CURRENT")).expect("read fresh CURRENT"),
+        b"empty\n"
+    );
+    let logs = process.stop_and_logs();
+    assert!(
+        logs.contains("segment checkpoint startup decision")
+            && logs.contains("initialized_empty_root"),
+        "empty lost+found must initialize the empty root:\n{logs}"
+    );
+    assert_empty_real_directory(&lost_found, "lost+found after first startup");
+    assert_eq!(snapshot_root(&lost_found), before);
+
+    let mut restarted = LumenProcess::spawn(root.path());
+    restarted.wait_until_ready();
+    let logs = restarted.stop_and_logs();
+    assert!(
+        logs.contains("segment checkpoint startup decision")
+            && logs.contains("restored_current_empty"),
+        "empty lost+found must coexist with CURRENT on restart:\n{logs}"
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("CURRENT")).expect("read restored CURRENT"),
+        b"empty\n"
+    );
+    assert_empty_real_directory(&lost_found, "lost+found after restart");
+    assert_eq!(snapshot_root(&lost_found), before);
+}
+
+#[test]
+fn nonempty_lost_found_refuses_before_current_or_listener() {
+    let root = tempfile::tempdir().expect("nonempty lost+found segment root");
+    let lost_found = root.path().join("lost+found");
+    std::fs::create_dir(&lost_found).expect("create lost+found");
+    let sentinel = b"lost+found content must remain untouched\n";
+    std::fs::write(lost_found.join("sentinel"), sentinel).expect("write lost+found sentinel");
+
+    let logs = assert_refuses_without_mutation(root.path(), "nonempty lost+found");
+
+    assert_eq!(
+        std::fs::read(lost_found.join("sentinel")).expect("read lost+found sentinel"),
+        sentinel
+    );
+    assert!(
+        logs.contains("lost+found (directory)") && logs.contains("lost+found must be empty"),
+        "nonempty lost+found refusal must retain sorted inventory evidence:\n{logs}"
+    );
+}
+
+#[test]
+fn lost_found_regular_file_refuses_before_current_or_listener() {
+    let root = tempfile::tempdir().expect("lost+found file segment root");
+    let lost_found = root.path().join("lost+found");
+    let bytes = b"not filesystem metadata\n";
+    std::fs::write(&lost_found, bytes).expect("write lost+found file");
+
+    let logs = assert_refuses_without_mutation(root.path(), "lost+found regular file");
+
+    assert_eq!(
+        std::fs::read(&lost_found).expect("read lost+found file"),
+        bytes
+    );
+    assert!(
+        logs.contains("lost+found (regular file)")
+            && logs.contains("lost+found must be a real empty directory"),
+        "lost+found file refusal must retain sorted inventory evidence:\n{logs}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn lost_found_symlink_refuses_before_current_or_listener() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().expect("lost+found symlink segment root");
+    let target = tempfile::tempdir().expect("lost+found symlink target");
+    symlink(target.path(), root.path().join("lost+found")).expect("create lost+found symlink");
+
+    let logs = assert_refuses_without_mutation(root.path(), "lost+found symlink");
+
+    assert!(root.path().join("lost+found").is_symlink());
+    assert!(
+        logs.contains("lost+found (symlink)")
+            && logs.contains("lost+found must be a real empty directory"),
+        "lost+found symlink refusal must retain sorted inventory evidence:\n{logs}"
     );
 }
 

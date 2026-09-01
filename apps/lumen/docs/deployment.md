@@ -36,6 +36,11 @@ A truly new empty root can initialize an empty `CURRENT` baseline. An AOF-only r
 
 A non-empty root without `CURRENT` that has an unknown layout, a symlink, an invalid entry type, or an unpointed revision generation fails before Lumen writes `CURRENT` or starts its listener. The process logs every direct root entry, its kind, and the refusal reason. It does not open the HTTP listener. A successful segment start logs `segment checkpoint startup decision` with one of `initialized_empty_root`, `recovered_uncommitted_empty`, `restored_current_empty`, `restored_current_generation`, or `adopted_legacy_0428`. AOF recovery logs `AOF startup decision` with `aof_decision=no_tail` or `aof_decision=tail_replayed`.
 
+On ext-family Persistent Disk volumes, the direct-root `lost+found` directory is
+accepted only when it is a real, empty directory. Lumen never writes, removes,
+renames, or changes that directory. A non-empty, unreadable, symlink, or regular
+file named `lost+found` still fails closed with the sorted root inventory.
+
 After 0.4.29 writes or adopts `CURRENT`, in-place downgrade to 0.4.28 is unsupported. Keep a pre-upgrade volume copy or backup for rollback.
 
 ### Container
