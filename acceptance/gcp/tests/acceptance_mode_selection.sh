@@ -121,6 +121,8 @@ present "MCP initialize again sends raw SSE to jq" \
   'extract_sse_json "$init_sse" "$init_body"' "$SIFT_VERIFY_SCRIPT"
 present "MCP tools/list again sends raw SSE to jq" \
   'extract_sse_json "$list_sse" "$list_body"' "$SIFT_VERIFY_SCRIPT"
+present "nested load evidence directories are no longer prepared" \
+  'mkdir -p "$(dirname "$output")"' "$SIFT_VERIFY_SCRIPT"
 present "Sift deployment no longer requires GKE FQDN policy enforcement" \
   'fqdnnetworkpolicies.networking.gke.io' "$DEPLOY_SCRIPT"
 present "Sift verifier lost the operator-managed auth binding proof" \
