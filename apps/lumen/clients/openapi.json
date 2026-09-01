@@ -10,7 +10,7 @@
     "license": {
       "name": "MIT"
     },
-    "version": "0.4.30"
+    "version": "0.4.31"
   },
   "servers": [
     {
@@ -686,6 +686,49 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "Index"
+        ],
+        "summary": "Deletes the complete indexed row for one caller-owned external id. Lumen",
+        "description": "indexes caller-owned fields only; source-record hydration stays with the\ncaller.",
+        "operationId": "delete_doc",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "external_id",
+            "in": "path",
+            "description": "Caller-owned identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/collections/{collection_id}/docs:replace": {
@@ -730,6 +773,118 @@
           },
           "400": {
             "description": "Malformed body or batch size over the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/docs:truncate": {
+      "post": {
+        "tags": [
+          "Index"
+        ],
+        "summary": "Empty all indexed documents while retaining the collection declaration.",
+        "description": "A successful response means this physical shard has durably swapped to the\nempty document state.  In routed mode each shard has that same boundary,\nbut callers can observe a mixed cross-shard window while the fan-out runs.",
+        "operationId": "truncate_docs",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Documents truncated; schema is unchanged"
+          },
+          "503": {
+            "description": "Reshard fence or routed shard unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/docs:unindex": {
+      "post": {
+        "tags": [
+          "Index"
+        ],
+        "summary": "Remove complete indexed rows for a bounded caller-supplied id list.",
+        "description": "Validation happens before storage admission, reshard fences, routing, and\ndurable publish.  Routed requests partition the list by current ownership;\neach nonempty physical shard receives one atomic durable command.",
+        "operationId": "batch_unindex_docs",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchUnindexDocsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Documents unindexed"
+          },
+          "400": {
+            "description": "Malformed body, empty/duplicate ids, or more than 1000 ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Reshard fence or routed shard unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -922,7 +1077,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/collections/{collection_id}/index/{external_id}": {
@@ -975,7 +1131,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/collections/{collection_id}/reindex/stream": {
@@ -1429,6 +1586,25 @@
         "discriminator": {
           "propertyName": "status"
         }
+      },
+      "BatchUnindexDocsRequest": {
+        "type": "object",
+        "description": "`POST /collections/{id}/docs:unindex` body.\n\nThis is intentionally only an identifier list.  It has no field selector,\nfilter, query, or request id: each selected document loses every indexed\nfield on its owning physical shard.",
+        "required": [
+          "external_ids"
+        ],
+        "properties": {
+          "external_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
       },
       "CacheStats": {
         "type": "object",

@@ -63,11 +63,13 @@ fn insert_after_first_from(source: &str, instruction: &str) -> String {
 const DURABLE_BEGIN: &str = "  # DURABLE-CONTRACT-BEGIN\n";
 const DURABLE_END: &str = "  # DURABLE-CONTRACT-END\n";
 const DURABLE_BLOCK_SHA256: &str =
-    "b10b42e8a3fd48ad2d4799806d3c497a890b05a794fa638a11ba3233f3e37845";
+    "d269cc1b8bd8174d5ef97a158daca836f355a9d8ffc842492c297884c5783b4b";
 const CANDIDATE_ROOT_REGEX: &str = "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$";
 const OLD_IMAGE: &str =
     "ghcr.io/chrischeng-c4/lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
 const DATA_MOUNT: &str = "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\"";
+const REJECT_DATA_MOUNT: &str =
+    "--mount \"type=volume,src=$REJECT_VOLUME,dst=/var/lib/lumen/data\"";
 const OLD_RUN: &str = concat!(
     "docker run -d --name \"$OLD_CONTAINER\" ",
     "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
@@ -83,6 +85,12 @@ const CANDIDATE_RUN: &str = concat!(
 const REPLACEMENT_RUN: &str = concat!(
     "docker run -d --name \"$REPLACEMENT_CONTAINER\" ",
     "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
+    "-e LUMEN_AUTH=off -p 127.0.0.1::7373 ",
+    "\"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null"
+);
+const REJECTED_RUN: &str = concat!(
+    "docker run -d --name \"$REJECTED_CONTAINER\" ",
+    "--mount \"type=volume,src=$REJECT_VOLUME,dst=/var/lib/lumen/data\" ",
     "-e LUMEN_AUTH=off -p 127.0.0.1::7373 ",
     "\"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null"
 );
@@ -309,6 +317,11 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
     )?;
     require_exact_once(
         &lines,
+        "REJECT_VOLUME=\"lumen-smoke-durable-reject-${ID_SUFFIX}\"",
+        "reject volume",
+    )?;
+    require_exact_once(
+        &lines,
         "if docker volume inspect \"$VOLUME\" >/dev/null 2>&1; then",
         "volume ownership check",
     )?;
@@ -317,7 +330,22 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
         "docker volume create \"$VOLUME\" >/dev/null",
         "volume creation",
     )?;
+    require_exact_once(
+        &lines,
+        "if docker volume inspect \"$REJECT_VOLUME\" >/dev/null 2>&1; then",
+        "reject volume ownership check",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker volume create \"$REJECT_VOLUME\" >/dev/null",
+        "reject volume creation",
+    )?;
     require_exact_once(&lines, "CREATED_VOLUME=1", "owned volume tracking")?;
+    require_exact_once(
+        &lines,
+        "CREATED_REJECT_VOLUME=1",
+        "owned reject volume tracking",
+    )?;
     require_exact_once(
         &lines,
         "if [[ \"$CREATED_VOLUME\" == 1 ]]; then",
@@ -325,8 +353,18 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
     )?;
     require_exact_once(
         &lines,
+        "if [[ \"$CREATED_REJECT_VOLUME\" == 1 ]]; then",
+        "owned reject volume cleanup",
+    )?;
+    require_exact_once(
+        &lines,
         "if ! docker volume rm \"$VOLUME\" >/dev/null 2>&1; then",
         "volume cleanup",
+    )?;
+    require_exact_once(
+        &lines,
+        "if ! docker volume rm \"$REJECT_VOLUME\" >/dev/null 2>&1; then",
+        "reject volume cleanup",
     )?;
     require_exact_once(
         &lines,
@@ -365,9 +403,16 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
         REPLACEMENT_RUN,
         "replacement run",
     )?;
+    require_before(
+        &lines,
+        "CREATED_REJECTED=\"$REJECTED_CONTAINER\"",
+        REJECTED_RUN,
+        "rejected run",
+    )?;
     require_exact_once(&lines, OLD_RUN, "old image command")?;
     require_exact_once(&lines, CANDIDATE_RUN, "candidate image command")?;
     require_exact_once(&lines, REPLACEMENT_RUN, "replacement image command")?;
+    require_exact_once(&lines, REJECTED_RUN, "rejected image command")?;
     if lines
         .iter()
         .filter(|line| line.contains(DATA_MOUNT))
@@ -375,6 +420,16 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
         != 3
     {
         return Err("each run must mount only the named volume at the data path".to_string());
+    }
+    if lines
+        .iter()
+        .filter(|line| line.contains(REJECT_DATA_MOUNT))
+        .count()
+        != 2
+    {
+        return Err(
+            "reject seed and run must mount only the reject volume at the data path".to_string(),
+        );
     }
     require_exact_once(
         &lines,
@@ -385,6 +440,61 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
         &lines,
         "docker rm \"$CANDIDATE_CONTAINER\" >/dev/null",
         "candidate removal",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker create --name \"$SEED_CONTAINER\" --mount \"type=volume,src=$REJECT_VOLUME,dst=/var/lib/lumen/data\" \"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null",
+        "reject volume seed container",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker cp \"$TEMP_DIR/foreign-layout\" \"$SEED_CONTAINER:/var/lib/lumen/data/foreign-layout\"",
+        "reject volume unknown-root seed",
+    )?;
+    require_exact_once(
+        &lines,
+        "docker rm \"$SEED_CONTAINER\" >/dev/null",
+        "reject seed removal",
+    )?;
+    require_exact_once(
+        &lines,
+        "wait_for_exit \"$REJECTED_CONTAINER\"",
+        "rejected startup exit",
+    )?;
+    require_exact_once(
+        &lines,
+        "[[ \"$exit_status\" -ne 0 ]] && return 0",
+        "rejected startup nonzero exit",
+    )?;
+    require_exact_once(
+        &lines,
+        "if curl -fsS --noproxy '*' --connect-timeout 2 --max-time 5 \"http://127.0.0.1:${REJECTED_PORT}/readyz\" -o \"$TEMP_DIR/rejected-ready\" >/dev/null 2>&1; then",
+        "rejected startup never ready",
+    )?;
+    require_exact_once(
+        &lines,
+        "grep -Eq 'segment checkpoint root entry.*refusing to initialize CURRENT' \"$TEMP_DIR/rejected.log\"",
+        "rejected startup reason",
+    )?;
+    require_exact_once(
+        &lines,
+        "[[ ! -e \"$TEMP_DIR/rejected-data/CURRENT\" ]]",
+        "rejected CURRENT absence",
+    )?;
+    require_exact_once(
+        &lines,
+        "cmp -s \"$TEMP_DIR/foreign-layout/sentinel\" \"$TEMP_DIR/rejected-data/foreign-layout/sentinel\"",
+        "rejected unknown-root preservation",
+    )?;
+    require_exact_once(
+        &lines,
+        "grep -Eq 'segment checkpoint startup decision.*decision=\\\"?adopted_legacy_0428\\\"?' \"$TEMP_DIR/candidate.log\"",
+        "legacy adoption startup decision",
+    )?;
+    require_exact_once(
+        &lines,
+        "grep -Eq 'segment checkpoint startup decision.*decision=\\\"?restored_current_generation\\\"?' \"$TEMP_DIR/replacement.log\"",
+        "current generation startup decision",
     )?;
 
     require_exact_once(
@@ -503,6 +613,7 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
         }
         if line.starts_with("docker volume rm ")
             && line != "if ! docker volume rm \"$VOLUME\" >/dev/null 2>&1; then"
+            && line != "if ! docker volume rm \"$REJECT_VOLUME\" >/dev/null 2>&1; then"
         {
             return Err(format!("durable block has unscoped volume cleanup: {line}"));
         }
@@ -804,6 +915,40 @@ fn test_durable_script_contract_and_negative_mutations() {
         ),
     ] {
         assert_durable_rejected(label, replace_exact(&source, copy, ""));
+    }
+
+    for (label, target) in [
+        (
+            "reject volume seed",
+            "  docker cp \"$TEMP_DIR/foreign-layout\" \"$SEED_CONTAINER:/var/lib/lumen/data/foreign-layout\"\n",
+        ),
+        (
+            "reject run",
+            "  docker run -d --name \"$REJECTED_CONTAINER\" --mount \"type=volume,src=$REJECT_VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off \\\n    -p 127.0.0.1::7373 \"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null\n",
+        ),
+        ("reject exit wait", "  wait_for_exit \"$REJECTED_CONTAINER\"\n"),
+        (
+            "reject error assertion",
+            "  grep -Eq 'segment checkpoint root entry.*refusing to initialize CURRENT' \"$TEMP_DIR/rejected.log\"\n",
+        ),
+        (
+            "reject CURRENT absence",
+            "  [[ ! -e \"$TEMP_DIR/rejected-data/CURRENT\" ]]\n",
+        ),
+        (
+            "reject unknown preservation",
+            "  cmp -s \"$TEMP_DIR/foreign-layout/sentinel\" \"$TEMP_DIR/rejected-data/foreign-layout/sentinel\"\n",
+        ),
+        (
+            "legacy adoption decision log",
+            "  grep -Eq 'segment checkpoint startup decision.*decision=\\\"?adopted_legacy_0428\\\"?' \"$TEMP_DIR/candidate.log\"\n",
+        ),
+        (
+            "current generation decision log",
+            "  grep -Eq 'segment checkpoint startup decision.*decision=\\\"?restored_current_generation\\\"?' \"$TEMP_DIR/replacement.log\"\n",
+        ),
+    ] {
+        assert_durable_rejected(label, replace_exact(&source, target, ""));
     }
 
     for action in [

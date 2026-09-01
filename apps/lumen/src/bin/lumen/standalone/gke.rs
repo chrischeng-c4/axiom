@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use storage_durable::{atomic_write, sync_parent_dir, FsyncPolicy};
 
 const MARKER: &str = "lumen-standalone-managed/v1\n";
-const IMAGE: &str = "ghcr.io/chrischeng-c4/lumen:0.4.30";
+const IMAGE: &str = "ghcr.io/chrischeng-c4/lumen:0.4.31";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

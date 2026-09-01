@@ -91,6 +91,14 @@ unchanged.
 Use `PUT /collections/{id}/docs:replace` when the caller owns the complete
 indexed row. Fields omitted from a replacement are deleted from that row.
 
+Use `POST /collections/{id}/docs:truncate` to clear every indexed row while
+keeping the collection schema. The request has no body.
+
+Use `POST /collections/{id}/docs:unindex` to remove complete indexed rows for
+one caller-supplied ID list. Send exactly `{"external_ids":[...]}` with 1 to
+1000 unique opaque strings. Missing IDs succeed as no-ops. The request has no
+field selector, query, filter, or `request_id`.
+
 ### 3. Search
 
 ```http

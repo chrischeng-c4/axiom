@@ -1,4 +1,4 @@
-//! Proposal admission lifecycle boundary tests (#3657).
+//! Proposal admission lifecycle boundary tests (#3657, #3658, #3665).
 //!
 //! # What was missing
 //!
@@ -9,16 +9,16 @@
 //! These rows test:
 //! 1. `quiesce_proposals()` on a leader causes subsequent local proposals on that
 //!    leader to return an `Err` containing `proposal admission closed`, and `/raftz`
-//!    reports `proposal_admission_closed` true with `lifecycle_generation` 1.
+//!    reports that only `proposal_rejected_before_routing` increments.
 //! 2. Forwarded proposals sent directly to the quiesced leader's `/raft/publish`
-//!    over h2c return `503 Service Unavailable` with a JSON error containing
-//!    `proposal admission closed`.
+//!    over h2c return `503 Service Unavailable` with a typed JSON outcome and
+//!    report that only `proposal_rejected_before_append` increments.
 //! 3. Eight concurrent `quiesce_proposals()` calls on a shared host collapse into
 //!    exactly one transition (one returning true, seven returning false), and `/raftz`
 //!    reports `lifecycle_generation` 1.
 //! 4. Negative control: an unquiesced cluster admits 8 proposals successfully,
 //!    replicates them to all nodes, and all 3 nodes report `proposal_admission_closed`
-//!    false and `lifecycle_generation` 0.
+//!    false, `lifecycle_generation` 0, and unchanged rejection counters.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -59,9 +59,15 @@ async fn local_proposal_refused_after_quiesce() {
     let client = h2c_client();
 
     let quiesced = nodes[leader].host.quiesce_proposals();
-    assert!(quiesced, "the first quiesce_proposals call must return true");
+    assert!(
+        quiesced,
+        "the first quiesce_proposals call must return true"
+    );
 
-    let res = nodes[leader].host.propose(b"command-after-quiesce".to_vec()).await;
+    let res = nodes[leader]
+        .host
+        .propose(b"command-after-quiesce".to_vec())
+        .await;
     assert!(res.is_err(), "proposal on quiesced leader must return Err");
     let err_msg = res.unwrap_err().to_string();
     assert!(
@@ -78,10 +84,18 @@ async fn local_proposal_refused_after_quiesce() {
         s.lifecycle_generation, 1,
         "lifecycle_generation must be exactly 1 on quiesced leader"
     );
+    assert_eq!(
+        s.proposal_rejected_before_routing, 1,
+        "direct local refusal must increment only the outer routing check"
+    );
+    assert_eq!(
+        s.proposal_rejected_before_append, 0,
+        "direct local refusal must not reach the inner append check"
+    );
 }
 
 /// A quiesced leader refuses forwarded proposals on /raft/publish with 503
-/// Service Unavailable and a JSON error containing "proposal admission closed".
+/// Service Unavailable and a typed JSON outcome containing the refusal reason.
 #[tokio::test]
 async fn forwarded_publish_refused_after_quiesce() {
     let nodes = cluster(3).await;
@@ -92,7 +106,10 @@ async fn forwarded_publish_refused_after_quiesce() {
     let group_id = nodes[leader].host.group_id().0.clone();
 
     let quiesced = nodes[leader].host.quiesce_proposals();
-    assert!(quiesced, "the first quiesce_proposals call must return true");
+    assert!(
+        quiesced,
+        "the first quiesce_proposals call must return true"
+    );
 
     let resp = client
         .post(format!("{}/raft/publish", nodes[leader].url))
@@ -110,6 +127,11 @@ async fn forwarded_publish_refused_after_quiesce() {
         "quiesced leader must answer /raft/publish with 503 Service Unavailable"
     );
     let body: serde_json::Value = resp.json().await.expect("response body is valid json");
+    assert_eq!(
+        body.get("outcome").and_then(|outcome| outcome.as_str()),
+        Some("rejected_before_admission"),
+        "admission refusal must carry the exact typed outcome discriminator"
+    );
     let error_text = body
         .get("error")
         .and_then(|e| e.as_str())
@@ -117,6 +139,15 @@ async fn forwarded_publish_refused_after_quiesce() {
     assert!(
         error_text.contains("proposal admission closed"),
         "error field must contain 'proposal admission closed', got: {error_text}"
+    );
+    let s = status(&client, &nodes[leader].url).await;
+    assert_eq!(
+        s.proposal_rejected_before_routing, 0,
+        "direct publish must not execute the outer routing check"
+    );
+    assert_eq!(
+        s.proposal_rejected_before_append, 1,
+        "direct publish refusal must increment the leader append check"
     );
 }
 
@@ -214,5 +245,49 @@ async fn unquiesced_cluster_admits_proposals_and_reports_generation_zero() {
             s.lifecycle_generation, 0,
             "node {idx} must report lifecycle_generation = 0"
         );
+        assert_eq!(
+            s.proposal_rejected_before_routing, 0,
+            "accepted proposals must not increment routing rejection count on node {idx}"
+        );
+        assert_eq!(
+            s.proposal_rejected_before_append, 0,
+            "accepted proposals must not increment append rejection count on node {idx}"
+        );
     }
+}
+
+/// A successful direct publish retains the established `seq` response shape and
+/// does not acquire an admission-outcome discriminator.
+#[tokio::test]
+async fn successful_publish_retains_seq_response_without_admission_outcome() {
+    let nodes = cluster(1).await;
+    let leader = await_leader(&nodes)
+        .await
+        .expect("a one-voter cluster elects its sole leader");
+    let client = h2c_client();
+    let group_id = nodes[leader].host.group_id().0.clone();
+
+    let resp = client
+        .post(format!("{}/raft/publish", nodes[leader].url))
+        .json(&serde_json::json!({
+            "group_id": group_id,
+            "command": b"successful-publish".to_vec(),
+        }))
+        .send()
+        .await
+        .expect("publish request sends");
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.expect("response body is valid json");
+    assert!(
+        body.get("seq").and_then(|seq| seq.as_u64()).is_some(),
+        "successful publish response must retain its numeric seq"
+    );
+    assert!(
+        body.get("outcome").is_none(),
+        "successful publish response must not add an admission outcome"
+    );
+    let s = status(&client, &nodes[leader].url).await;
+    assert_eq!(s.proposal_rejected_before_routing, 0);
+    assert_eq!(s.proposal_rejected_before_append, 0);
 }

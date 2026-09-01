@@ -31,6 +31,7 @@ main groups are:
 | Listener | `--host`, `LUMEN_HOST`, `--port`, `LUMEN_PORT` | Read at process start. |
 | Logging | `--log-level`, `LUMEN_LOG_LEVEL`, `--log-format`, `LUMEN_LOG_FORMAT` | Read at process start. |
 | Storage | `--data-dir`, `LUMEN_DATA_DIR`, `LUMEN_PERSISTENCE`, `LUMEN_SNAPSHOT_SECS` | Read at process start. No data directory means in-memory by default. |
+| Truncate reclamation | `LUMEN_RECLAIM_WORKERS` | Selects 1 to 4 workers for the one process-wide reclaim queue. The default is 1. Larger values are capped at 4. The value is read when the first truncate starts the reclaimer; restart the process to change it. |
 | Replication | `LUMEN_WAL`, `LUMEN_RAFT_DATA_DIR`, `LUMEN_HEADLESS_SERVICE`, `LUMEN_PEERS` | Read at process start. Managed topology adds operator-owned identity values. |
 | Security | `LUMEN_AUTH` and serving or peer TLS paths | Auth mode is read at start. TLS files can reload at their mounted paths. |
 | Admission and limits | `LUMEN_ADMISSION_*`, `LUMEN_BODY_LIMIT_BYTES` | Read at process start. |

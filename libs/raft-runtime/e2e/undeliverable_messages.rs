@@ -1,4 +1,4 @@
-//! Undeliverable outbound Raft message observability (#3651).
+//! Undeliverable outbound Raft message observability (#3656).
 //!
 //! # What was missing
 //!
@@ -13,6 +13,8 @@
 //! 2. Discarding in-flight outbound messages whose peer address was withdrawn via
 //!    `forget_peer` increments the `undeliverable_withdrawn_address` counter on
 //!    `/raftz`.
+//! 3. Successful delivery, a retryable transport loss to a still-registered peer,
+//!    and repeated status reads do not increment either discard counter.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -178,6 +180,108 @@ async fn unaddressed_peer_messages_increment_never_addressed_counter() {
 
     assert!(s.undeliverable_never_addressed > 0);
     assert_eq!(s.undeliverable_withdrawn_address, 0);
+}
+
+/// A delivered proposal and observing the published status twice do not discard
+/// any message, so neither terminal-discard counter changes.
+#[tokio::test]
+async fn successful_delivery_and_repeated_status_reads_do_not_increment_discard_counters() {
+    let nodes = cluster_with_long_rpc_timeout().await;
+    let leader = await_leader(&nodes)
+        .await
+        .expect("a three-voter cluster elects a leader");
+    let client = h2c_client();
+    let before = status(&client, &nodes[leader].url).await;
+
+    nodes[leader]
+        .host
+        .propose(b"successful-delivery".to_vec())
+        .await
+        .expect("a healthy three-voter cluster delivers and commits the proposal");
+
+    let after_delivery = status(&client, &nodes[leader].url).await;
+    let after_duplicate_observation = status(&client, &nodes[leader].url).await;
+    assert_eq!(
+        (
+            after_delivery.undeliverable_never_addressed,
+            after_delivery.undeliverable_withdrawn_address,
+        ),
+        (
+            before.undeliverable_never_addressed,
+            before.undeliverable_withdrawn_address,
+        ),
+        "successful delivery must not count as terminal discard"
+    );
+    assert_eq!(
+        (
+            after_duplicate_observation.undeliverable_never_addressed,
+            after_duplicate_observation.undeliverable_withdrawn_address,
+        ),
+        (
+            after_delivery.undeliverable_never_addressed,
+            after_delivery.undeliverable_withdrawn_address,
+        ),
+        "repeated status observation must not mutate discard counters"
+    );
+}
+
+/// Losing a live h2c connection before the peer replies is a retryable
+/// transport loss, not a terminal address discard while that peer remains
+/// registered.
+#[tokio::test]
+async fn retryable_transport_loss_to_registered_peer_does_not_increment_discard_counters() {
+    let nodes = cluster_with_long_rpc_timeout().await;
+    let leader = await_leader(&nodes)
+        .await
+        .expect("a three-voter cluster elects a leader");
+    let client = h2c_client();
+    let victim = ((leader + 1) % 3) as u64;
+    let (loss_listener, loss_url) = bind().await;
+    nodes[leader].host.upsert_peer(victim, loss_url).await;
+
+    let loss_observed = tokio::spawn(async move {
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), loss_listener.accept())
+            .await
+            .expect("the registered peer receives an h2c connection")
+            .expect("the transport-loss listener accepts the connection");
+        let mut preface = [0_u8; 24];
+        tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut preface))
+            .await
+            .expect("the connection sends the HTTP/2 preface")
+            .expect("the connection yields a complete HTTP/2 preface");
+        assert_eq!(&preface, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+        // Dropping the stream before a reply makes this a transport loss while
+        // the leader still retains the victim's address.
+    });
+
+    let before = status(&client, &nodes[leader].url).await;
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        nodes[leader]
+            .host
+            .propose(b"retryable-transport-loss".to_vec()),
+    )
+    .await
+    .expect("the healthy voter still lets the proposal finish within five seconds")
+    .expect("the healthy voter commits the proposal despite the lost peer connection");
+    tokio::time::timeout(Duration::from_secs(5), loss_observed)
+        .await
+        .expect("the test observes the lost registered-peer connection")
+        .expect("the transport-loss observer does not panic");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let after = status(&client, &nodes[leader].url).await;
+    assert_eq!(
+        (
+            after.undeliverable_never_addressed,
+            after.undeliverable_withdrawn_address,
+        ),
+        (
+            before.undeliverable_never_addressed,
+            before.undeliverable_withdrawn_address,
+        ),
+        "retryable transport loss to a registered peer must not count as terminal discard"
+    );
 }
 
 /// Withdrawing a peer address while a send to it is stalled in flight causes

@@ -47,7 +47,7 @@ The OpenAPI tags divide the public operations into four families:
 | Family | Use it for |
 |---|---|
 | Collections | Declare, list, inspect, and remove collection schemas. |
-| Index | Merge indexed fields, replace complete indexed rows, delete values, or run the current stream-reindex endpoint. |
+| Index | Merge indexed fields, replace complete indexed rows, delete values, unindex a bounded caller-selected ID list, truncate one collection's indexed documents, or run the current stream-reindex endpoint. |
 | Query | Search one or many collections, inspect statistics, and find duplicates. |
 | Admin and operations | Probe the process, inspect version and metrics, and run backup, restore, checkpoint, debug, or reshard operations. |
 

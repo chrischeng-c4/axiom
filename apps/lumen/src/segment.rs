@@ -2172,6 +2172,40 @@ impl SegmentReader {
             .map(|p| (*p).clone())
     }
 
+    /// Number of keyword dictionary ordinals in lexical order. This is the
+    /// direct sort-planner seam: it avoids materializing every dictionary
+    /// string when a page only needs the first few posting buckets. `None`
+    /// means the dictionary column is absent or malformed.
+    pub fn keyword_ordinal_count(&self) -> Option<u32> {
+        self.column(ROLE_DICT)
+            .and_then(|column| u32::try_from(column.elem_count).ok())
+    }
+
+    /// Keyword term at a lexical dictionary ordinal. This decodes only the
+    /// requested dictionary entry (and its bounded compressed block), so the
+    /// sort planner can merge a sealed dictionary with its live tail without
+    /// materializing every term. `None` is fail-closed for an invalid ordinal
+    /// or torn dictionary data.
+    pub fn keyword_term_at_ordinal(&self, ordinal: u32) -> Option<String> {
+        if ordinal >= self.keyword_ordinal_count()? {
+            return None;
+        }
+        self.dict_string(ordinal)
+    }
+
+    /// Keyword posting bucket at a lexical dictionary ordinal. Ordinal `0` is
+    /// the smallest keyword. The returned bitmap is the immutable sealed
+    /// posting, before `storage.rs` applies query-time tombstones. `None` is
+    /// returned for an invalid ordinal or a malformed posting block.
+    pub fn keyword_postings_at_ordinal(&self, ordinal: u32) -> Option<roaring::RoaringBitmap> {
+        let count = self.keyword_ordinal_count()?;
+        if ordinal >= count {
+            return None;
+        }
+        self.cached_docid_postings(ROLE_KEYWORD_POSTINGS, ordinal)
+            .map(|posting| (*posting).clone())
+    }
+
     /// Materialize EVERY keyword term in the [`ROLE_DICT`] string dictionary of a
     /// Keyword segment paired with its stored INVERTED postings, in dict-id
     /// (ascending lexical) order. `None` if any dict entry or posting block is
@@ -3109,6 +3143,21 @@ mod tests {
         assert_eq!(r.keyword_df("apple"), Some(1));
         assert_eq!(r.keyword_df("cherry"), Some(1));
         assert_eq!(r.keyword_df("durian"), None);
+        // #3997: the sort planner can stream sealed dictionary ordinals without
+        // materializing the complete `(term, posting)` vector.
+        assert_eq!(r.keyword_ordinal_count(), Some(3));
+        assert_eq!(r.keyword_term_at_ordinal(0).as_deref(), Some("apple"));
+        assert_eq!(r.keyword_term_at_ordinal(1).as_deref(), Some("banana"));
+        assert_eq!(r.keyword_term_at_ordinal(3), None);
+        assert_eq!(
+            r.keyword_postings_at_ordinal(0),
+            Some([2u32].into_iter().collect()) // apple
+        );
+        assert_eq!(
+            r.keyword_postings_at_ordinal(1),
+            Some([0u32, 4].into_iter().collect()) // banana
+        );
+        assert_eq!(r.keyword_postings_at_ordinal(3), None);
         std::fs::remove_file(&path).ok();
     }
 

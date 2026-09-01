@@ -120,6 +120,29 @@ current runtime still accepts the current field model.
 all indexed fields for the supplied `external_id`. Fields omitted from the
 replacement are removed from that indexed row.
 
+`POST /collections/{id}/docs:truncate` has no request body. It clears every
+indexed document but keeps the collection ID, declared fields, and schema
+version. It does not accept `request_id`.
+
+`POST /collections/{id}/docs:unindex` removes every indexed field for the
+caller-supplied rows. Its body is exactly `{"external_ids":[...]}`. The list
+has 1 through 1000 unique opaque strings. Missing IDs are successful no-ops.
+It has no field selector, filter, query, or `request_id`. Invalid JSON, empty,
+duplicate, or oversized ID lists fail before a write fence, routing, or durable
+publish.
+
+Within one physical shard, the durable log orders truncate with every write.
+A write committed before truncate is removed. A write committed after truncate
+is visible. A read sees the state before or after the shard swap, never a
+partially cleared shard. Routed truncate sends one command to every active
+physical shard. It can therefore expose a mixed cross-shard window. A shard
+failure returns 5xx and does not roll back a shard that already completed.
+
+Truncate refuses an active reshard write fence with `503 bucket_write_paused`.
+It has no delete tombstone. A delayed write ordered after truncate can recreate
+a document. Callers must fence or quiesce stale ingest before retrying an
+ambiguous routed failure.
+
 The current request body can carry `request_id`. Its de-duplication window is
 five minutes and its state is process-local. The key is not bound to a payload.
 Lumen does not replay the original response for a duplicate key. A restart or
@@ -179,6 +202,31 @@ give one uniform durable-acknowledgement promise for every mode.
 A caller must select and verify the runtime storage configuration. A current
 2xx response must not be treated as the same disk-loss guarantee in every
 backend mode.
+
+`docs:truncate` is one durable command per physical shard. The command replays
+through AOF and Raft WAL and is present in checkpoints and snapshots. Old
+document state is reclaimed after the logical swap, outside the request path.
+One process-wide queue schedules the cleanup. Each task handles at most 1,024
+external IDs. One task owns a retired generation at a time. The next task is
+queued only after the current task completes. `LUMEN_RECLAIM_WORKERS` selects
+1 to 4 workers; the default is 1. More workers can clean different retired
+generations at the same time.
+
+The 1,024 limit is an external-ID work limit. It is not a byte or time limit.
+A document can still contain many tokens, set values, or vector values. Final
+container, HNSW, and memory-map destruction also has no current byte limit.
+These steps remain outside the durable apply and request paths.
+All voting members must run 0.4.31 before the first truncate. After truncate
+is durable, direct downgrade to 0.4.30 requires an older snapshot or a
+collection rebuild.
+
+`docs:unindex` is at most one durable command per nonempty physical shard. A
+routed request partitions IDs by the active map, waits for every shard, and
+can expose a mixed cross-shard result when one shard fails. It has no rollback.
+Within one shard, a command removes fields and write-version side state
+atomically, so a later write can recreate an unindexed row. All voting members
+must run 0.4.31 before its first durable command. Downgrade after that point
+also needs an older snapshot or a collection rebuild.
 
 ### 0.5 target acknowledgement
 

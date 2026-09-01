@@ -11,7 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{CreateCollectionRequest, FieldSpec, IndexRequest, ReplaceDocsRequest};
+use crate::types::{
+    BatchUnindexDocsRequest, CreateCollectionRequest, FieldSpec, IndexRequest, ReplaceDocsRequest,
+};
 
 /// One committed mutation against the lumen storage engine.
 ///
@@ -34,6 +36,20 @@ pub enum RaftLogEntry {
     ReplaceDocs {
         collection_id: String,
         req: ReplaceDocsRequest,
+    },
+    /// Empty every indexed document while keeping the collection declaration.
+    ///
+    /// This is deliberately a collection-level command rather than a batch of
+    /// [`Self::Delete`] entries.  One committed command establishes the
+    /// shard-local order boundary for every document in the collection.
+    TruncateDocs {
+        collection_id: String,
+    },
+    /// Remove every indexed field for the named documents in one physical
+    /// shard.  Missing identifiers are successful no-ops.
+    UnindexDocs {
+        collection_id: String,
+        req: BatchUnindexDocsRequest,
     },
     Delete {
         collection_id: String,

@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.30"
+version = "0.4.31"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -402,6 +402,18 @@ name = "drop_field_e2e"
 path = "e2e/drop_field_e2e.rs"
 
 [[test]]
+name = "docs_namespace_e2e"
+path = "e2e/docs_namespace_e2e.rs"
+
+[[test]]
+name = "truncate_docs_e2e"
+path = "e2e/truncate_docs_e2e.rs"
+
+[[test]]
+name = "batch_unindex_docs_e2e"
+path = "e2e/batch_unindex_docs_e2e.rs"
+
+[[test]]
 name = "efficiency_lumen_claim_competitor_performance_external_comparison"
 path = "e2e/efficiency_lumen_claim_competitor_performance_external_comparison.rs"
 
@@ -547,8 +559,16 @@ name = "search_all_e2e"
 path = "e2e/search_all_e2e.rs"
 
 [[test]]
+name = "search_responsiveness_e2e"
+path = "e2e/search_responsiveness_e2e.rs"
+
+[[test]]
 name = "segment_checkpoint_vector_sidecar"
 path = "e2e/segment_checkpoint_vector_sidecar.rs"
+
+[[test]]
+name = "segment_startup_fail_closed_e2e"
+path = "e2e/segment_startup_fail_closed_e2e.rs"
 
 [[test]]
 name = "serving_tls_rotation"
@@ -573,6 +593,10 @@ path = "e2e/snapshot_round_trip_keeps_sealed_inverted_index.rs"
 [[test]]
 name = "snapshot_ships_only_the_forward_column"
 path = "e2e/snapshot_ships_only_the_forward_column.rs"
+
+[[test]]
+name = "sort_missing_topk_e2e"
+path = "e2e/sort_missing_topk_e2e.rs"
 
 [[test]]
 name = "spec_route_parity"

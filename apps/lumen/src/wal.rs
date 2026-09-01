@@ -36,10 +36,18 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 use crate::log_entry::RaftLogEntry;
-use crate::types::{FieldValue, IndexItem, IndexRequest};
+use crate::types::{
+    validate_batch_unindex_docs_request, BatchUnindexDocsRequest, FieldValue, IndexItem,
+    IndexRequest, MAX_BATCH_UNINDEX_DOCS_SIZE,
+};
 
-/// Current on-the-wire record format version.
+/// Legacy on-the-wire record format version.  Existing writable operations
+/// keep emitting this byte so a 0.4.30 reader sees their exact old wire form.
 pub const WAL_FORMAT_VERSION: u8 = 1;
+/// #3992 control-record version.  A pre-0.4.31 reader rejects this byte before
+/// it attempts to decode the new command tag, making the downgrade boundary
+/// explicit rather than reporting an opaque unknown-enum error.
+pub const WAL_CONTROL_FORMAT_VERSION: u8 = 2;
 const WAL_FAST_MAGIC: &[u8; 4] = b"LWAL";
 /// Legacy fast-Index tag: `(external_id, field, value)` triples only, no
 /// `IndexItem.version`. Every fast record written before #3952 used this tag.
@@ -61,6 +69,13 @@ const WAL_FAST_INDEX: u8 = 1;
 /// downgrade path open for exactly the records an older binary could have
 /// read correctly, and closes it, loudly, for the ones it could not.
 const WAL_FAST_INDEX_VERSIONED: u8 = 2;
+/// #3992: `POST .../docs:truncate`.  This has no request body beyond its
+/// collection id, so a small control record is both clearer and stricter than
+/// a generic CBOR enum payload.  It is always paired with WAL v2.
+const WAL_FAST_TRUNCATE_DOCS: u8 = 3;
+/// #3994: `POST .../docs:unindex`.  This stays a separate v2 control tag so
+/// a reader never mistakes an identifier batch for a collection-wide swap.
+const WAL_FAST_UNINDEX_DOCS: u8 = 4;
 const WAL_VALUE_STRING: u8 = 1;
 const WAL_VALUE_NUMBER: u8 = 2;
 const WAL_VALUE_VECTOR: u8 = 3;
@@ -79,13 +94,42 @@ pub struct WalRecord {
 impl WalRecord {
     pub fn new(entry: RaftLogEntry) -> Self {
         Self {
-            version: WAL_FORMAT_VERSION,
+            version: match entry {
+                RaftLogEntry::TruncateDocs { .. } | RaftLogEntry::UnindexDocs { .. } => {
+                    WAL_CONTROL_FORMAT_VERSION
+                }
+                _ => WAL_FORMAT_VERSION,
+            },
             entry,
         }
     }
 
     #[inline]
     pub fn encode(&self) -> Result<Vec<u8>> {
+        match &self.entry {
+            RaftLogEntry::TruncateDocs { .. } => {
+                return self.encode_fast_truncate_docs().ok_or_else(|| {
+                    anyhow!(
+                        "TruncateDocs must use WAL v{} fast control encoding",
+                        WAL_CONTROL_FORMAT_VERSION
+                    )
+                });
+            }
+            RaftLogEntry::UnindexDocs { .. } => {
+                return self.encode_fast_unindex_docs().ok_or_else(|| {
+                    anyhow!(
+                        "UnindexDocs must use a valid WAL v{} fast control encoding",
+                        WAL_CONTROL_FORMAT_VERSION
+                    )
+                });
+            }
+            _ => {}
+        }
+        anyhow::ensure!(
+            self.version != WAL_CONTROL_FORMAT_VERSION,
+            "WAL v{} is reserved for fast control records",
+            WAL_CONTROL_FORMAT_VERSION
+        );
         if let Some(bytes) = self.encode_fast_index() {
             return Ok(bytes);
         }
@@ -107,14 +151,25 @@ impl WalRecord {
         };
         anyhow::ensure!(
             rec.version == WAL_FORMAT_VERSION,
-            "unsupported WAL record version {} (expected {})",
+            "unsupported generic WAL record version {} (expected {})",
             rec.version,
             WAL_FORMAT_VERSION
+        );
+        anyhow::ensure!(
+            !matches!(
+                &rec.entry,
+                RaftLogEntry::TruncateDocs { .. } | RaftLogEntry::UnindexDocs { .. }
+            ),
+            "control commands must use WAL v{} fast control encoding",
+            WAL_CONTROL_FORMAT_VERSION
         );
         Ok(rec)
     }
 
     fn encode_fast_index(&self) -> Option<Vec<u8>> {
+        if self.version != WAL_FORMAT_VERSION {
+            return None;
+        }
         let RaftLogEntry::Index { collection_id, req } = &self.entry else {
             return None;
         };
@@ -184,6 +239,44 @@ impl WalRecord {
         }
         Some(bytes)
     }
+
+    fn encode_fast_truncate_docs(&self) -> Option<Vec<u8>> {
+        let RaftLogEntry::TruncateDocs { collection_id } = &self.entry else {
+            return None;
+        };
+        if self.version != WAL_CONTROL_FORMAT_VERSION {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(WAL_FAST_MAGIC.len() + 2 + collection_id.len() + 4);
+        bytes.extend_from_slice(WAL_FAST_MAGIC);
+        bytes.push(WAL_CONTROL_FORMAT_VERSION);
+        bytes.push(WAL_FAST_TRUNCATE_DOCS);
+        put_str(&mut bytes, collection_id)?;
+        Some(bytes)
+    }
+
+    fn encode_fast_unindex_docs(&self) -> Option<Vec<u8>> {
+        let RaftLogEntry::UnindexDocs { collection_id, req } = &self.entry else {
+            return None;
+        };
+        if self.version != WAL_CONTROL_FORMAT_VERSION
+            || validate_batch_unindex_docs_request(req).is_err()
+        {
+            return None;
+        }
+        let ids_len: usize = req.external_ids.iter().map(|id| 4 + id.len()).sum();
+        let mut bytes =
+            Vec::with_capacity(WAL_FAST_MAGIC.len() + 2 + 4 + collection_id.len() + 4 + ids_len);
+        bytes.extend_from_slice(WAL_FAST_MAGIC);
+        bytes.push(WAL_CONTROL_FORMAT_VERSION);
+        bytes.push(WAL_FAST_UNINDEX_DOCS);
+        put_str(&mut bytes, collection_id)?;
+        put_u32(&mut bytes, req.external_ids.len())?;
+        for external_id in &req.external_ids {
+            put_str(&mut bytes, external_id)?;
+        }
+        Some(bytes)
+    }
 }
 
 /// `versioned` must be the same predicate `encode_fast_index` used to pick the
@@ -232,12 +325,54 @@ fn decode_fast_record(bytes: &[u8]) -> Result<WalRecord> {
     cur.expect_magic(WAL_FAST_MAGIC)?;
     let version = cur.read_u8()?;
     anyhow::ensure!(
-        version == WAL_FORMAT_VERSION,
-        "unsupported WAL fast record version {} (expected {})",
+        matches!(version, WAL_FORMAT_VERSION | WAL_CONTROL_FORMAT_VERSION),
+        "unsupported WAL fast record version {} (expected {} or {})",
         version,
-        WAL_FORMAT_VERSION
+        WAL_FORMAT_VERSION,
+        WAL_CONTROL_FORMAT_VERSION
     );
     let tag = cur.read_u8()?;
+    if version == WAL_CONTROL_FORMAT_VERSION {
+        return match tag {
+            WAL_FAST_TRUNCATE_DOCS => {
+                let collection_id = cur.read_string()?;
+                cur.expect_eof()?;
+                Ok(WalRecord {
+                    version,
+                    entry: RaftLogEntry::TruncateDocs { collection_id },
+                })
+            }
+            WAL_FAST_UNINDEX_DOCS => {
+                let collection_id = cur.read_string()?;
+                let item_count = cur.read_u32()? as usize;
+                // Validate the untrusted count before `Vec::with_capacity`.
+                // A corrupt WAL frame must not force a replica to reserve an
+                // attacker-sized allocation merely to reject it later.
+                anyhow::ensure!(
+                    (1..=MAX_BATCH_UNINDEX_DOCS_SIZE).contains(&item_count),
+                    "invalid WAL UnindexDocs item count {item_count} (must be 1..={MAX_BATCH_UNINDEX_DOCS_SIZE})"
+                );
+                let mut external_ids = Vec::with_capacity(item_count);
+                let mut seen = std::collections::BTreeSet::new();
+                for _ in 0..item_count {
+                    let external_id = cur.read_string()?;
+                    anyhow::ensure!(
+                        seen.insert(external_id.clone()),
+                        "duplicate external_id in WAL UnindexDocs record"
+                    );
+                    external_ids.push(external_id);
+                }
+                cur.expect_eof()?;
+                let req = BatchUnindexDocsRequest { external_ids };
+                validate_batch_unindex_docs_request(&req)?;
+                Ok(WalRecord {
+                    version,
+                    entry: RaftLogEntry::UnindexDocs { collection_id, req },
+                })
+            }
+            _ => Err(anyhow!("unsupported WAL v2 control tag {tag}")),
+        };
+    }
     anyhow::ensure!(
         tag == WAL_FAST_INDEX || tag == WAL_FAST_INDEX_VERSIONED,
         "unsupported WAL fast record tag {tag}"
@@ -585,7 +720,9 @@ impl WalLog for MemWal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CreateCollectionRequest, FieldValue, IndexItem, IndexRequest};
+    use crate::types::{
+        BatchUnindexDocsRequest, CreateCollectionRequest, FieldValue, IndexItem, IndexRequest,
+    };
     use futures::StreamExt;
     use std::collections::BTreeMap;
 
@@ -620,6 +757,150 @@ mod tests {
         let back = WalRecord::decode(&bytes).unwrap();
         assert!(matches!(back.entry, RaftLogEntry::CreateCollection { .. }));
         assert_eq!(back.version, WAL_FORMAT_VERSION);
+    }
+
+    #[test]
+    fn truncate_control_record_round_trips_and_fails_a_v1_reader_at_version_gate() {
+        let bytes = WalRecord::new(RaftLogEntry::TruncateDocs {
+            collection_id: "users".into(),
+        })
+        .encode()
+        .unwrap();
+        assert!(bytes.starts_with(WAL_FAST_MAGIC));
+        assert_eq!(bytes[WAL_FAST_MAGIC.len()], WAL_CONTROL_FORMAT_VERSION);
+        assert_eq!(bytes[WAL_FAST_MAGIC.len() + 1], WAL_FAST_TRUNCATE_DOCS);
+
+        let back = WalRecord::decode(&bytes).expect("0.4.31 must read a v2 control record");
+        assert!(matches!(
+            back.entry,
+            RaftLogEntry::TruncateDocs { collection_id } if collection_id == "users"
+        ));
+
+        // This is the pre-0.4.31 fast-record entrance check.  It reads and
+        // rejects the version byte before looking at the command tag, so a
+        // direct downgrade fails closed with the intended compatibility
+        // boundary rather than attempting to decode `TruncateDocs`.
+        let v1_reader = || -> Result<()> {
+            anyhow::ensure!(bytes.starts_with(WAL_FAST_MAGIC), "invalid WAL fast magic");
+            anyhow::ensure!(
+                bytes[WAL_FAST_MAGIC.len()] == WAL_FORMAT_VERSION,
+                "unsupported WAL fast record version {} (expected {})",
+                bytes[WAL_FAST_MAGIC.len()],
+                WAL_FORMAT_VERSION
+            );
+            Ok(())
+        };
+        assert!(
+            v1_reader().is_err(),
+            "a v1 reader must refuse the v2 byte first"
+        );
+    }
+
+    #[test]
+    fn generic_wal_envelope_cannot_smuggle_control_versions_or_commands() {
+        let truncate = RaftLogEntry::TruncateDocs {
+            collection_id: "users".into(),
+        };
+        let unindex = RaftLogEntry::UnindexDocs {
+            collection_id: "users".into(),
+            req: BatchUnindexDocsRequest {
+                external_ids: vec!["d1".into()],
+            },
+        };
+        assert!(
+            WalRecord {
+                version: WAL_FORMAT_VERSION,
+                entry: truncate.clone(),
+            }
+            .encode()
+            .is_err(),
+            "a v1 envelope must never emit TruncateDocs"
+        );
+        assert!(
+            WalRecord {
+                version: WAL_FORMAT_VERSION,
+                entry: unindex.clone(),
+            }
+            .encode()
+            .is_err(),
+            "a v1 envelope must never emit UnindexDocs"
+        );
+        assert!(
+            WalRecord {
+                version: WAL_CONTROL_FORMAT_VERSION,
+                entry: create_entry("users"),
+            }
+            .encode()
+            .is_err(),
+            "v2 is reserved for the fast control tag"
+        );
+
+        // Decode must enforce the same boundary even for bytes that bypassed
+        // this build's encoder (for example, a malformed external WAL frame).
+        for record in [
+            WalRecord {
+                version: WAL_FORMAT_VERSION,
+                entry: truncate,
+            },
+            WalRecord {
+                version: WAL_CONTROL_FORMAT_VERSION,
+                entry: create_entry("users"),
+            },
+            WalRecord {
+                version: WAL_FORMAT_VERSION,
+                entry: unindex,
+            },
+        ] {
+            let mut bytes = Vec::new();
+            ciborium::ser::into_writer(&record, &mut bytes).unwrap();
+            assert!(WalRecord::decode(&bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn unindex_control_record_round_trips_and_rejects_invalid_fast_shapes() {
+        let entry = RaftLogEntry::UnindexDocs {
+            collection_id: "users".into(),
+            req: BatchUnindexDocsRequest {
+                external_ids: vec!["one".into(), "two".into()],
+            },
+        };
+        let bytes = WalRecord::new(entry).encode().unwrap();
+        assert!(bytes.starts_with(WAL_FAST_MAGIC));
+        assert_eq!(bytes[WAL_FAST_MAGIC.len()], WAL_CONTROL_FORMAT_VERSION);
+        assert_eq!(bytes[WAL_FAST_MAGIC.len() + 1], WAL_FAST_UNINDEX_DOCS);
+        assert!(matches!(
+            WalRecord::decode(&bytes).unwrap().entry,
+            RaftLogEntry::UnindexDocs { collection_id, req }
+                if collection_id == "users" && req.external_ids == ["one", "two"]
+        ));
+
+        // This is the legacy entrance guard: an older reader refuses the v2
+        // byte before it can observe either control tag.
+        assert_ne!(bytes[WAL_FAST_MAGIC.len()], WAL_FORMAT_VERSION);
+
+        let mut over_limit = Vec::new();
+        over_limit.extend_from_slice(WAL_FAST_MAGIC);
+        over_limit.push(WAL_CONTROL_FORMAT_VERSION);
+        over_limit.push(WAL_FAST_UNINDEX_DOCS);
+        put_str(&mut over_limit, "users").unwrap();
+        put_u32(&mut over_limit, MAX_BATCH_UNINDEX_DOCS_SIZE + 1).unwrap();
+        let err = WalRecord::decode(&over_limit).unwrap_err();
+        assert!(
+            err.to_string().contains("item count"),
+            "count must fail before allocation/read, got: {err}"
+        );
+
+        let mut duplicate = Vec::new();
+        duplicate.extend_from_slice(WAL_FAST_MAGIC);
+        duplicate.push(WAL_CONTROL_FORMAT_VERSION);
+        duplicate.push(WAL_FAST_UNINDEX_DOCS);
+        put_str(&mut duplicate, "users").unwrap();
+        put_u32(&mut duplicate, 2).unwrap();
+        put_str(&mut duplicate, "same").unwrap();
+        put_str(&mut duplicate, "same").unwrap();
+        let err = WalRecord::decode(&duplicate).unwrap_err();
+        assert!(err.to_string().contains("duplicate"), "got: {err}");
     }
 
     #[test]

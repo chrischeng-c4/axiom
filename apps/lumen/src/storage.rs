@@ -19,11 +19,13 @@
 //! re-indexing the same `(eid, field)` cleanly evicts the old postings
 //! before appending the new ones.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -36,13 +38,14 @@ use crate::metrics::Metrics;
 use crate::routing::VirtualBucketShardMap;
 use crate::tokenize;
 use crate::types::{
-    Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
-    DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
-    HammingQuery, HasChildQuery, IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp,
-    MatchQuery, PrefixQuery, QueryNode, RangeBound, RangeQuery, ReplaceDocItem, ReplaceDocResult,
-    ReplaceDocsRequest, ReplaceDocsResponse, RrfQuery, SearchHit, SearchRequest, SearchResponse,
-    SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
-    VectorSpec, MAX_BATCH_REPLACE_SIZE,
+    validate_batch_unindex_docs_request, Analyzer, BatchUnindexDocsRequest, CacheStats,
+    CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup, DuplicatesRequest,
+    DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue, HammingQuery, HasChildQuery,
+    IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery, PrefixQuery, QueryNode,
+    RangeBound, RangeQuery, ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest,
+    ReplaceDocsResponse, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortMissing,
+    SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
+    MAX_BATCH_REPLACE_SIZE,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
@@ -53,8 +56,60 @@ const SEARCH_RESULT_CACHE_MAX: usize = 256;
 type FastHashMap<K, V> = FxHashMap<K, V>;
 type FastHashSet<K> = rustc_hash::FxHashSet<K>;
 
+// #3992 deterministic test oracle.  This is thread-local so concurrent unit
+// tests and the asynchronous reclaimer cannot affect the caller-thread check.
+// The truncate test uses an unavailable worker and requires this to remain
+// zero, proving the apply thread did not reach the per-document primitive.
+#[cfg(test)]
+thread_local! {
+    static DROP_EID_CALLS: Cell<u64> = const { Cell::new(0) };
+    // #3997 structural oracles are thread-local so parallel storage tests
+    // cannot perturb the counter that one test resets and asserts.
+    static MATERIALIZED_SORT_COMPARISONS: Cell<u64> = const { Cell::new(0) };
+    static MATERIALIZED_SORT_RETAINED_HIGH_WATER: Cell<u64> = const { Cell::new(0) };
+}
+#[cfg(test)]
+static RETIREMENT_FAILSAFE_RETAINS: AtomicU64 = AtomicU64::new(0);
+
 /// Maximum items in a single `POST /index` request (README §1 v1 limit).
 pub const MAX_INDEX_ITEMS: usize = 10_000;
+/// One detached-generation reclaim token removes no more than this many
+/// external-id items. This is an item-count work bound only. It is not a hard
+/// byte limit, a portable allocator-time limit, or a complete destructor-time
+/// limit: one item can still contain an unbounded value, and final container
+/// destruction is reported separately below.
+const RETIRED_DOCUMENTS_PER_TASK: usize = 1_024;
+
+/// Read-only process-wide diagnostics for detached collection reclamation.
+///
+/// These counters never participate in logical apply. They let the scale
+/// harness measure the queue after `docs:truncate` without turning local
+/// cleanup speed into a Raft admission or success condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectionReclaimerSnapshot {
+    /// Generations retained by the registry, whether queued or active.
+    pub pending_generations: usize,
+    /// Generations handed to the reclaimer since process start.
+    pub submitted_generations: u64,
+    /// Generations whose final destructor completed off the apply thread.
+    pub completed_generations: u64,
+    /// Task tokens currently waiting in the one shared queue.
+    pub queued_tasks: usize,
+    /// Largest observed `queued_tasks` value since process start.
+    pub queue_high_water: usize,
+    /// Task tokens currently executing across all configured workers.
+    pub active_tasks: usize,
+}
+
+static RETIREMENT_SUBMITTED_GENERATIONS: AtomicU64 = AtomicU64::new(0);
+static RETIREMENT_COMPLETED_GENERATIONS: AtomicU64 = AtomicU64::new(0);
+static RETIREMENT_QUEUED_TASKS: AtomicUsize = AtomicUsize::new(0);
+static RETIREMENT_QUEUE_HIGH_WATER: AtomicUsize = AtomicUsize::new(0);
+static RETIREMENT_ACTIVE_TASKS: AtomicUsize = AtomicUsize::new(0);
+// A receiver may dequeue immediately after `send`. This lock makes the queue
+// counter increment visible before the matching decrement without wrapping
+// the channel or holding a lock while `recv` blocks.
+static RETIREMENT_QUEUE_METRICS_LOCK: Mutex<()> = Mutex::new(());
 /// #183: max keys in a multi-key `sort`. The generic plan and keyset cursor carry
 /// a full `Vec<SortValue>` and compare every key in order, so this is a guard
 /// against pathological requests, not a structural limit.
@@ -76,7 +131,9 @@ pub enum DropOutcome {
 pub enum StorageError {
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
-    #[error("invalid collection id `{0}`: `:` is reserved for custom-method routes (e.g. `POST /collections:search`) and cannot appear in a collection id")]
+    #[error(
+        "invalid collection id `{0}`: `:` is reserved for custom-method routes (e.g. `POST /collections:search`) and cannot appear in a collection id"
+    )]
     InvalidCollectionName(String),
     #[error("unknown field `{field}` in collection `{collection}`")]
     UnknownField { collection: String, field: String },
@@ -314,6 +371,47 @@ impl Interner {
 
     fn resolve(&self, id: u32) -> &str {
         &self.to_eid[id as usize]
+    }
+
+    /// Remove the last interned id together with its lookup entry. Retired
+    /// collections drain in reverse id order, so taking the vector tail does
+    /// not shift any remaining id. The hash bucket is compacted at the same
+    /// item boundary instead of leaving a collection-sized lookup map for the
+    /// final destructor.
+    fn take_last_for_retirement(&mut self) -> Option<(u32, String)> {
+        let id = self.to_eid.len().checked_sub(1)? as u32;
+        let external_id = self.to_eid.pop()?;
+        self.remove_hash_id(hash_external_id(&external_id), id);
+        Some((id, external_id))
+    }
+
+    fn remove_hash_id(&mut self, hash: u64, id: u32) {
+        let mut remove_bucket = false;
+        if let Some(bucket) = self.to_hash.get_mut(&hash) {
+            match bucket {
+                InternerBucket::One(existing) => {
+                    debug_assert_eq!(*existing, id);
+                    remove_bucket = true;
+                }
+                InternerBucket::Many(ids) => {
+                    let position = ids
+                        .iter()
+                        .position(|candidate| *candidate == id)
+                        .expect("retired id must remain in its interner hash bucket");
+                    ids.swap_remove(position);
+                    match ids.as_slice() {
+                        [] => remove_bucket = true,
+                        [remaining] => *bucket = InternerBucket::One(*remaining),
+                        _ => {}
+                    }
+                }
+            }
+        } else {
+            debug_assert!(false, "retired id must have an interner hash bucket");
+        }
+        if remove_bucket {
+            self.to_hash.remove(&hash);
+        }
     }
 }
 
@@ -1003,6 +1101,16 @@ struct KeywordIndex {
     tombstones: RoaringBitmap,
 }
 
+/// Result of walking keyword posting buckets in lexical field-sort order.
+/// `Unavailable` is fail-closed: a torn segment falls back to the generic
+/// bounded top-k path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeywordBucketWalk {
+    Completed,
+    Stopped,
+    Unavailable,
+}
+
 impl KeywordIndex {
     /// The doc's keyword for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -1168,6 +1276,115 @@ impl KeywordIndex {
             }
         }
         out
+    }
+
+    /// Streams live keyword posting buckets in field-sort order without first
+    /// materializing every `(term, posting)` pair. For a sealed field it
+    /// merges the ordinal dictionary and the sorted live tail one entry at a
+    /// time. Equal terms union the tail posting after tombstones are removed;
+    /// tail-only terms retain their lexical place. Any torn ordinal entry is
+    /// fail-closed and lets the caller take the generic exact fallback.
+    fn visit_sorted_posting_buckets<F>(
+        &self,
+        descending: bool,
+        mut visit: F,
+    ) -> Result<KeywordBucketWalk>
+    where
+        F: FnMut(&RoaringBitmap) -> Result<bool>,
+    {
+        if let Some(segment) = &self.segment {
+            let Some(count) = segment.keyword_ordinal_count() else {
+                return Ok(KeywordBucketWalk::Unavailable);
+            };
+            if descending {
+                let mut tail = self.terms.iter().rev().peekable();
+                for ordinal in (0..count).rev() {
+                    let Some(term) = segment.keyword_term_at_ordinal(ordinal) else {
+                        return Ok(KeywordBucketWalk::Unavailable);
+                    };
+                    while tail
+                        .peek()
+                        .is_some_and(|(tail_term, _)| tail_term.as_str() > term.as_str())
+                    {
+                        let (_, tail_posting) = tail.next().expect("peeked tail entry");
+                        if !tail_posting.is_empty() && !visit(tail_posting)? {
+                            return Ok(KeywordBucketWalk::Stopped);
+                        }
+                    }
+                    let Some(mut posting) = segment.keyword_postings_at_ordinal(ordinal) else {
+                        return Ok(KeywordBucketWalk::Unavailable);
+                    };
+                    if !self.tombstones.is_empty() {
+                        posting -= &self.tombstones;
+                    }
+                    if tail
+                        .peek()
+                        .is_some_and(|(tail_term, _)| tail_term.as_str() == term.as_str())
+                    {
+                        let (_, tail_posting) = tail.next().expect("peeked equal tail entry");
+                        posting |= tail_posting;
+                    }
+                    if !posting.is_empty() && !visit(&posting)? {
+                        return Ok(KeywordBucketWalk::Stopped);
+                    }
+                }
+                for (_, tail_posting) in tail {
+                    if !tail_posting.is_empty() && !visit(tail_posting)? {
+                        return Ok(KeywordBucketWalk::Stopped);
+                    }
+                }
+            } else {
+                let mut tail = self.terms.iter().peekable();
+                for ordinal in 0..count {
+                    let Some(term) = segment.keyword_term_at_ordinal(ordinal) else {
+                        return Ok(KeywordBucketWalk::Unavailable);
+                    };
+                    while tail
+                        .peek()
+                        .is_some_and(|(tail_term, _)| tail_term.as_str() < term.as_str())
+                    {
+                        let (_, tail_posting) = tail.next().expect("peeked tail entry");
+                        if !tail_posting.is_empty() && !visit(tail_posting)? {
+                            return Ok(KeywordBucketWalk::Stopped);
+                        }
+                    }
+                    let Some(mut posting) = segment.keyword_postings_at_ordinal(ordinal) else {
+                        return Ok(KeywordBucketWalk::Unavailable);
+                    };
+                    if !self.tombstones.is_empty() {
+                        posting -= &self.tombstones;
+                    }
+                    if tail
+                        .peek()
+                        .is_some_and(|(tail_term, _)| tail_term.as_str() == term.as_str())
+                    {
+                        let (_, tail_posting) = tail.next().expect("peeked equal tail entry");
+                        posting |= tail_posting;
+                    }
+                    if !posting.is_empty() && !visit(&posting)? {
+                        return Ok(KeywordBucketWalk::Stopped);
+                    }
+                }
+                for (_, tail_posting) in tail {
+                    if !tail_posting.is_empty() && !visit(tail_posting)? {
+                        return Ok(KeywordBucketWalk::Stopped);
+                    }
+                }
+            }
+            return Ok(KeywordBucketWalk::Completed);
+        }
+
+        let postings: Box<dyn Iterator<Item = &RoaringBitmap>> = if descending {
+            Box::new(self.terms.iter().rev().map(|(_, posting)| posting))
+        } else {
+            Box::new(self.terms.values())
+        };
+        for posting in postings {
+            if !visit(posting)? {
+                return Ok(KeywordBucketWalk::Stopped);
+            }
+        }
+        Ok(KeywordBucketWalk::Completed)
     }
 }
 
@@ -2576,6 +2793,8 @@ impl FieldIndex {
     /// only for the String-keyed vector backend) and return the number of
     /// bytes freed (approximate, used to keep `bytes` honest).
     fn drop_eid(&mut self, id: u32, eid: &str) -> u64 {
+        #[cfg(test)]
+        DROP_EID_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
         match self {
             FieldIndex::Text { idx, .. } => {
                 idx.clear_match_rank_cache();
@@ -2967,6 +3186,322 @@ struct Collection {
     field_checksums: FastHashMap<u32, FastHashMap<String, u64>>,
 }
 
+/// One detached generation remains in this registry until the background
+/// reclaimer has drained its per-document work and performed final cleanup.
+/// Keeping the registry's strong reference is deliberate: a failed handoff
+/// must retain memory, never fall back to a synchronous destructor in Raft
+/// apply.
+struct RetiredGeneration {
+    id: u64,
+    collection: Mutex<Option<Collection>>,
+}
+
+impl RetiredGeneration {
+    fn new(id: u64, collection: Collection) -> Self {
+        Self {
+            id,
+            collection: Mutex::new(Some(collection)),
+        }
+    }
+
+    /// Drain one indivisible reclaim task. The mutex makes this generation
+    /// single-owner even when several shared-queue workers are active. A task
+    /// completes only when its next token is accepted by the shared queue or
+    /// its generation is removed from the registry; destruction itself cannot
+    /// be rolled back once Rust begins dropping the final collection.
+    fn drain_document_task(&self) -> RetireTaskProgress {
+        let mut guard = self
+            .collection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let collection = guard
+            .as_mut()
+            .expect("retired generation must have one collection while queued");
+        let retired_documents = collection.retire_document_batch(RETIRED_DOCUMENTS_PER_TASK);
+        if collection.interner.to_eid.is_empty() {
+            let collection = guard
+                .take()
+                .expect("retired generation collection disappeared during final task");
+            RetireTaskProgress::Complete {
+                retired_documents,
+                collection,
+            }
+        } else {
+            RetireTaskProgress::More { retired_documents }
+        }
+    }
+}
+
+enum RetireTaskProgress {
+    More {
+        retired_documents: usize,
+    },
+    Complete {
+        retired_documents: usize,
+        collection: Collection,
+    },
+}
+
+/// A token represents one bounded slice of one retired generation. There is
+/// at most one queued token per generation: completing a slice creates the
+/// next token only after the worker owns the current one.
+struct RetireTask {
+    generation: Arc<RetiredGeneration>,
+}
+
+/// Process-wide ownership registry. It is intentionally separate from the
+/// queue: the queue has one small token per active generation, while this map
+/// retains a generation if a worker fails before requeueing it.
+struct RetiredGenerationRegistry {
+    next_id: AtomicU64,
+    generations: Mutex<FastHashMap<u64, Arc<RetiredGeneration>>>,
+}
+
+impl RetiredGenerationRegistry {
+    fn register(&self, collection: Collection) -> Arc<RetiredGeneration> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let generation = Arc::new(RetiredGeneration::new(id, collection));
+        self.generations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id, Arc::clone(&generation));
+        RETIREMENT_SUBMITTED_GENERATIONS.fetch_add(1, Ordering::Release);
+        generation
+    }
+
+    fn complete(&self, id: u64) {
+        let removed = self
+            .generations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&id)
+            .is_some();
+        if removed {
+            RETIREMENT_COMPLETED_GENERATIONS.fetch_add(1, Ordering::Release);
+        }
+    }
+}
+
+static RETIRED_GENERATIONS: OnceLock<RetiredGenerationRegistry> = OnceLock::new();
+
+fn retired_generation_registry() -> &'static RetiredGenerationRegistry {
+    RETIRED_GENERATIONS.get_or_init(|| RetiredGenerationRegistry {
+        next_id: AtomicU64::new(1),
+        generations: Mutex::new(FastHashMap::default()),
+    })
+}
+
+/// Return a non-blocking diagnostic snapshot of the shared reclaimer.
+///
+/// The values are observational and can change immediately after return. A
+/// caller that needs to measure one truncate should take a baseline, issue the
+/// API request, then wait until `completed_generations` advances and
+/// `pending_generations` returns to its baseline.
+pub fn collection_reclaimer_snapshot() -> CollectionReclaimerSnapshot {
+    let pending_generations = retired_generation_registry()
+        .generations
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .len();
+    CollectionReclaimerSnapshot {
+        pending_generations,
+        submitted_generations: RETIREMENT_SUBMITTED_GENERATIONS.load(Ordering::Acquire),
+        completed_generations: RETIREMENT_COMPLETED_GENERATIONS.load(Ordering::Acquire),
+        queued_tasks: RETIREMENT_QUEUED_TASKS.load(Ordering::Acquire),
+        queue_high_water: RETIREMENT_QUEUE_HIGH_WATER.load(Ordering::Acquire),
+        active_tasks: RETIREMENT_ACTIVE_TASKS.load(Ordering::Acquire),
+    }
+}
+
+/// Process-wide retirement queue for collections detached by `docs:truncate`.
+///
+/// A truncate state-machine apply never waits for reclaimer progress and never
+/// makes its durable outcome depend on local queue progress. The queue holds
+/// one bounded-work token per active retired generation. Configured workers
+/// share one receiver. The default is one worker; `LUMEN_RECLAIM_WORKERS`
+/// allows up to four. A long retirement yields after each token and lets
+/// another worker run another generation. A token processes at most
+/// [`RETIRED_DOCUMENTS_PER_TASK`] external-id items. This does not claim a
+/// hard byte bound or portable CPU/allocator-time bound because a current
+/// field value and final container have no such cap.
+///
+/// If no worker starts or a requeue fails, the registry intentionally retains
+/// the detached generation. Synchronous destruction could make one replica's
+/// committed apply depend on local cleanup speed. The failure is logged and
+/// never changes visible collection state.
+const DEFAULT_COLLECTION_RETIREMENT_WORKERS: usize = 1;
+const MAX_COLLECTION_RETIREMENT_WORKERS: usize = 4;
+
+fn collection_retirement_worker_count(configured: Option<&str>) -> usize {
+    configured
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .map(|count| count.min(MAX_COLLECTION_RETIREMENT_WORKERS))
+        .unwrap_or(DEFAULT_COLLECTION_RETIREMENT_WORKERS)
+}
+
+fn configured_collection_retirement_worker_count() -> usize {
+    let configured = std::env::var("LUMEN_RECLAIM_WORKERS").ok();
+    collection_retirement_worker_count(configured.as_deref())
+}
+
+enum CollectionRetirementWorker {
+    Ready(mpsc::Sender<RetireTask>),
+    Unavailable,
+}
+
+static COLLECTION_RETIREMENT_WORKER: OnceLock<CollectionRetirementWorker> = OnceLock::new();
+
+fn collection_retirement_worker() -> &'static CollectionRetirementWorker {
+    COLLECTION_RETIREMENT_WORKER.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel::<RetireTask>();
+        let receiver = Arc::new(Mutex::new(receiver));
+        let mut workers_started = 0;
+
+        for worker_index in 0..configured_collection_retirement_worker_count() {
+            let receiver = Arc::clone(&receiver);
+            let sender_for_worker = sender.clone();
+            let name = format!("lumen-collection-reclaimer-{worker_index}");
+            match std::thread::Builder::new().name(name).spawn(move || {
+                collection_retirement_loop(receiver, sender_for_worker);
+            }) {
+                Ok(_) => workers_started += 1,
+                Err(error) => {
+                    tracing::error!(%error, worker_index, "start collection retirement worker")
+                }
+            }
+        }
+
+        if workers_started == 0 {
+            CollectionRetirementWorker::Unavailable
+        } else {
+            CollectionRetirementWorker::Ready(sender)
+        }
+    })
+}
+
+fn collection_retirement_loop(
+    receiver: Arc<Mutex<mpsc::Receiver<RetireTask>>>,
+    sender: mpsc::Sender<RetireTask>,
+) {
+    loop {
+        // The receiver lock covers only dequeue. A worker never holds it while
+        // it drains a generation, which lets another worker own the next task.
+        let Some(task) = receive_retirement_task(receiver.as_ref()) else {
+            return;
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_retire_task(task, &sender);
+        }));
+        finish_retirement_task();
+        if result.is_err() {
+            // The registry still owns the generation entry after a task panic.
+            // Do not re-run partly-mutated detached state or block an apply.
+            tracing::error!("collection retirement task panicked; generation retained");
+        }
+    }
+}
+
+fn receive_retirement_task(receiver: &Mutex<mpsc::Receiver<RetireTask>>) -> Option<RetireTask> {
+    let task = receiver
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .recv()
+        .ok();
+    if task.is_some() {
+        mark_retirement_task_dequeued();
+    }
+    task
+}
+
+#[cfg(test)]
+fn try_receive_retirement_task(
+    receiver: &mpsc::Receiver<RetireTask>,
+) -> std::result::Result<RetireTask, mpsc::TryRecvError> {
+    let task = receiver.try_recv()?;
+    mark_retirement_task_dequeued();
+    Ok(task)
+}
+
+fn mark_retirement_task_dequeued() {
+    let _metrics = RETIREMENT_QUEUE_METRICS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let queued = RETIREMENT_QUEUED_TASKS.fetch_sub(1, Ordering::AcqRel);
+    debug_assert!(queued > 0, "a dequeued retirement task must be counted");
+    RETIREMENT_ACTIVE_TASKS.fetch_add(1, Ordering::Release);
+}
+
+fn finish_retirement_task() {
+    let active = RETIREMENT_ACTIVE_TASKS.fetch_sub(1, Ordering::AcqRel);
+    debug_assert!(active > 0, "a completed retirement task must be active");
+}
+
+fn send_retirement_task(
+    sender: &mpsc::Sender<RetireTask>,
+    task: RetireTask,
+) -> std::result::Result<(), mpsc::SendError<RetireTask>> {
+    let _metrics = RETIREMENT_QUEUE_METRICS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    sender.send(task)?;
+    let queued = RETIREMENT_QUEUED_TASKS.fetch_add(1, Ordering::AcqRel) + 1;
+    RETIREMENT_QUEUE_HIGH_WATER.fetch_max(queued, Ordering::AcqRel);
+    Ok(())
+}
+
+fn run_retire_task(task: RetireTask, sender: &mpsc::Sender<RetireTask>) {
+    let generation_id = task.generation.id;
+    match task.generation.drain_document_task() {
+        RetireTaskProgress::More { retired_documents } => {
+            debug_assert_eq!(retired_documents, RETIRED_DOCUMENTS_PER_TASK);
+            let next = RetireTask {
+                generation: task.generation,
+            };
+            if let Err(error) = send_retirement_task(sender, next) {
+                retain_retirement_task_failsafe(error.0, "worker channel disconnected");
+            }
+        }
+        RetireTaskProgress::Complete {
+            retired_documents,
+            collection,
+        } => {
+            debug_assert!(retired_documents <= RETIRED_DOCUMENTS_PER_TASK);
+            // This final drop can still be unbounded: `HashMap` capacities,
+            // segment handles, and field/vector internals do not expose an
+            // incremental destruction API. It remains off the apply thread.
+            // A panic cannot be rolled back, so retain the registry entry and
+            // let the worker's outer catch retain it without acknowledgement.
+            drop(collection);
+            retired_generation_registry().complete(generation_id);
+        }
+    }
+}
+
+fn retain_retirement_task_failsafe(task: RetireTask, reason: &'static str) {
+    tracing::error!(%reason, generation_id = task.generation.id, "collection retirement unavailable; retaining detached generation");
+    #[cfg(test)]
+    RETIREMENT_FAILSAFE_RETAINS.fetch_add(1, Ordering::Relaxed);
+    // The registry holds a strong reference. Dropping this failed token cannot
+    // run the collection destructor on the apply thread.
+    drop(task);
+}
+
+fn retire_collection_with(worker: &CollectionRetirementWorker, old: Collection) {
+    let generation = retired_generation_registry().register(old);
+    let task = RetireTask { generation };
+    match worker {
+        CollectionRetirementWorker::Ready(sender) => {
+            if let Err(error) = send_retirement_task(sender, task) {
+                retain_retirement_task_failsafe(error.0, "worker channel disconnected");
+            }
+        }
+        CollectionRetirementWorker::Unavailable => {
+            retain_retirement_task_failsafe(task, "worker failed to start");
+        }
+    }
+}
+
 impl Collection {
     fn new(schema: BTreeMap<String, FieldSpec>) -> Result<Self> {
         let mut fields = FastHashMap::default();
@@ -2987,6 +3522,40 @@ impl Collection {
             doc_versions: FastHashMap::default(),
             field_checksums: FastHashMap::default(),
         })
+    }
+
+    /// Reclaim at most `document_budget` detached documents. This method is
+    /// called only after the collection has left `EngineState`, so it cannot
+    /// change API-visible data. It deliberately works from the end of the
+    /// interner: popping the owned external id lets vector indexes release
+    /// their string-keyed state without cloning every id first.
+    ///
+    /// The bound is on external-id items only. A value can contain many text
+    /// tokens or set members, and the collection's residual maps and segment
+    /// handles still need a final non-incremental destructor.
+    fn retire_document_batch(&mut self, document_budget: usize) -> usize {
+        debug_assert!(document_budget > 0);
+        let mut retired_documents = 0;
+        for _ in 0..document_budget {
+            let Some((id, external_id)) = self.interner.take_last_for_retirement() else {
+                break;
+            };
+            let fields = self
+                .eid_fields
+                .remove(&id)
+                .map(|coverage| coverage.names)
+                .unwrap_or_default();
+            for field in fields {
+                if let Some(index) = self.fields.get_mut(&field) {
+                    index.drop_eid(id, &external_id);
+                }
+            }
+            self.cell_versions.remove(&id);
+            self.doc_versions.remove(&id);
+            self.field_checksums.remove(&id);
+            retired_documents += 1;
+        }
+        retired_documents
     }
 
     fn check_live(&self, collection_id: &str) -> Result<()> {
@@ -3692,6 +4261,113 @@ impl Engine {
         Ok(())
     }
 
+    /// Remove complete indexed rows for a bounded group of external ids.
+    ///
+    /// Validation runs before the state lock.  Under the lock we resolve every
+    /// known id and its recorded fields before changing caches or postings.
+    /// Once that preparation succeeds, the remainder only removes owned map
+    /// entries and postings, so one durable command is atomic within this
+    /// physical shard.  Unknown ids deliberately never enter the interner and
+    /// are successful no-ops.
+    pub fn unindex_docs(&self, collection_id: &str, req: BatchUnindexDocsRequest) -> Result<()> {
+        validate_batch_unindex_docs_request(&req)?;
+
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let coll = state
+            .collections
+            .get_mut(collection_id)
+            .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+        coll.check_live(collection_id)?;
+
+        // Do all allocation and lookup work before cache invalidation.  A
+        // field listed in `eid_fields` was admitted by index/replace, so the
+        // later removal loop contains no fallible validation or I/O.
+        let known: Vec<(u32, String, Vec<String>)> = req
+            .external_ids
+            .iter()
+            .filter_map(|external_id| {
+                let id = coll.interner.id(external_id)?;
+                let fields = coll
+                    .eid_fields
+                    .get(&id)
+                    .map(|coverage| coverage.iter().cloned().collect())
+                    .unwrap_or_default();
+                // The interner is append-only, so an id can be known with no
+                // live fields.  Keep it in the plan anyway: it may still own
+                // an old LWW/checksum side entry that must not become a
+                // delete tombstone.
+                Some((id, external_id.clone(), fields))
+            })
+            .collect();
+
+        if known.is_empty() {
+            return Ok(());
+        }
+
+        // These derived caches are collection-wide.  Clear each once rather
+        // than once per selected row, before any posting is removed.
+        coll.clear_search_cache();
+        coll.clear_text_rank_caches();
+        coll.clear_number_filter_caches();
+
+        for (id, external_id, fields) in known {
+            for field in fields {
+                if let Some(index) = coll.fields.get_mut(&field) {
+                    index.drop_eid(id, &external_id);
+                }
+            }
+            coll.eid_fields.remove(&id);
+            // A batch unindex has no tombstone.  Future writes to this id
+            // start with no cell/doc version ceiling or replace checksum.
+            coll.cell_versions.remove(&id);
+            coll.doc_versions.remove(&id);
+            coll.field_checksums.remove(&id);
+        }
+
+        self.publish_storage_bytes(&state);
+        Ok(())
+    }
+
+    /// Replace one live collection's document state with a fresh empty state.
+    ///
+    /// The map-slot replacement is the shard-local linearization point.  It
+    /// costs only the declared schema, not the number of existing documents:
+    /// old postings, interned ids, HNSW state, and mmap handles move to the
+    /// process-wide reclaimer after the new state is visible.  This is not a
+    /// loop over [`Self::delete`].
+    pub fn truncate_docs(&self, collection_id: &str) -> Result<()> {
+        self.truncate_docs_with_retirement(collection_id, collection_retirement_worker())
+    }
+
+    fn truncate_docs_with_retirement(
+        &self,
+        collection_id: &str,
+        retirement_worker: &CollectionRetirementWorker,
+    ) -> Result<()> {
+        let old = {
+            let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+            let existing = state
+                .collections
+                .get(collection_id)
+                .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+            existing.check_live(collection_id)?;
+
+            let mut replacement = Collection::new(existing.schema.clone())?;
+            // `Collection::new` starts a newly-created collection at version
+            // one.  Truncate retains the declaration exactly, including its
+            // add/drop-field version.
+            replacement.version = existing.version;
+            let old = state
+                .collections
+                .insert(collection_id.to_string(), replacement)
+                .expect("collection was checked while holding the state write lock");
+            self.publish_storage_bytes(&state);
+            old
+        };
+        retire_collection_with(retirement_worker, old);
+        Ok(())
+    }
+
     // -- Replace docs (full-replacement write) -------------------------------
 
     /// `PUT /collections/{id}/docs:replace`: each item's `fields` becomes
@@ -4244,20 +4920,50 @@ impl Engine {
         // #180: materialized missing-aware sort. When any sort key is
         // first/last, include rows lacking that key's value (placed before/after
         // the present rows per the policy) and count them in an exact total; rows
-        // missing an `exclude` key are dropped. Materializes the full matched set
-        // (no early termination) and paginates by offset.
+        // missing an `exclude` key are dropped. The single-key keyword planner
+        // streams posting buckets when safe; every other shape uses a bounded
+        // top-k fallback and paginates by offset.
         if sort_needs_materialize {
             let sort = req
                 .sort
                 .as_deref()
                 .expect("materialized-sort path has a sort");
+            if let Some((hits, total)) =
+                try_missing_keyword_bitmap_plan(coll, collection_id, &req, offset, sort, &state)?
+            {
+                let next_offset = offset + hits.len();
+                let cursor = if req.offset == 0 && (next_offset as u64) < total {
+                    Some(make_cursor(next_offset))
+                } else {
+                    None
+                };
+                let el = start.elapsed();
+                let took_ms = el.as_millis() as u64;
+                self.metrics.observe_search(el);
+                let response = SearchResponse {
+                    hits,
+                    total,
+                    cursor,
+                    took_ms,
+                    took_us: el.as_micros() as u64,
+                };
+                coll.cache_search_response(cache_key.clone(), &response);
+                return Ok(response);
+            }
             let universe: BTreeSet<u32> = if query_needs_universe(&req.query) {
                 coll.eid_fields.keys().copied().collect()
             } else {
                 BTreeSet::new()
             };
             let scored = eval_query(coll, collection_id, &req.query, &universe, &state)?;
-            let mut included: Vec<(u32, Vec<Option<SortValue>>)> = Vec::with_capacity(scored.len());
+            // Keep only the prefix required to answer the requested native
+            // offset page. The worst-first heap retains exactly `offset +
+            // limit` tuples; it never grows a compaction buffer above that
+            // bound while still scanning every match for the exact total.
+            let wanted = offset.saturating_add(limit);
+            let mut included: BinaryHeap<MissingSortHeapCandidate> =
+                BinaryHeap::with_capacity(wanted.min(1024));
+            let mut total = 0u64;
             'docs: for (id, _score) in scored {
                 let mut tuple = Vec::with_capacity(sort.len());
                 for spec in sort {
@@ -4267,50 +4973,40 @@ impl Engine {
                     }
                     tuple.push(v);
                 }
-                included.push((id, tuple));
-            }
-            let total = included.len() as u64;
-            included.sort_by(|(a_id, a_t), (b_id, b_t)| {
-                for (idx, spec) in sort.iter().enumerate() {
-                    let ord = match (&a_t[idx], &b_t[idx]) {
-                        (Some(a), Some(b)) => {
-                            let base = compare_sort_value(a, b);
-                            if matches!(spec.order, SortOrder::Desc) {
-                                base.reverse()
-                            } else {
-                                base
-                            }
-                        }
-                        // NULLS FIRST/LAST placement is independent of asc/desc.
-                        (None, Some(_)) => {
-                            if spec.missing == SortMissing::First {
-                                CmpOrdering::Less
-                            } else {
-                                CmpOrdering::Greater
-                            }
-                        }
-                        (Some(_), None) => {
-                            if spec.missing == SortMissing::First {
-                                CmpOrdering::Greater
-                            } else {
-                                CmpOrdering::Less
-                            }
-                        }
-                        (None, None) => CmpOrdering::Equal,
-                    };
-                    if ord != CmpOrdering::Equal {
-                        return ord;
-                    }
+                total += 1;
+                if wanted == 0 {
+                    continue;
                 }
-                interner.resolve(*a_id).cmp(interner.resolve(*b_id))
-            });
+                let candidate = MissingSortHeapCandidate {
+                    id,
+                    keys: missing_heap_keys(&tuple, sort),
+                    tuple,
+                    external_id: interner.resolve(id).to_string(),
+                };
+                if included.len() < wanted {
+                    included.push(candidate);
+                    #[cfg(test)]
+                    MATERIALIZED_SORT_RETAINED_HIGH_WATER.with(|high_water| {
+                        high_water.set(high_water.get().max(included.len() as u64));
+                    });
+                } else if included
+                    .peek()
+                    .is_some_and(|worst| candidate.cmp(worst) == CmpOrdering::Less)
+                {
+                    included.pop();
+                    included.push(candidate);
+                }
+            }
+            let mut included = included.into_vec();
+            included.sort_unstable();
             let hits: Vec<SearchHit> = included
-                .iter()
+                .into_iter()
                 .skip(offset)
                 .take(limit)
-                .map(|(id, tuple)| SearchHit {
-                    external_id: interner.resolve(*id).to_string(),
-                    score: tuple
+                .map(|candidate| SearchHit {
+                    external_id: candidate.external_id,
+                    score: candidate
+                        .tuple
                         .iter()
                         .find_map(|v| v.as_ref().map(sort_score))
                         .unwrap_or(0.0),
@@ -5263,6 +5959,14 @@ impl Engine {
             RaftLogEntry::ReplaceDocs { collection_id, req } => {
                 ApplyOutcome::Replaced(self.replace_docs(&collection_id, req)?)
             }
+            RaftLogEntry::TruncateDocs { collection_id } => {
+                self.truncate_docs(&collection_id)?;
+                ApplyOutcome::DocsTruncated
+            }
+            RaftLogEntry::UnindexDocs { collection_id, req } => {
+                self.unindex_docs(&collection_id, req)?;
+                ApplyOutcome::DocsUnindexed
+            }
             RaftLogEntry::Delete {
                 collection_id,
                 external_id,
@@ -5296,6 +6000,8 @@ pub enum ApplyOutcome {
     Created(CreateCollectionResponse),
     Indexed(IndexResponse),
     Replaced(ReplaceDocsResponse),
+    DocsTruncated,
+    DocsUnindexed,
     Deleted,
     Dropped(DropOutcome),
     /// New collection version after add-field / drop-field.
@@ -6801,6 +7507,16 @@ fn eval_match_topk(
     Ok(Some((ranked.iter().take(k).copied().collect(), total)))
 }
 
+/// Authoritative field-presence bitmap. `eid_fields` is updated on every
+/// write/delete and rebuilt from segment presence on restore, so this answers
+/// `Exists` without walking a high-cardinality term/value dictionary.
+fn field_presence_bitmap(coll: &Collection, field: &str) -> RoaringBitmap {
+    coll.eid_fields
+        .iter()
+        .filter_map(|(id, coverage)| coverage.contains(field).then_some(*id))
+        .collect()
+}
+
 /// Shared engine for `Exists` and `Duplicated`: the union of doc-ids that have a
 /// value in `field` whose posting size ≥ `min_count`.
 ///   - `min_count = 1` → `Exists` (doc has any value in the field).
@@ -6821,6 +7537,18 @@ fn eval_field_doc_union(coll: &Collection, field: &str, min_count: u64) -> Resul
             collection: "<>".into(),
             field: field.to_string(),
         })?;
+    // `Exists` is field coverage, not an inverted-dictionary aggregation. This
+    // is both the authoritative semantic source (including empty values where
+    // supported) and bounds high-cardinality fields to one census scan rather
+    // than decoding every sealed term/value posting.
+    if min_count == 1
+        && matches!(
+            fi,
+            FieldIndex::Keyword(_) | FieldIndex::Number(_) | FieldIndex::Set(_)
+        )
+    {
+        return Ok(field_presence_bitmap(coll, field));
+    }
     // Union postings of size >= min_count: owned sets (segment path) or borrowed
     // in-RAM sets (tail-only path) without cloning the map.
     fn union_owned<K>(map: BTreeMap<K, RoaringBitmap>, min_count: u64) -> RoaringBitmap {
@@ -8912,6 +9640,271 @@ fn sort_score(value: &SortValue) -> f32 {
         SortValue::Number(bits) => SortableF64::from_bits(*bits).to_f64() as f32,
         SortValue::Keyword(_) => 1.0,
     }
+}
+
+/// One normalized field-sort component for the bounded missing-aware heap.
+/// Its ordering is the public sort ordering: smaller is a better result. A
+/// `BinaryHeap` then exposes the worst retained result at `peek()`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MissingHeapKey {
+    MissingFirst,
+    PresentAsc(SortValue),
+    PresentDesc(SortValue),
+    MissingLast,
+}
+
+impl MissingHeapKey {
+    fn rank(&self) -> u8 {
+        match self {
+            Self::MissingFirst => 0,
+            Self::PresentAsc(_) | Self::PresentDesc(_) => 1,
+            Self::MissingLast => 2,
+        }
+    }
+}
+
+impl Ord for MissingHeapKey {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        let rank = self.rank().cmp(&other.rank());
+        if rank != CmpOrdering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            (Self::PresentAsc(left), Self::PresentAsc(right)) => compare_sort_value(left, right),
+            (Self::PresentDesc(left), Self::PresentDesc(right)) => {
+                compare_sort_value(left, right).reverse()
+            }
+            // Every candidate uses the same sort specs, so equal-position
+            // present keys always have the same direction. Keep this stable if
+            // a malformed internal caller violates that invariant.
+            (Self::PresentAsc(_), Self::PresentDesc(_)) => CmpOrdering::Less,
+            (Self::PresentDesc(_), Self::PresentAsc(_)) => CmpOrdering::Greater,
+            _ => CmpOrdering::Equal,
+        }
+    }
+}
+
+impl PartialOrd for MissingHeapKey {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MissingSortHeapCandidate {
+    id: u32,
+    tuple: Vec<Option<SortValue>>,
+    keys: Vec<MissingHeapKey>,
+    external_id: String,
+}
+
+impl Ord for MissingSortHeapCandidate {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        #[cfg(test)]
+        MATERIALIZED_SORT_COMPARISONS.with(|comparisons| {
+            comparisons.set(comparisons.get().saturating_add(1));
+        });
+        self.keys
+            .cmp(&other.keys)
+            .then_with(|| self.external_id.cmp(&other.external_id))
+            .then_with(|| self.id.cmp(&other.id))
+    }
+}
+
+impl PartialOrd for MissingSortHeapCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn missing_heap_keys(tuple: &[Option<SortValue>], sort: &[SortSpec]) -> Vec<MissingHeapKey> {
+    tuple
+        .iter()
+        .zip(sort)
+        .map(|(value, spec)| match value {
+            Some(value) if matches!(spec.order, SortOrder::Asc) => {
+                MissingHeapKey::PresentAsc(value.clone())
+            }
+            Some(value) => MissingHeapKey::PresentDesc(value.clone()),
+            None if matches!(spec.missing, SortMissing::First) => MissingHeapKey::MissingFirst,
+            None => MissingHeapKey::MissingLast,
+        })
+        .collect()
+}
+
+/// Retains the lexically smallest external ids from one equal-key posting
+/// bucket. The heap is bounded by `wanted`, which matters for low-cardinality
+/// keyword values such as booleans: sorting that whole bucket would recreate
+/// the all-match latency cliff for a small requested page.
+fn select_docids_by_external_id<I>(docids: I, wanted: usize, interner: &Interner) -> Vec<u32>
+where
+    I: Iterator<Item = u32>,
+{
+    if wanted == 0 {
+        return Vec::new();
+    }
+    let mut heap: BinaryHeap<(String, u32)> = BinaryHeap::with_capacity(wanted.min(1024));
+    for id in docids {
+        let candidate = (interner.resolve(id).to_string(), id);
+        if heap.len() < wanted {
+            heap.push(candidate);
+            continue;
+        }
+        let replace = heap
+            .peek()
+            .is_some_and(|largest| candidate.cmp(largest) == CmpOrdering::Less);
+        if replace {
+            heap.pop();
+            heap.push(candidate);
+        }
+    }
+    let mut selected = heap.into_vec();
+    selected.sort_unstable();
+    selected.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Bitmap-only query shapes. Their result score is the same constant `1.0`
+/// that `eval_query` would assign, so the missing-keyword sort planner can
+/// avoid building its score HashMap. Complex/scored/boolean shapes deliberately
+/// return `None` and keep the general evaluator as the exact fallback.
+fn constant_filter_bitmap_for_missing_sort(
+    coll: &Collection,
+    query: &QueryNode,
+) -> Result<Option<RoaringBitmap>> {
+    match query {
+        QueryNode::Term(_)
+        | QueryNode::Terms(_)
+        | QueryNode::Prefix(_)
+        | QueryNode::Ids(_)
+        | QueryNode::Range(_)
+        | QueryNode::Exists(_)
+        | QueryNode::Duplicated(_) => Ok(Some(eval_filter_bitmap(coll, query)?)),
+        _ => Ok(None),
+    }
+}
+
+/// Plans one keyword field with `missing:first|last`. It evaluates the query
+/// once into a bitmap, then streams keyword posting buckets in field order.
+/// For `missing:last`, a normal page stops once `offset + limit` rows are
+/// selected; it never comparison-sorts the high-cardinality tail. For
+/// `missing:first`, discovering the leading missing group necessarily scans
+/// matches, but selection inside that group remains bounded by page size.
+///
+fn try_missing_keyword_bitmap_plan(
+    coll: &Collection,
+    collection_id: &str,
+    req: &SearchRequest,
+    offset: usize,
+    sort: &[SortSpec],
+    state: &EngineState,
+) -> Result<Option<(Vec<SearchHit>, u64)>> {
+    let [spec] = sort else {
+        return Ok(None);
+    };
+    if !matches!(spec.missing, SortMissing::First | SortMissing::Last) {
+        return Ok(None);
+    }
+    if query_has_has_child(&req.query) {
+        return Ok(None);
+    }
+    let Some(FieldIndex::Keyword(keyword)) = coll.fields.get(&spec.field) else {
+        return Ok(None);
+    };
+
+    let matched = match constant_filter_bitmap_for_missing_sort(coll, &req.query)? {
+        Some(bitmap) => bitmap,
+        None => {
+            let universe: BTreeSet<u32> = if query_needs_universe(&req.query) {
+                coll.eid_fields.keys().copied().collect()
+            } else {
+                BTreeSet::new()
+            };
+            eval_query(coll, collection_id, &req.query, &universe, state)?
+                .keys()
+                .copied()
+                .collect()
+        }
+    };
+    let total = matched.len() as u64;
+    let wanted = offset.saturating_add(req.limit as usize);
+    let interner = &coll.interner;
+    // `eid_fields` is the authoritative field-presence census. Derive both
+    // groups with bitmap operations instead of probing `keyword_at` for every
+    // match, which would turn a high-cardinality page into random segment reads.
+    let field_presence = field_presence_bitmap(coll, &spec.field);
+    let mut present = matched.clone();
+    present &= &field_presence;
+    let mut missing = matched.clone();
+    missing -= &field_presence;
+    let mut ordered: Vec<(u32, bool)> = Vec::with_capacity(wanted.min(1024));
+
+    if spec.missing == SortMissing::First {
+        ordered.extend(
+            select_docids_by_external_id(missing.iter(), wanted, interner)
+                .into_iter()
+                .map(|id| (id, false)),
+        );
+        if missing.len() as usize >= wanted {
+            let hits = ordered
+                .into_iter()
+                .skip(offset)
+                .take(req.limit as usize)
+                .map(|(id, present)| SearchHit {
+                    external_id: interner.resolve(id).to_string(),
+                    score: if present { 1.0 } else { 0.0 },
+                })
+                .collect();
+            return Ok(Some((hits, total)));
+        }
+    }
+
+    let walk =
+        keyword.visit_sorted_posting_buckets(matches!(spec.order, SortOrder::Desc), |posting| {
+            let mut bucket = posting.clone();
+            bucket &= &present;
+            if bucket.is_empty() {
+                return Ok(true);
+            }
+            let room = wanted.saturating_sub(ordered.len());
+            if room == 0 {
+                return Ok(false);
+            }
+            ordered.extend(
+                select_docids_by_external_id(bucket.iter(), room, interner)
+                    .into_iter()
+                    .map(|id| (id, true)),
+            );
+            Ok(ordered.len() < wanted)
+        })?;
+    if matches!(walk, KeywordBucketWalk::Unavailable) {
+        return Ok(None);
+    }
+
+    // `missing:last` needs the absent group only when the field-ordered
+    // buckets did not already fill the requested offset+page window. Reaching
+    // this point implies the walk completed, so the bitmap subtraction is exact.
+    if spec.missing == SortMissing::Last && ordered.len() < wanted {
+        if !matches!(walk, KeywordBucketWalk::Completed) {
+            return Ok(None);
+        }
+        let room = wanted.saturating_sub(ordered.len());
+        ordered.extend(
+            select_docids_by_external_id(missing.iter(), room, interner)
+                .into_iter()
+                .map(|id| (id, false)),
+        );
+    }
+
+    let hits = ordered
+        .into_iter()
+        .skip(offset)
+        .take(req.limit as usize)
+        .map(|(id, present)| SearchHit {
+            external_id: interner.resolve(id).to_string(),
+            score: if present { 1.0 } else { 0.0 },
+        })
+        .collect();
+    Ok(Some((hits, total)))
 }
 
 fn cursor_value_matches_kind(value: &SortValue, kind: SortFieldKind) -> bool {
@@ -12678,6 +13671,7 @@ mod segment_number_range_diff_tests {
         let mut fields = BTreeMap::new();
         fields.insert("price".into(), fieldspec(FieldType::Number));
         fields.insert("cat".into(), fieldspec(FieldType::Keyword));
+        fields.insert("kw".into(), fieldspec(FieldType::Keyword));
         CreateCollectionRequest { fields }
     }
 
@@ -17603,6 +18597,351 @@ mod tests {
         assert_eq!(r.total, 0);
     }
 
+    /// #3992: a truncate is a document-state swap, not a disguised batch of
+    /// per-document deletes. This checks the precise state that has to reset
+    /// and uses an unavailable worker to prove the caller thread does not
+    /// reach the per-document removal primitive.
+    #[test]
+    fn truncate_docs_preserves_schema_version_and_never_walks_documents() {
+        let e = Engine::new();
+        let created = e.create_collection("users", build_users_schema()).unwrap();
+        let schema = {
+            let state = e.state.read().unwrap();
+            state.collections["users"].schema.clone()
+        };
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    crate::types::IndexItem {
+                        external_id: "u1".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("u1@example.com".into()),
+                        version: Some(7),
+                    },
+                    item("u1", "bio", FieldValue::String("rust engineer".into())),
+                    item(
+                        "u1",
+                        "tags",
+                        FieldValue::StringList(vec!["systems".into(), "search".into()]),
+                    ),
+                    item("u1", "age", FieldValue::Number(42.0)),
+                ],
+                request_id: Some("before-truncate".into()),
+            },
+        )
+        .unwrap();
+        let mut replacement = BTreeMap::new();
+        replacement.insert("bio".into(), FieldValue::String("new bio".into()));
+        e.replace_docs(
+            "users",
+            ReplaceDocsRequest {
+                docs: vec![ReplaceDocItem {
+                    external_id: "u1".into(),
+                    version: Some(9),
+                    fields: replacement,
+                }],
+            },
+        )
+        .unwrap();
+        let _ = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Exists(ExistsQuery {
+                        field: "email".into(),
+                    }),
+                    limit: 10,
+                    offset: 0,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+
+        DROP_EID_CALLS.with(|calls| calls.set(0));
+        e.truncate_docs_with_retirement("users", &CollectionRetirementWorker::Unavailable)
+            .unwrap();
+        DROP_EID_CALLS.with(|calls| {
+            assert_eq!(
+                calls.get(),
+                0,
+                "truncate must not call the per-document drop primitive on its caller thread"
+            );
+        });
+
+        let state = e.state.read().unwrap();
+        let coll = &state.collections["users"];
+        assert_eq!(coll.version, created.version);
+        assert_eq!(coll.schema, schema);
+        assert!(coll.interner.to_eid.is_empty());
+        assert!(coll.eid_fields.is_empty());
+        assert!(coll.seen_requests.is_empty());
+        assert!(coll.cell_versions.is_empty());
+        assert!(coll.doc_versions.is_empty());
+        assert!(coll.field_checksums.is_empty());
+        assert!(coll.search_cache.read().unwrap().is_empty());
+        assert!(coll.last_indexed_at.is_none());
+        for index in coll.fields.values() {
+            assert_eq!(
+                index.bytes(),
+                0,
+                "fresh schema field must hold no documents"
+            );
+        }
+        drop(state);
+
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![item(
+                    "u2",
+                    "email",
+                    FieldValue::String("u2@example.com".into()),
+                )],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            e.stats("users").unwrap().documents_indexed,
+            1,
+            "the retained schema must accept a new document immediately"
+        );
+    }
+
+    #[test]
+    fn unavailable_retirement_worker_fails_safe_without_changing_apply_semantics() {
+        let before = RETIREMENT_FAILSAFE_RETAINS.load(Ordering::Relaxed);
+        let detached = Collection::new(BTreeMap::new()).unwrap();
+        retire_collection_with(&CollectionRetirementWorker::Unavailable, detached);
+        assert_eq!(
+            RETIREMENT_FAILSAFE_RETAINS.load(Ordering::Relaxed),
+            before + 1,
+            "a failed worker handoff must retain the old generation instead of dropping it on the apply thread"
+        );
+    }
+
+    #[test]
+    fn retired_generation_splits_document_reclaim_into_fixed_size_tasks() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let documents = RETIRED_DOCUMENTS_PER_TASK * 2 + 1;
+        let mut items = Vec::with_capacity(documents);
+        for document in 0..documents {
+            items.push(item(
+                &format!("u{document}"),
+                "email",
+                FieldValue::String(format!("u{document}@example.com")),
+            ));
+        }
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            e.stats("users").unwrap().documents_indexed,
+            documents as u64
+        );
+
+        let detached = e
+            .state
+            .write()
+            .unwrap()
+            .collections
+            .remove("users")
+            .expect("test collection exists");
+        DROP_EID_CALLS.with(|calls| calls.set(0));
+        let generation = RetiredGeneration::new(0, detached);
+        let mut task_sizes = Vec::new();
+        let final_collection = loop {
+            match generation.drain_document_task() {
+                RetireTaskProgress::More { retired_documents } => {
+                    task_sizes.push(retired_documents);
+                }
+                RetireTaskProgress::Complete {
+                    retired_documents,
+                    collection,
+                } => {
+                    task_sizes.push(retired_documents);
+                    break collection;
+                }
+            }
+        };
+
+        assert_eq!(
+            task_sizes,
+            vec![RETIRED_DOCUMENTS_PER_TASK, RETIRED_DOCUMENTS_PER_TASK, 1],
+            "each token owns one bounded document slice"
+        );
+        DROP_EID_CALLS.with(|calls| {
+            assert_eq!(
+                calls.get(),
+                documents as u64,
+                "the detached worker removed each indexed field exactly once"
+            );
+        });
+        assert!(final_collection.interner.to_eid.is_empty());
+        assert!(final_collection.interner.to_hash.is_empty());
+        assert!(final_collection.eid_fields.is_empty());
+        assert!(final_collection.cell_versions.is_empty());
+        assert!(final_collection.doc_versions.is_empty());
+        assert!(final_collection.field_checksums.is_empty());
+        assert_eq!(final_collection.fields["email"].bytes(), 0);
+        drop(final_collection);
+    }
+
+    #[test]
+    fn retired_generation_requeues_exactly_one_token_until_completion() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let documents = RETIRED_DOCUMENTS_PER_TASK + 1;
+        let items = (0..documents)
+            .map(|document| {
+                item(
+                    &format!("u{document}"),
+                    "email",
+                    FieldValue::String(format!("u{document}@example.com")),
+                )
+            })
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        let detached = e
+            .state
+            .write()
+            .unwrap()
+            .collections
+            .remove("users")
+            .expect("test collection exists");
+        let generation = Arc::new(RetiredGeneration::new(0, detached));
+        let (sender, receiver) = mpsc::channel();
+
+        run_retire_task(
+            RetireTask {
+                generation: Arc::clone(&generation),
+            },
+            &sender,
+        );
+        let completion = try_receive_retirement_task(&receiver)
+            .expect("one incomplete generation must requeue one token");
+        assert!(
+            receiver.try_recv().is_err(),
+            "one generation may not enqueue multiple concurrent tokens"
+        );
+
+        run_retire_task(completion, &sender);
+        finish_retirement_task();
+        assert!(
+            receiver.try_recv().is_err(),
+            "the final token must acknowledge completion without requeueing"
+        );
+        assert!(
+            generation.collection.lock().unwrap().is_none(),
+            "completion consumes the detached collection exactly once"
+        );
+    }
+
+    #[test]
+    fn shared_retirement_receiver_assigns_distinct_generation_tokens_to_workers() {
+        let (sender, receiver) = mpsc::channel();
+        let receiver = Arc::new(Mutex::new(receiver));
+        let first = Arc::new(RetiredGeneration::new(
+            41,
+            Collection::new(BTreeMap::new()).unwrap(),
+        ));
+        let second = Arc::new(RetiredGeneration::new(
+            42,
+            Collection::new(BTreeMap::new()).unwrap(),
+        ));
+        send_retirement_task(
+            &sender,
+            RetireTask {
+                generation: Arc::clone(&first),
+            },
+        )
+        .unwrap();
+        send_retirement_task(
+            &sender,
+            RetireTask {
+                generation: Arc::clone(&second),
+            },
+        )
+        .unwrap();
+        drop(sender);
+
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let (observed_sender, observed_receiver) = mpsc::channel();
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let receiver = Arc::clone(&receiver);
+                let barrier = Arc::clone(&barrier);
+                let observed_sender = observed_sender.clone();
+                scope.spawn(move || {
+                    barrier.wait();
+                    let task = receive_retirement_task(receiver.as_ref())
+                        .expect("each worker receives one pre-enqueued token");
+                    observed_sender.send(task.generation.id).unwrap();
+                    finish_retirement_task();
+                });
+            }
+            barrier.wait();
+        });
+
+        let mut observed = vec![
+            observed_receiver.recv().unwrap(),
+            observed_receiver.recv().unwrap(),
+        ];
+        observed.sort_unstable();
+        assert_eq!(observed, vec![41, 42]);
+        assert!(
+            receiver.lock().unwrap().try_recv().is_err(),
+            "the two workers consumed both tokens exactly once"
+        );
+    }
+
+    #[test]
+    fn interner_retirement_compacts_a_collision_bucket() {
+        let mut interner = Interner {
+            to_hash: FastHashMap::default(),
+            to_eid: vec!["first".into(), "second".into()],
+        };
+        interner.to_hash.insert(7, InternerBucket::Many(vec![0, 1]));
+
+        interner.remove_hash_id(7, 1);
+        assert!(matches!(
+            interner.to_hash.get(&7),
+            Some(InternerBucket::One(0))
+        ));
+        interner.remove_hash_id(7, 0);
+        assert!(interner.to_hash.is_empty());
+    }
+
+    #[test]
+    fn collection_reclaimer_worker_count_defaults_and_caps() {
+        assert_eq!(collection_retirement_worker_count(None), 1);
+        assert_eq!(collection_retirement_worker_count(Some("0")), 1);
+        assert_eq!(collection_retirement_worker_count(Some("invalid")), 1);
+        assert_eq!(collection_retirement_worker_count(Some("2")), 2);
+        assert_eq!(
+            collection_retirement_worker_count(Some("99")),
+            MAX_COLLECTION_RETIREMENT_WORKERS
+        );
+    }
+
     #[test]
     fn idempotency_skips_duplicate_request_id() {
         let e = Engine::new();
@@ -18466,10 +19805,7 @@ mod tests {
         let e = Engine::new();
         e.create_collection("a", kw_only_schema()).unwrap();
         index_kw(&e, "a", "old1");
-        assert_eq!(
-            e.drop_collection("a", false).unwrap(),
-            DropOutcome::Marked
-        );
+        assert_eq!(e.drop_collection("a", false).unwrap(), DropOutcome::Marked);
 
         // Live routes must still see the tombstone as 410 Gone before the
         // recreate — this fix must not touch that behavior.
@@ -18576,10 +19912,7 @@ mod tests {
     fn sweep_deleted_still_reclaims_a_tombstone_nobody_recreates() {
         let e = Engine::new();
         e.create_collection("a", kw_only_schema()).unwrap();
-        assert_eq!(
-            e.drop_collection("a", false).unwrap(),
-            DropOutcome::Marked
-        );
+        assert_eq!(e.drop_collection("a", false).unwrap(), DropOutcome::Marked);
 
         // Immediately: the grace window has not elapsed, sweep does nothing.
         assert_eq!(e.sweep_deleted(Duration::from_secs(3600)).unwrap(), 0);
@@ -20261,7 +21594,7 @@ mod external_version_lww_tests {
 #[cfg(test)]
 mod sort_missing_tests {
     use super::*;
-    use crate::types::{IndexItem, SortMissing};
+    use crate::types::{ExistsQuery, IndexItem, SortMissing};
 
     fn fieldspec(t: FieldType) -> FieldSpec {
         FieldSpec {
@@ -20279,6 +21612,7 @@ mod sort_missing_tests {
         let mut fields = BTreeMap::new();
         fields.insert("price".into(), fieldspec(FieldType::Number));
         fields.insert("cat".into(), fieldspec(FieldType::Keyword));
+        fields.insert("kw".into(), fieldspec(FieldType::Keyword));
         CreateCollectionRequest { fields }
     }
 
@@ -20389,6 +21723,209 @@ mod sort_missing_tests {
         assert_eq!(ids(&p2), vec!["d2"]);
         assert_eq!(p2.total, 3);
     }
+
+    /// #3997: a single high-cardinality keyword key with `missing:last` must
+    /// not send a small page through the generic full tuple-sort fallback.
+    /// Values are deliberately permuted so the old all-row sort needs many
+    /// comparisons; the new keyword planner streams dictionary buckets.
+    #[test]
+    fn keyword_missing_last_small_page_bypasses_full_tuple_sort() {
+        const DOCS: usize = 1_024;
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        for i in 0..DOCS {
+            let mut items = vec![IndexItem {
+                external_id: format!("d{i:04}"),
+                field: "cat".into(),
+                value: FieldValue::String("x".into()),
+                version: None,
+            }];
+            if i % 8 != 0 {
+                items.push(IndexItem {
+                    external_id: format!("d{i:04}"),
+                    field: "kw".into(),
+                    value: FieldValue::String(format!("k{:04}", DOCS - i)),
+                    version: None,
+                });
+            }
+            e.index(
+                "c",
+                IndexRequest {
+                    items,
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let segment_dir = tempfile::tempdir().expect("keyword segment tempdir");
+        e.__seal_keyword_field_to_segment("c", "kw", segment_dir.path())
+            .expect("seal high-cardinality keyword field");
+        e.__seal_keyword_field_to_segment("c", "cat", segment_dir.path())
+            .expect("seal exact exists filter field");
+
+        MATERIALIZED_SORT_COMPARISONS.with(|comparisons| comparisons.set(0));
+        let response = e
+            .search(
+                "c",
+                SearchRequest {
+                    query: QueryNode::Exists(ExistsQuery {
+                        field: "cat".into(),
+                    }),
+                    limit: 10,
+                    offset: 0,
+                    cursor: None,
+                    routing_key: None,
+                    sort: Some(vec![SortSpec {
+                        field: "kw".into(),
+                        order: SortOrder::Asc,
+                        missing: SortMissing::Last,
+                    }]),
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(response.total, DOCS as u64);
+        assert!(
+            response.hits.iter().all(|hit| hit.score == 1.0),
+            "keyword-present rows retain the constant filter score"
+        );
+        assert_eq!(
+            ids(&response),
+            (0..DOCS)
+                .rev()
+                .filter(|i| i % 8 != 0)
+                .take(10)
+                .map(|i| format!("d{i:04}"))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            MATERIALIZED_SORT_COMPARISONS.with(|comparisons| comparisons.get()) <= DOCS as u64,
+            "small-page keyword sort must not comparison-sort all {DOCS} matches"
+        );
+    }
+
+    /// A sealed ordinal stream must merge tail-only values, an equal tail value,
+    /// and a post-seal tombstone without materializing either dictionary.
+    #[test]
+    fn sealed_keyword_bucket_walk_merges_tombstone_and_live_tail_both_orders() {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        let write = |eid: &str, keyword: &str| {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![
+                        IndexItem {
+                            external_id: eid.into(),
+                            field: "cat".into(),
+                            value: FieldValue::String("x".into()),
+                            version: None,
+                        },
+                        IndexItem {
+                            external_id: eid.into(),
+                            field: "kw".into(),
+                            value: FieldValue::String(keyword.into()),
+                            version: None,
+                        },
+                    ],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        };
+        write("base-a", "a");
+        write("base-b", "b");
+        write("base-c", "c");
+        let segment_dir = tempfile::tempdir().unwrap();
+        e.__seal_keyword_field_to_segment("c", "kw", segment_dir.path())
+            .unwrap();
+        e.delete("c", "base-b", None).unwrap();
+        write("tail-aa", "aa");
+        write("tail-c", "c");
+        write("tail-z", "z");
+
+        let run = |order| {
+            e.search(
+                "c",
+                SearchRequest {
+                    query: QueryNode::Exists(ExistsQuery {
+                        field: "cat".into(),
+                    }),
+                    limit: 100,
+                    offset: 0,
+                    cursor: None,
+                    routing_key: None,
+                    sort: Some(vec![SortSpec {
+                        field: "kw".into(),
+                        order,
+                        missing: SortMissing::Last,
+                    }]),
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap()
+        };
+        let asc = run(SortOrder::Asc);
+        assert_eq!(
+            ids(&asc),
+            ["base-a", "tail-aa", "base-c", "tail-c", "tail-z"]
+        );
+        assert!(asc.hits.iter().all(|hit| hit.score == 1.0));
+        let desc = run(SortOrder::Desc);
+        assert_eq!(
+            ids(&desc),
+            ["tail-z", "base-c", "tail-c", "tail-aa", "base-a"]
+        );
+        assert!(desc.hits.iter().all(|hit| hit.score == 1.0));
+    }
+
+    /// Non-keyword/multi-key missing sorts use the exact bounded fallback.
+    /// Counting may scan all matches, but retained tuples must never exceed the
+    /// requested native prefix.
+    #[test]
+    fn missing_sort_fallback_retains_at_most_offset_plus_limit() {
+        const DOCS: usize = 1_024;
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        for i in 0..DOCS {
+            idx(
+                &e,
+                &format!("d{i:04}"),
+                (i % 5 != 0).then_some((DOCS - i) as f64),
+            );
+        }
+        MATERIALIZED_SORT_RETAINED_HIGH_WATER.with(|high_water| high_water.set(0));
+        let response = e
+            .search(
+                "c",
+                SearchRequest {
+                    query: QueryNode::Exists(ExistsQuery {
+                        field: "cat".into(),
+                    }),
+                    limit: 13,
+                    offset: 7,
+                    cursor: None,
+                    routing_key: None,
+                    sort: Some(vec![SortSpec {
+                        field: "price".into(),
+                        order: SortOrder::Asc,
+                        missing: SortMissing::Last,
+                    }]),
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(response.total, DOCS as u64);
+        assert_eq!(response.hits.len(), 13);
+        assert!(
+            MATERIALIZED_SORT_RETAINED_HIGH_WATER.with(|high_water| high_water.get()) <= 20,
+            "fallback retained more than offset + limit tuples"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -20473,6 +22010,7 @@ mod has_child_sort_tests {
         let e = Engine::new();
         let mut pf = BTreeMap::new();
         pf.insert("status".into(), kw());
+        pf.insert("rank".into(), kw());
         pf.insert("ts".into(), num());
         e.create_collection("orders", CreateCollectionRequest { fields: pf })
             .unwrap();
@@ -20553,6 +22091,45 @@ mod has_child_sort_tests {
         let r = run(&e, q, sort_ts_desc());
         assert_eq!(ids(&r), vec!["o1"]); // o2 is closed
         assert_eq!(r.total, 1);
+    }
+
+    /// #3997: a child query keeps the exact bounded materialized fallback,
+    /// even when its one sort key could otherwise use the keyword stream.
+    #[test]
+    fn has_child_missing_keyword_sort_keeps_materialized_fallback() {
+        let e = setup();
+        e.index(
+            "orders",
+            IndexRequest {
+                items: vec![IndexItem {
+                    external_id: "o1".into(),
+                    field: "rank".into(),
+                    value: FieldValue::String("a".into()),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        MATERIALIZED_SORT_RETAINED_HIGH_WATER.with(|high_water| high_water.set(0));
+
+        let r = run(
+            &e,
+            has_child_s0(),
+            Some(vec![SortSpec {
+                field: "rank".into(),
+                order: SortOrder::Asc,
+                missing: SortMissing::Last,
+            }]),
+        );
+
+        assert_eq!(ids(&r), vec!["o1", "o2"]);
+        assert_eq!(r.total, 2);
+        assert_eq!(
+            MATERIALIZED_SORT_RETAINED_HIGH_WATER.with(|high_water| high_water.get()),
+            2,
+            "has_child must retain its bounded materialized fallback"
+        );
     }
 
     /// R3: sort + knn is still rejected (400 UnsupportedSort).
@@ -20923,3 +22500,162 @@ mod multikey_sort_cap_tests {
     }
 }
 // CODEGEN-END
+
+#[cfg(test)]
+mod batch_unindex_docs_tests {
+    use super::*;
+    use crate::types::{BatchUnindexDocsRequest, IndexItem};
+
+    #[test]
+    fn batch_unindex_removes_a_known_document() {
+        let engine = Engine::new();
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "email".to_string(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        engine
+            .create_collection("docs", CreateCollectionRequest { fields })
+            .unwrap();
+        engine
+            .index(
+                "docs",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "old".to_string(),
+                        field: "email".to_string(),
+                        value: FieldValue::String("old@example.com".to_string()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+
+        engine
+            .unindex_docs(
+                "docs",
+                BatchUnindexDocsRequest {
+                    external_ids: vec!["old".to_string()],
+                },
+            )
+            .unwrap();
+        assert_eq!(engine.stats("docs").unwrap().documents_indexed, 0);
+    }
+
+    #[test]
+    fn batch_unindex_clears_lww_and_replace_side_state_before_rewrite() {
+        let engine = Engine::new();
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "email".to_string(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        engine
+            .create_collection("docs", CreateCollectionRequest { fields })
+            .unwrap();
+        engine
+            .index(
+                "docs",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "old".to_string(),
+                        field: "email".to_string(),
+                        value: FieldValue::String("old@example.com".to_string()),
+                        version: Some(4),
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        engine
+            .replace_docs(
+                "docs",
+                ReplaceDocsRequest {
+                    docs: vec![ReplaceDocItem {
+                        external_id: "old".to_string(),
+                        version: Some(9),
+                        fields: BTreeMap::from([(
+                            "email".to_string(),
+                            FieldValue::String("replace@example.com".to_string()),
+                        )]),
+                    }],
+                },
+            )
+            .unwrap();
+
+        engine
+            .unindex_docs(
+                "docs",
+                BatchUnindexDocsRequest {
+                    external_ids: vec!["old".to_string()],
+                },
+            )
+            .unwrap();
+        let state = engine.state.read().unwrap();
+        let coll = state.collections.get("docs").unwrap();
+        let id = coll.interner.id("old").expect("append-only interner entry");
+        assert!(!coll.eid_fields.contains_key(&id));
+        assert!(!coll.cell_versions.contains_key(&id));
+        assert!(!coll.doc_versions.contains_key(&id));
+        assert!(!coll.field_checksums.contains_key(&id));
+        drop(state);
+
+        // No unindex tombstone is retained.  An older external version can
+        // become the first version of the rewritten row.
+        let rewritten = engine
+            .index(
+                "docs",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "old".to_string(),
+                        field: "email".to_string(),
+                        value: FieldValue::String("rewritten@example.com".to_string()),
+                        version: Some(1),
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(rewritten.indexed, 1);
+    }
+
+    #[test]
+    fn batch_unindex_revalidates_before_taking_any_mutation_path() {
+        let engine = Engine::new();
+        engine
+            .create_collection(
+                "docs",
+                CreateCollectionRequest {
+                    fields: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+        let err = engine
+            .unindex_docs(
+                "docs",
+                BatchUnindexDocsRequest {
+                    external_ids: Vec::new(),
+                },
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("at least one"), "got: {err}");
+        assert_eq!(engine.stats("docs").unwrap().documents_indexed, 0);
+    }
+}

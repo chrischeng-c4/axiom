@@ -70,6 +70,9 @@ const DEFAULT_GATE_N: usize = 10_000;
 const RELEASE_SOAK_GATE_N: usize = 1_000_000;
 const DEFAULT_SCALE_ROWS: &[usize] = &[1_000, 10_000, 100_000];
 const DEFAULT_SCALE_MAX_ROWS: usize = 100_000;
+const SCALE_READ_CELLS: &[&str] = &["range", "filter_sort", "keyword_sort", "sorted_page_deep"];
+const SCALE_CURSOR_PAGE_SIZE: u32 = 100;
+const SCALE_RECLAIMER_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 // EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
 // provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
 fn pg_dsn() -> String {
@@ -438,6 +441,51 @@ fn lumen_query(cell: &str) -> Value {
     }
 }
 
+/// The fixed read matrix for the Lumen-only scale bench. These query shapes stay
+/// independent from the competitive peer cells because the scale corpus has a
+/// deliberately high-cardinality keyword column and the cursor row must start
+/// from one precomputed mid-collection cursor.
+fn scale_lumen_query(cell: &str, cursor: Option<String>) -> Value {
+    let cursor = cursor.map(Value::String).unwrap_or(Value::Null);
+    match cell {
+        // `range` is deliberately a compound range + boolean filter cell. The
+        // fixed four selector names stay stable while this one request covers
+        // both required filter behaviours.
+        "range" => json!({
+            "query":{"and":[
+                {"term":{"field":"city","value":"taipei"}},
+                {"range":{"field":"age","gte":30,"lt":40}}
+            ]},
+            "limit":10
+        }),
+        // `filter_sort` is the required numeric-sort cell.
+        "filter_sort" => json!({
+            "query":{"range":{"field":"age","gte":0}},
+            "sort":[{"field":"age","order":"asc"}],
+            "limit":10,
+            "track_total":false
+        }),
+        // `keyword_sort` is a deterministic high-cardinality keyword sort.
+        // #3997 makes it sparse; `missing:last` plus an exact total reproduce
+        // the formerly unbounded planner shape.
+        "keyword_sort" => json!({
+            "query":{"range":{"field":"age","gte":0}},
+            "sort":[{"field":"sort_key","order":"asc","missing":"last"}],
+            "limit":80,
+            "track_total":true
+        }),
+        // `sorted_page_deep` is cursor pagination from a precomputed deep cursor.
+        "sorted_page_deep" => json!({
+            "query":{"range":{"field":"age","gte":0}},
+            "sort":[{"field":"doc_key","order":"asc"}],
+            "limit":SCALE_CURSOR_PAGE_SIZE,
+            "cursor":cursor,
+            "track_total":false
+        }),
+        _ => unreachable!("unknown scale cell {cell}"),
+    }
+}
+
 /// pgvector literal: `[0.12,-0.04,...]`.
 fn pg_vec_literal(v: &[f32]) -> String {
     let mut s = String::with_capacity(v.len() * 8 + 2);
@@ -454,13 +502,23 @@ fn pg_vec_literal(v: &[f32]) -> String {
 
 fn pg_sql(cell: &str, table: &str) -> String {
     match cell {
-        "text_bm25" => format!("SELECT eid FROM {table} WHERE bio_tsv @@ websearch_to_tsquery('simple','engineer') ORDER BY ts_rank(bio_tsv, websearch_to_tsquery('simple','engineer')) DESC LIMIT 10"),
-        "text_and" => format!("SELECT eid FROM {table} WHERE bio_tsv @@ websearch_to_tsquery('simple','engineer rust') ORDER BY ts_rank(bio_tsv, websearch_to_tsquery('simple','engineer rust')) DESC LIMIT 10"),
-        "filtered_search" => format!("SELECT eid FROM {table} WHERE bio_tsv @@ websearch_to_tsquery('simple','engineer') AND city='taipei' AND age>=30 AND age<40 ORDER BY ts_rank(bio_tsv, websearch_to_tsquery('simple','engineer')) DESC LIMIT 10"),
+        "text_bm25" => format!(
+            "SELECT eid FROM {table} WHERE bio_tsv @@ websearch_to_tsquery('simple','engineer') ORDER BY ts_rank(bio_tsv, websearch_to_tsquery('simple','engineer')) DESC LIMIT 10"
+        ),
+        "text_and" => format!(
+            "SELECT eid FROM {table} WHERE bio_tsv @@ websearch_to_tsquery('simple','engineer rust') ORDER BY ts_rank(bio_tsv, websearch_to_tsquery('simple','engineer rust')) DESC LIMIT 10"
+        ),
+        "filtered_search" => format!(
+            "SELECT eid FROM {table} WHERE bio_tsv @@ websearch_to_tsquery('simple','engineer') AND city='taipei' AND age>=30 AND age<40 ORDER BY ts_rank(bio_tsv, websearch_to_tsquery('simple','engineer')) DESC LIMIT 10"
+        ),
         "kw_term" => format!("SELECT eid FROM {table} WHERE city='taipei' LIMIT 10"),
         "range" => format!("SELECT eid FROM {table} WHERE age>=30 AND age<40 LIMIT 10"),
-        "bool_filter" => format!("SELECT eid FROM {table} WHERE city='taipei' AND age>=30 AND age<40 LIMIT 10"),
-        "filter_sort" => format!("SELECT eid FROM {table} WHERE city='taipei' ORDER BY age ASC, eid ASC LIMIT 10"),
+        "bool_filter" => {
+            format!("SELECT eid FROM {table} WHERE city='taipei' AND age>=30 AND age<40 LIMIT 10")
+        }
+        "filter_sort" => format!(
+            "SELECT eid FROM {table} WHERE city='taipei' ORDER BY age ASC, eid ASC LIMIT 10"
+        ),
         "sorted_page_deep" => format!(
             "SELECT eid FROM {table} WHERE age>=0 ORDER BY age ASC, eid ASC LIMIT {} OFFSET {}",
             SORTED_PAGE_DEEP_SIZE,
@@ -705,19 +763,28 @@ async fn lumen_serve_native(engine: Arc<lumen::storage::Engine>) -> NativeEndpoi
 }
 
 async fn post_index(client: &reqwest::Client, base: &str, items: &[Value]) {
-    client
+    let response = client
         .post(format!("{base}/collections/docs/index"))
         .json(&json!({"items": items}))
         .send()
         .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
+        .expect("scale index request");
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
+        panic!("scale index failed with HTTP {status}: {body}");
+    }
 }
 
 async fn measure_lumen(client: &reqwest::Client, base: &str, cell: &str) -> Stat {
+    measure_lumen_request(client, base, lumen_query(cell)).await
+}
+
+async fn measure_lumen_request(client: &reqwest::Client, base: &str, body: Value) -> Stat {
     let url = format!("{base}/collections/docs/search");
-    let body = lumen_query(cell);
     let mut e2e = Vec::with_capacity(REPS);
     let mut engine = Vec::with_capacity(REPS);
     for r in 0..(WARMUP + REPS) {
@@ -727,6 +794,8 @@ async fn measure_lumen(client: &reqwest::Client, base: &str, cell: &str) -> Stat
             .json(&body)
             .send()
             .await
+            .unwrap()
+            .error_for_status()
             .unwrap()
             .json()
             .await
@@ -1126,7 +1195,31 @@ fn parse_cells_env(var: &str) -> Vec<&'static str> {
 }
 
 fn parse_scale_cells() -> Vec<&'static str> {
-    parse_cells_env("LUMEN_SCALE_CELLS")
+    let Some(raw) = std::env::var("LUMEN_SCALE_CELLS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return SCALE_READ_CELLS.to_vec();
+    };
+
+    let mut cells = Vec::new();
+    for token in raw.split(',') {
+        let cell = token.trim();
+        if cell.is_empty() {
+            continue;
+        }
+        let Some(&known) = SCALE_READ_CELLS.iter().find(|&&known| known == cell) else {
+            panic!(
+                "unknown LUMEN_SCALE_CELLS entry {cell:?}; valid scale cells: {}",
+                SCALE_READ_CELLS.join(",")
+            );
+        };
+        cells.push(known);
+    }
+    if cells.is_empty() {
+        panic!("LUMEN_SCALE_CELLS did not contain any valid scale cells");
+    }
+    cells
 }
 
 fn is_vector_cell(cell: &str) -> bool {
@@ -1289,7 +1382,10 @@ async fn issue(req: &Req, worker: usize) -> bool {
                 None => client.get(url),
             };
             match rb.send().await {
-                Ok(r) => r.bytes().await.is_ok(), // read full body (server serialize cost)
+                Ok(response) => match response.error_for_status() {
+                    Ok(response) => response.bytes().await.is_ok(), // read full body (server serialize cost)
+                    Err(_) => false,
+                },
                 Err(_) => false,
             }
         }
@@ -1344,7 +1440,7 @@ async fn run_load(req: Req, target_qps: usize) -> Load {
     let interval = Duration::from_secs_f64(1.0 / target_qps.max(1) as f64);
     let max_in_flight = (target_qps.max(1) * 2).clamp(32, 4096);
     let in_flight = Arc::new(Semaphore::new(max_in_flight));
-    let mut set: JoinSet<Option<Result<f64, ()>>> = JoinSet::new();
+    let mut set: JoinSet<Result<Option<f64>, ()>> = JoinSet::new();
     let mut issued = 0usize;
     loop {
         let due = start + interval.mul_f64(issued as f64);
@@ -1364,14 +1460,12 @@ async fn run_load(req: Req, target_qps: usize) -> Load {
             let _permit = permit;
             let t = Instant::now();
             let ok = issue(&req, worker).await;
-            if t >= warmup_end && t < window_end {
-                if ok {
-                    Some(Ok(t.elapsed().as_secs_f64() * 1000.0))
-                } else {
-                    Some(Err(()))
-                }
+            if !ok {
+                Err(())
+            } else if t >= warmup_end && t < window_end {
+                Ok(Some(t.elapsed().as_secs_f64() * 1000.0))
             } else {
-                None
+                Ok(None)
             }
         });
         issued += 1;
@@ -1380,9 +1474,9 @@ async fn run_load(req: Req, target_qps: usize) -> Load {
     let mut errors = 0usize;
     while let Some(r) = set.join_next().await {
         match r {
-            Ok(Some(Ok(s))) => all.push(s),
-            Ok(Some(Err(()))) => errors += 1,
-            _ => {}
+            Ok(Ok(Some(s))) => all.push(s),
+            Ok(Err(())) | Err(_) => errors += 1,
+            Ok(Ok(None)) => {}
         }
     }
     all.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -1524,10 +1618,6 @@ async fn healthz_ceiling_load(client: &reqwest::Client, base: &str, qps: usize) 
         qps,
     )
     .await
-}
-
-async fn healthz_ceiling(client: &reqwest::Client, base: &str, qps: usize) -> f64 {
-    healthz_ceiling_load(client, base, qps).await.achieved_qps
 }
 
 // ---------------------------------------------------------------------------
@@ -1694,7 +1784,9 @@ async fn competitive_perf_gate() {
     }
 
     if compare_peers {
-        println!("\n=== native binary search path (prepared compact frame over Unix socket/TCP fallback) — pg cheap predicate gate ===");
+        println!(
+            "\n=== native binary search path (prepared compact frame over Unix socket/TCP fallback) — pg cheap predicate gate ==="
+        );
         println!(
             "{:<16} {:>11} {:>11} {:>11} {:>11} {:>13} {:>8}",
             "cell", "native_e2e", "native_eng", "http_e2e", "pg_e2e", "pg/native", "v"
@@ -2266,7 +2358,7 @@ async fn lumen_serve_disk(
 /// If this fails, the "disk" numbers would be a lie (RAM reads), so it is a HARD
 /// assert, not a report. Uses `Engine::segment_field_probe`.
 fn assert_segment_backed(engine: &lumen::storage::Engine) {
-    for field in ["bio", "city", "age"] {
+    for field in ["bio", "city", "age", "doc_key", "sort_key"] {
         let (driver_len, has_segment) = engine
             .segment_field_probe("docs", field)
             .unwrap_or_else(|e| panic!("probe field `{field}`: {e}"));
@@ -2355,7 +2447,9 @@ async fn competitive_perf_gate_disk() {
     // ---- report + assert. e2e_min is the float-precise comparable (same HTTP
     // path for disk + in-mem + OpenSearch). ratio = peer/lumen_disk, >1 = lumen
     // faster. ovh = disk_e2e / inmem_e2e (warm-cache disk overhead vs RAM). ----
-    println!("\n=== DISK-tier competitive perf gate (N={n}) — ratio = peer/lumen_DISK, >1 = lumen faster ===");
+    println!(
+        "\n=== DISK-tier competitive perf gate (N={n}) — ratio = peer/lumen_DISK, >1 = lumen faster ==="
+    );
     println!(
         "{:<16} {:>9} {:>9} {:>6}   {:>9} {:>9}   {:>11} {:>11}   {:>11} {:>11}",
         "cell",
@@ -2489,8 +2583,9 @@ async fn competitive_perf_gate_disk() {
 // process RSS, and the RSS/on-disk ratio. It is a MEASUREMENT/REPORT — no WIN
 // assertions; it only sanity-asserts results are non-empty and index bytes > 0.
 //
-// Reuses gen_corpus / lumen_query / measure_lumen / run_load / healthz_ceiling /
-// QPS_LADDER from this same file (that is WHY it lives here, not in a new file).
+// Reuses the corpus, HTTP, and paced-load mechanics from this same file. The
+// fixed SCALE_READ_CELLS selectors and scale_lumen_query stay independent from
+// the competitive peer matrix.
 //
 //   cargo test --release -p lumen --test perf_gate_vs_db -- \
 //       --ignored --nocapture lumen_scale_bench
@@ -2646,6 +2741,8 @@ fn scale_collection_fields() -> std::collections::BTreeMap<String, lumen::types:
     fields.insert("bio".to_string(), spec(FieldType::Text));
     fields.insert("city".to_string(), spec(FieldType::Keyword));
     fields.insert("age".to_string(), spec(FieldType::Number));
+    fields.insert("doc_key".to_string(), spec(FieldType::Keyword));
+    fields.insert("sort_key".to_string(), spec(FieldType::Keyword));
     fields
 }
 
@@ -2661,11 +2758,22 @@ fn create_scale_collection(engine: &lumen::storage::Engine, collection_id: &str)
         .expect("create_collection docs");
 }
 
+fn scale_doc_key(document: usize) -> String {
+    format!("scale-key-{document:010}")
+}
+
+/// Present for nine out of every ten rows. The value is unique and sorted by
+/// document ordinal, while the omitted tenth exercises `missing:last`.
+fn scale_sort_key(document: usize) -> Option<String> {
+    (document % 10 != 0).then(|| format!("scale-sort-{document:010}"))
+}
+
 /// Stream-index docs DIRECTLY through the `Engine::index` API (NOT over HTTP)
 /// in batches under the bulk cap. For explicit above-1M research runs, the
 /// in-process call path keeps benchmark overhead below HTTP/JSON write overhead.
-/// Three items per doc (bio/city/age) mirror the HTTP indexer exactly. The corpus
-/// is generated on the fly, so large research runs do not first allocate a
+/// Up to five items per doc (bio/city/age/doc_key/sort_key) mirror the HTTP
+/// indexer exactly. The
+/// corpus is generated on the fly, so large research runs do not first allocate a
 /// `Vec<Doc>`.
 fn scale_index_direct_range(
     engine: &lumen::storage::Engine,
@@ -2677,13 +2785,14 @@ fn scale_index_direct_range(
     rng: &mut Lcg,
 ) {
     use lumen::types::{FieldValue, IndexItem, IndexRequest};
-    const BATCH_DOCS: usize = 3000; // 3000 docs * 3 fields = 9000 items < 10_000 cap
+    const BATCH_DOCS: usize = 2_000;
+    const MAX_ITEMS: usize = lumen::types::MAX_INDEX_BATCH_SIZE;
     let progress_every = std::env::var("LUMEN_SCALE_PROGRESS_EVERY")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(10_000_000)
         .max(1);
-    let mut items: Vec<IndexItem> = Vec::with_capacity(BATCH_DOCS * 3);
+    let mut items: Vec<IndexItem> = Vec::with_capacity(BATCH_DOCS * 5);
     let flush = |items: &mut Vec<IndexItem>| {
         if items.is_empty() {
             return;
@@ -2699,6 +2808,12 @@ fn scale_index_direct_range(
             .expect("engine.index (direct)");
     };
     for local_i in 0..count {
+        // A sparse row has four or five fields. Flush before adding the next
+        // maximum-size row so a near-full batch can never cross the public
+        // 10,000-item index cap.
+        if items.len().saturating_add(5) > MAX_ITEMS {
+            flush(&mut items);
+        }
         let global_i = start + local_i;
         let d = gen_doc(global_i, rng);
         items.push(IndexItem {
@@ -2719,8 +2834,19 @@ fn scale_index_direct_range(
             value: FieldValue::Number(d.age as f64),
             version: None,
         });
-        if items.len() >= BATCH_DOCS * 3 {
-            flush(&mut items);
+        items.push(IndexItem {
+            external_id: d.eid,
+            field: "doc_key".into(),
+            value: FieldValue::String(scale_doc_key(global_i)),
+            version: None,
+        });
+        if let Some(sort_key) = scale_sort_key(global_i) {
+            items.push(IndexItem {
+                external_id: format!("d{global_i}"),
+                field: "sort_key".into(),
+                value: FieldValue::String(sort_key),
+                version: None,
+            });
         }
         let done = completed_before + local_i + 1;
         if total >= progress_every && done % progress_every == 0 {
@@ -2736,6 +2862,513 @@ fn scale_index_direct_range(
 fn scale_index_direct(engine: &lumen::storage::Engine, n: usize) {
     let mut rng = Lcg::new(SEED);
     scale_index_direct_range(engine, "docs", 0, n, n, 0, &mut rng);
+}
+
+fn scale_document_items(document: usize) -> Vec<Value> {
+    let mut rng = Lcg::for_doc(document);
+    let doc = gen_doc(document, &mut rng);
+    let mut items = vec![
+        json!({"external_id":doc.eid,"field":"bio","value":doc.bio}),
+        json!({"external_id":format!("d{document}"),"field":"city","value":doc.city}),
+        json!({"external_id":format!("d{document}"),"field":"age","value":doc.age}),
+        json!({"external_id":format!("d{document}"),"field":"doc_key","value":scale_doc_key(document)}),
+    ];
+    if let Some(sort_key) = scale_sort_key(document) {
+        items.push(
+            json!({"external_id":format!("d{document}"),"field":"sort_key","value":sort_key}),
+        );
+    }
+    items
+}
+
+fn scale_sentinel_items() -> Vec<Value> {
+    vec![
+        json!({"external_id":"scale-unindex-survivor","field":"bio","value":"scale sentinel"}),
+        json!({"external_id":"scale-unindex-survivor","field":"city","value":"sentinel"}),
+        json!({"external_id":"scale-unindex-survivor","field":"age","value":-1}),
+        json!({"external_id":"scale-unindex-survivor","field":"doc_key","value":"scale-sentinel"}),
+        json!({"external_id":"scale-unindex-survivor","field":"sort_key","value":"scale-sentinel"}),
+    ]
+}
+
+async fn scale_reindex_documents(
+    client: &reqwest::Client,
+    base: &str,
+    documents: impl IntoIterator<Item = usize>,
+) {
+    // Sparse fixture rows have four or five fields. Check before appending a
+    // whole row so a 996-item batch cannot cross the public item cap with a
+    // five-item row.
+    const MAX_ITEMS: usize = lumen::types::MAX_INDEX_BATCH_SIZE;
+    let mut items = Vec::with_capacity(MAX_ITEMS);
+    for document in documents {
+        let document_items = scale_document_items(document);
+        if items.len().saturating_add(document_items.len()) > MAX_ITEMS {
+            post_index(client, base, &items).await;
+            items.clear();
+        }
+        items.extend(document_items);
+    }
+    if !items.is_empty() {
+        post_index(client, base, &items).await;
+    }
+}
+
+async fn scale_search_json(client: &reqwest::Client, base: &str, body: Value) -> Value {
+    client
+        .post(format!("{base}/collections/docs/search"))
+        .json(&body)
+        .send()
+        .await
+        .expect("scale search request")
+        .error_for_status()
+        .expect("scale search success status")
+        .json()
+        .await
+        .expect("scale search JSON")
+}
+
+/// First-use timings for the #3997 query shape. Each limit changes the exact
+/// request-cache key, so this reports a cold response-cache request without
+/// adding a write (which would measure mutation work rather than sort work).
+/// These are evidence rows only. They intentionally have no latency floor.
+async fn scale_measure_keyword_sort_cold(client: &reqwest::Client, base: &str, documents: usize) {
+    for limit in [1u32, 20, 80, 500, 2_000] {
+        let mut query = scale_lumen_query("keyword_sort", None);
+        query["limit"] = json!(limit);
+        let started = Instant::now();
+        let response = scale_search_json(client, base, query).await;
+        let elapsed = started.elapsed();
+        let expected_len = documents.min(limit as usize);
+        assert_eq!(
+            scale_response_ids(&response, "keyword_sort cold").len(),
+            expected_len,
+            "cold keyword_sort limit={limit} returned an unexpected page size"
+        );
+        assert_eq!(
+            response["total"].as_u64(),
+            Some(documents as u64),
+            "cold keyword_sort limit={limit} lost missing rows from the exact total"
+        );
+        println!(
+            "  keyword_sort cold_response_cache: N={documents} limit={limit} sparse=90% missing=last track_total=true e2e={:.3}ms took_us={}",
+            elapsed.as_secs_f64() * 1000.0,
+            response["took_us"].as_u64().unwrap_or(0),
+        );
+    }
+}
+
+async fn scale_documents_indexed(client: &reqwest::Client, base: &str) -> u64 {
+    client
+        .get(format!("{base}/collections/docs/stats"))
+        .send()
+        .await
+        .expect("scale stats request")
+        .error_for_status()
+        .expect("scale stats success status")
+        .json::<Value>()
+        .await
+        .expect("scale stats JSON")["documents_indexed"]
+        .as_u64()
+        .expect("scale stats documents_indexed")
+}
+
+fn assert_scale_page(response: &Value, start: usize, expected_len: usize) {
+    let hits = response["hits"]
+        .as_array()
+        .expect("scale cursor hits array");
+    assert_eq!(
+        hits.len(),
+        expected_len,
+        "scale cursor page has an unexpected number of hits"
+    );
+    let expected: Vec<_> = (start..start + expected_len)
+        .map(|document| format!("d{document}"))
+        .collect();
+    let actual: Vec<_> = hits
+        .iter()
+        .map(|hit| {
+            hit["external_id"]
+                .as_str()
+                .expect("scale cursor external_id")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(actual, expected, "scale cursor order changed");
+}
+
+fn scale_response_ids(response: &Value, cell: &str) -> Vec<String> {
+    response["hits"]
+        .as_array()
+        .unwrap_or_else(|| panic!("scale {cell} preflight hits array"))
+        .iter()
+        .map(|hit| {
+            hit["external_id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("scale {cell} preflight external_id"))
+                .to_string()
+        })
+        .collect()
+}
+
+async fn scale_preflight_fixture(client: &reqwest::Client, base: &str, documents: usize) {
+    assert_eq!(
+        scale_documents_indexed(client, base).await,
+        documents as u64,
+        "scale preflight fixture count differs from N={documents} before measurements"
+    );
+
+    let range = scale_search_json(client, base, scale_lumen_query("range", None)).await;
+    let expected_range: Vec<String> = (0..documents)
+        .filter_map(|document| {
+            let mut rng = Lcg::for_doc(document);
+            let doc = gen_doc(document, &mut rng);
+            (doc.city == "taipei" && (30..40).contains(&doc.age)).then_some(doc.eid)
+        })
+        .take(10)
+        .collect();
+    // Current 0.4 constant-score filters use posting/internal-docid order. This
+    // fixture indexes d0..dN sequentially, so document ordinal is the stable
+    // hard oracle. External-id ordering is a separate 0.5 target contract.
+    assert_eq!(
+        scale_response_ids(&range, "range"),
+        expected_range,
+        "scale preflight range filter result set/order changed from deterministic fixture document order"
+    );
+
+    let filter_sort = scale_search_json(client, base, scale_lumen_query("filter_sort", None)).await;
+    let mut expected_filter_sort: Vec<(i32, usize)> = (0..documents)
+        .map(|document| (doc_age(&format!("d{document}")), document))
+        .collect();
+    expected_filter_sort.sort_by(|(left_age, left_document), (right_age, right_document)| {
+        left_age
+            .cmp(right_age)
+            .then_with(|| left_document.cmp(right_document))
+    });
+    let expected_filter_sort: Vec<String> = expected_filter_sort
+        .into_iter()
+        .take(10)
+        .map(|(_, document)| format!("d{document}"))
+        .collect();
+    assert_eq!(
+        scale_response_ids(&filter_sort, "filter_sort"),
+        expected_filter_sort,
+        "scale preflight numeric sort must be age ascending with deterministic fixture document-order tie-break"
+    );
+
+    let keyword_sort =
+        scale_search_json(client, base, scale_lumen_query("keyword_sort", None)).await;
+    let expected_keyword_sort: Vec<String> = (0..documents)
+        .filter(|document| scale_sort_key(*document).is_some())
+        .take(80)
+        .map(|document| format!("d{document}"))
+        .collect();
+    assert_eq!(
+        scale_response_ids(&keyword_sort, "keyword_sort"),
+        expected_keyword_sort,
+        "scale preflight sparse high-cardinality missing:last keyword sort changed"
+    );
+    assert_eq!(
+        keyword_sort["total"].as_u64(),
+        Some(documents as u64),
+        "scale preflight keyword_sort must keep an exact total including missing rows"
+    );
+
+    let sorted_page_deep =
+        scale_search_json(client, base, scale_lumen_query("sorted_page_deep", None)).await;
+    assert_scale_page(
+        &sorted_page_deep,
+        0,
+        usize::try_from(SCALE_CURSOR_PAGE_SIZE).expect("cursor page size fits usize"),
+    );
+    println!(
+        "  preflight: N={documents} fixture count and range/filter-sort/keyword-sort/sorted-page order verified"
+    );
+}
+
+async fn scale_precompute_mid_collection_cursor(
+    client: &reqwest::Client,
+    base: &str,
+    documents: usize,
+) -> String {
+    let page_size = SCALE_CURSOR_PAGE_SIZE as usize;
+    let mid_start = (documents / 2 / page_size) * page_size;
+    assert!(
+        mid_start >= page_size && mid_start + 2 * page_size <= documents,
+        "scale cursor preflight needs two full mid-collection pages for N={documents}"
+    );
+
+    let mut cursor = None;
+    for page_start in (0..mid_start).step_by(page_size) {
+        let page = scale_search_json(
+            client,
+            base,
+            scale_lumen_query("sorted_page_deep", cursor.take()),
+        )
+        .await;
+        assert_scale_page(&page, page_start, page_size);
+        cursor = page["cursor"].as_str().map(str::to_owned);
+        assert!(
+            cursor.is_some(),
+            "scale cursor preflight exhausted before mid-collection page {mid_start}"
+        );
+    }
+    let mid_cursor = cursor.expect("scale precomputed mid-collection cursor");
+
+    let first = scale_search_json(
+        client,
+        base,
+        scale_lumen_query("sorted_page_deep", Some(mid_cursor.clone())),
+    )
+    .await;
+    assert_scale_page(&first, mid_start, page_size);
+    let next_cursor = first["cursor"]
+        .as_str()
+        .expect("first mid-collection cursor page has continuation")
+        .to_string();
+    let second = scale_search_json(
+        client,
+        base,
+        scale_lumen_query("sorted_page_deep", Some(next_cursor)),
+    )
+    .await;
+    assert_scale_page(&second, mid_start + page_size, page_size);
+    let first_ids: std::collections::BTreeSet<_> = first["hits"]
+        .as_array()
+        .expect("first scale cursor hits")
+        .iter()
+        .map(|hit| {
+            hit["external_id"]
+                .as_str()
+                .expect("first cursor external_id")
+        })
+        .collect();
+    assert!(
+        second["hits"]
+            .as_array()
+            .expect("second scale cursor hits")
+            .iter()
+            .all(|hit| !first_ids.contains(
+                hit["external_id"]
+                    .as_str()
+                    .expect("second cursor external_id")
+            )),
+        "scale cursor preflight pages overlap"
+    );
+    mid_cursor
+}
+
+async fn scale_assert_ids(
+    client: &reqwest::Client,
+    base: &str,
+    ids: &[String],
+    expected: &[String],
+) {
+    let response = scale_search_json(
+        client,
+        base,
+        json!({"query":{"ids":{"values":ids}},"limit":ids.len()}),
+    )
+    .await;
+    let actual: std::collections::BTreeSet<_> = response["hits"]
+        .as_array()
+        .expect("ids query hits")
+        .iter()
+        .map(|hit| {
+            hit["external_id"]
+                .as_str()
+                .expect("ids query external_id")
+                .to_string()
+        })
+        .collect();
+    let expected: std::collections::BTreeSet<_> = expected.iter().cloned().collect();
+    assert_eq!(actual, expected, "ids query visibility changed");
+}
+
+struct ScaleMutationMeasurement {
+    batch_unindex: Duration,
+    post_reindex_keyword_sort: Duration,
+    post_reindex_keyword_sort_took_us: u64,
+    truncate: Duration,
+    batch_ids: usize,
+    readyz_status: reqwest::StatusCode,
+    reclaimer_baseline: lumen::storage::CollectionReclaimerSnapshot,
+    reclaimer_after_truncate: lumen::storage::CollectionReclaimerSnapshot,
+    reclaimer_drained: lumen::storage::CollectionReclaimerSnapshot,
+    reclaimer_drain: Duration,
+}
+
+async fn wait_for_scale_reclaimer_drain(
+    baseline: lumen::storage::CollectionReclaimerSnapshot,
+    truncate_started: Instant,
+) -> lumen::storage::CollectionReclaimerSnapshot {
+    let submitted_for_this_run = baseline.submitted_generations + 1;
+    let completed_for_this_run = baseline.completed_generations + 1;
+    let deadline = Instant::now() + SCALE_RECLAIMER_DRAIN_TIMEOUT;
+
+    loop {
+        let snapshot = lumen::storage::collection_reclaimer_snapshot();
+        if snapshot.submitted_generations >= submitted_for_this_run
+            && snapshot.completed_generations >= completed_for_this_run
+            && snapshot.pending_generations == baseline.pending_generations
+        {
+            return snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "scale truncate reclaimer did not drain this run's generation within {:?}: baseline={baseline:?}; latest={snapshot:?}; elapsed={:?}",
+            SCALE_RECLAIMER_DRAIN_TIMEOUT,
+            truncate_started.elapsed(),
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn measure_scale_mutations(
+    client: &reqwest::Client,
+    base: &str,
+    documents: usize,
+) -> ScaleMutationMeasurement {
+    let batch_ids: Vec<String> = (0..documents.min(1_000))
+        .map(|document| format!("d{document}"))
+        .collect();
+    let survivor = "scale-unindex-survivor".to_string();
+
+    // At N=1,000 the required batch removes every measured document. Add one
+    // temporary survivor after the read matrix so the mutation probe can still
+    // prove an unaffected document without changing the recorded scale N.
+    let sentinel_items = scale_sentinel_items();
+    post_index(client, base, &sentinel_items).await;
+    assert_eq!(
+        scale_documents_indexed(client, base).await,
+        documents as u64 + 1,
+        "scale mutation probe must add only its temporary survivor"
+    );
+
+    let started = Instant::now();
+    let response = client
+        .post(format!("{base}/collections/docs/docs:unindex"))
+        .json(&json!({"external_ids":&batch_ids}))
+        .send()
+        .await
+        .expect("batch unindex request")
+        .error_for_status()
+        .expect("batch unindex success status");
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "batch unindex must return its atomic logical acknowledgement"
+    );
+    let batch_unindex = started.elapsed();
+
+    scale_assert_ids(client, base, &batch_ids, &[]).await;
+    scale_assert_ids(
+        client,
+        base,
+        std::slice::from_ref(&survivor),
+        std::slice::from_ref(&survivor),
+    )
+    .await;
+    assert_eq!(
+        scale_documents_indexed(client, base).await,
+        documents as u64 + 1 - batch_ids.len() as u64,
+        "batch unindex must make every selected id invisible together"
+    );
+
+    scale_reindex_documents(client, base, batch_ids.iter().map(|id| doc_ordinal(id))).await;
+    assert_eq!(
+        scale_documents_indexed(client, base).await,
+        documents as u64 + 1,
+        "reindex must restore every batch-unindexed document"
+    );
+
+    client
+        .post(format!("{base}/collections/docs/docs:unindex"))
+        .json(&json!({"external_ids":[survivor]}))
+        .send()
+        .await
+        .expect("temporary survivor cleanup request")
+        .error_for_status()
+        .expect("temporary survivor cleanup status");
+    assert_eq!(
+        scale_documents_indexed(client, base).await,
+        documents as u64,
+        "temporary survivor cleanup must restore the exact scale document count"
+    );
+
+    // Both reindex and survivor cleanup invalidate the response cache. This
+    // first post-write request is intentionally measured without a threshold:
+    // it proves the sealed dictionary plus live-tail merge keeps the sparse
+    // keyword page and exact total correct after the write path.
+    let started = Instant::now();
+    let post_reindex_keyword_response =
+        scale_search_json(client, base, scale_lumen_query("keyword_sort", None)).await;
+    let post_reindex_keyword_sort = started.elapsed();
+    let expected_keyword_sort: Vec<String> = (0..documents)
+        .filter(|document| scale_sort_key(*document).is_some())
+        .take(80)
+        .map(|document| format!("d{document}"))
+        .collect();
+    assert_eq!(
+        scale_response_ids(&post_reindex_keyword_response, "keyword_sort post-reindex"),
+        expected_keyword_sort,
+        "post-reindex cold keyword_sort changed sparse missing:last order"
+    );
+    assert_eq!(
+        post_reindex_keyword_response["total"].as_u64(),
+        Some(documents as u64),
+        "post-reindex cold keyword_sort lost its exact total"
+    );
+    let post_reindex_keyword_sort_took_us = post_reindex_keyword_response["took_us"]
+        .as_u64()
+        .unwrap_or(0);
+
+    let reclaimer_baseline = lumen::storage::collection_reclaimer_snapshot();
+    let started = Instant::now();
+    let response = client
+        .post(format!("{base}/collections/docs/docs:truncate"))
+        .send()
+        .await
+        .expect("truncate request")
+        .error_for_status()
+        .expect("truncate success status");
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "truncate must return its logical acknowledgement"
+    );
+    let truncate = started.elapsed();
+    let reclaimer_after_truncate = lumen::storage::collection_reclaimer_snapshot();
+    assert_eq!(
+        scale_documents_indexed(client, base).await,
+        0,
+        "truncate must make its fresh collection visible before the reclaimer drains"
+    );
+    let readyz_status = client
+        .get(format!("{base}/readyz"))
+        .send()
+        .await
+        .expect("readyz after truncate request")
+        .status();
+    assert_eq!(
+        readyz_status,
+        reqwest::StatusCode::OK,
+        "truncate must not move the scale engine into drain"
+    );
+    let reclaimer_drained = wait_for_scale_reclaimer_drain(reclaimer_baseline, started).await;
+
+    ScaleMutationMeasurement {
+        batch_unindex,
+        post_reindex_keyword_sort,
+        post_reindex_keyword_sort_took_us,
+        truncate,
+        batch_ids: batch_ids.len(),
+        readyz_status,
+        reclaimer_baseline,
+        reclaimer_after_truncate,
+        reclaimer_drained,
+        reclaimer_drain: started.elapsed(),
+    }
 }
 
 /// Build a DISK-backed lumen for the scale bench: a fresh Engine, the `docs`
@@ -2804,6 +3437,33 @@ async fn scale_serve_inram(n: usize) -> (reqwest::Client, String, Arc<lumen::sto
     (client, base, engine)
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scale_mutation_probe_waits_for_reclaimer_drain() {
+    // This is a focused harness gate, not a scale-matrix row. A small corpus
+    // exercises the same HTTP batch-unindex and truncate path without running
+    // the DEV or full read/QPS matrix.
+    let (client, base, _engine, _dir) = scale_serve_disk(1_000, 91).await;
+    let measurement = measure_scale_mutations(&client, &base, 1_000).await;
+
+    assert_eq!(measurement.batch_ids, 1_000);
+    assert!(
+        measurement.reclaimer_after_truncate.submitted_generations
+            >= measurement.reclaimer_baseline.submitted_generations + 1
+    );
+    assert!(
+        measurement.reclaimer_drained.completed_generations
+            >= measurement.reclaimer_baseline.completed_generations + 1
+    );
+    assert_eq!(
+        measurement.reclaimer_drained.pending_generations,
+        measurement.reclaimer_baseline.pending_generations
+    );
+    assert!(
+        measurement.reclaimer_drain <= SCALE_RECLAIMER_DRAIN_TIMEOUT,
+        "focused scale mutation probe exceeded its reclaimer drain timeout"
+    );
+}
+
 struct ScaleShard {
     engine: Arc<lumen::storage::Engine>,
     dir: std::path::PathBuf,
@@ -2837,8 +3497,7 @@ impl ShardedScale {
         (total, by_field)
     }
 
-    fn search(&self, mut req: lumen::types::SearchRequest) -> lumen::types::SearchResponse {
-        req.cursor = None;
+    fn search(&self, req: lumen::types::SearchRequest) -> lumen::types::SearchResponse {
         lumen::routing::search_shards_parallel(
             "docs",
             req,
@@ -2846,6 +3505,10 @@ impl ShardedScale {
             |shard, collection_id, req| Ok(shard.engine.search(collection_id, req)?),
             |hit, field| match field {
                 "age" => Some(doc_age(&hit.external_id) as f64),
+                // `doc_key` is a zero-padded rendering of the same document
+                // ordinal, so the numeric surrogate preserves its deterministic
+                // high-cardinality keyword order during shard merge.
+                "doc_key" => Some(doc_ordinal(&hit.external_id) as f64),
                 _ => None,
             },
         )
@@ -3227,9 +3890,9 @@ fn scale_serve_disk_sharded_reopened_parallel(
     scale_open_storage_only_chunks(chunks, seq, workers)
 }
 
-fn measure_lumen_sharded(scale: &ShardedScale, cell: &str) -> Stat {
+fn measure_scale_lumen_sharded(scale: &ShardedScale, cell: &str) -> Stat {
     let req: lumen::types::SearchRequest =
-        serde_json::from_value(lumen_query(cell)).expect("parse lumen query");
+        serde_json::from_value(scale_lumen_query(cell, None)).expect("parse scale query");
     let mut e2e = Vec::with_capacity(REPS);
     let mut engine = Vec::with_capacity(REPS);
     for i in 0..(WARMUP + REPS) {
@@ -3402,9 +4065,9 @@ async fn lumen_scale_bench() {
             .unwrap_or_else(|| "OFF (single segment build)".to_string())
     );
     println!(
-        "#   per cell   : measure_lumen (e2e_min + engine took){}",
+        "#   per cell   : fixed read matrix (range, boolean, number sort, high-cardinality keyword sort, cursor pagination){}",
         if run_qps {
-            " + qps ladder"
+            " + paced read-only qps ladder"
         } else {
             " (qps ladder skipped)"
         }
@@ -3515,8 +4178,34 @@ async fn lumen_scale_bench() {
             );
         }
 
-        // ---- per-cell latency (measure_lumen: e2e_min + engine took_us) -------
-        let mut lat = std::collections::BTreeMap::new();
+        // Fail before any latency/QPS measurement when the normal single-engine
+        // fixture or deterministic result ordering has changed. Chunked research
+        // routing has its own merge proof and is intentionally not treated as a
+        // normal single-engine matrix row.
+        if !storage_only && sharded.is_none() {
+            if selected_cells.contains(&"keyword_sort") {
+                scale_measure_keyword_sort_cold(
+                    client
+                        .as_ref()
+                        .expect("cold keyword timing requires HTTP client"),
+                    base.as_ref()
+                        .expect("cold keyword timing requires HTTP base"),
+                    n,
+                )
+                .await;
+            }
+            scale_preflight_fixture(
+                client
+                    .as_ref()
+                    .expect("single-engine preflight requires HTTP client"),
+                base.as_ref()
+                    .expect("single-engine preflight requires HTTP base"),
+                n,
+            )
+            .await;
+        }
+
+        // ---- per-cell latency (HTTP e2e_min + engine took_us) ------------------
         if !storage_only {
             for &cell in &selected_cells {
                 println!(
@@ -3524,9 +4213,14 @@ async fn lumen_scale_bench() {
                     row_started.elapsed().as_secs_f64()
                 );
                 let s = if let Some(scale) = &sharded {
-                    measure_lumen_sharded(scale.as_ref(), cell)
+                    measure_scale_lumen_sharded(scale.as_ref(), cell)
                 } else {
-                    measure_lumen(client.as_ref().unwrap(), base.as_ref().unwrap(), cell).await
+                    measure_lumen_request(
+                        client.as_ref().unwrap(),
+                        base.as_ref().unwrap(),
+                        scale_lumen_query(cell, None),
+                    )
+                    .await
                 };
                 peak_rss = peak_rss.max(scale_procmem::rss_bytes().unwrap_or(0));
                 println!(
@@ -3535,7 +4229,6 @@ async fn lumen_scale_bench() {
                     s.engine_min.unwrap_or(f64::NAN),
                     row_started.elapsed().as_secs_f64()
                 );
-                lat.insert(cell, s);
             }
         }
 
@@ -3544,7 +4237,7 @@ async fn lumen_scale_bench() {
             let sanity_cell = selected_cells[0];
             let hits = if let Some(scale) = &sharded {
                 let req: lumen::types::SearchRequest =
-                    serde_json::from_value(lumen_query(sanity_cell)).unwrap();
+                    serde_json::from_value(scale_lumen_query(sanity_cell, None)).unwrap();
                 scale.search(req).hits.len()
             } else {
                 let url = format!("{}/collections/docs/search", base.as_ref().unwrap());
@@ -3552,9 +4245,11 @@ async fn lumen_scale_bench() {
                     .as_ref()
                     .unwrap()
                     .post(&url)
-                    .json(&lumen_query(sanity_cell))
+                    .json(&scale_lumen_query(sanity_cell, None))
                     .send()
                     .await
+                    .unwrap()
+                    .error_for_status()
                     .unwrap()
                     .json()
                     .await
@@ -3570,21 +4265,30 @@ async fn lumen_scale_bench() {
             );
         }
 
-        // ---- qps ladder (run_load per QPS step, saturation-guarded) -----------
-        // load -> (achieved_qps, p50) per (cell, qps).
-        let mut load: std::collections::BTreeMap<(&str, usize), (f64, f64)> =
-            std::collections::BTreeMap::new();
-        let mut sat: std::collections::BTreeMap<(&str, usize), &'static str> =
-            std::collections::BTreeMap::new();
+        // ---- paced read-only qps ladder --------------------------------------
+        // Each row retains its complete measurement so the final report remains
+        // one row per (documents, read cell, target qps), including qps=10.
+        let mut load_rows: Vec<(&str, usize, Load, &'static str)> = Vec::new();
         if run_qps {
             let client = client.as_ref().expect("qps path requires HTTP client");
             let base = base.as_ref().expect("qps path requires HTTP base");
+            let mid_collection_cursor =
+                scale_precompute_mid_collection_cursor(client, base, n).await;
+            println!(
+                "  cursor preflight: N={n} precomputed mid-collection cursor; ordered non-overlapping pages verified"
+            );
             for &qps in &qps_targets {
                 println!(
                     "  qps ladder start: N={n} target={qps} elapsed={:.1}s",
                     row_started.elapsed().as_secs_f64()
                 );
-                let ceiling = healthz_ceiling(client, base, qps).await;
+                let ceiling_load = healthz_ceiling_load(client, base, qps).await;
+                assert_eq!(
+                    ceiling_load.errors, 0,
+                    "N={n}: /healthz qps probe had {} request errors",
+                    ceiling_load.errors
+                );
+                let ceiling = ceiling_load.achieved_qps;
                 for &cell in &selected_cells {
                     println!(
                         "  qps start: N={n} target={qps} cell={cell} ceiling={ceiling:.0} elapsed={:.1}s",
@@ -3594,34 +4298,36 @@ async fn lumen_scale_bench() {
                         Req::Http {
                             client: client.clone(),
                             url: format!("{base}/collections/docs/search"),
-                            body: Some(http_json_body(lumen_query(cell))),
+                            body: Some(http_json_body(scale_lumen_query(
+                                cell,
+                                (cell == "sorted_page_deep").then(|| mid_collection_cursor.clone()),
+                            ))),
                         },
                         qps,
                     )
                     .await;
                     peak_rss = peak_rss.max(scale_procmem::rss_bytes().unwrap_or(0));
-                    // saturation: HARN = pinned at client/runtime ceiling; ok = drove
-                    // ~target; SVR = server-limited below target (same logic as the gate).
-                    let healthy = l.achieved_qps >= 0.9 * qps as f64;
-                    let harness_bound = ceiling > 0.0 && l.achieved_qps >= 0.7 * ceiling;
-                    sat.insert(
-                        (cell, qps),
-                        if harness_bound {
-                            "HARN"
-                        } else if healthy {
-                            "ok"
-                        } else {
-                            "SVR"
-                        },
-                    );
-                    load.insert((cell, qps), (l.achieved_qps, l.p50));
+                    // This is a classification, not a threshold or gate: `ok`
+                    // reached the requested rate, `HARN` could not drive even
+                    // /healthz to that rate, and `SVR` leaves the remaining
+                    // shortfall to the server/query path.
+                    let state = if l.achieved_qps >= qps as f64 {
+                        "ok"
+                    } else if ceiling < qps as f64 {
+                        "HARN"
+                    } else {
+                        "SVR"
+                    };
                     println!(
-                        "  qps done : N={n} target={qps} cell={cell} achieved={:.0} p50={:.3}ms sat={} elapsed={:.1}s",
+                        "  qps done : N={n} target={qps} cell={cell} achieved={:.0} p50={:.3}ms p95={:.3}ms p99={:.3}ms errors={} state={state} elapsed={:.1}s",
                         l.achieved_qps,
                         l.p50,
-                        sat[&(cell, qps)],
+                        l.p95,
+                        l.p99,
+                        l.errors,
                         row_started.elapsed().as_secs_f64()
                     );
+                    load_rows.push((cell, qps, l, state));
                 }
             }
         }
@@ -3637,33 +4343,74 @@ async fn lumen_scale_bench() {
         if storage_only {
             println!("\n  --- N={n} latency/qps skipped: storage-only chunked footprint proof ---");
         } else {
-            println!("\n  --- N={n} cell × {{latency, qps}} matrix (lumen-only) ---");
+            println!("\n  --- N={n} read qps matrix (lumen-only, disk-backed HTTP) ---");
             println!(
-                "  {:<16} {:>10} {:>10}   {:>11} {:>11} {:>5}   {:>11} {:>11} {:>5}",
+                "  {:>8} {:<30} {:>8} {:>12} {:>10} {:>10} {:>10} {:>8} {:>10} {:>5}",
+                "documents",
                 "cell",
-                "e2e_min",
-                "eng_min",
-                "q100_p50",
-                "q100_qps",
-                "sat",
-                "q1k_p50",
-                "q1k_qps",
-                "sat",
+                "target",
+                "achieved_qps",
+                "p50_ms",
+                "p95_ms",
+                "p99_ms",
+                "errors",
+                "error_rate",
+                "state",
             );
-            for &cell in &selected_cells {
-                let s = &lat[cell];
-                let eng = s.engine_min.unwrap_or(f64::NAN);
-                let (q100_qps, q100_p50) =
-                    load.get(&(cell, 100usize)).copied().unwrap_or((0.0, 0.0));
-                let (q1k_qps, q1k_p50) =
-                    load.get(&(cell, 1000usize)).copied().unwrap_or((0.0, 0.0));
-                let s100 = sat.get(&(cell, 100usize)).copied().unwrap_or("-");
-                let s1k = sat.get(&(cell, 1000usize)).copied().unwrap_or("-");
+            for (cell, qps, load, state) in &load_rows {
                 println!(
-                    "  {:<16} {:>10.3} {:>10.4}   {:>11.3} {:>11.0} {:>5}   {:>11.3} {:>11.0} {:>5}",
-                    cell, s.e2e_min, eng, q100_p50, q100_qps, s100, q1k_p50, q1k_qps, s1k,
+                    "  {n:>8} {cell:<30} {qps:>8} {:>12.3} {:>10.3} {:>10.3} {:>10.3} {:>8} {:>10.4} {:>5}",
+                    load.achieved_qps,
+                    load.p50,
+                    load.p95,
+                    load.p99,
+                    load.errors,
+                    load.error_rate,
+                    state,
                 );
             }
+            let request_errors: usize = load_rows.iter().map(|(_, _, load, _)| load.errors).sum();
+            assert_eq!(
+                request_errors, 0,
+                "N={n}: read qps matrix had {request_errors} request errors"
+            );
+        }
+
+        if storage_only {
+            println!(
+                "  mutations: skipped (storage-only chunked proof has no HTTP mutation surface)"
+            );
+        } else if sharded.is_some() {
+            println!(
+                "  mutations: unavailable for chunked research mode (the read-only shard harness has no single atomic cross-shard docs:unindex/docs:truncate surface)"
+            );
+        } else {
+            let mutation = measure_scale_mutations(
+                client.as_ref().expect("mutation path requires HTTP client"),
+                base.as_ref().expect("mutation path requires HTTP base"),
+                n,
+            )
+            .await;
+            println!(
+                "  mutations: N={n} batch_unindex_ids={} logical={:?}; keyword_sort_post_reindex_cold_e2e={:?} took_us={}; truncate logical={:?}; readyz_after_truncate={}; reclaimer_pending_baseline={}; reclaimer_submitted_baseline={}; reclaimer_completed_baseline={}; reclaimer_after_truncate_pending={}; reclaimer_after_truncate_queued={}; reclaimer_after_truncate_active={}; reclaimer_queue_high_water={}; reclaimer_drained_pending={}; reclaimer_drained_submitted={}; reclaimer_drained_completed={}; reclaimer_drain_from_truncate_start={:?}",
+                mutation.batch_ids,
+                mutation.batch_unindex,
+                mutation.post_reindex_keyword_sort,
+                mutation.post_reindex_keyword_sort_took_us,
+                mutation.truncate,
+                mutation.readyz_status,
+                mutation.reclaimer_baseline.pending_generations,
+                mutation.reclaimer_baseline.submitted_generations,
+                mutation.reclaimer_baseline.completed_generations,
+                mutation.reclaimer_after_truncate.pending_generations,
+                mutation.reclaimer_after_truncate.queued_tasks,
+                mutation.reclaimer_after_truncate.active_tasks,
+                mutation.reclaimer_drained.queue_high_water,
+                mutation.reclaimer_drained.pending_generations,
+                mutation.reclaimer_drained.submitted_generations,
+                mutation.reclaimer_drained.completed_generations,
+                mutation.reclaimer_drain,
+            );
         }
 
         // -------------------- per-N storage summary line -----------------------

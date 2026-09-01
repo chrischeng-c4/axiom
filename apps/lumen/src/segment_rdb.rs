@@ -33,6 +33,14 @@ use crate::storage::Engine;
 const GENERATION_MANIFEST_FILE: &str = "_generation.json";
 const GENERATION_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
+const CURRENT_FILE: &str = "CURRENT";
+const CURRENT_TEMP_FILE: &str = "CURRENT.tmp";
+const AOF_FILE: &str = "aof.log";
+const AOF_COMPACT_TEMP_FILE: &str = "aof.log.compact.tmp";
+// The shipped image pre-populates its declared volume with this inert regular
+// file so Docker recognizes a non-empty data directory. It carries no Lumen
+// state and is part of a semantically new root.
+const CONTAINER_VOLUME_SEED_FILE: &str = ".lumen-volume-seed";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +59,64 @@ struct GenerationRecord {
     revision: u64,
     legacy: bool,
     previous: Option<GenerationName>,
+}
+
+/// The durable checkpoint decision made before Lumen starts accepting work.
+///
+/// This is intentionally about the checkpoint root only. The binary logs the
+/// separate AOF replay decision after it applies the checkpoint baseline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SegmentStartupDecision {
+    InitializedEmptyRoot,
+    RecoveredUncommittedEmpty,
+    RestoredCurrentEmpty,
+    RestoredCurrentGeneration,
+    AdoptedLegacy0428,
+}
+
+impl SegmentStartupDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InitializedEmptyRoot => "initialized_empty_root",
+            Self::RecoveredUncommittedEmpty => "recovered_uncommitted_empty",
+            Self::RestoredCurrentEmpty => "restored_current_empty",
+            Self::RestoredCurrentGeneration => "restored_current_generation",
+            Self::AdoptedLegacy0428 => "adopted_legacy_0428",
+        }
+    }
+}
+
+/// The exact successful checkpoint-root state selected during cold start.
+#[derive(Clone, Debug)]
+pub struct SegmentStartupOutcome {
+    pub decision: SegmentStartupDecision,
+    pub checkpoint_sequence: Option<u64>,
+    pub generation: Option<GenerationName>,
+    pub recovered_legacy_aside: bool,
+    pub staging_cleaned: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum StartupBootstrap {
+    ExistingCurrent {
+        staging_cleaned: usize,
+    },
+    InitializedEmpty {
+        recovered_uncommitted: bool,
+        staging_cleaned: usize,
+    },
+    Legacy {
+        recovered_legacy_aside: bool,
+        staging_cleaned: usize,
+    },
+}
+
+#[derive(Debug, Default)]
+struct RootInventory {
+    non_seed_entries: usize,
+    revision_generations: Vec<String>,
+    has_aof_log: bool,
+    has_aof_compact_temp: bool,
 }
 
 /// The exact generation selected by `CURRENT`, reopened into a fresh engine.
@@ -84,6 +150,7 @@ pub struct SegmentRdbStore {
     root: PathBuf,
     save_lock: Arc<Mutex<()>>,
     generations: GenerationStore,
+    bootstrap: StartupBootstrap,
 }
 
 impl fmt::Debug for SegmentRdbStore {
@@ -98,9 +165,11 @@ impl fmt::Debug for SegmentRdbStore {
 impl SegmentRdbStore {
     /// Open or create the checkpoint root.
     ///
-    /// A new root receives the explicit empty `CURRENT` sentinel. A root with
-    /// exact 0.4.28 legacy generations remains uninitialized until
-    /// [`Self::reopen_into`] validates and adopts the highest one.
+    /// A genuinely empty root receives the explicit empty `CURRENT` sentinel.
+    /// A root with exact 0.4.28 legacy generations remains uninitialized until
+    /// [`Self::reopen_into_with_outcome`] validates and adopts the highest one.
+    /// A non-empty root with an unknown layout fails before this method writes
+    /// `CURRENT` or removes any entry.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
         Self::open_with_injector(root, Arc::new(NoFailures))
     }
@@ -120,29 +189,15 @@ impl SegmentRdbStore {
             save_lock: shared_save_lock(&root)?,
             root,
             generations,
+            bootstrap: StartupBootstrap::ExistingCurrent { staging_cleaned: 0 },
         };
         let _guard = store
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        store.sweep_abandoned_staging()?;
-
-        match store.generations.read_current() {
-            Ok(_) => {}
-            Err(error) if error.kind == CurrentReadErrorKind::Missing => {
-                store.reconcile_legacy_asides()?;
-                if store.legacy_records()?.is_empty() {
-                    store
-                        .generations
-                        .initialize_empty()
-                        .map_err(anyhow::Error::new)
-                        .context("initialize empty segment generation store")?;
-                }
-            }
-            Err(error) => return Err(anyhow::Error::new(error).context("read CURRENT")),
-        }
+        let bootstrap = store.prepare_startup_root()?;
         drop(_guard);
-        Ok(store)
+        Ok(Self { bootstrap, ..store })
     }
 
     /// Open a store with deterministic filesystem failures for restore tests.
@@ -181,6 +236,7 @@ impl SegmentRdbStore {
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.inventory_root()?;
         self.sweep_abandoned_staging()?;
 
         let current = self.current_record()?;
@@ -272,25 +328,78 @@ impl SegmentRdbStore {
         }))
     }
 
-    /// Reopen only the generation selected by `CURRENT`.
-    ///
-    /// If `CURRENT` is missing, this method performs the one allowed 0.4.28
-    /// migration: it validates the exact highest `gen-<seq>` directory, reopens
-    /// it, and only then adopts that exact name. Corruption is fatal and never
-    /// falls back to an older generation.
-    pub fn reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> {
+    /// Reopen the cold-start checkpoint and return the decision that selected
+    /// it. A missing `CURRENT` can adopt only an exact 0.4.28 generation that
+    /// the open-time inventory already accepted. It never selects an unpointed
+    /// revision or falls back from a corrupt highest legacy generation.
+    pub fn reopen_into_with_outcome(&self, engine: &Arc<Engine>) -> Result<SegmentStartupOutcome> {
         let _guard = self
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match self.generations.read_current() {
-            Ok(CurrentTarget::Empty) => Ok(None),
+            Ok(CurrentTarget::Empty) => match self.bootstrap {
+                StartupBootstrap::InitializedEmpty {
+                    recovered_uncommitted,
+                    staging_cleaned,
+                } => Ok(SegmentStartupOutcome {
+                    decision: if recovered_uncommitted {
+                        SegmentStartupDecision::RecoveredUncommittedEmpty
+                    } else {
+                        SegmentStartupDecision::InitializedEmptyRoot
+                    },
+                    checkpoint_sequence: None,
+                    generation: None,
+                    recovered_legacy_aside: false,
+                    staging_cleaned,
+                }),
+                StartupBootstrap::ExistingCurrent { staging_cleaned } => {
+                    Ok(SegmentStartupOutcome {
+                        decision: SegmentStartupDecision::RestoredCurrentEmpty,
+                        checkpoint_sequence: None,
+                        generation: None,
+                        recovered_legacy_aside: false,
+                        staging_cleaned,
+                    })
+                }
+                StartupBootstrap::Legacy { .. } => {
+                    bail!("CURRENT became empty before legacy segment generation adoption")
+                }
+            },
             Ok(CurrentTarget::Generation(name)) => {
                 let record = self.record_for_name(name)?;
-                self.reopen_record(engine, &record).map(Some)
+                let seq = self.reopen_record(engine, &record)?;
+                let staging_cleaned = match self.bootstrap {
+                    StartupBootstrap::ExistingCurrent { staging_cleaned } => staging_cleaned,
+                    StartupBootstrap::InitializedEmpty {
+                        staging_cleaned, ..
+                    }
+                    | StartupBootstrap::Legacy {
+                        staging_cleaned, ..
+                    } => staging_cleaned,
+                };
+                Ok(SegmentStartupOutcome {
+                    decision: SegmentStartupDecision::RestoredCurrentGeneration,
+                    checkpoint_sequence: Some(seq),
+                    generation: Some(record.name),
+                    recovered_legacy_aside: false,
+                    staging_cleaned,
+                })
             }
             Err(error) if error.kind == CurrentReadErrorKind::Missing => {
-                self.reconcile_legacy_asides()?;
+                let StartupBootstrap::Legacy {
+                    recovered_legacy_aside,
+                    staging_cleaned,
+                } = self.bootstrap
+                else {
+                    bail!("CURRENT disappeared after segment root initialization");
+                };
+                let inventory = self.inventory_root()?;
+                if let Some(name) = inventory.revision_generations.first() {
+                    bail!(
+                        "CURRENT is missing but root contains unpointed revision generation `{name}`; refusing to select or initialize it"
+                    );
+                }
                 let Some(record) = self.legacy_records()?.into_iter().next_back() else {
                     bail!("CURRENT is missing and no exact 0.4.28 generation can be adopted");
                 };
@@ -299,10 +408,21 @@ impl SegmentRdbStore {
                     .adopt_legacy(record.name.clone())
                     .map_err(anyhow::Error::new)
                     .with_context(|| format!("adopt legacy segment generation {}", record.name))?;
-                Ok(Some(seq))
+                Ok(SegmentStartupOutcome {
+                    decision: SegmentStartupDecision::AdoptedLegacy0428,
+                    checkpoint_sequence: Some(seq),
+                    generation: Some(record.name),
+                    recovered_legacy_aside,
+                    staging_cleaned,
+                })
             }
             Err(error) => Err(anyhow::Error::new(error).context("read CURRENT")),
         }
+    }
+
+    /// Reopen the cold-start checkpoint without exposing the startup decision.
+    pub fn reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> {
+        Ok(self.reopen_into_with_outcome(engine)?.checkpoint_sequence)
     }
 
     /// Retain the active generation and up to `keep - 1` prior generations.
@@ -317,6 +437,7 @@ impl SegmentRdbStore {
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.inventory_root()?;
         self.sweep_abandoned_staging()?;
         let (history, truncated) = self.active_history()?;
         let all = self.generation_entries()?;
@@ -363,6 +484,155 @@ impl SegmentRdbStore {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect())
+    }
+
+    /// Inspect every direct child before any root mutation. The segment root is
+    /// Lumen-owned, but a wrong mount or an older unsupported layout must still
+    /// fail loudly instead of being converted into a fresh empty store.
+    fn inventory_root(&self) -> Result<RootInventory> {
+        let mut inventory = RootInventory::default();
+        let mut children = Vec::new();
+        let mut violations = Vec::new();
+        let mut entries = std::fs::read_dir(&self.root)
+            .with_context(|| format!("read checkpoint root {}", self.root.display()))?
+            .collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("inspect checkpoint root entry {}", path.display()))?;
+            let kind = root_entry_kind(&metadata);
+            let raw = match entry.file_name().into_string() {
+                Ok(raw) => raw,
+                Err(name) => {
+                    let display = format!("{name:?}");
+                    children.push(format!("{display} ({kind})"));
+                    violations.push(format!("checkpoint root has non-UTF-8 entry {display}"));
+                    continue;
+                }
+            };
+            children.push(format!("{raw} ({kind})"));
+            let regular_file = !metadata.file_type().is_symlink() && metadata.is_file();
+            let real_directory = !metadata.file_type().is_symlink() && metadata.is_dir();
+
+            if raw != CONTAINER_VOLUME_SEED_FILE {
+                inventory.non_seed_entries += 1;
+            }
+
+            if matches!(
+                raw.as_str(),
+                CURRENT_FILE
+                    | CURRENT_TEMP_FILE
+                    | AOF_FILE
+                    | AOF_COMPACT_TEMP_FILE
+                    | CONTAINER_VOLUME_SEED_FILE
+            ) {
+                if !regular_file {
+                    violations.push(format!(
+                        "checkpoint root entry must be a regular file: {}",
+                        path.display()
+                    ));
+                } else if raw == AOF_FILE {
+                    inventory.has_aof_log = true;
+                } else if raw == AOF_COMPACT_TEMP_FILE {
+                    inventory.has_aof_compact_temp = true;
+                }
+                continue;
+            }
+            if parse_legacy_name(&raw).is_some() {
+                if !real_directory {
+                    violations.push(format!(
+                        "legacy checkpoint must be a real directory: {}",
+                        path.display()
+                    ));
+                }
+                continue;
+            }
+            if parse_revision_name(&raw).is_some() {
+                if !real_directory {
+                    violations.push(format!(
+                        "segment generation must be a real directory: {}",
+                        path.display()
+                    ));
+                } else {
+                    inventory.revision_generations.push(raw);
+                }
+                continue;
+            }
+            if is_legacy_aside_name(&raw) {
+                if !real_directory {
+                    violations.push(format!(
+                        "legacy aside must be a real directory: {}",
+                        path.display()
+                    ));
+                }
+                continue;
+            }
+            if is_known_staging_name(&raw) {
+                if !real_directory {
+                    violations.push(format!(
+                        "checkpoint staging must be a real directory: {}",
+                        path.display()
+                    ));
+                }
+                continue;
+            }
+            violations.push(format!(
+                "unrecognized non-empty segment checkpoint root entry `{raw}` at {}",
+                path.display()
+            ));
+        }
+
+        if inventory.has_aof_compact_temp && !inventory.has_aof_log {
+            violations.push(format!(
+                "{AOF_COMPACT_TEMP_FILE} requires regular {AOF_FILE} beside it"
+            ));
+        }
+        if !violations.is_empty() {
+            bail!(
+                "invalid segment checkpoint root inventory [{}]; refusing to initialize CURRENT: {}",
+                children.join(", "),
+                violations.join("; ")
+            );
+        }
+        Ok(inventory)
+    }
+
+    /// Establish the one permitted missing-`CURRENT` state before a caller can
+    /// save or reopen. This runs under `save_lock` and mutates only after the
+    /// full direct-child inventory has accepted the root.
+    fn prepare_startup_root(&self) -> Result<StartupBootstrap> {
+        let inventory = self.inventory_root()?;
+        match self.generations.read_current() {
+            Ok(_) => Ok(StartupBootstrap::ExistingCurrent {
+                staging_cleaned: self.sweep_abandoned_staging()?,
+            }),
+            Err(error) if error.kind == CurrentReadErrorKind::Missing => {
+                if let Some(name) = inventory.revision_generations.first() {
+                    bail!(
+                        "CURRENT is missing but root contains unpointed revision generation `{name}`; refusing to select or initialize it"
+                    );
+                }
+                let recovered_legacy_aside = self.reconcile_legacy_asides()?;
+                let staging_cleaned = self.sweep_abandoned_staging()?;
+                if !self.legacy_records()?.is_empty() {
+                    return Ok(StartupBootstrap::Legacy {
+                        recovered_legacy_aside,
+                        staging_cleaned,
+                    });
+                }
+                self.generations
+                    .initialize_empty()
+                    .map_err(anyhow::Error::new)
+                    .context("initialize empty segment generation store")?;
+                Ok(StartupBootstrap::InitializedEmpty {
+                    recovered_uncommitted: inventory.non_seed_entries > 0,
+                    staging_cleaned,
+                })
+            }
+            Err(error) => Err(anyhow::Error::new(error).context("read CURRENT")),
+        }
     }
 
     fn current_record(&self) -> Result<Option<GenerationRecord>> {
@@ -617,8 +887,8 @@ impl SegmentRdbStore {
         Ok(())
     }
 
-    fn sweep_abandoned_staging(&self) -> Result<()> {
-        let mut removed = false;
+    fn sweep_abandoned_staging(&self) -> Result<usize> {
+        let mut removed = 0usize;
         for entry in std::fs::read_dir(&self.root)
             .with_context(|| format!("read checkpoint root {}", self.root.display()))?
         {
@@ -626,16 +896,7 @@ impl SegmentRdbStore {
             let Some(raw) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            let legacy_stage = raw
-                .strip_prefix(".gen-")
-                .and_then(|name| name.strip_suffix(".tmp"))
-                .and_then(parse_canonical_u64)
-                .is_some();
-            let durable_stage = raw
-                .strip_prefix(".stage-")
-                .and_then(parse_revision_name)
-                .is_some();
-            if !legacy_stage && !durable_stage {
+            if !is_known_staging_name(&raw) {
                 continue;
             }
             let path = entry.path();
@@ -649,15 +910,15 @@ impl SegmentRdbStore {
             }
             std::fs::remove_dir_all(&path)
                 .with_context(|| format!("remove abandoned staging {}", path.display()))?;
-            removed = true;
+            removed += 1;
         }
-        if removed {
+        if removed > 0 {
             sync_directory(&self.root).context("fsync root after staging cleanup")?;
         }
-        Ok(())
+        Ok(removed)
     }
 
-    fn reconcile_legacy_asides(&self) -> Result<()> {
+    fn reconcile_legacy_asides(&self) -> Result<bool> {
         let mut asides = Vec::new();
         for entry in std::fs::read_dir(&self.root)
             .with_context(|| format!("read checkpoint root {}", self.root.display()))?
@@ -666,11 +927,7 @@ impl SegmentRdbStore {
             let Some(raw) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            let Some(sequence) = raw
-                .strip_prefix("gen-")
-                .and_then(|name| name.strip_suffix(".old"))
-                .and_then(parse_canonical_u64)
-            else {
+            let Some(sequence) = parse_legacy_aside_name(&raw) else {
                 continue;
             };
             let path = entry.path();
@@ -717,7 +974,7 @@ impl SegmentRdbStore {
         if changed {
             sync_directory(&self.root).context("fsync root after legacy aside recovery")?;
         }
-        Ok(())
+        Ok(changed)
     }
 }
 
@@ -728,6 +985,39 @@ fn parse_canonical_u64(raw: &str) -> Option<u64> {
 
 fn parse_legacy_name(raw: &str) -> Option<u64> {
     parse_canonical_u64(raw.strip_prefix("gen-")?)
+}
+
+fn parse_legacy_aside_name(raw: &str) -> Option<u64> {
+    raw.strip_prefix("gen-")?
+        .strip_suffix(".old")
+        .and_then(parse_canonical_u64)
+}
+
+fn root_entry_kind(metadata: &std::fs::Metadata) -> &'static str {
+    if metadata.file_type().is_symlink() {
+        "symlink"
+    } else if metadata.is_file() {
+        "regular file"
+    } else if metadata.is_dir() {
+        "directory"
+    } else {
+        "special file"
+    }
+}
+
+fn is_legacy_aside_name(raw: &str) -> bool {
+    parse_legacy_aside_name(raw).is_some()
+}
+
+fn is_known_staging_name(raw: &str) -> bool {
+    raw.strip_prefix(".gen-")
+        .and_then(|name| name.strip_suffix(".tmp"))
+        .and_then(parse_canonical_u64)
+        .is_some()
+        || raw
+            .strip_prefix(".stage-")
+            .and_then(parse_revision_name)
+            .is_some()
 }
 
 fn parse_revision_name(raw: &str) -> Option<(u64, u64)> {
@@ -1060,8 +1350,14 @@ mod tests {
 
         let store = SegmentRdbStore::new(dir.path()).unwrap();
         assert!(!dir.path().join("CURRENT").exists());
-        let (loaded, sequence) = store.load_latest().unwrap().unwrap();
-        assert_eq!(sequence, 42);
+        let loaded = Arc::new(Engine::new());
+        let outcome = store.reopen_into_with_outcome(&loaded).unwrap();
+        assert_eq!(outcome.decision, SegmentStartupDecision::AdoptedLegacy0428);
+        assert_eq!(outcome.checkpoint_sequence, Some(42));
+        assert_eq!(
+            outcome.generation.as_ref().map(GenerationName::as_str),
+            Some("gen-42")
+        );
         assert_eq!(loaded.stats("u").unwrap().documents_indexed, 1);
         assert_eq!(
             std::fs::read(dir.path().join("CURRENT")).unwrap(),
@@ -1116,14 +1412,14 @@ mod tests {
         source.create_collection("u", kw_schema()).unwrap();
         index_kw(&source, "u1", "a@x.com");
         source.flush_to_segments(&legacy, 42).unwrap();
-        let outside = dir.path().join("outside");
-        std::fs::write(&outside, b"outside").unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside").unwrap();
         let collection = std::fs::read_dir(&legacy)
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .find(|path| path.is_dir())
             .unwrap();
-        symlink(&outside, collection.join("nested-link")).unwrap();
+        symlink(outside.path(), collection.join("nested-link")).unwrap();
 
         let store = SegmentRdbStore::new(dir.path()).unwrap();
         assert!(store.load_latest().is_err());
@@ -1342,12 +1638,194 @@ mod tests {
         std::fs::create_dir(&unrelated).unwrap();
         std::fs::write(unrelated.join("owned-by-user"), b"keep").unwrap();
 
-        let _store = SegmentRdbStore::new(dir.path()).unwrap();
+        assert!(SegmentRdbStore::new(dir.path()).is_err());
+        assert!(
+            !dir.path().join("CURRENT").exists(),
+            "an unrecognized non-empty root must not become an empty store"
+        );
         assert!(unrelated.is_dir());
         assert_eq!(
             std::fs::read(unrelated.join("owned-by-user")).unwrap(),
             b"keep"
         );
+    }
+
+    #[test]
+    fn mixed_legacy_and_unknown_root_fails_before_legacy_adoption() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("gen-42");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&legacy, 42).unwrap();
+        std::fs::create_dir(dir.path().join("foreign-layout")).unwrap();
+
+        assert!(SegmentRdbStore::new(dir.path()).is_err());
+        assert!(
+            !dir.path().join("CURRENT").exists(),
+            "unknown content must block legacy adoption before it writes CURRENT"
+        );
+        assert!(legacy.is_dir());
+        assert!(dir.path().join("foreign-layout").is_dir());
+    }
+
+    #[test]
+    fn unknown_entry_beside_valid_current_fails_before_any_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = SegmentRdbStore::new(dir.path()).unwrap();
+        let current = std::fs::read(dir.path().join("CURRENT")).unwrap();
+        drop(first);
+        let foreign = dir.path().join("foreign-layout");
+        std::fs::create_dir(&foreign).unwrap();
+
+        assert!(SegmentRdbStore::new(dir.path()).is_err());
+        assert_eq!(std::fs::read(dir.path().join("CURRENT")).unwrap(), current);
+        assert!(foreign.is_dir());
+    }
+
+    #[test]
+    fn unpointed_revision_without_current_has_a_specific_fail_closed_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("gen-7-rev-1")).unwrap();
+
+        let error = SegmentRdbStore::new(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("unpointed revision generation"));
+        assert!(!dir.path().join("CURRENT").exists());
+    }
+
+    #[test]
+    fn aof_only_root_remains_a_supported_empty_checkpoint_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("aof.log"), b"").unwrap();
+        std::fs::write(dir.path().join("aof.log.compact.tmp"), b"").unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let outcome = store
+            .reopen_into_with_outcome(&Arc::new(Engine::new()))
+            .unwrap();
+        assert_eq!(
+            outcome.decision,
+            SegmentStartupDecision::RecoveredUncommittedEmpty
+        );
+        assert_eq!(outcome.checkpoint_sequence, None);
+        assert_eq!(
+            std::fs::read(dir.path().join("CURRENT")).unwrap(),
+            b"empty\n"
+        );
+    }
+
+    #[test]
+    fn compact_aof_temp_without_aof_is_rejected_before_current_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let compact = dir.path().join(AOF_COMPACT_TEMP_FILE);
+        let bytes = b"uncommitted compact output";
+        std::fs::write(&compact, bytes).unwrap();
+
+        let error = SegmentRdbStore::new(dir.path()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("aof.log.compact.tmp requires regular aof.log beside it"));
+        assert!(!dir.path().join(CURRENT_FILE).exists());
+        assert_eq!(std::fs::read(compact).unwrap(), bytes);
+    }
+
+    #[test]
+    fn invalid_root_inventory_lists_every_child_name_and_kind_in_sorted_order() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(AOF_FILE)).unwrap();
+        std::fs::write(dir.path().join("alpha-foreign"), b"foreign").unwrap();
+        std::fs::create_dir(dir.path().join("zeta-foreign")).unwrap();
+
+        let error = SegmentRdbStore::new(dir.path()).unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains(
+            "invalid segment checkpoint root inventory [alpha-foreign (regular file), aof.log (directory), zeta-foreign (directory)]"
+        ));
+        assert!(rendered.contains("checkpoint root entry must be a regular file"));
+        assert!(rendered
+            .contains("unrecognized non-empty segment checkpoint root entry `alpha-foreign`"));
+        assert!(rendered
+            .contains("unrecognized non-empty segment checkpoint root entry `zeta-foreign`"));
+        assert!(!dir.path().join(CURRENT_FILE).exists());
+    }
+
+    #[test]
+    fn current_empty_remains_authoritative_over_an_unpointed_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let _first = SegmentRdbStore::new(dir.path()).unwrap();
+        let current = std::fs::read(dir.path().join(CURRENT_FILE)).unwrap();
+        std::fs::create_dir(dir.path().join("gen-7-rev-1")).unwrap();
+
+        let reopened = SegmentRdbStore::new(dir.path()).unwrap();
+        let outcome = reopened
+            .reopen_into_with_outcome(&Arc::new(Engine::new()))
+            .unwrap();
+        assert_eq!(
+            outcome.decision,
+            SegmentStartupDecision::RestoredCurrentEmpty
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join(CURRENT_FILE)).unwrap(),
+            current
+        );
+    }
+
+    #[test]
+    fn genuinely_empty_root_reports_initialization_once_then_current_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(CONTAINER_VOLUME_SEED_FILE), b"").unwrap();
+        let first = SegmentRdbStore::new(dir.path()).unwrap();
+        assert_eq!(
+            first
+                .reopen_into_with_outcome(&Arc::new(Engine::new()))
+                .unwrap()
+                .decision,
+            SegmentStartupDecision::InitializedEmptyRoot
+        );
+
+        let reopened = SegmentRdbStore::new(dir.path()).unwrap();
+        assert_eq!(
+            reopened
+                .reopen_into_with_outcome(&Arc::new(Engine::new()))
+                .unwrap()
+                .decision,
+            SegmentStartupDecision::RestoredCurrentEmpty
+        );
+    }
+
+    #[test]
+    fn legacy_aside_is_recovered_and_reported_before_adoption() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("gen-42.old");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "u1", "a@x.com");
+        source.flush_to_segments(&legacy, 42).unwrap();
+
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let outcome = store
+            .reopen_into_with_outcome(&Arc::new(Engine::new()))
+            .unwrap();
+        assert_eq!(outcome.decision, SegmentStartupDecision::AdoptedLegacy0428);
+        assert!(outcome.recovered_legacy_aside);
+        assert!(dir.path().join("gen-42").is_dir());
+        assert!(!dir.path().join("gen-42.old").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unknown_root_symlink_fails_before_current_is_written() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), dir.path().join("foreign-layout")).unwrap();
+
+        assert!(SegmentRdbStore::new(dir.path()).is_err());
+        assert!(!dir.path().join("CURRENT").exists());
+        assert!(dir.path().join("foreign-layout").is_symlink());
     }
 
     #[test]

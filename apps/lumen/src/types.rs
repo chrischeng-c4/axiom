@@ -792,6 +792,92 @@ pub struct ReplaceDocBody {
 }
 
 // ---------------------------------------------------------------------------
+// Batch document removal
+// ---------------------------------------------------------------------------
+
+/// Maximum caller-owned identifiers accepted by one `docs:unindex` command.
+/// The limit bounds one durable shard command as well as the HTTP request.
+pub const MAX_BATCH_UNINDEX_DOCS_SIZE: usize = 1000;
+
+/// `POST /collections/{id}/docs:unindex` body.
+///
+/// This is intentionally only an identifier list.  It has no field selector,
+/// filter, query, or request id: each selected document loses every indexed
+/// field on its owning physical shard.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BatchUnindexDocsRequest {
+    #[schema(schema_with = opaque_external_ids_schema)]
+    pub external_ids: Vec<String>,
+}
+
+fn opaque_external_ids_schema() -> utoipa::openapi::schema::Array {
+    use utoipa::openapi::schema::{ArrayBuilder, Object, SchemaType};
+
+    ArrayBuilder::new()
+        .items(Object::with_type(SchemaType::String))
+        .min_items(Some(1))
+        .max_items(Some(MAX_BATCH_UNINDEX_DOCS_SIZE))
+        .unique_items(true)
+        .build()
+}
+
+/// The validation error shared by HTTP admission, routed local writes, and
+/// replay/state-machine apply.  Keeping this independent of HTTP errors makes
+/// a malformed durable command fail before it can mutate one replica only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchUnindexDocsValidationError {
+    Empty,
+    TooLarge { got: usize, max: usize },
+    DuplicateExternalId { external_id: String },
+}
+
+impl std::fmt::Display for BatchUnindexDocsValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("external_ids must contain at least one identifier"),
+            Self::TooLarge { got, max } => {
+                write!(f, "external_ids has {got} items, max is {max}")
+            }
+            Self::DuplicateExternalId { external_id } => {
+                write!(
+                    f,
+                    "external_ids contains duplicate identifier `{external_id}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BatchUnindexDocsValidationError {}
+
+/// Validate the fixed `docs:unindex` command shape without changing any
+/// state.  `external_id` remains opaque, so this deliberately imposes no
+/// character or length policy beyond JSON string decoding and uniqueness.
+pub fn validate_batch_unindex_docs_request(
+    req: &BatchUnindexDocsRequest,
+) -> Result<(), BatchUnindexDocsValidationError> {
+    if req.external_ids.is_empty() {
+        return Err(BatchUnindexDocsValidationError::Empty);
+    }
+    if req.external_ids.len() > MAX_BATCH_UNINDEX_DOCS_SIZE {
+        return Err(BatchUnindexDocsValidationError::TooLarge {
+            got: req.external_ids.len(),
+            max: MAX_BATCH_UNINDEX_DOCS_SIZE,
+        });
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for external_id in &req.external_ids {
+        if !seen.insert(external_id) {
+            return Err(BatchUnindexDocsValidationError::DuplicateExternalId {
+                external_id: external_id.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Duplicates
 // ---------------------------------------------------------------------------
 

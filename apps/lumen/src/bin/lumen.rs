@@ -3543,16 +3543,19 @@ async fn serve(args: ServeArgs) -> Result<()> {
         } else if let Some(store) = &segment_store {
             // Segment mode: reopen every collection from the newest checkpoint
             // INTO `engine` (no whole-collection load), replacing the CBOR restore.
-            match store
-                .reopen_into(&engine)
-                .context("load latest segment checkpoint")?
-            {
-                Some(seq) => {
-                    tracing::info!(up_to_seq = seq, "restored segment-checkpoint baseline");
-                    seq
-                }
-                None => 0,
-            }
+            let outcome = store
+                .reopen_into_with_outcome(&engine)
+                .context("load latest segment checkpoint")?;
+            let generation = outcome.generation.as_ref().map(|name| name.as_str());
+            tracing::info!(
+                decision = outcome.decision.as_str(),
+                generation = ?generation,
+                checkpoint_seq = ?outcome.checkpoint_sequence,
+                recovered_legacy_aside = outcome.recovered_legacy_aside,
+                staging_cleaned = outcome.staging_cleaned,
+                "segment checkpoint startup decision"
+            );
+            outcome.checkpoint_sequence.unwrap_or(0)
         } else {
             cbor_cold_start(&rdb_store, &engine).await?
         }
@@ -3570,10 +3573,18 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 // sequence to the AOF head `A` so the loop tails the broker from `A+1`.
                 let replayed = lumen::aof::replay_aof_into(&engine, &aof_path, start_seq)
                     .context("replay AOF over segment baseline")?;
-                if replayed > start_seq {
-                    tracing::info!(from = start_seq, to = replayed, "replayed AOF tail");
-                    start_seq = replayed;
-                }
+                let aof_decision = if replayed > start_seq {
+                    "tail_replayed"
+                } else {
+                    "no_tail"
+                };
+                tracing::info!(
+                    aof_decision,
+                    from_seq = start_seq,
+                    to_seq = replayed,
+                    "AOF startup decision"
+                );
+                start_seq = replayed;
                 // Open the same AOF for continued appends (truncates any torn tail).
                 let w = lumen::aof::AofWriter::open(&aof_path).context("open AOF")?;
                 Some(std::sync::Arc::new(std::sync::Mutex::new(w)))

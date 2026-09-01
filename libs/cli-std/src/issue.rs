@@ -108,6 +108,75 @@ pub fn issue_payload(title: &str, body: &str, labels: &[String]) -> serde_json::
     serde_json::Value::Object(map)
 }
 
+#[cfg(any(feature = "online", test))]
+#[derive(Debug, PartialEq, Eq)]
+struct CreatedIssue {
+    url: String,
+    labels: Vec<String>,
+}
+
+#[cfg(any(feature = "online", test))]
+fn created_issue_from_response(value: &serde_json::Value) -> CreatedIssue {
+    let labels = value
+        .get("labels")
+        .and_then(|labels| labels.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|label| {
+            label
+                .as_str()
+                .or_else(|| label.get("name").and_then(|name| name.as_str()))
+        })
+        .map(str::to_string)
+        .collect();
+    CreatedIssue {
+        url: value
+            .get("html_url")
+            .and_then(|url| url.as_str())
+            .unwrap_or("(issue created)")
+            .to_string(),
+        labels,
+    }
+}
+
+#[cfg(any(feature = "online", test))]
+fn missing_created_issue_labels(requested: &[String], returned: &[String]) -> Vec<String> {
+    let mut missing = Vec::new();
+    for label in requested {
+        if !returned.iter().any(|returned| returned == label)
+            && !missing
+                .iter()
+                .any(|already_missing| already_missing == label)
+        {
+            missing.push(label.clone());
+        }
+    }
+    missing
+}
+
+#[cfg(any(feature = "online", test))]
+fn created_issue_label_state(requested: &[String], returned: &[String]) -> String {
+    let missing = missing_created_issue_labels(requested, returned);
+    if missing.is_empty() {
+        "labels: applied".to_string()
+    } else {
+        format!(
+            "labels: pending repository reconciliation: {}",
+            missing.join(", ")
+        )
+    }
+}
+
+#[cfg(feature = "online")]
+fn print_created_issue(created: &CreatedIssue, requested_labels: &[String]) {
+    println!("filed: {}", created.url);
+    println!(
+        "{}",
+        created_issue_label_state(requested_labels, &created.labels)
+    );
+    println!("next: done");
+}
+
 /// Canonical labels for CLI-created intake Reports.
 ///
 /// Callers may add domain labels, but the shared issue surface always owns the
@@ -325,11 +394,10 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
         }
         let (owner, name) = split_repo_owner_name(&repo)?;
         let url = courier_create_url(&courier_url, owner, name);
-        let filed_url =
+        let created =
             submit_issue_via_courier(&client, &url, &issue_payload(&opts.title, &body, &labels))
                 .await?;
-        println!("filed: {filed_url}");
-        println!("next: done");
+        print_created_issue(&created, &labels);
         return Ok(());
     }
     // HANDWRITE-END
@@ -341,15 +409,14 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
                 println!("next: done");
                 return Ok(());
             }
-            let url = submit_issue(
+            let created = submit_issue(
                 &client,
                 &repo,
                 &token,
                 &issue_payload(&opts.title, &body, &labels),
             )
             .await?;
-            println!("filed: {url}");
-            println!("next: done");
+            print_created_issue(&created, &labels);
         }
         None => {
             note_no_credential();
@@ -636,7 +703,7 @@ async fn submit_issue(
     repo: &str,
     token: &str,
     payload: &serde_json::Value,
-) -> Result<String> {
+) -> Result<CreatedIssue> {
     use anyhow::{bail, Context};
     let url = format!("https://api.github.com/repos/{repo}/issues");
     let resp = client
@@ -656,11 +723,7 @@ async fn submit_issue(
             .unwrap_or("unknown error");
         bail!("GitHub returned {status}: {msg}");
     }
-    Ok(value
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("(issue created)")
-        .to_string())
+    Ok(created_issue_from_response(&value))
 }
 
 #[cfg(feature = "online")]
@@ -827,18 +890,14 @@ async fn submit_issue_via_courier(
     client: &reqwest::Client,
     url: &str,
     payload: &serde_json::Value,
-) -> Result<String> {
+) -> Result<CreatedIssue> {
     use anyhow::Context;
     let value: serde_json::Value = courier_post(client, url, payload)
         .await?
         .json()
         .await
         .context("parse courier issue response")?;
-    Ok(value
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("(issue created)")
-        .to_string())
+    Ok(created_issue_from_response(&value))
 }
 
 /// `POST /v1/issues/{owner}/{name}/{number}/comments` via courier — courier
@@ -1018,6 +1077,74 @@ mod tests {
     }
 
     #[test]
+    fn created_issue_response_reports_applied_labels() {
+        let created = created_issue_from_response(&serde_json::json!({
+            "html_url": "https://github.com/o/n/issues/42",
+            "labels": [
+                {"name": "app:lumen"},
+                {"name": "type:report"},
+                {"name": "severity:high"}
+            ]
+        }));
+        assert_eq!(created.url, "https://github.com/o/n/issues/42");
+        assert_eq!(
+            created_issue_label_state(&["app:lumen".into(), "type:report".into()], &created.labels,),
+            "labels: applied"
+        );
+    }
+
+    #[test]
+    fn created_issue_response_reports_missing_labels_in_requested_order() {
+        let created = created_issue_from_response(&serde_json::json!({
+            "html_url": "https://github.com/o/n/issues/42",
+            "labels": [{"name": "severity:high"}, {"name": "app:lumen"}]
+        }));
+        assert_eq!(
+            created_issue_label_state(
+                &[
+                    "type:report".into(),
+                    "app:lumen".into(),
+                    "priority:p0".into(),
+                    "type:report".into(),
+                ],
+                &created.labels,
+            ),
+            "labels: pending repository reconciliation: type:report, priority:p0"
+        );
+    }
+
+    #[test]
+    fn created_issue_response_fails_closed_for_absent_or_malformed_labels() {
+        for response in [
+            serde_json::json!({}),
+            serde_json::json!({"labels": "app:lumen"}),
+            serde_json::json!({"labels": [null, {}, {"name": 7}]}),
+        ] {
+            let created = created_issue_from_response(&response);
+            assert_eq!(created.url, "(issue created)");
+            assert_eq!(
+                created_issue_label_state(
+                    &["app:lumen".into(), "type:report".into()],
+                    &created.labels,
+                ),
+                "labels: pending repository reconciliation: app:lumen, type:report"
+            );
+        }
+    }
+
+    #[test]
+    fn created_issue_response_accepts_forwarded_string_label_shape() {
+        let created = created_issue_from_response(&serde_json::json!({
+            "html_url": "https://github.com/o/n/issues/42",
+            "labels": ["app:lumen", "type:report"]
+        }));
+        assert_eq!(
+            created_issue_label_state(&["app:lumen".into(), "type:report".into()], &created.labels,),
+            "labels: applied"
+        );
+    }
+
+    #[test]
     fn comment_payload_and_followup_body() {
         #[cfg(feature = "online")]
         assert_eq!(reopen_payload()["state"], "open");
@@ -1036,6 +1163,7 @@ mod tests {
     fn representative_issue_outputs_are_chainable() {
         for output in [
             "repo:  chrischeng-c4/axiom\ntitle: lumen: bug\n---\nbody\nnext: done\n",
+            "filed: https://github.com/chrischeng-c4/axiom/issues/42\nlabels: applied\nnext: done\n",
             "#1142 [open] lumen: add lightweight chainable output\nnext: done\n",
             "#1142 [open] lumen: add lightweight chainable output\nhttps://github.com/chrischeng-c4/axiom/issues/1142\n---\nbody\nnext: done\n",
         ] {

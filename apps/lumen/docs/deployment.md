@@ -28,7 +28,15 @@ The shipped image defaults are `LUMEN_DATA_DIR=/var/lib/lumen/data`,
 `LUMEN_PERSISTENCE=segment`, `LUMEN_WAL=embedded`, and
 `VOLUME ["/var/lib/lumen/data"]`.
 
-A 0.4.28 volume upgrades only when it contains a valid segment checkpoint in the exact legacy `gen-<seq>` form. On the first 0.4.29 start, Lumen validates the highest such generation and atomically writes `CURRENT`. A corrupt highest legacy generation fails startup and never falls back to an older generation. After 0.4.29 writes or adopts `CURRENT`, in-place downgrade to 0.4.28 is unsupported. Keep a pre-upgrade volume copy or backup for rollback.
+A 0.4.28 volume upgrades only when it contains a valid segment checkpoint in the exact legacy `gen-<seq>` form. On the first 0.4.29 start, Lumen validates the highest such generation and atomically writes `CURRENT`. A corrupt highest legacy generation fails startup and never falls back to an older generation.
+
+A truly new empty root can initialize an empty `CURRENT` baseline. An AOF-only root is also valid when it has a regular `aof.log`; it starts from the empty checkpoint baseline and replays its AOF. `aof.log.compact.tmp` is valid only beside that regular `aof.log`. A compact temporary file on its own fails closed.
+
+`CURRENT` is the checkpoint authority. A valid `CURRENT=empty` remains authoritative even if an unpointed generation beside it looks like data that an operator expected Lumen to restore. Lumen does not choose another generation or rewrite that `CURRENT` automatically. Repair that state from a verified backup or an explicit recovery procedure.
+
+A non-empty root without `CURRENT` that has an unknown layout, a symlink, an invalid entry type, or an unpointed revision generation fails before Lumen writes `CURRENT` or starts its listener. The process logs every direct root entry, its kind, and the refusal reason. It does not open the HTTP listener. A successful segment start logs `segment checkpoint startup decision` with one of `initialized_empty_root`, `recovered_uncommitted_empty`, `restored_current_empty`, `restored_current_generation`, or `adopted_legacy_0428`. AOF recovery logs `AOF startup decision` with `aof_decision=no_tail` or `aof_decision=tail_replayed`.
+
+After 0.4.29 writes or adopts `CURRENT`, in-place downgrade to 0.4.28 is unsupported. Keep a pre-upgrade volume copy or backup for rollback.
 
 ### Container
 

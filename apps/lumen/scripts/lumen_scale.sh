@@ -47,17 +47,19 @@ fi
 # against the in-RAM driver path).
 export LUMEN_SCALE_DISK="${LUMEN_SCALE_DISK:-1}"
 
-# Full reports include the fixed-window qps ladder by default. For large
-# preflights, set LUMEN_SCALE_QPS=0 to measure index+seal+latency+storage first.
+# Full reports include the fixed read-only QPS ladder by default. Use the DEV
+# command with an explicit target of 10; set LUMEN_SCALE_QPS=0 only for an
+# above-standard storage preflight.
 export LUMEN_SCALE_QPS="${LUMEN_SCALE_QPS:-1}"
+export LUMEN_SCALE_QPS_TARGETS="${LUMEN_SCALE_QPS_TARGETS:-10,100,1000}"
 export LUMEN_SCALE_CHUNK_ROWS="${LUMEN_SCALE_CHUNK_ROWS:-}"
 export LUMEN_SCALE_STORAGE_ONLY="${LUMEN_SCALE_STORAGE_ONLY:-0}"
 export LUMEN_SCALE_CHUNK_WORKERS="${LUMEN_SCALE_CHUNK_WORKERS:-1}"
 export LUMEN_SCALE_REOPEN_SHARDS="${LUMEN_SCALE_REOPEN_SHARDS:-1}"
 
 echo "== LUMEN-ONLY DISK SCALE BENCH =="
-echo "   LUMEN_SCALE_ROWS=$LUMEN_SCALE_ROWS  LUMEN_SCALE_MAX_ROWS=$LUMEN_SCALE_MAX_ROWS  LUMEN_SCALE_DISK=$LUMEN_SCALE_DISK  LUMEN_SCALE_QPS=$LUMEN_SCALE_QPS  LUMEN_SCALE_CHUNK_ROWS=${LUMEN_SCALE_CHUNK_ROWS:-<off>}  LUMEN_SCALE_STORAGE_ONLY=$LUMEN_SCALE_STORAGE_ONLY  LUMEN_SCALE_CHUNK_WORKERS=$LUMEN_SCALE_CHUNK_WORKERS  LUMEN_SCALE_REOPEN_SHARDS=$LUMEN_SCALE_REOPEN_SHARDS"
+echo "   LUMEN_SCALE_ROWS=$LUMEN_SCALE_ROWS  LUMEN_SCALE_MAX_ROWS=$LUMEN_SCALE_MAX_ROWS  LUMEN_SCALE_DISK=$LUMEN_SCALE_DISK  LUMEN_SCALE_QPS=$LUMEN_SCALE_QPS  LUMEN_SCALE_QPS_TARGETS=$LUMEN_SCALE_QPS_TARGETS  LUMEN_SCALE_CHUNK_ROWS=${LUMEN_SCALE_CHUNK_ROWS:-<off>}  LUMEN_SCALE_STORAGE_ONLY=$LUMEN_SCALE_STORAGE_ONLY  LUMEN_SCALE_CHUNK_WORKERS=$LUMEN_SCALE_CHUNK_WORKERS  LUMEN_SCALE_REOPEN_SHARDS=$LUMEN_SCALE_REOPEN_SHARDS"
 echo "   (lumen-only — no pg / no OpenSearch)"
 
-exec cargo test --release -p lumen --test perf_gate_vs_db -- \
+exec cargo test --release --locked -p lumen --test perf_gate_vs_db -- \
     --ignored --nocapture lumen_scale_bench

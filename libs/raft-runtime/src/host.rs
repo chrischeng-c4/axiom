@@ -64,7 +64,10 @@ impl ChunkSink<Box<dyn FnMut(&[u8]) -> std::io::Result<()> + Send>> {
 
     /// Create a streaming chunk sink that emits chunks of up to `chunk_size` to `handler`
     /// without unbounded memory retention.
-    pub fn streaming<H>(chunk_size: usize, mut handler: H) -> ChunkSink<Box<dyn FnMut(&[u8]) -> std::io::Result<()> + Send>>
+    pub fn streaming<H>(
+        chunk_size: usize,
+        mut handler: H,
+    ) -> ChunkSink<Box<dyn FnMut(&[u8]) -> std::io::Result<()> + Send>>
     where
         H: FnMut(&[u8]) + Send + 'static,
     {
@@ -200,6 +203,10 @@ pub struct RaftStatus {
     pub membership_phase: MembershipPhase,
     pub undeliverable_never_addressed: u64,
     pub undeliverable_withdrawn_address: u64,
+    /// Proposals refused by `propose_outcome` before route selection.
+    pub proposal_rejected_before_routing: u64,
+    /// Proposals refused by the leader-side check before log append.
+    pub proposal_rejected_before_append: u64,
     pub proposal_admission_closed: bool,
     pub lifecycle_generation: u64,
 }
@@ -356,6 +363,8 @@ pub(crate) struct Shared {
     pub(crate) latched_failure: StdMutex<Option<StorageFailed>>,
     pub(crate) undeliverable_never_addressed: AtomicU64,
     pub(crate) undeliverable_withdrawn_address: AtomicU64,
+    pub(crate) proposal_rejected_before_routing: AtomicU64,
+    pub(crate) proposal_rejected_before_append: AtomicU64,
     pub(crate) lifecycle_generation: AtomicU64,
     pub(crate) shutdown_started: AtomicBool,
     pub(crate) shutdown_tx: watch::Sender<Option<HostShutdownReport>>,
@@ -688,6 +697,8 @@ impl Shared {
     /// an apply timeout remains an error and must not be retried blindly.
     async fn try_propose_applied(self: &Arc<Self>, command: Command) -> Option<ProposalOutcome> {
         if self.lifecycle_generation.load(Ordering::Acquire) > 0 {
+            self.proposal_rejected_before_append
+                .fetch_add(1, Ordering::Relaxed);
             return Some(ProposalOutcome::RejectedBeforeAdmission {
                 reason: "raft: proposal admission closed".to_string(),
             });
@@ -892,6 +903,8 @@ impl RaftHost {
             latched_failure: StdMutex::new(None),
             undeliverable_never_addressed: AtomicU64::new(0),
             undeliverable_withdrawn_address: AtomicU64::new(0),
+            proposal_rejected_before_routing: AtomicU64::new(0),
+            proposal_rejected_before_append: AtomicU64::new(0),
             lifecycle_generation: AtomicU64::new(0),
             shutdown_started: AtomicBool::new(false),
             shutdown_tx,
@@ -1202,8 +1215,8 @@ impl RaftHost {
     /// runtime.
     pub async fn shutdown(&self) -> Result<()> {
         let timeout = self.shared.cfg.rpc_timeout + self.shared.cfg.rpc_timeout;
-        let deadline = ShutdownDeadline::from_now(timeout, Duration::ZERO)
-            .map_err(|e| anyhow!("{e}"))?;
+        let deadline =
+            ShutdownDeadline::from_now(timeout, Duration::ZERO).map_err(|e| anyhow!("{e}"))?;
         let report = self.shutdown_within(deadline).await;
         report.into_result()
     }
@@ -1359,6 +1372,8 @@ impl RaftHost {
     pub async fn propose_outcome(&self, command: Command) -> ProposalOutcome {
         let s = &self.shared;
         if s.lifecycle_generation.load(Ordering::Acquire) > 0 {
+            s.proposal_rejected_before_routing
+                .fetch_add(1, Ordering::Relaxed);
             return ProposalOutcome::RejectedBeforeAdmission {
                 reason: "raft: proposal admission closed".to_string(),
             };
@@ -1403,10 +1418,11 @@ impl RaftHost {
                         };
                     }
                     outcome @ ProposalOutcome::DurabilityFailure { .. } => return outcome,
-                    ProposalOutcome::RejectedBeforeAdmission { reason } => {
-                        last_route_error = Some(reason);
-                    }
-                    ProposalOutcome::Ambiguous { index: None, reason } => {
+                    outcome @ ProposalOutcome::RejectedBeforeAdmission { .. } => return outcome,
+                    ProposalOutcome::Ambiguous {
+                        index: None,
+                        reason,
+                    } => {
                         last_route_error = Some(reason);
                     }
                 },
@@ -1453,10 +1469,35 @@ impl RaftHost {
                 };
             }
         };
-        if resp.status() != StatusCode::OK {
+        let status = resp.status();
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            let v: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    return ProposalOutcome::Ambiguous {
+                        index: None,
+                        reason: e.to_string(),
+                    };
+                }
+            };
+            if v.get("outcome").and_then(|outcome| outcome.as_str())
+                == Some("rejected_before_admission")
+            {
+                if let Some(reason) = v.get("error").and_then(|error| error.as_str()) {
+                    return ProposalOutcome::RejectedBeforeAdmission {
+                        reason: reason.to_string(),
+                    };
+                }
+            }
             return ProposalOutcome::Ambiguous {
                 index: None,
-                reason: format!("raft: leader redirect returned {}", resp.status()),
+                reason: format!("raft: leader redirect returned {status}"),
+            };
+        }
+        if status != StatusCode::OK {
+            return ProposalOutcome::Ambiguous {
+                index: None,
+                reason: format!("raft: leader redirect returned {status}"),
             };
         }
         let v: serde_json::Value = match resp.json().await {
@@ -1686,7 +1727,10 @@ pub(crate) async fn publish_handler(
         }
         Some(ProposalOutcome::RejectedBeforeAdmission { reason }) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": reason })),
+            Json(serde_json::json!({
+                "outcome": "rejected_before_admission",
+                "error": reason,
+            })),
         )
             .into_response(),
         Some(ProposalOutcome::Ambiguous { reason, .. }) => (
@@ -1745,12 +1789,12 @@ pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
         incoming_voters,
         learners,
         membership_phase,
-        undeliverable_never_addressed: s
-            .undeliverable_never_addressed
+        undeliverable_never_addressed: s.undeliverable_never_addressed.load(Ordering::Relaxed),
+        undeliverable_withdrawn_address: s.undeliverable_withdrawn_address.load(Ordering::Relaxed),
+        proposal_rejected_before_routing: s
+            .proposal_rejected_before_routing
             .load(Ordering::Relaxed),
-        undeliverable_withdrawn_address: s
-            .undeliverable_withdrawn_address
-            .load(Ordering::Relaxed),
+        proposal_rejected_before_append: s.proposal_rejected_before_append.load(Ordering::Relaxed),
         proposal_admission_closed: s.lifecycle_generation.load(Ordering::Acquire) > 0,
         lifecycle_generation: s.lifecycle_generation.load(Ordering::Acquire),
     }

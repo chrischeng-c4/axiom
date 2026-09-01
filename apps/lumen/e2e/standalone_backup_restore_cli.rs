@@ -49,7 +49,7 @@ fn compose(path: &Path, port: &str, managed: bool) {
     fs::write(
         path,
         format!(
-            "services:\n  lumen:\n    image: ghcr.io/chrischeng-c4/lumen:0.4.30\n    ports:\n      - '{port}'\n    labels:\n      com.axiom.lumen.managed: '{label}'\n"
+            "services:\n  lumen:\n    image: ghcr.io/chrischeng-c4/lumen:0.4.31\n    ports:\n      - '{port}'\n    labels:\n      com.axiom.lumen.managed: '{label}'\n"
         ),
     )
     .unwrap();
