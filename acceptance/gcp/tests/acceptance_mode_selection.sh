@@ -115,6 +115,12 @@ present "the Sift verifier lost its authenticated non-2xx status helper" \
   'auth_curl_status() {' "$SIFT_VERIFY_SCRIPT"
 present "Remote Write 2.0 rejection again aborts before its 415 assertion" \
   'remote_write_v2_status="$(auth_curl_status ' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier lost its MCP SSE decoder" \
+  'extract_sse_json() {' "$SIFT_VERIFY_SCRIPT"
+present "MCP initialize again sends raw SSE to jq" \
+  'extract_sse_json "$init_sse" "$init_body"' "$SIFT_VERIFY_SCRIPT"
+present "MCP tools/list again sends raw SSE to jq" \
+  'extract_sse_json "$list_sse" "$list_body"' "$SIFT_VERIFY_SCRIPT"
 present "Sift deployment no longer requires GKE FQDN policy enforcement" \
   'fqdnnetworkpolicies.networking.gke.io' "$DEPLOY_SCRIPT"
 present "Sift verifier lost the operator-managed auth binding proof" \
