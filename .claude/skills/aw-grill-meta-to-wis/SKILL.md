@@ -25,10 +25,23 @@ parent relation for a delivery issue.
    uv run --python 3.13 --no-project ".claude/aw/scripts/wis.py" gap <project>
    ```
 
-3. Resolve each semantic choice with the human. This includes the target
-   version, whether a promise deserves its own Milestone, issue boundaries,
-   issue order, and the type of every issue.
-4. Create a Milestone description with:
+3. Read the default target version from all prior open and closed release
+   Milestones:
+
+   ```bash
+   uv run --python 3.13 --no-project ".claude/aw/scripts/milestone.py" next-version <project> --json
+   ```
+
+   With no override, this applies Axiom's default `minor` bump:
+   `M.m.p` becomes `M.(m+1).0`. This is a repository policy, not a human
+   question. It has no base-64 ceiling.
+4. Ask the human for a version only when no existing release Milestone supplies
+   a base, or when the release needs an explicit exception. Use `--bump patch`
+   for a human-selected fix-only release and `--bump major` for a human-selected
+   incompatible release. The human may instead select one exact core SemVer
+   title. Then resolve whether the promise deserves its own Milestone, the issue
+   boundaries, issue order, and the type of every issue.
+5. Create a Milestone description with:
 
    ```bash
    uv run --python 3.13 --no-project ".claude/aw/scripts/milestone.py" skeleton
@@ -36,22 +49,22 @@ parent relation for a delivery issue.
 
    Fill `## Goal` and `## Acceptance`. During initial child creation, keep the
    exact `## Development Order` draft line printed by the skeleton.
-5. Create the Milestone in draft form:
+6. Create the Milestone in draft form with the selected title:
 
    ```bash
    uv run --python 3.13 --no-project ".claude/aw/scripts/milestone.py" create --title <project>@<version> --description-file <path> --draft
    ```
 
-6. Create or update delivery issues through `change.py`. Assign each delivery
+7. Create or update delivery issues through `change.py`. Assign each delivery
    issue with `--milestone milestone:<number>` or the exact Milestone title.
    Each has exactly one of `type:feat`, `type:fix`, `type:refactor`,
    `type:perf`, `type:test`, `type:docs`, or `type:chore`, plus the owning
    `app:*` or `lib:*` label. `type:spike` and `type:report` are intake. Reject
    legacy `type:change` and every other legacy type.
-7. Replace the draft line with a contiguous numbered list. Each assigned
+8. Replace the draft line with a contiguous numbered list. Each assigned
    delivery issue appears exactly once as `1. #<iid>`. The list is the global
    queue. Only its first open row is executable.
-8. Finalize the description without `--draft`, then reconcile it:
+9. Finalize the description without `--draft`, then reconcile it:
 
    ```bash
    uv run --python 3.13 --no-project ".claude/aw/scripts/milestone.py" update milestone:<number> --description-file <path>
@@ -59,15 +72,17 @@ parent relation for a delivery issue.
    uv run --python 3.13 --no-project ".claude/aw/scripts/milestone.py" order milestone:<number> --open-only
    ```
 
-9. Bind the product section as `## <title> (Milestone #<number>)`. Set its
+10. Bind the product section as `## <title> (Milestone #<number>)`. Set its
    tracking link to `[Milestone #<number>](<milestone-url>)`.
-10. Re-run `wis.py gap <project>`. Report the named G1-G3 rows and their
+11. Re-run `wis.py gap <project>`. Report the named G1-G3 rows and their
    populations.
 
 ## Acceptance
 
-- The Milestone title is the release identity and passes the repository's
-  0..63 minor and patch rule.
+- The Milestone title is the release identity and uses core SemVer
+  `major.minor.patch`: three non-negative integer fields without leading zeroes.
+- Without a human-selected exception, the title equals the `next-version`
+  command's default minor result and resets patch to zero.
 - `milestone.py reconcile` reports no structural error.
 - `milestone.py order` lists every assigned delivery issue exactly once.
 - Every delivery issue has exactly one supported delivery type.
@@ -81,6 +96,9 @@ parent relation for a delivery issue.
 - Never use a bare number for a Milestone. Use `milestone:<number>` or its
   exact title.
 - Never infer issue order from creation time, issue number, or API return order.
+- Never apply the build/release base-64 carry rule to a Milestone version.
+- Never choose an initial version, major bump, patch bump, or exact version
+  override for the human.
 - Never create, assign, or execute legacy `type:change` work.
 - Never treat intake issues as delivery issues.
 - Never mutate legacy issue-based epics during this flow. Report them as

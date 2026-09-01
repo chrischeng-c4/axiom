@@ -1714,6 +1714,15 @@ Atomic issues own work state and assignees. The tracker owns schedules and
 delivery history. Do not copy those fields or completion percentages into
 ROADMAP.
 
+A release Milestone title uses the SemVer core form
+`<project>@<major>.<minor>.<patch>`. Each field is a non-negative integer
+without leading zeroes. The normal next release increments minor and resets
+patch to zero. A major bump, patch bump, or exact version is a human override.
+If the project has no prior release Milestone, the human chooses its initial
+version. Calculate the normal next version from all open and closed release
+Milestones. Do not derive it from a package manifest or Git tag. This planning
+policy does not replace project-local build or release version rules.
+
 A project can also adopt conventional supporting guides. They are optional.
 When a conventional protocol, client, indexing, querying, GKE, or
 client-integration file exists, the project README must link it from

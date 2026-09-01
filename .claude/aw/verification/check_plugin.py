@@ -40,6 +40,7 @@ MILESTONE_VERBS = (
     "next",
     "reconcile",
     "versions",
+    "next-version",
     "create",
     "update",
     "close",
@@ -152,6 +153,9 @@ def collect(repo: Path) -> Reporter:
             "<project>@<major>.<minor>.<patch>",
             "## Development Order",
             "milestone.py\" reconcile",
+            "milestone.py\" next-version <project> --json",
+            "default `minor` bump",
+            "--bump patch", "--bump major", "initial version",
             "issue order, and the type of every issue.",
             "type:feat", "type:fix", "type:refactor", "type:perf",
             "type:test", "type:docs", "type:chore",
@@ -191,6 +195,8 @@ def collect(repo: Path) -> Reporter:
         ),
         "aw-ask-user": (
             "version, milestone order, scope boundary",
+            "default minor Milestone bump",
+            "major, patch, or exact version override",
             "No file, Git ref, issue, milestone, or release changes.",
         ),
     }
@@ -234,8 +240,14 @@ def collect(repo: Path) -> Reporter:
                      verb in declared_verbs)
     report.check("milestone.py refuses bare numeric references",
                  "bare `{ref}` is ambiguous" in milestone_source)
-    report.check("milestone.py enforces the release title grammar",
-                 "minor > 63" in milestone_source and "patch > 63" in milestone_source)
+    report.check("milestone.py enforces SemVer core without a base-64 ceiling",
+                 "CORE_SEMVER_RULE" in milestone_source
+                 and "minor > 63" not in milestone_source
+                 and "patch > 63" not in milestone_source)
+    report.check("milestone.py defaults new release Milestones to a minor bump",
+                 'DEFAULT_BUMP = "minor"' in milestone_source
+                 and "def next_release_identity" in milestone_source
+                 and 'list_milestones(args.repo, "all")' in milestone_source)
     report.check("milestone.py owns an explicit Development Order",
                  'SECTIONS = ("Goal", "Development Order", "Acceptance")' in milestone_source)
     report.check("milestone.py exposes one typed queue head",
