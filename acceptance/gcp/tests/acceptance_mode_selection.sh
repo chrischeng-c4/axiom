@@ -121,6 +121,10 @@ rg -q '^\s*enable_fqdn_network_policy\s*=\s*true\s*$' "$CLUSTER_TF" \
   || fail "persistent cluster lost FQDN Network Policy"
 present "cluster reuse no longer rejects an incompatible dataplane" \
   'requires Dataplane V2 and FQDN Network Policy' "$BOOTSTRAP_SCRIPT"
+present "cluster reuse reads Dataplane V2 from GKE networkConfig" \
+  '.networkConfig.datapathProvider // ""' "$BOOTSTRAP_SCRIPT"
+present "cluster reuse reads FQDN policy from GKE networkConfig" \
+  '.networkConfig.enableFqdnNetworkPolicy // false' "$BOOTSTRAP_SCRIPT"
 
 # --- phase ordering ---------------------------------------------------------
 # Lumen's bundle must be materialized before the Sift branch consumes the
