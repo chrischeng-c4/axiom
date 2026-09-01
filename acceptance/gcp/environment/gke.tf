@@ -28,7 +28,10 @@ resource "google_container_node_pool" "sift_mvp" {
   }
 
   node_config {
-    machine_type    = "e2-standard-4"
+    machine_type = "e2-standard-4"
+    # Keep node boot disks out of SSD_TOTAL_GB. The Sift data PVCs use the
+    # cluster's SSD-backed default StorageClass and need that quota instead.
+    disk_type       = "pd-standard"
     service_account = one(local.acceptance_node_service_accounts)
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
     metadata        = { disable-legacy-endpoints = "true" }

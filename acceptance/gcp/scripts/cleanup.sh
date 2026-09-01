@@ -52,6 +52,28 @@ capture_failure_evidence() {
   fi
 }
 
+delete_sift_instance() {
+  local namespace="$1"
+  local name="$2"
+  if ! kubectl get sift.sift.axiom.dev "$name" --namespace "$namespace" \
+    >/dev/null 2>&1; then
+    return 0
+  fi
+  if kubectl delete sift.sift.axiom.dev "$name" --namespace "$namespace" \
+    --wait=true --timeout=180s >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # The instance and namespace are owned by this run. If the operator cannot
+  # finish its cluster-child finalizer, remove only this known acceptance CR's
+  # finalizers so cleanup cannot leave a billing resource behind forever.
+  echo "Sift instance $namespace/$name did not finalize; removing its orphaned finalizers" >&2
+  kubectl patch sift.sift.axiom.dev "$name" --namespace "$namespace" \
+    --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+  kubectl wait --for=delete "sift.sift.axiom.dev/$name" --namespace "$namespace" \
+    --timeout=60s >/dev/null 2>&1 || true
+}
+
 delete_run_image() {
   local image="$1"
   local tagged="$REGISTRY/$image:$IMAGE_TAG"
@@ -106,6 +128,14 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
     # puts in a *second* namespace to prove a SubjectAccessReview scoped to the
     # serving namespace does not honour a grant written elsewhere.
     namespaces=(lumen lumen-system sift sift-system lumen-fleet-a lumen-fleet-b lumen-auth-client)
+  fi
+  # Sift owns cluster-scoped RBAC through a CR finalizer. Delete each known
+  # acceptance instance while sift-system still hosts the operator. Deleting
+  # the operator namespace first strands the finalizer and blocks both the
+  # data namespace and CRD in Terminating.
+  if [[ "$acceptance_mode" == "sift" || "$acceptance_mode" == "lumen-sift" ]]; then
+    delete_sift_instance sift sift
+    delete_sift_instance sift-restore sift-restore
   fi
   # The fleet controller reconciles cluster-wide, so it must lose its API
   # before its target namespaces start terminating; otherwise a pass that
