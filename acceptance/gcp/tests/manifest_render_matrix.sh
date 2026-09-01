@@ -185,6 +185,11 @@ check_app_subtree "sift" "sift" "$scratch_dir/sift/manifests" "sift sift-system"
 
 grep -q 'storeSize: 50Gi' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
   || fail "standalone Sift did not render its 50Gi store volume"
+grep -q 'peerTlsSecret: sift-peer-tls' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+  || fail "standalone Sift did not bind the generated peer TLS Secret"
+if grep -q 'REPLACE_ME__SIFT_PEER_TLS_SECRET' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml"; then
+  fail "standalone Sift left the peer TLS placeholder in the applied bundle"
+fi
 grep -q 'name: sift-rig' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
   || fail "standalone Sift did not render its isolated Rig service account"
 if grep -q 'system:auth-delegator' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml"; then

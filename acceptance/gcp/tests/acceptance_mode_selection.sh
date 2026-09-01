@@ -101,6 +101,8 @@ present "sift-only mode lost the 90-minute cap" 'sift_cloud_cap=5400' "$RUN_SCRI
 present "sift-only mode no longer requires immutable Rig" 'INPUT_RIG_IMAGE' "$RUN_SCRIPT"
 present "Terraform lost the sift-only enum" '"sift"' "$ENV_VARIABLES"
 present "Terraform lost the run-scoped Sift node pool" 'resource "google_container_node_pool" "sift_mvp"' "$ENV_GKE"
+rg -q '^\s*disk_type\s*=\s*"pd-standard"\s*$' "$ENV_GKE" \
+  || fail "the Sift node pool boot disks consume the PVC SSD quota"
 present "the Sift verifier lost its 30-minute load" 'LOAD_SECONDS=1800' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost the 10k/s rate" 'ITEMS_PER_SECOND=10000' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost its 18M exact count" 'EXPECTED_ITEMS=18000000' "$SIFT_VERIFY_SCRIPT"
@@ -192,6 +194,17 @@ ns_delete_line="$(line_of 'kubectl delete namespace "$namespace" --ignore-not-fo
   || fail "could not locate cleanup's fleet-CRD and namespace deletes"
 (( fleet_crd_line < ns_delete_line )) \
   || fail "the LumenFleet CRD must be deleted before the namespace sweep (crd@$fleet_crd_line, namespaces@$ns_delete_line)"
+
+# A Sift CR owns cluster-scoped children through an operator finalizer. Delete
+# that CR while the operator namespace is still live. Otherwise the namespace
+# and CRD stay Terminating with nobody left to remove the finalizer.
+sift_cr_delete_line="$(line_of 'kubectl delete sift.sift.axiom.dev "$name" --namespace "$namespace"' "$CLEANUP_SCRIPT")"
+[[ "$sift_cr_delete_line" =~ ^[0-9]+$ ]] \
+  || fail "could not locate cleanup's ordered Sift CR delete"
+(( sift_cr_delete_line < ns_delete_line )) \
+  || fail "Sift CRs must be deleted before the namespace sweep (cr@$sift_cr_delete_line, namespaces@$ns_delete_line)"
+present "cleanup lost the orphaned Sift finalizer fallback" \
+  'patch sift.sift.axiom.dev "$name" --namespace "$namespace"' "$CLEANUP_SCRIPT"
 
 present "the lumen-sift pre-flight list names lumen-auth-client" \
   'mode_namespaces=(lumen lumen-system sift sift-system lumen-auth-client)' "$RUN_SCRIPT"

@@ -304,6 +304,9 @@ patches:
         path: /spec/image
         value: ${SIFT_IMAGE}
       - op: replace
+        path: /spec/peerTlsSecret
+        value: sift-peer-tls
+      - op: replace
         path: /spec/auth
         value: ${sift_auth}
       - op: replace
