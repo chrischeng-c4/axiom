@@ -12363,6 +12363,7 @@ dependencies = [
  "clap",
  "rig",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

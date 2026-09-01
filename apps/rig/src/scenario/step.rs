@@ -66,6 +66,13 @@ fn default_timeout_ms() -> u64 {
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
+    /// Extra request headers. Names and values support variable interpolation.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Read a bearer token from this file before every request. The path
+    /// supports interpolation, and long runs observe projected token rotation.
+    #[serde(default)]
+    pub bearer_token_file: Option<String>,
     #[serde(default)]
     pub body: Option<String>,
     #[serde(default)]

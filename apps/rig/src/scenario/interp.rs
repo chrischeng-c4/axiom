@@ -10,11 +10,14 @@
 
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Default)]
 /// @spec apps/rig/tech-design/semantic/source/projects-rig-src-scenario-interp-rs.md#source
 pub struct VarStore {
     vars: BTreeMap<String, Value>,
+    operation_sequence: Arc<AtomicU64>,
 }
 
 /// @spec apps/rig/tech-design/semantic/source/projects-rig-src-scenario-interp-rs.md#source
@@ -40,6 +43,17 @@ impl VarStore {
 
     pub fn set(&mut self, name: impl Into<String>, value: Value) {
         self.vars.insert(name.into(), value);
+    }
+
+    /// Clone the current values and add a unique value for one scheduled load
+    /// operation. All clones of this store share the same counter.
+    pub(crate) fn next_operation(&self) -> Self {
+        let mut operation = self.clone();
+        let sequence = self.operation_sequence.fetch_add(1, Ordering::Relaxed);
+        operation.set("rig.sequence", Value::from(sequence));
+        operation.set("rig.sequence_06", Value::from(format!("{sequence:06}")));
+        operation.set("rig.sequence_016x", Value::from(format!("{sequence:016x}")));
+        operation
     }
 
     pub fn get(&self, name: &str) -> Option<&Value> {

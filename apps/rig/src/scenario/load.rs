@@ -34,7 +34,7 @@ pub struct LoadProfile {
 
 /// Metric names a load run publishes into the var store / report — the
 /// names pins reference.
-pub const LOAD_METRICS: &[&str] = &["p50_ms", "p99_ms", "error_rate", "achieved_qps"];
+pub const LOAD_METRICS: &[&str] = &["p50_ms", "p95_ms", "p99_ms", "error_rate", "achieved_qps"];
 
 #[cfg(test)]
 mod tests {
