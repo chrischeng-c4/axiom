@@ -21,6 +21,7 @@ BOOTSTRAP_SCRIPT="$ACCEPTANCE_ROOT/scripts/bootstrap-cluster.sh"
 SIFT_VERIFY_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-sift-mvp.sh"
 ENV_VARIABLES="$ACCEPTANCE_ROOT/environment/variables.tf"
 ENV_GKE="$ACCEPTANCE_ROOT/environment/gke.tf"
+CLUSTER_TF="$ACCEPTANCE_ROOT/cluster/main.tf"
 SCHEMA="$ACCEPTANCE_ROOT/evidence/schema.json"
 
 fail() {
@@ -112,6 +113,12 @@ present "Sift verifier lost the operator-managed auth binding proof" \
   'auth-delegator-binding.json' "$SIFT_VERIFY_SCRIPT"
 present "Sift verifier lost instance-scoped FQDN policy proof" \
   'fqdn-network-policies.json' "$SIFT_VERIFY_SCRIPT"
+rg -q '^\s*datapath_provider\s*=\s*"ADVANCED_DATAPATH"\s*$' "$CLUSTER_TF" \
+  || fail "persistent cluster lost Dataplane V2"
+rg -q '^\s*enable_fqdn_network_policy\s*=\s*true\s*$' "$CLUSTER_TF" \
+  || fail "persistent cluster lost FQDN Network Policy"
+present "cluster reuse no longer rejects an incompatible dataplane" \
+  'requires Dataplane V2 and FQDN Network Policy' "$BOOTSTRAP_SCRIPT"
 
 # --- phase ordering ---------------------------------------------------------
 # Lumen's bundle must be materialized before the Sift branch consumes the
