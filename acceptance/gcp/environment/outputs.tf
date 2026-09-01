@@ -29,3 +29,7 @@ output "tagged_images" {
 output "artifact_registry_repository" {
   value = data.google_artifact_registry_repository.existing.name
 }
+
+output "sift_node_pool" {
+  value = var.acceptance_apps == "sift" ? google_container_node_pool.sift_mvp[0].name : null
+}

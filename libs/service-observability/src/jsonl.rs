@@ -79,6 +79,10 @@ pub struct ServiceLogEventV1 {
     pub attributes: BTreeMap<String, Value>,
 }
 
+/// Stable public name for the collector-facing structured service log.
+/// `ServiceLogEventV1` remains available for source compatibility.
+pub type StructuredServiceLogV1 = ServiceLogEventV1;
+
 pub fn collector_compatible(format: LogFormat) -> bool {
     matches!(format, LogFormat::Json)
 }

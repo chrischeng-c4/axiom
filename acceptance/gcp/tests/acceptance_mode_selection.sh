@@ -16,7 +16,11 @@ RENDER_SCRIPT="$ACCEPTANCE_ROOT/scripts/render-manifests.sh"
 CLEANUP_SCRIPT="$ACCEPTANCE_ROOT/scripts/cleanup.sh"
 VERIFY_CLEAN_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-clean.sh"
 CELL_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-operator-cell.sh"
+DEPLOY_SCRIPT="$ACCEPTANCE_ROOT/scripts/deploy.sh"
 BOOTSTRAP_SCRIPT="$ACCEPTANCE_ROOT/scripts/bootstrap-cluster.sh"
+SIFT_VERIFY_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-sift-mvp.sh"
+ENV_VARIABLES="$ACCEPTANCE_ROOT/environment/variables.tf"
+ENV_GKE="$ACCEPTANCE_ROOT/environment/gke.tf"
 SCHEMA="$ACCEPTANCE_ROOT/evidence/schema.json"
 
 fail() {
@@ -64,12 +68,16 @@ jq empty "$SCHEMA" || fail "evidence schema is not valid JSON"
 present "run.sh lost the lumen-sift mode"      '"lumen sift") acceptance_mode="lumen-sift" ;;' "$RUN_SCRIPT"
 present "run.sh lost the lumen-auth mode"       '"lumen auth") acceptance_mode="lumen-auth" ;;' "$RUN_SCRIPT"
 present "run.sh lost the tape mode"            '"tape") acceptance_mode="tape" ;;'             "$RUN_SCRIPT"
+present "run.sh lost the sift-only MVP mode"   '"sift") acceptance_mode="sift" ;;'             "$RUN_SCRIPT"
 present "run.sh accepts an unknown mode"       "lumen auth" "$RUN_SCRIPT"
 present "render-manifests lost lumen modes"   '"lumen sift"|"lumen auth")' "$RENDER_SCRIPT"
 present "render-manifests lost tape"           '"tape")'       "$RENDER_SCRIPT"
-present "render-manifests accepts an unknown mode" "ACCEPTANCE_APPS must be 'lumen sift', 'lumen auth', or 'tape'" "$RENDER_SCRIPT"
+present "render-manifests lost sift-only mode" '"sift")'       "$RENDER_SCRIPT"
+present "render-manifests accepts an unknown mode" "ACCEPTANCE_APPS must be 'lumen sift', 'lumen auth', 'sift', or 'tape'" "$RENDER_SCRIPT"
 present "cleanup lost lumen-auth"              '"lumen auth") acceptance_mode="lumen-auth" ;;' "$CLEANUP_SCRIPT"
 present "verify-clean lost lumen-auth"         '"lumen auth") acceptance_mode="lumen-auth" ;;' "$VERIFY_CLEAN_SCRIPT"
+present "cleanup lost sift-only mode"          '"sift") acceptance_mode="sift" ;;' "$CLEANUP_SCRIPT"
+present "verify-clean lost sift-only mode"     '"sift") acceptance_mode="sift" ;;' "$VERIFY_CLEAN_SCRIPT"
 present "auth-only invokes finalizer"          'finalize-lumen-acceptance.sh" lumen-auth' "$RUN_SCRIPT"
 absent  "the deleted LUMEN_ONLY mode came back in run.sh"    'LUMEN_ONLY' "$RUN_SCRIPT"
 absent  "the deleted LUMEN_ONLY mode came back in cleanup"   'LUMEN_ONLY' "$CLEANUP_SCRIPT"
@@ -85,6 +93,25 @@ present "the cloud-time cap trap is gone"      '45-minute cloud acceptance cap r
 present "the false-green sentinel is gone"     'run_completed=1'                    "$RUN_SCRIPT"
 present "cleanup no longer refuses ec=0 without the sentinel" 'run aborted before completion' "$RUN_SCRIPT"
 present "the backup service account is no longer swept" 'wait_for_empty "backup service account"' "$VERIFY_CLEAN_SCRIPT"
+
+# --- Sift MVP is independent, bounded, and evidence-complete --------------
+present "sift-only mode does not invoke its verifier" 'verify-sift-mvp.sh"' "$RUN_SCRIPT"
+present "sift-only mode lost the 90-minute cap" 'sift_cloud_cap=5400' "$RUN_SCRIPT"
+present "sift-only mode no longer requires immutable Rig" 'INPUT_RIG_IMAGE' "$RUN_SCRIPT"
+present "Terraform lost the sift-only enum" '"sift"' "$ENV_VARIABLES"
+present "Terraform lost the run-scoped Sift node pool" 'resource "google_container_node_pool" "sift_mvp"' "$ENV_GKE"
+present "the Sift verifier lost its 30-minute load" 'LOAD_SECONDS=1800' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier lost the 10k/s rate" 'ITEMS_PER_SECOND=10000' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier lost its 18M exact count" 'EXPECTED_ITEMS=18000000' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier lost GCS outage testing" 'archive-iam-disabled' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier lost fresh-PVC restore" 'fresh-pvc-restore' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier no longer emits acceptance.json" 'acceptance.json' "$SIFT_VERIFY_SCRIPT"
+present "Sift deployment no longer requires GKE FQDN policy enforcement" \
+  'fqdnnetworkpolicies.networking.gke.io' "$DEPLOY_SCRIPT"
+present "Sift verifier lost the operator-managed auth binding proof" \
+  'auth-delegator-binding.json' "$SIFT_VERIFY_SCRIPT"
+present "Sift verifier lost instance-scoped FQDN policy proof" \
+  'fqdn-network-policies.json' "$SIFT_VERIFY_SCRIPT"
 
 # --- phase ordering ---------------------------------------------------------
 # Lumen's bundle must be materialized before the Sift branch consumes the

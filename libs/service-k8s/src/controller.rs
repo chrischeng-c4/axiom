@@ -12,12 +12,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use kube::api::{Api, ApiResource, DynamicObject, Patch, PatchParams};
+use kube::api::{Api, ApiResource, DeleteParams, DynamicObject, Patch, PatchParams, Preconditions};
 use kube::runtime::controller::{Action, Controller};
 use kube::runtime::events::{Event, EventType, Recorder, Reporter};
 use kube::runtime::watcher;
 use kube::{Client, ResourceExt};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::lease::{self, Election};
 use crate::metrics::{self, ControllerMetrics};
@@ -36,6 +36,12 @@ pub enum Error {
     Missing(&'static str),
     #[error("service reconcile plan failed: {0}")]
     Plan(String),
+    #[error("refusing to delete cluster-scoped {kind}/{name}: {reason}")]
+    ClusterOwnership {
+        kind: String,
+        name: String,
+        reason: String,
+    },
 }
 // </HANDWRITE>
 
@@ -128,6 +134,8 @@ fn plural_for(kind: &str) -> String {
         "StatefulSet" => "statefulsets",
         "ServiceMonitor" => "servicemonitors",
         "PrometheusRule" => "prometheusrules",
+        "ClusterRoleBinding" => "clusterrolebindings",
+        "FQDNNetworkPolicy" => "fqdnnetworkpolicies",
         // The fallback would yield `networkpolicys` — a plural no apiserver
         // serves, so every apply of a rendered NetworkPolicy would 404 at
         // runtime with nothing failing at build time (#2603).
@@ -169,7 +177,11 @@ async fn apply_object(client: &Client, ns: &str, manager: &str, value: Value) ->
 
     let ar = api_resource(&api_version, &kind);
     let obj: DynamicObject = serde_json::from_value(value)?;
-    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &ar);
+    let api: Api<DynamicObject> = if kind == "ClusterRoleBinding" {
+        Api::all_with(client.clone(), &ar)
+    } else {
+        Api::namespaced_with(client.clone(), ns, &ar)
+    };
     api.patch(
         &name,
         &PatchParams::apply(manager).force(),
@@ -295,14 +307,114 @@ async fn prune_object(
     }
 }
 
-/// Read `.status.readyReplicas` off a workload, or 0 if absent.
+fn cluster_children_finalizer<S: ManagedService>() -> String {
+    format!("service-k8s.axiom.dev/{}-cluster-children", S::MANAGER)
+}
+
+async fn patch_finalizers<S: ManagedService>(
+    api: &Api<S>,
+    obj: &S,
+    finalizers: Vec<String>,
+) -> Result<(), Error> {
+    let mut metadata = json!({"finalizers": finalizers});
+    if let Some(resource_version) = obj.meta().resource_version.as_deref() {
+        metadata["resourceVersion"] = Value::String(resource_version.to_string());
+    }
+    api.patch(
+        &obj.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(json!({"metadata": metadata})),
+    )
+    .await?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClusterPruneOutcome {
+    Absent,
+    DeleteRequested,
+}
+
+/// Remove one cluster-scoped child only when labels and the SSA manager both
+/// prove that this controller created it for this CR.
+async fn prune_cluster_scoped_object(
+    client: &Client,
+    manager: &str,
+    target: &service::ClusterScopedChild,
+) -> Result<ClusterPruneOutcome, Error> {
+    let ar = api_resource(target.api_version, target.kind);
+    let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+    let Some(live) = api.get_opt(&target.name).await? else {
+        return Ok(ClusterPruneOutcome::Absent);
+    };
+
+    let labels_match = target.expected_labels.iter().all(|(key, value)| {
+        live.metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get(key))
+            == Some(value)
+    });
+    if !labels_match {
+        return Err(Error::ClusterOwnership {
+            kind: target.kind.to_string(),
+            name: target.name.clone(),
+            reason: "expected owner labels do not match the live object".to_string(),
+        });
+    }
+    let managed = live
+        .metadata
+        .managed_fields
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .any(|entry| entry.manager.as_deref() == Some(manager));
+    if !managed {
+        return Err(Error::ClusterOwnership {
+            kind: target.kind.to_string(),
+            name: target.name.clone(),
+            reason: format!("managedFields does not contain field manager {manager}"),
+        });
+    }
+
+    let Some(uid) = live.metadata.uid.clone() else {
+        return Err(Error::ClusterOwnership {
+            kind: target.kind.to_string(),
+            name: target.name.clone(),
+            reason: "live object has no UID for a safe delete precondition".to_string(),
+        });
+    };
+    let delete_params = DeleteParams {
+        preconditions: Some(Preconditions {
+            uid: Some(uid),
+            resource_version: live.metadata.resource_version.clone(),
+        }),
+        ..DeleteParams::default()
+    };
+
+    match api.delete(&target.name, &delete_params).await {
+        Ok(_) => Ok(ClusterPruneOutcome::DeleteRequested),
+        Err(kube::Error::Api(error)) if error.code == 404 => Ok(ClusterPruneOutcome::Absent),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn workload_ready_replicas(kind: &str, data: &Value) -> i64 {
+    let field = match kind {
+        "DaemonSet" => "numberReady",
+        _ => "readyReplicas",
+    };
+    data["status"][field].as_i64().unwrap_or(0)
+}
+
+/// Read the workload kind's native ready count, or 0 if absent.
 async fn ready_replicas(client: &Client, ns: &str, kind: &str, name: &str) -> Result<i64, Error> {
     let ar = api_resource("apps/v1", kind);
     let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &ar);
     Ok(api
         .get_opt(name)
         .await?
-        .and_then(|o| o.data["status"]["readyReplicas"].as_i64())
+        .map(|o| workload_ready_replicas(kind, &o.data))
         .unwrap_or(0))
 }
 
@@ -332,6 +444,45 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
         .ok_or(Error::Missing("metadata.namespace"))?;
     let name = obj.name_any();
     let client = &ctx.client;
+
+    // Cluster-scoped children cannot use an owner reference to a namespaced
+    // CR. Install a finalizer before the first apply, and remove only children
+    // whose labels and field manager prove ownership.
+    let cluster_children = obj.cluster_scoped_children();
+    if !cluster_children.is_empty() {
+        let finalizer = cluster_children_finalizer::<S>();
+        let mut finalizers = obj.meta().finalizers.clone().unwrap_or_default();
+        let api: Api<S> = Api::namespaced(client.clone(), &ns);
+        if obj.meta().deletion_timestamp.is_some() {
+            let mut pending = false;
+            for target in &cluster_children {
+                pending |= prune_cluster_scoped_object(client, S::MANAGER, target).await?
+                    == ClusterPruneOutcome::DeleteRequested;
+            }
+            if pending {
+                return Ok(Action::requeue(Duration::from_secs(1)));
+            }
+            if finalizers.iter().any(|item| item == &finalizer) {
+                finalizers.retain(|item| item != &finalizer);
+                patch_finalizers(&api, obj.as_ref(), finalizers).await?;
+            }
+            return Ok(Action::await_change());
+        }
+        if !finalizers.iter().any(|item| item == &finalizer) {
+            finalizers.push(finalizer);
+            patch_finalizers(&api, obj.as_ref(), finalizers).await?;
+            return Ok(Action::await_change());
+        }
+    }
+
+    let mut cluster_delete_pending = false;
+    for target in cluster_children.iter().filter(|target| !target.desired) {
+        cluster_delete_pending |= prune_cluster_scoped_object(client, S::MANAGER, target).await?
+            == ClusterPruneOutcome::DeleteRequested;
+    }
+    if cluster_delete_pending {
+        return Ok(Action::requeue(Duration::from_secs(1)));
+    }
 
     // 1. Let the service perform async admission/observation, then apply the
     // planned children through the shared SSA path.
@@ -821,7 +972,12 @@ mod tests {
     }
 
     #[derive(
-        kube::CustomResource, Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema,
+        kube::CustomResource,
+        Clone,
+        Debug,
+        serde::Deserialize,
+        serde::Serialize,
+        schemars::JsonSchema,
     )]
     #[kube(
         group = "service-k8s.test",
@@ -986,7 +1142,12 @@ mod tests {
     }
 
     #[derive(
-        kube::CustomResource, Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema,
+        kube::CustomResource,
+        Clone,
+        Debug,
+        serde::Deserialize,
+        serde::Serialize,
+        schemars::JsonSchema,
     )]
     #[kube(
         group = "service-k8s.test",
@@ -1054,9 +1215,7 @@ mod tests {
             ),
             // Narration, not the subject: answered so it neither fails nor
             // hides from the request log.
-            ("POST", p) if p.ends_with("/events") => {
-                (201, json!({ "metadata": { "name": "e" } }))
-            }
+            ("POST", p) if p.ends_with("/events") => (201, json!({ "metadata": { "name": "e" } })),
             _ => (
                 500,
                 json!({ "kind": "Status", "status": "Failure", "code": 500 }),

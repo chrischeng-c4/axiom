@@ -6,6 +6,15 @@
 
 use futures::stream::{self, StreamExt};
 
+mod group_commit;
+mod job_runner;
+
+pub use group_commit::{
+    spawn_group_commit, GroupCommitConfig, GroupCommitConfigError, GroupCommitError,
+    GroupCommitQueue, GroupCommitRequest, GroupCommitWorker,
+};
+pub use job_runner::{JobRunReport, JobRunState, JobRunner, JobState};
+
 /// Execute every input with at most `max_concurrency` futures in flight.
 ///
 /// Results are returned in completion order. A zero concurrency setting is

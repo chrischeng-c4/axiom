@@ -6,6 +6,8 @@
 //! replacement, CRC-framed append logs, and sequence-named snapshot stores.
 
 mod atomic;
+mod capacity;
+mod data_root;
 mod framed_log;
 mod fsync;
 mod generation;
@@ -14,6 +16,13 @@ mod snapshot_store;
 pub use atomic::{
     atomic_write, atomic_write_strict, strict_sync_parent_dir, sync_parent_dir,
     StrictAtomicWriteError,
+};
+pub use capacity::{
+    CapacityError, CapacityGuard, CapacityLevel, CapacityReservation, CapacityThresholds,
+    FileSystemSpaceProbe, SpaceProbe,
+};
+pub use data_root::{
+    reject_symlink, set_private_directory_mode, set_private_file_mode, DataRoot, DataRootPolicy,
 };
 pub use framed_log::{FramedLogReader, FramedLogWriter, LogFrame};
 pub use fsync::FsyncPolicy;

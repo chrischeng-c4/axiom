@@ -81,11 +81,172 @@
         },
         "sift": {
           "type": "object",
-          "required": [
-            "operator_reconcile_1x1",
-            "scheduled_backup",
-            "gcs_backup",
-            "topology_beyond_1x1"
+          "oneOf": [
+            {
+              "required": [
+                "operator_reconcile_1x1",
+                "scheduled_backup",
+                "gcs_backup",
+                "topology_beyond_1x1"
+              ]
+            },
+            {
+              "required": [
+                "schema",
+                "status",
+                "candidate",
+                "topology",
+                "protocols",
+                "load",
+                "latency",
+                "failover",
+                "archive",
+                "retention",
+                "restore",
+                "cleanup_evidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "schema": {"const": "axiom.gcp.sift.mvp.acceptance.v1"},
+                "status": {"const": "passed"},
+                "candidate": {
+                  "type": "object",
+                  "required": ["sift_image", "rig_image", "immutable"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "sift_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+                    "rig_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+                    "immutable": {"const": true}
+                  }
+                },
+                "topology": {
+                  "type": "object",
+                  "required": ["store_voters", "control_replicas", "gateway_replicas", "query_replicas", "peer_mtls", "pvc_restart"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "store_voters": {"const": 3},
+                    "control_replicas": {"const": 3},
+                    "gateway_replicas": {"const": 1},
+                    "query_replicas": {"const": 1},
+                    "peer_mtls": {"const": "passed"},
+                    "pvc_restart": {"const": "passed"}
+                  }
+                },
+                "protocols": {
+                  "type": "object",
+                  "required": ["otlp_http_json", "otlp_http_protobuf", "otlp_gzip", "otlp_grpc", "partial_success", "remote_write_1", "remote_write_2_rejected_415", "mcp_read_only_tools", "mcp_host_origin", "cross_project_denied"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "otlp_http_json": {"const": "passed"},
+                    "otlp_http_protobuf": {"const": "passed"},
+                    "otlp_gzip": {"const": "passed"},
+                    "otlp_grpc": {"const": "passed"},
+                    "partial_success": {"const": "passed"},
+                    "remote_write_1": {"const": "passed"},
+                    "remote_write_2_rejected_415": {"const": "passed"},
+                    "mcp_read_only_tools": {"const": "passed"},
+                    "mcp_host_origin": {"const": "passed"},
+                    "cross_project_denied": {"const": "passed"}
+                  }
+                },
+                "load": {
+                  "type": "object",
+                  "required": ["duration_seconds", "offered_items_per_second", "expected_unique_items", "expected_logs", "expected_metric_points", "expected_spans", "observed"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "duration_seconds": {"const": 1800},
+                    "offered_items_per_second": {"const": 10000},
+                    "expected_unique_items": {"const": 18000000},
+                    "expected_logs": {"const": 9000000},
+                    "expected_metric_points": {"const": 5400000},
+                    "expected_spans": {"const": 3600000},
+                    "observed": {
+                      "type": "object",
+                      "required": ["requests", "failed", "achieved_items_per_second", "p95_ms", "p99_ms"],
+                      "properties": {
+                        "requests": {"const": 18000},
+                        "failed": {"const": 0},
+                        "achieved_items_per_second": {"type": "number", "minimum": 9500},
+                        "p95_ms": {"type": "number", "maximum": 250},
+                        "p99_ms": {"type": "number", "maximum": 1000}
+                      }
+                    }
+                  }
+                },
+                "latency": {
+                  "type": "object",
+                  "required": ["query_p95_ms", "trace_read_p95_ms", "tail_visible_ms"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "query_p95_ms": {"type": "number", "maximum": 2000},
+                    "trace_read_p95_ms": {"type": "number", "maximum": 1000},
+                    "tail_visible_ms": {"type": "number", "maximum": 2000}
+                  }
+                },
+                "failover": {
+                  "type": "object",
+                  "required": ["duration_seconds", "expected_unique_items", "leader_before", "leader_after", "stopped_vm", "observed", "acknowledged_data_loss", "auto_repair"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "duration_seconds": {"const": 300},
+                    "expected_unique_items": {"const": 3000000},
+                    "leader_before": {"type": "string", "minLength": 1},
+                    "leader_after": {"type": "string", "minLength": 1},
+                    "stopped_vm": {"type": "string", "minLength": 1},
+                    "observed": {
+                      "type": "object",
+                      "required": ["requests", "failed", "achieved_items_per_second", "p95_ms", "p99_ms"],
+                      "properties": {
+                        "requests": {"const": 3000},
+                        "failed": {"const": 0},
+                        "achieved_items_per_second": {"type": "number", "minimum": 9500},
+                        "p95_ms": {"type": "number", "maximum": 250},
+                        "p99_ms": {"type": "number", "maximum": 1000}
+                      }
+                    },
+                    "acknowledged_data_loss": {"const": 0},
+                    "auto_repair": {"const": "passed"}
+                  }
+                },
+                "archive": {
+                  "type": "object",
+                  "required": ["gcs_iam_outage", "wal_preserved", "manifest_uri"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "gcs_iam_outage": {"const": "passed"},
+                    "wal_preserved": {"const": "passed"},
+                    "manifest_uri": {"type": "string", "pattern": "^gs://"}
+                  }
+                },
+                "retention": {
+                  "type": "object",
+                  "required": ["day_29", "day_31", "day_181"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "day_29": {"const": "hot-query-passed"},
+                    "day_31": {"const": "cold-query-passed"},
+                    "day_181": {"const": "non-retryable-partial-rejection-passed"}
+                  }
+                },
+                "restore": {
+                  "type": "object",
+                  "required": ["fresh_pvc", "new_cluster_id", "restored_from", "source_count", "restored_count", "source_digest", "restored_digest", "source_watermark", "restored_watermark"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "fresh_pvc": {"const": "passed"},
+                    "new_cluster_id": {"const": true},
+                    "restored_from": {"type": "string", "pattern": "^gs://"},
+                    "source_count": {"type": "integer", "minimum": 18000000},
+                    "restored_count": {"type": "integer", "minimum": 18000000},
+                    "source_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "restored_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "source_watermark": {"type": "integer", "minimum": 1},
+                    "restored_watermark": {"type": "integer", "minimum": 1}
+                  }
+                },
+                "cleanup_evidence": {"const": "cleanup.json"}
+              }
+            }
           ]
         },
         "tape": {
@@ -118,6 +279,16 @@
         },
         {
           "required": ["tape"]
+        },
+        {
+          "required": ["sift"],
+          "not": {"anyOf": [{"required": ["lumen"]}, {"required": ["auth"]}, {"required": ["tape"]}]},
+          "properties": {
+            "sift": {
+              "required": ["schema"],
+              "properties": {"schema": {"const": "axiom.gcp.sift.mvp.acceptance.v1"}}
+            }
+          }
         }
       ],
       "additionalProperties": false
@@ -136,6 +307,22 @@
     {
       "required": ["backup_bucket", "acceptance"],
       "properties": {"acceptance": {"required": ["tape"]}}
+    },
+    {
+      "required": ["backup_bucket", "acceptance"],
+      "properties": {
+        "acceptance": {
+          "required": ["sift"],
+          "not": {"anyOf": [{"required": ["lumen"]}, {"required": ["auth"]}, {"required": ["tape"]}]},
+          "properties": {
+            "sift": {
+              "required": ["schema"],
+              "properties": {"schema": {"const": "axiom.gcp.sift.mvp.acceptance.v1"}}
+            }
+          }
+        }
+      },
+      "not": {"anyOf": [{"required": ["lumen_evidence"]}, {"required": ["lumen_provenance"]}]}
     }
   ],
   "additionalProperties": false

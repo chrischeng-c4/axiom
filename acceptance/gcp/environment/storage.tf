@@ -39,7 +39,8 @@ data "google_project" "current" {
 resource "google_service_account_iam_member" "backup_workload_identity" {
   for_each = toset(concat(
     local.backup_enabled && var.acceptance_apps == "tape" ? ["tape/tape-backup", "tape/tape"] : local.backup_enabled ? ["lumen/lumen-backup"] : [],
-    var.acceptance_apps == "lumen-sift" ? ["sift/sift-backup"] : [],
+    var.acceptance_apps == "lumen-sift" ? ["sift/sift-backup", "sift/sift-store"] : [],
+    var.acceptance_apps == "sift" ? ["sift/sift-store", "sift-restore/sift-restore-store"] : [],
   ))
 
   service_account_id = google_service_account.backup[0].name

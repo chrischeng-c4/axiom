@@ -11,6 +11,28 @@ use tracing_subscriber::fmt::format::JsonFields;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::prelude::*;
 
+#[test]
+fn structured_service_log_v1_is_the_public_schema_name() {
+    fn accepts_shared_schema(_: service_observability::StructuredServiceLogV1) {}
+    accepts_shared_schema(ServiceLogEventV1 {
+        schema: SERVICE_LOG_SCHEMA_V1.to_string(),
+        timestamp: "2026-08-31T00:00:00Z".to_string(),
+        severity: "INFO".to_string(),
+        service: ServiceLogIdentityV1 {
+            name: "fixture".to_string(),
+            version: "1".to_string(),
+        },
+        event: "fixture".to_string(),
+        message: "fixture".to_string(),
+        trace_id: None,
+        span_id: None,
+        parent_span_id: None,
+        trace_flags: None,
+        request_id: None,
+        attributes: Default::default(),
+    });
+}
+
 #[derive(Clone, Default)]
 struct SharedWriter {
     bytes: Arc<Mutex<Vec<u8>>>,

@@ -48,3 +48,7 @@ path = "e2e/shutdown_deadline.rs"
 [[test]]
 name = "shutdown_deadline_publication"
 path = "e2e/shutdown_deadline_publication.rs"
+
+[[test]]
+name = "task_supervisor"
+path = "e2e/task_supervisor.rs"

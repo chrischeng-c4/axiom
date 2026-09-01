@@ -87,7 +87,7 @@ jobs:
           stage="pkg/${name}"
           mkdir -p "${stage}" out
           cp "target/${{ matrix.target }}/release/sift" "${stage}/sift"
-          cp projects/sift/README.md "${stage}/README.md"
+          cp apps/sift/README.md "${stage}/README.md"
           tarball="out/${name}.tar.gz"
           tar -C pkg -czf "${tarball}" "${name}"
           if command -v shasum >/dev/null; then
@@ -133,7 +133,7 @@ jobs:
             ## Install
 
             ```sh
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/projects/sift/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/apps/sift/install.sh | sh
             ```
 
   # #2462: durable, digest-pinned container images per release. Runs after
@@ -189,7 +189,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: projects/sift/Dockerfile.release
+          file: apps/sift/Dockerfile.release
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |

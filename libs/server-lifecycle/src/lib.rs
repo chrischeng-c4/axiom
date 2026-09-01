@@ -16,6 +16,7 @@ pub mod limits;
 pub mod metrics;
 pub mod readiness;
 pub mod signal;
+pub mod task_supervisor;
 
 pub use config::BindConfig;
 pub use deadline::{DeadlineError, ShutdownDeadline};
@@ -30,3 +31,4 @@ pub use limits::{ConnectionBudget, ConnectionLimitExceeded, ConnectionPermit};
 pub use metrics::{ConnectionMetrics, NoopConnectionMetrics};
 pub use readiness::Readiness;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
+pub use task_supervisor::TaskSupervisor;

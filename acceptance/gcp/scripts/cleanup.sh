@@ -20,9 +20,10 @@ export KUBECONFIG
 case "$ACCEPTANCE_APPS" in
   "lumen sift") acceptance_mode="lumen-sift" ;;
   "lumen auth") acceptance_mode="lumen-auth" ;;
+  "sift") acceptance_mode="sift" ;;
   "tape") acceptance_mode="tape" ;;
   *)
-    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', 'sift', or 'tape'" >&2
     exit 1
     ;;
 esac
@@ -40,6 +41,9 @@ capture_failure_evidence() {
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
     kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
       > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
+  elif [[ "$acceptance_mode" == "sift" ]]; then
+    kubectl logs -n sift-system deployment/sift-operator --tail=500 --request-timeout=15s \
+      > "$EVIDENCE_DIR/kubernetes/sift-operator.log" 2>&1 || true
   else
     kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
       > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
@@ -88,6 +92,8 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
     namespaces=(tape tape-system)
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
     namespaces=(lumen lumen-system lumen-auth-client)
+  elif [[ "$acceptance_mode" == "sift" ]]; then
+    namespaces=(sift sift-system sift-restore)
   else
     # lumen-fleet-a/-b are the data-plane namespaces the LumenFleet leg
     # materializes into. They are swept HERE, not only at the end of that leg,
@@ -105,7 +111,7 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   # before its target namespaces start terminating; otherwise a pass that
   # lands between two deletes re-materializes a Lumen into a namespace on its
   # way out and the no-leftovers gate trips on a resource cleanup just removed.
-  if [[ "$acceptance_mode" != "tape" ]]; then
+  if [[ "$acceptance_mode" != "tape" && "$acceptance_mode" != "sift" ]]; then
     kubectl delete customresourcedefinition lumenfleets.lumen.dev \
       --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
   fi
@@ -137,6 +143,15 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   else
     if [[ "$acceptance_mode" == "lumen-auth" ]]; then
       kubectl delete customresourcedefinition lumens.lumen.dev \
+        --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+    elif [[ "$acceptance_mode" == "sift" ]]; then
+      kubectl delete customresourcedefinition sifts.sift.axiom.dev \
+        --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+      kubectl delete clusterrolebinding \
+        -l axiom-owner=gcp-operator-acceptance,axiom-run-id="$RUN_ID" \
+        --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+      kubectl delete clusterrolebinding \
+        -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=sift \
         --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
     else
       kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
@@ -182,6 +197,8 @@ if [[ -f "$state" ]]; then
     destroy_args+=(-var="acceptance_apps=tape")
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
     destroy_args+=(-var="acceptance_apps=lumen-auth")
+  elif [[ "$acceptance_mode" == "sift" ]]; then
+    destroy_args+=(-var="acceptance_apps=sift")
   fi
   for attempt in 1 2 3; do
     if TF_DATA_DIR="$tf_data" terraform -chdir="$TERRAFORM_ENVIRONMENT_DIR" \
@@ -196,7 +213,10 @@ if [[ -f "$state" ]]; then
   done
 fi
 
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  delete_run_image sift
+  delete_run_image rig
+elif [[ "$acceptance_mode" == "tape" ]]; then
   delete_run_image tape
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
   delete_run_image lumen
@@ -212,3 +232,13 @@ PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" RUN_ID="$RUN_ID" 
   PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
   ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
   "$ACCEPTANCE_ROOT/scripts/verify-clean.sh"
+
+if [[ "$acceptance_mode" == "sift" \
+  && -f "$EVIDENCE_DIR/acceptance.json" \
+  && -f "$EVIDENCE_DIR/cleanup.json" ]]; then
+  acceptance_tmp="$(mktemp "$EVIDENCE_DIR/.acceptance.json.XXXXXX")"
+  jq '.acceptance.sift.cleanup_evidence = "cleanup.json"' \
+    "$EVIDENCE_DIR/acceptance.json" > "$acceptance_tmp"
+  mv "$acceptance_tmp" "$EVIDENCE_DIR/acceptance.json"
+  cp "$EVIDENCE_DIR/acceptance.json" "$EVIDENCE_DIR/sift-mvp-acceptance.json"
+fi

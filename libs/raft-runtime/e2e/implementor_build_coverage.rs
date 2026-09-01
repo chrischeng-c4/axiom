@@ -92,7 +92,7 @@ const SITES: [Site; 12] = [
         gate: Gate::Tape,
     },
     Site {
-        path: "projects/sift/src/durability.rs",
+        path: "apps/sift/src/durability.rs",
         implementor: "SiftStateMachine",
         gate: Gate::Sift,
     },
@@ -144,7 +144,7 @@ fn required_gate(path: &str) -> Result<Gate, String> {
         "apps/lumen/src/raft_sm.rs" => Ok(Gate::LumenRaftWal),
         "apps/relay/src/raft.rs" => Ok(Gate::Relay),
         "apps/tape/src/raft.rs" => Ok(Gate::Tape),
-        "projects/sift/src/durability.rs" => Ok(Gate::Sift),
+        "apps/sift/src/durability.rs" => Ok(Gate::Sift),
         "libs/raft-runtime/src/lib.rs"
         | "libs/raft-runtime/e2e/group_registry.rs"
         | "libs/raft-runtime/e2e/support/cluster.rs"

@@ -32,7 +32,8 @@ pub use gcs::GcsSink;
 #[cfg(feature = "http-client")]
 pub use http::{
     fetch_admin_snapshot, run_admin_snapshot_backup, AdminSnapshotOperation,
-    AdminSnapshotTransport, AdminSnapshotTransportError,
+    AdminSnapshotDiagnostic, AdminSnapshotRequest, AdminSnapshotRequestError,
+    AdminSnapshotTransport, AdminSnapshotTransportConfig, AdminSnapshotTransportError,
 };
 pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy};
 pub use runner::{run_backup_once, BackupObject, BackupRunResult};

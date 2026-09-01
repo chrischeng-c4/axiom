@@ -1,48 +1,46 @@
-// HANDWRITE-BEGIN gap="service-backup-gcs-adapter" tracker="1659" reason="Implement GCS JSON API put/list/prune/get with Vat emulator endpoint support and ADC workload-identity bearer tokens."
-//! Google Cloud Storage JSON API adapter for the synchronous backup contract.
-//!
-//! `STORAGE_EMULATOR_HOST` selects Vat's real HTTP emulator and disables auth.
-//! Production uses an explicit access token or the GCE/GKE metadata server,
-//! which is the workload-identity path. Object writes return only after GCS has
-//! acknowledged the media upload.
+//! Compatibility wrapper over the shared `storage-object` GCS adapter.
 
-use std::time::{Duration, SystemTime};
+use std::fmt;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
-use reqwest::blocking::{Client, RequestBuilder};
-use serde_json::Value;
+use storage_object::{GcsObjectStore, ObjectStore, PutCondition};
 
 use crate::{BackupDestination, BackupSink};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GcsSink {
     bucket: String,
     prefix: String,
-    endpoint: String,
-    emulator: bool,
-    client: Client,
+    store: Arc<dyn ObjectStore>,
+}
+
+impl fmt::Debug for GcsSink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GcsSink")
+            .field("bucket", &self.bucket)
+            .field("prefix", &self.prefix)
+            .finish_non_exhaustive()
+    }
 }
 
 impl GcsSink {
     pub fn from_destination(destination: &BackupDestination) -> Result<Self> {
-        let BackupDestination::Gcs { bucket, prefix, .. } = destination else {
+        let BackupDestination::Gcs {
+            bucket,
+            prefix,
+            credentials_secret,
+        } = destination
+        else {
             bail!("{} is not a GCS backup destination", destination.identity());
         };
-        let (endpoint, emulator) = match std::env::var("STORAGE_EMULATOR_HOST") {
-            Ok(value) => {
-                let value = if value.starts_with("http://") || value.starts_with("https://") {
-                    value
-                } else {
-                    format!("http://{value}")
-                };
-                (value.trim_end_matches('/').to_string(), true)
-            }
-            Err(std::env::VarError::NotPresent) => {
-                ("https://storage.googleapis.com".to_string(), false)
-            }
-            Err(error) => return Err(error.into()),
-        };
+        if let Some(secret) = credentials_secret {
+            bail!(
+                "GCS credentials_secret `{secret}` is not supported; use ADC and GKE Workload Identity"
+            );
+        }
         Ok(Self {
             bucket: bucket.clone(),
             prefix: if prefix.is_empty() {
@@ -50,116 +48,54 @@ impl GcsSink {
             } else {
                 prefix.trim_matches('/').to_string()
             },
-            endpoint,
-            emulator,
-            client: Client::builder().timeout(Duration::from_secs(60)).build()?,
+            store: Arc::new(GcsObjectStore::new(bucket, "")?),
         })
     }
 
     pub fn from_exact_uri(uri: &str) -> Result<(Self, String)> {
         let (bucket, key) = split_gs_uri(uri)?;
-        let destination = BackupDestination::Gcs {
-            bucket,
-            prefix: String::new(),
-            credentials_secret: None,
-        };
-        Ok((Self::from_destination(&destination)?, key))
+        let store = Arc::new(GcsObjectStore::new(&bucket, "")?);
+        Ok((
+            Self {
+                bucket,
+                prefix: String::new(),
+                store,
+            },
+            key,
+        ))
     }
 
     pub fn put_object(&self, key: &str, payload: &[u8], content_type: &str) -> Result<String> {
         let key = key.trim_start_matches('/');
-        let url = format!(
-            "{}/upload/storage/v1/b/{}/o?uploadType=media&name={}",
-            self.endpoint,
-            urlencoding::encode(&self.bucket),
-            urlencoding::encode(key)
-        );
-        let response = self
-            .authorized(self.client.post(url))?
-            .header(reqwest::header::CONTENT_TYPE, content_type)
-            .body(payload.to_vec())
-            .send()
-            .context("upload GCS backup object")?;
-        ensure_success(response, "upload GCS backup object")?;
+        self.store
+            .put(key, payload, content_type, PutCondition::Any)?;
         Ok(format!("gs://{}/{key}", self.bucket))
     }
 
     pub fn get_object(&self, key: &str) -> Result<Vec<u8>> {
-        let url = format!(
-            "{}/download/storage/v1/b/{}/o/{}?alt=media",
-            self.endpoint,
-            urlencoding::encode(&self.bucket),
-            urlencoding::encode(key.trim_start_matches('/'))
-        );
-        let response = self
-            .authorized(self.client.get(url))?
-            .send()
-            .context("download GCS backup object")?;
-        Ok(ensure_success(response, "download GCS backup object")?
-            .bytes()?
-            .to_vec())
+        Ok(self.store.get(key.trim_start_matches('/'))?.bytes)
     }
 
     pub fn delete_object(&self, key: &str) -> Result<()> {
-        let url = format!(
-            "{}/storage/v1/b/{}/o/{}",
-            self.endpoint,
-            urlencoding::encode(&self.bucket),
-            urlencoding::encode(key.trim_start_matches('/'))
-        );
-        let response = self.authorized(self.client.delete(url))?.send()?;
-        ensure_success(response, "delete GCS backup object")?;
+        self.store.delete(key.trim_start_matches('/'))?;
         Ok(())
     }
 
     fn list_objects(&self) -> Result<Vec<(String, DateTime<Utc>)>> {
-        let mut objects = Vec::new();
-        let mut page_token = None::<String>;
-        loop {
-            let mut url = format!(
-                "{}/storage/v1/b/{}/o?prefix={}",
-                self.endpoint,
-                urlencoding::encode(&self.bucket),
-                urlencoding::encode(&self.prefix)
-            );
-            if let Some(token) = &page_token {
-                url.push_str("&pageToken=");
-                url.push_str(&urlencoding::encode(token));
-            }
-            let response = self.authorized(self.client.get(url))?.send()?;
-            let value: Value = ensure_success(response, "list GCS backup objects")?.json()?;
-            objects.extend(
-                value
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|item| {
-                        Some((
-                            item.get("name")?.as_str()?.to_string(),
-                            DateTime::parse_from_rfc3339(item.get("updated")?.as_str()?)
-                                .ok()?
-                                .with_timezone(&Utc),
-                        ))
-                    }),
-            );
-            page_token = value
-                .get("nextPageToken")
-                .and_then(Value::as_str)
-                .filter(|token| !token.is_empty())
-                .map(str::to_string);
-            if page_token.is_none() {
-                break;
-            }
-        }
-        Ok(objects)
-    }
-
-    fn authorized(&self, request: RequestBuilder) -> Result<RequestBuilder> {
-        if self.emulator {
-            return Ok(request);
-        }
-        Ok(request.bearer_auth(access_token(&self.client)?))
+        self.store
+            .list(&self.prefix)?
+            .into_iter()
+            .map(|meta| {
+                let updated = meta
+                    .updated
+                    .as_deref()
+                    .context("GCS object metadata lacks updated time")?;
+                Ok((
+                    meta.key,
+                    DateTime::parse_from_rfc3339(updated)?.with_timezone(&Utc),
+                ))
+            })
+            .collect()
     }
 }
 
@@ -210,43 +146,3 @@ fn split_gs_uri(uri: &str) -> Result<(String, String)> {
     }
     Ok((bucket.to_string(), key.trim_start_matches('/').to_string()))
 }
-
-fn access_token(client: &Client) -> Result<String> {
-    for name in ["GOOGLE_OAUTH_ACCESS_TOKEN", "GCS_ACCESS_TOKEN"] {
-        if let Ok(value) = std::env::var(name) {
-            if !value.trim().is_empty() {
-                return Ok(value);
-            }
-        }
-    }
-    let metadata_host = std::env::var("GCE_METADATA_HOST")
-        .unwrap_or_else(|_| "metadata.google.internal".to_string());
-    let url = format!(
-        "http://{metadata_host}/computeMetadata/v1/instance/service-accounts/default/token"
-    );
-    let response = client
-        .get(url)
-        .header("Metadata-Flavor", "Google")
-        .send()
-        .context("obtain GCS workload-identity token from metadata server")?;
-    let value: Value = ensure_success(response, "obtain GCS workload-identity token")?.json()?;
-    value
-        .get("access_token")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .context("metadata token response lacks access_token")
-}
-
-fn ensure_success(
-    response: reqwest::blocking::Response,
-    action: &str,
-) -> Result<reqwest::blocking::Response> {
-    if response.status().is_success() {
-        return Ok(response);
-    }
-    let status = response.status();
-    let body = response.text().unwrap_or_default();
-    bail!("{action} failed with HTTP {status}: {body}")
-}
-// HANDWRITE-END

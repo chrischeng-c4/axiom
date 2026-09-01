@@ -104,6 +104,7 @@ pub mod llm;
 mod middleware;
 pub mod reload;
 pub mod role_map;
+pub mod scoped;
 mod verifier;
 
 pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier};
@@ -122,6 +123,9 @@ pub use reload::{
 pub use role_map::{
     load_registry, load_registry_file, load_registry_files, Registry, RegistrySource, Role,
     RoleMapDenied, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims,
+};
+pub use scoped::{
+    scoped_authorization_middleware, ScopedAuthorization, ScopedAuthorizationOutcome,
 };
 pub use verifier::Verifier;
 

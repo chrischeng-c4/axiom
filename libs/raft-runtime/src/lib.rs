@@ -22,6 +22,7 @@ mod outcome_window;
 mod peer_transport;
 mod proposal_cache;
 mod read_consistency;
+mod replica_host;
 mod registry;
 mod state_machine;
 mod store;
@@ -46,6 +47,7 @@ pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAU
 pub use peer_transport::PeerTransport;
 pub use proposal_cache::{ProposalCache, DEFAULT_PROPOSAL_CACHE_CAPACITY};
 pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
+pub use replica_host::{MembershipPolicy, ReplicaHostBuilder, ReplicaHostRuntime};
 pub use registry::{GroupRegistry, RaftRegistry, RegistryError};
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};

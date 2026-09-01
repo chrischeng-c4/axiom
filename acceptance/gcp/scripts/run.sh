@@ -16,6 +16,7 @@ REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}
 ACCEPTANCE_APPS="${ACCEPTANCE_APPS:-lumen sift}"
 INPUT_LUMEN_IMAGE="${LUMEN_IMAGE:-}"
 INPUT_SIFT_IMAGE="${SIFT_IMAGE:-}"
+INPUT_RIG_IMAGE="${RIG_IMAGE:-}"
 INPUT_TAPE_IMAGE="${TAPE_IMAGE:-}"
 LUMEN_PRIOR_ACCEPTANCE="${LUMEN_PRIOR_ACCEPTANCE:-}"
 LUMEN_AUTH_ISSUER_GSA="${LUMEN_AUTH_ISSUER_GSA:-}"
@@ -29,12 +30,19 @@ TAPE_CLI="${TAPE_CLI:-}"
 LUMEN_IMAGE=""
 SIFT_IMAGE=""
 TAPE_IMAGE=""
+RIG_IMAGE=""
 STATE_DIR="${STATE_DIR:-/tmp/axiom-gcp-operator-${RUN_ID}}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/axiom-gcp-operator-evidence/${RUN_ID}}"
 MANIFEST_DIR="${MANIFEST_DIR:-$STATE_DIR/manifests}"
 TERRAFORM_ENVIRONMENT_DIR="${TERRAFORM_ENVIRONMENT_DIR:-$STATE_DIR/environment}"
 GCS_SOURCE_PREFIX="${GCS_SOURCE_PREFIX:-gs://${PROJECT_ID}_cloudbuild/source/axiom-gcp-operator-${RUN_ID}}"
-MAX_CLOUD_SECONDS="${MAX_CLOUD_SECONDS:-2700}"
+sift_cloud_cap=5400
+if [[ "$ACCEPTANCE_APPS" == "sift" ]]; then
+  default_cloud_seconds="$sift_cloud_cap"
+else
+  default_cloud_seconds=2700
+fi
+MAX_CLOUD_SECONDS="${MAX_CLOUD_SECONDS:-$default_cloud_seconds}"
 KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
 cleanup_armed=0
 cleanup_started=0
@@ -99,9 +107,13 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT
-trap 'echo "45-minute cloud acceptance cap reached" >&2; exit 124' TERM
+if [[ "$ACCEPTANCE_APPS" == "sift" ]]; then
+  trap 'echo "90-minute Sift MVP cloud acceptance cap reached" >&2; exit 124' TERM
+else
+  trap 'echo "45-minute cloud acceptance cap reached" >&2; exit 124' TERM
+fi
 
-for command in cargo curl gcloud git jq kubectl terraform; do
+for command in cargo curl gcloud git gzip jq kubectl openssl terraform; do
   require "$command"
 done
 [[ "$RUN_ID" =~ ^[a-z0-9][a-z0-9-]{0,17}$ ]] || {
@@ -112,23 +124,42 @@ done
   echo "GKE_ZONE must be a zone such as asia-east1-a" >&2
   exit 1
 }
-[[ "$MAX_CLOUD_SECONDS" =~ ^[0-9]+$ && "$MAX_CLOUD_SECONDS" -le 2700 ]] || {
-  echo "MAX_CLOUD_SECONDS must be an integer no greater than 2700" >&2
+[[ "$MAX_CLOUD_SECONDS" =~ ^[0-9]+$ && "$MAX_CLOUD_SECONDS" -le "$default_cloud_seconds" ]] || {
+  echo "MAX_CLOUD_SECONDS must be an integer no greater than $default_cloud_seconds for this mode" >&2
   exit 1
 }
 case "$ACCEPTANCE_APPS" in
   "lumen sift") acceptance_mode="lumen-sift" ;;
   "lumen auth") acceptance_mode="lumen-auth" ;;
+  "sift") acceptance_mode="sift" ;;
   "tape") acceptance_mode="tape" ;;
   *)
-    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', 'sift', or 'tape'" >&2
     exit 1
     ;;
 esac
-if [[ "$acceptance_mode" != "tape" ]]; then
+if [[ "$acceptance_mode" != "tape" && "$acceptance_mode" != "sift" ]]; then
   : "${LUMEN_AUTH_ISSUER_GSA:?LUMEN_AUTH_ISSUER_GSA is required for auth-running modes}"
 fi
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  for input_image in "$INPUT_SIFT_IMAGE" "$INPUT_RIG_IMAGE"; do
+    [[ -z "$input_image" || "$input_image" == *@sha256:* ]] || {
+      echo "caller-supplied Sift and Rig images must be immutable @sha256 digest references" >&2
+      exit 1
+    }
+  done
+  if [[ -n "$INPUT_SIFT_IMAGE" && -n "$INPUT_RIG_IMAGE" ]]; then
+    IMAGE_PROVENANCE="prebuilt"
+  elif [[ -n "$INPUT_SIFT_IMAGE" || -n "$INPUT_RIG_IMAGE" ]]; then
+    IMAGE_PROVENANCE="mixed"
+  else
+    IMAGE_PROVENANCE="cloud-build"
+  fi
+  [[ -z "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
+    echo "LUMEN_PRIOR_ACCEPTANCE is meaningless in ACCEPTANCE_APPS=sift mode" >&2
+    exit 1
+  }
+elif [[ "$acceptance_mode" == "tape" ]]; then
   [[ -z "$INPUT_TAPE_IMAGE" || "$INPUT_TAPE_IMAGE" == *@sha256:* ]] || {
     echo "caller-supplied service images must be immutable @sha256 digest references" >&2
     exit 1
@@ -252,7 +283,9 @@ if [[ "$IMAGE_PROVENANCE" != "prebuilt" ]]; then
   fi
 fi
 
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  image_list=(sift rig)
+elif [[ "$acceptance_mode" == "tape" ]]; then
   image_list=(tape)
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
   image_list=(lumen)
@@ -265,9 +298,8 @@ for image in "${image_list[@]}"; do
   if gcloud artifacts docker images list "$REGISTRY/$image" \
     --project="$PROJECT_ID" --include-tags --format=json > "$inventory" 2>"$list_stderr"; then
     :
-  elif [[ "$image" == "tape" ]] && rg -F "NOT_FOUND" "$list_stderr" >/dev/null; then
-    # The tape package may not exist in the registry yet on a first run;
-    # applied ONLY in tape mode. lumen/sift keep the hard failure below.
+  elif [[ "$image" == "tape" || "$image" == "rig" ]] && rg -F "NOT_FOUND" "$list_stderr" >/dev/null; then
+    # A test-only package may not exist in the registry on its first run.
     printf '[]' > "$inventory"
   else
     echo "could not inventory existing $image images; refusing a destructive run" >&2
@@ -324,7 +356,11 @@ jq -n \
   > "$EVIDENCE_DIR/run.json"
 
 echo ">> local deployment CLI build and render-surface preflight"
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+    -p sift --bin sift
+  SIFT_CLI="${SIFT_CLI:-$REPO_ROOT/target/debug/sift}"
+elif [[ "$acceptance_mode" == "tape" ]]; then
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
     -p tape --bin tape --features "operator backup"
   TAPE_CLI="${TAPE_CLI:-$REPO_ROOT/target/debug/tape}"
@@ -375,7 +411,10 @@ resolve_digest() {
 
 if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
   echo ">> using caller-supplied immutable release or candidate images"
-  if [[ "$acceptance_mode" == "tape" ]]; then
+  if [[ "$acceptance_mode" == "sift" ]]; then
+    SIFT_IMAGE="$INPUT_SIFT_IMAGE"
+    RIG_IMAGE="$INPUT_RIG_IMAGE"
+  elif [[ "$acceptance_mode" == "tape" ]]; then
     TAPE_IMAGE="$INPUT_TAPE_IMAGE"
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
     LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
@@ -384,7 +423,14 @@ if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
     SIFT_IMAGE="$INPUT_SIFT_IMAGE"
   fi
 else
-  if [[ "$acceptance_mode" == "tape" ]]; then
+  if [[ "$acceptance_mode" == "sift" ]]; then
+    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.sift-mvp.yaml"
+    if [[ -n "$INPUT_SIFT_IMAGE" ]]; then
+      CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.rig.yaml"
+    elif [[ -n "$INPUT_RIG_IMAGE" ]]; then
+      CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.sift.yaml"
+    fi
+  elif [[ "$acceptance_mode" == "tape" ]]; then
     CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.tape.yaml"
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
     CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.lumen.yaml"
@@ -438,7 +484,18 @@ else
   done
   gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
     --format=json > "$EVIDENCE_DIR/cloud-build-final.json"
-  if [[ "$acceptance_mode" == "tape" ]]; then
+  if [[ "$acceptance_mode" == "sift" ]]; then
+    if [[ -n "$INPUT_SIFT_IMAGE" ]]; then
+      SIFT_IMAGE="$INPUT_SIFT_IMAGE"
+    else
+      SIFT_IMAGE="$(resolve_digest sift)"
+    fi
+    if [[ -n "$INPUT_RIG_IMAGE" ]]; then
+      RIG_IMAGE="$INPUT_RIG_IMAGE"
+    else
+      RIG_IMAGE="$(resolve_digest rig)"
+    fi
+  elif [[ "$acceptance_mode" == "tape" ]]; then
     TAPE_IMAGE="$(resolve_digest tape)"
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
     LUMEN_IMAGE="$(resolve_digest lumen)"
@@ -455,7 +512,10 @@ else
     fi
   fi
 fi
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  jq -n --arg sift "$SIFT_IMAGE" --arg rig "$RIG_IMAGE" \
+    '{sift:$sift,rig:$rig}' > "$EVIDENCE_DIR/images.json"
+elif [[ "$acceptance_mode" == "tape" ]]; then
   jq -n --arg tape "$TAPE_IMAGE" '{tape:$tape}' > "$EVIDENCE_DIR/images.json"
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
   jq -n --arg lumen "$LUMEN_IMAGE" '{lumen:$lumen}' > "$EVIDENCE_DIR/images.json"
@@ -481,7 +541,9 @@ GKE_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME"
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
 # Export mode-specific CLIs and images only
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  export SIFT_CLI SIFT_IMAGE RIG_IMAGE
+elif [[ "$acceptance_mode" == "tape" ]]; then
   export TAPE_CLI TAPE_IMAGE
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
   export LUMEN_CLI LUMEN_IMAGE LUMEN_AUTH_ISSUER_GSA
@@ -511,6 +573,8 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
 # and keeps apply symmetric with cleanup.sh's destroy args.
 if [[ "$acceptance_mode" == "tape" ]]; then
   terraform_acceptance_apps=tape
+elif [[ "$acceptance_mode" == "sift" ]]; then
+  terraform_acceptance_apps=sift
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
   terraform_acceptance_apps=lumen-auth
 else
@@ -551,6 +615,8 @@ gcloud container clusters get-credentials "$cluster" \
 # the other run's namespaces either.
 if [[ "$acceptance_mode" == "tape" ]]; then
   mode_namespaces=(tape tape-system)
+elif [[ "$acceptance_mode" == "sift" ]]; then
+  mode_namespaces=(sift sift-system sift-restore)
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
   mode_namespaces=(lumen lumen-system lumen-auth-client)
 else
@@ -567,7 +633,11 @@ printf '%s\n' "$cluster" > "$STATE_DIR/kube-context-ready.txt"
 export EVIDENCE_DIR
 export PROJECT_ID REGION BACKUP_BUCKET
 
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  "$SCRIPT_DIR/deploy.sh" sift
+  "$SCRIPT_DIR/verify-operator-cell.sh" sift
+  "$SCRIPT_DIR/verify-sift-mvp.sh"
+elif [[ "$acceptance_mode" == "tape" ]]; then
   # Tape-only acceptance mode: a single disposable domain-plane cell, no
   # Lumen/Sift phasing.
   "$SCRIPT_DIR/deploy.sh" tape

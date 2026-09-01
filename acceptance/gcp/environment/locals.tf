@@ -9,6 +9,9 @@ locals {
   backup_enabled = var.acceptance_apps != "lumen-auth"
   images = var.acceptance_apps == "tape" ? {
     tape = "${local.registry}/tape:${var.image_tag}"
+    } : var.acceptance_apps == "sift" ? {
+    sift = "${local.registry}/sift:${var.image_tag}"
+    rig  = "${local.registry}/rig:${var.image_tag}"
     } : var.acceptance_apps == "lumen-auth" ? {
     lumen = "${local.registry}/lumen:${var.image_tag}"
     } : {

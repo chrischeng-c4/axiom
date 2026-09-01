@@ -104,6 +104,10 @@ path = "e2e/shutdown_idempotency.rs"
 name = "implementor_build_coverage"
 path = "e2e/implementor_build_coverage.rs"
 
+[[test]]
+name = "replica_host_builder"
+path = "e2e/replica_host_builder.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 server-lifecycle = { path = "../server-lifecycle" }
