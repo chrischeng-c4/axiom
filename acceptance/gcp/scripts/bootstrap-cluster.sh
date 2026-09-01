@@ -18,6 +18,13 @@ CLUSTER_TF_DATA_DIR="${CLUSTER_TF_DATA_DIR:-/tmp/axiom-gcp-operator-cluster/.ter
 
 if cluster_json="$(gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json 2>/dev/null)"; then
+  datapath_provider="$(jq -r '.datapathProvider // ""' <<<"$cluster_json")"
+  fqdn_network_policy="$(jq -r '.enableFqdnNetworkPolicy // false' <<<"$cluster_json")"
+  if [[ "$datapath_provider" != "ADVANCED_DATAPATH" || "$fqdn_network_policy" != "true" ]]; then
+    echo "$PERSISTENT_CLUSTER_NAME requires Dataplane V2 and FQDN Network Policy; got datapathProvider=${datapath_provider:-unset}, enableFqdnNetworkPolicy=$fqdn_network_policy" >&2
+    echo "Destroy and recreate this empty acceptance cluster from acceptance/gcp/cluster/main.tf before retrying." >&2
+    exit 1
+  fi
   # Same drift class, same cheap place. The dedicated data-plane pool is what
   # gives `spec.placement` a real pool boundary to be proven against; without it
   # the placement leg hard-fails, but only after the legs before it have already
