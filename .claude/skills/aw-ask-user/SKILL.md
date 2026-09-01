@@ -14,7 +14,10 @@ Turn assumptions, silently selected routes, deferred choices, and unresolved
 
 1. Review the current conversation and the files already read in this session.
 2. Collect only decisions that can change scope, behavior, order, version, or
-   acceptance. Do not ask for facts that can be read safely.
+   acceptance. Treat the default minor Milestone bump returned by
+   `milestone.py next-version` as a readable policy, not a decision. A missing
+   initial version and any major, patch, or exact version override are
+   decisions. Do not ask for other facts that can be read safely.
 3. Group dependent questions together. Ask no more than three short questions
    in one round.
 4. Use the runtime's native question interface when it is available. Otherwise
@@ -36,6 +39,7 @@ Turn assumptions, silently selected routes, deferred choices, and unresolved
 
 - Never turn a readable fact into a question.
 - Never choose a version, milestone order, scope boundary, or acceptance gate
-  for the human.
+  for the human. This includes an initial version and a major, patch, or exact
+  version override.
 - Never continue a write workflow while a material decision remains unresolved.
 - Never edit the artifact that contains the question.

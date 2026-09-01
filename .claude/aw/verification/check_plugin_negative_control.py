@@ -85,6 +85,13 @@ def remove_next_verb(root: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def change_default_milestone_bump(root: Path) -> None:
+    path = root / ".claude/aw/scripts/milestone.py"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace('DEFAULT_BUMP = "minor"', 'DEFAULT_BUMP = "patch"', 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def remove_plan_first(root: Path) -> None:
     for runtime in (".agents", ".claude"):
         path = root / runtime / "skills/aw-grill-me-to-meta/SKILL.md"
@@ -146,6 +153,8 @@ def main() -> int:
              "FAIL aw-e2e-for-wi: has no legacy issue-epic writer"),
         case("missing Milestone queue-head verb", remove_next_verb,
              "FAIL milestone.py exposes `next`"),
+        case("Milestone default bump changes", change_default_milestone_bump,
+             "FAIL milestone.py defaults new release Milestones to a minor bump"),
         case("grill skips Plan mode", remove_plan_first,
              "FAIL aw-grill-me-to-meta: first step enters Plan mode"),
         case("grill Plan mode is open", make_plan_open,

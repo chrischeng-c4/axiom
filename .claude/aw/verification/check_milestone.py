@@ -60,8 +60,72 @@ def issue(number: int, *, state: str = "OPEN", labels: tuple[str, ...] = (
 def main() -> int:
     valid = milestone.release_identity("tape@0.4.63")
     check("release title parses", valid is not None and valid.version == (0, 4, 63))
-    for title in ("tape@0.4.64", "tape@0.64.0", "tape@00.4.1", "tape@0.4", "Tape@0.4.1"):
+    for title in ("tape@0.4.64", "tape@0.64.0", "tape@12.345.678"):
+        parsed = milestone.release_identity(title)
+        check(f"core SemVer accepts {title}", parsed is not None)
+    for title in (
+        "tape@00.4.1", "tape@0.04.1", "tape@0.4.01", "tape@0.4",
+        "Tape@0.4.1", "tape@0.4.1-alpha", "tape@0.4.1+build",
+        " tape@0.4.1", "tape@0.4.1 ",
+    ):
         check(f"release title refuses {title}", milestone.release_identity(title) is None)
+
+    base = milestone.release_identity("tape@1.2.9")
+    assert base is not None
+    check("default release bump is minor and resets patch",
+          milestone.bump_identity(base).title == "tape@1.3.0")
+    user_example = milestone.release_identity("tape@0.4.63")
+    assert user_example is not None
+    check("ordinary 0.4.63 release advances to 0.5.0",
+          milestone.bump_identity(user_example).title == "tape@0.5.0")
+    check("explicit major bump resets minor and patch",
+          milestone.bump_identity(base, "major").title == "tape@2.0.0")
+    check("explicit patch bump increments only patch",
+          milestone.bump_identity(base, "patch").title == "tape@1.2.10")
+    boundary = milestone.release_identity("tape@0.63.63")
+    assert boundary is not None
+    check("SemVer bump has no base-64 ceiling",
+          milestone.bump_identity(boundary, "patch").title == "tape@0.63.64"
+          and milestone.bump_identity(boundary).title == "tape@0.64.0")
+
+    history = [
+        {"title": "tape@1.2.9"},
+        {"title": "tape@1.12.99"},
+        {"title": "tape@1.3.500"},
+        {"title": "lumen@9.9.9"},
+        {"title": "tape@invalid"},
+    ]
+    latest, suggested = milestone.next_release_identity("tape", history)
+    check("default suggestion uses the highest same-project release",
+          latest.title == "tape@1.12.99" and suggested.title == "tape@1.13.0")
+    try:
+        milestone.next_release_identity("new-project", history)
+    except workitem.GhError as exc:
+        check("first release needs a human-selected initial version",
+              "human must choose" in str(exc))
+    else:
+        check("first release needs a human-selected initial version", False)
+
+    parsed_args = milestone.build_parser().parse_args(["next-version", "tape"])
+    check("next-version CLI defaults to minor", parsed_args.bump == "minor")
+    original_version_list = milestone.list_milestones
+    version_states: list[str] = []
+    milestone.list_milestones = lambda _repo, state="all": (
+        version_states.append(state) or list(history)
+    )
+    stream = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stream):
+            code = milestone.cmd_next_version(argparse.Namespace(
+                project="tape", repo="owner/repo", bump="minor", json=True,
+            ))
+        suggestion = json.loads(stream.getvalue())
+    finally:
+        milestone.list_milestones = original_version_list
+    check("next-version reads open and closed Milestones",
+          code == 0 and version_states == ["all"]
+          and suggestion.get("previous") == "tape@1.12.99"
+          and suggestion.get("title") == "tape@1.13.0", repr(suggestion))
 
     ready = description()
     check("strict description accepts Chinese observable goal",

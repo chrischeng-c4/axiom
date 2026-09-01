@@ -2,9 +2,15 @@
 """Milestone-native epic, release, and development-order facade.
 
 A milestone is the one epic record for one project version. Its title is
-`<project>@<major>.<minor>.<patch>`. Its description carries the observable
-goal, a numbered list of assigned change issues, and the completion conditions.
-GitHub's native issue milestone field is the only child-ownership relation.
+`<project>@<major>.<minor>.<patch>` using the three numeric SemVer core fields.
+Its description carries the observable goal, a numbered list of assigned
+change issues, and the completion conditions. GitHub's native issue milestone
+field is the only child-ownership relation.
+
+New release planning defaults to a minor bump and resets patch to zero. Major
+and patch bumps are explicit overrides. The calculation reads all prior release
+Milestones, open and closed; it never derives a release version from a Cargo
+manifest or Git tag.
 
 Milestone references are explicit. Use `milestone:<number>` or the exact title.
 A bare number is refused because issue and milestone numbers share no namespace.
@@ -26,12 +32,20 @@ import workitem  # noqa: E402
 import wi_types  # noqa: E402
 
 
+PROJECT_TOKEN = r"[a-z0-9][a-z0-9-]*"
+PROJECT = re.compile(rf"^{PROJECT_TOKEN}$")
 TITLE = re.compile(
-    r"^(?P<project>[a-z0-9][a-z0-9-]*)@"
+    rf"^(?P<project>{PROJECT_TOKEN})@"
     r"(?P<major>0|[1-9][0-9]*)\."
     r"(?P<minor>0|[1-9][0-9]*)\."
     r"(?P<patch>0|[1-9][0-9]*)$"
 )
+CORE_SEMVER_RULE = (
+    "`<project>@<major>.<minor>.<patch>` using non-negative integer SemVer "
+    "core fields without leading zeroes"
+)
+VERSION_BUMPS = ("major", "minor", "patch")
+DEFAULT_BUMP = "minor"
 MILESTONE_REF = re.compile(r"^milestone:(?P<number>[1-9][0-9]*)$")
 ORDER_ROW = re.compile(
     r"^[ \t]*(?P<rank>[1-9][0-9]*)\.[ \t]+#(?P<iid>[1-9][0-9]*)[ \t]*$"
@@ -71,18 +85,59 @@ class ReleaseIdentity:
 
 
 def release_identity(title: str) -> ReleaseIdentity | None:
-    found = TITLE.fullmatch(title.strip())
+    found = TITLE.fullmatch(title)
     if not found:
         return None
-    identity = ReleaseIdentity(
+    return ReleaseIdentity(
         found.group("project"),
         int(found.group("major")),
         int(found.group("minor")),
         int(found.group("patch")),
     )
-    if identity.minor > 63 or identity.patch > 63:
-        return None
-    return identity
+
+
+def bump_identity(
+    identity: ReleaseIdentity,
+    bump: str = DEFAULT_BUMP,
+) -> ReleaseIdentity:
+    """Return the explicit SemVer-core bump for one release identity."""
+    if bump == "major":
+        return ReleaseIdentity(identity.project, identity.major + 1, 0, 0)
+    if bump == "minor":
+        return ReleaseIdentity(
+            identity.project, identity.major, identity.minor + 1, 0
+        )
+    if bump == "patch":
+        return ReleaseIdentity(
+            identity.project, identity.major, identity.minor, identity.patch + 1
+        )
+    raise workitem.GhError(
+        f"unsupported version bump `{bump}`; expected " + ", ".join(VERSION_BUMPS)
+    )
+
+
+def next_release_identity(
+    project: str,
+    milestones: list[dict],
+    bump: str = DEFAULT_BUMP,
+) -> tuple[ReleaseIdentity, ReleaseIdentity]:
+    """Return the latest project release and its requested next identity."""
+    if not PROJECT.fullmatch(project):
+        raise workitem.GhError(
+            "project must use lowercase letters, digits, and internal hyphens"
+        )
+    identities = []
+    for target in milestones:
+        identity = release_identity(target.get("title") or "")
+        if identity and identity.project == project:
+            identities.append(identity)
+    if not identities:
+        raise workitem.GhError(
+            f"no existing release Milestone for `{project}`; the human must choose "
+            f"the initial {CORE_SEMVER_RULE} title"
+        )
+    latest = max(identities, key=lambda identity: identity.version)
+    return latest, bump_identity(latest, bump)
 
 
 def split_description(text: str) -> tuple[dict[str, str], list[str]]:
@@ -227,7 +282,7 @@ def order_payload(milestone: dict, issues: list[dict], *, open_only: bool = Fals
 
     identity = release_identity(milestone.get("title") or "")
     if identity is None:
-        errors.append("milestone title must be `<project>@<major>.<minor>.<patch>` with minor and patch 0..63")
+        errors.append(f"milestone title must be {CORE_SEMVER_RULE}")
         expected_label = None
     else:
         expected_label = workitem.project_label(identity.project)
@@ -309,7 +364,7 @@ def cmd_validate(args) -> int:
         subject = f"milestone:{milestone['number']}"
     errors = validate_description(description, allow_draft=args.draft)
     if release_identity(title) is None:
-        errors.insert(0, "title must be `<project>@<major>.<minor>.<patch>` with minor and patch 0..63")
+        errors.insert(0, f"title must be {CORE_SEMVER_RULE}")
     if args.json:
         print(json.dumps({"subject": subject, "valid": not errors, "errors": errors}, indent=2))
     elif errors:
@@ -427,11 +482,31 @@ def cmd_versions(args) -> int:
     return 0
 
 
+def cmd_next_version(args) -> int:
+    """Print the next release identity from all prior project Milestones."""
+    latest, target = next_release_identity(
+        args.project,
+        list_milestones(args.repo, "all"),
+        args.bump,
+    )
+    payload = {
+        "project": args.project,
+        "previous": latest.title,
+        "bump": args.bump,
+        "title": target.title,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"{latest.title} -> {target.title} ({args.bump})")
+    return 0
+
+
 def cmd_create(args) -> int:
     description = _description(args.description_file)
     errors = validate_description(description, allow_draft=args.draft)
     if release_identity(args.title) is None:
-        errors.insert(0, "title must be `<project>@<major>.<minor>.<patch>` with minor and patch 0..63")
+        errors.insert(0, f"title must be {CORE_SEMVER_RULE}")
     if not args.draft:
         errors.append("Milestone creation must use `--draft`; finalize order after assigning changes")
     elif not is_draft_description(description):
@@ -463,7 +538,7 @@ def cmd_update(args) -> int:
     description = _description(args.description_file) if args.description_file else (milestone.get("description") or "")
     errors = validate_description(description, allow_draft=args.draft)
     if release_identity(title) is None:
-        errors.insert(0, "title must be `<project>@<major>.<minor>.<patch>` with minor and patch 0..63")
+        errors.insert(0, f"title must be {CORE_SEMVER_RULE}")
     if args.draft:
         if issues:
             errors.append("`--draft` is refused after any issue is assigned")
@@ -559,6 +634,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", choices=("open", "closed", "all"), default="open")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_versions)
+
+    p = sub.add_parser("next-version")
+    p.add_argument("project")
+    p.add_argument("--bump", choices=VERSION_BUMPS, default=DEFAULT_BUMP)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_next_version)
 
     p = sub.add_parser("create")
     p.add_argument("--title", required=True)

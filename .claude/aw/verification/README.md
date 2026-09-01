@@ -131,7 +131,7 @@ directory for a file none of them owns.
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
 | `check_plugin.py` | a missing or drifted seven-skill mirror, missing script, legacy issue-epic writer, or incomplete type and Milestone contract |
 | `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that skips Plan mode |
-| `check_milestone.py` | a version title outside the 0..63 rule, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
+| `check_milestone.py` | a malformed SemVer-core title, wrong next-version bump, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
 | `check_type_registry.py` | a missing, duplicate, unknown, intake, or legacy executable type; wrong flow; unsafe retype; or lifecycle close without matching commit evidence |
 | `check_type_migration.py` | an incomplete or drifted manifest, wrong fixed mapping, partial replacement hidden as complete, unsafe readback, or resume without the same receipt |
 | `check_maint_flow.py` | a maintenance profile that writes outside its type boundary, accepts incomplete gate evidence, executes issue text, or commits without its evidence trailers |
@@ -285,8 +285,16 @@ negative control hold these rules.
 ## Where a release order comes from
 
 One GitHub Milestone is one versioned epic. Its title is
-`<project>@<major>.<minor>.<patch>`. Minor and patch are each 0..63. GitHub's
-native issue `milestone` field is the only membership relation.
+`<project>@<major>.<minor>.<patch>`. The three SemVer core fields are
+non-negative integers without leading zeroes. GitHub's native issue
+`milestone` field is the only membership relation.
+
+`milestone.py next-version <project>` reads all open and closed release
+Milestones for the project. It increments minor and resets patch to zero by
+default. Major and patch bumps are explicit overrides. An exact version is
+also a human choice. If no prior release Milestone exists, the command refuses
+to guess the initial version. This Milestone planning rule does not change a
+project's build or release version rules.
 
 The Milestone description has exactly three H2 sections: `## Goal`,
 `## Development Order`, and `## Acceptance`. The order section contains only

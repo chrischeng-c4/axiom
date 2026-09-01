@@ -109,6 +109,15 @@ and flow. Each phase commit is recorded by `change.py lifecycle`, and
 `change.py close` advances the queue only after all required evidence matches
 the commit. `prepare-goal` and `ask-user` stand outside the lifecycle.
 
+Release Milestone titles use the SemVer core form
+`<project>@<major>.<minor>.<patch>`. Each version field is a non-negative
+integer without leading zeroes. `milestone.py next-version <project>` reads
+all open and closed release Milestones for that project. It defaults to a
+minor bump and resets patch to zero. A major bump, patch bump, or exact version
+is an explicit human choice. If no prior release Milestone exists, the human
+chooses the initial version. This planning policy does not change a project's
+build or release version rules.
+
 Every `grill-*` skill enters Plan mode as step 1. It does not read, ask, or
 write until the runtime confirms Plan mode. If the runtime cannot switch modes
 from a skill, it stops and asks the human to enter Plan mode first.
