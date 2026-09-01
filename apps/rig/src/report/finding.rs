@@ -67,6 +67,8 @@ pub enum Kind {
     ScenarioError,
     /// Load-mode honesty warning: achieved_qps fell below the offered target.
     LoadHonesty,
+    /// Informational load statistics retained even when the run is clean.
+    LoadObservation,
 }
 
 /// @spec apps/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
@@ -81,6 +83,7 @@ impl Kind {
             Kind::Timeout => "timeout",
             Kind::ScenarioError => "scenario_error",
             Kind::LoadHonesty => "load_honesty",
+            Kind::LoadObservation => "load_observation",
         }
     }
 }

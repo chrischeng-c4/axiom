@@ -210,6 +210,29 @@ fn run_run(args: RunArgs) -> RigReport {
         };
         executed += 1;
 
+        if scenario.record.kind == ScenarioKind::Load && run.raw_passed {
+            b.add_finding(Finding {
+                id: finding_id(Kind::LoadObservation, &run.scenario_id),
+                severity: Severity::Info,
+                kind: Kind::LoadObservation,
+                title: format!("load observation for `{}`", run.scenario_id),
+                detail:
+                    "The load window completed and retained its latency, rate, and count evidence."
+                        .into(),
+                remediation: "None — informational evidence.".into(),
+                invoke: Invoke::command(format!("rig run --scenario {rel}")),
+                evidence: serde_json::json!({
+                    "p50_ms": run.vars.get_f64("p50_ms"),
+                    "p95_ms": run.vars.get_f64("p95_ms"),
+                    "p99_ms": run.vars.get_f64("p99_ms"),
+                    "error_rate": run.vars.get_f64("error_rate"),
+                    "achieved_qps": run.vars.get_f64("achieved_qps"),
+                    "total": run.vars.get("total").cloned(),
+                    "failed": run.vars.get("failed").cloned(),
+                }),
+            });
+        }
+
         // Pins gate metrics captured by a scenario whose steps held.
         if run.raw_passed {
             for pin in pins.iter().filter(|p| p.matches(&run.scenario_id)) {
@@ -750,12 +773,15 @@ fn run_load_scenario(scenario: &rig::scenario::Scenario, rel: &str) -> rig::engi
     } else {
         for (key, value) in [
             ("p50_ms", stats.p50_ms),
+            ("p95_ms", stats.p95_ms),
             ("p99_ms", stats.p99_ms),
             ("error_rate", stats.error_rate),
             ("achieved_qps", stats.achieved_qps),
         ] {
             vars.set(key, serde_json::json!(value));
         }
+        vars.set("total", serde_json::json!(stats.total));
+        vars.set("failed", serde_json::json!(stats.failed));
         let honesty_floor = profile.target_qps as f64 * ACHIEVED_QPS_HONESTY_RATIO;
         if stats.achieved_qps < honesty_floor {
             findings.push(Finding {

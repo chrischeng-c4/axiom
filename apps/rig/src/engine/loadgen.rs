@@ -26,6 +26,7 @@ use super::transport::{HttpTransport, Transport};
 /// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#source
 pub struct LoadStats {
     pub p50_ms: f64,
+    pub p95_ms: f64,
     pub p99_ms: f64,
     pub error_rate: f64,
     pub achieved_qps: f64,
@@ -40,6 +41,7 @@ impl LoadStats {
     pub fn get(&self, key: &str) -> Option<f64> {
         match key {
             "p50_ms" => Some(self.p50_ms),
+            "p95_ms" => Some(self.p95_ms),
             "p99_ms" => Some(self.p99_ms),
             "error_rate" => Some(self.error_rate),
             "achieved_qps" => Some(self.achieved_qps),
@@ -62,13 +64,24 @@ pub struct Schedule {
 /// original API. Per-request work happens on `profile.workers` plain threads.
 /// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#source
 pub fn run(profile: &LoadProfile, vars: &VarStore) -> LoadStats {
-    // Pre-interpolate once: load templates must be constant during the run, so
-    // a bad template is an abort, not a per-request failure.
-    if let Err(e) = vars.interpolate(&profile.request.url) {
-        return LoadStats {
-            abort: Some(e),
-            ..Default::default()
-        };
+    // Validate every template once. The operation sequence changes for each
+    // request, but its shape is known before the load window starts.
+    let mut preview = vars.clone();
+    preview.set("rig.sequence", serde_json::json!(0));
+    preview.set("rig.sequence_06", serde_json::json!("000000"));
+    preview.set("rig.sequence_016x", serde_json::json!("0000000000000000"));
+    let templates = std::iter::once(&profile.request.url)
+        .chain(profile.request.body.iter())
+        .chain(profile.request.headers.keys())
+        .chain(profile.request.headers.values())
+        .chain(profile.request.bearer_token_file.iter());
+    for template in templates {
+        if let Err(e) = preview.interpolate(template) {
+            return LoadStats {
+                abort: Some(e),
+                ..Default::default()
+            };
+        }
     }
     let transport: Arc<dyn Transport> = Arc::new(HttpTransport {
         request: profile.request.clone(),
@@ -191,6 +204,7 @@ pub fn run_transport(schedule: &Schedule, transport: &Arc<dyn Transport>) -> Loa
 
     LoadStats {
         p50_ms: percentile(&ok_latencies, 50.0),
+        p95_ms: percentile(&ok_latencies, 95.0),
         p99_ms: percentile(&ok_latencies, 99.0),
         error_rate: if total == 0 {
             1.0
@@ -243,6 +257,8 @@ mod tests {
             request: HttpRequest {
                 method: "GET".into(),
                 url: format!("http://{addr}/x"),
+                headers: Default::default(),
+                bearer_token_file: None,
                 body: None,
                 expect: HttpExpect::default(),
             },
@@ -274,6 +290,8 @@ mod tests {
             request: HttpRequest {
                 method: "GET".into(),
                 url: format!("http://{dead}/x"),
+                headers: Default::default(),
+                bearer_token_file: None,
                 body: None,
                 expect: HttpExpect {
                     timeout_ms: 200,

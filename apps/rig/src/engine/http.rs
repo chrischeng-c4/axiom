@@ -56,14 +56,47 @@ pub(super) fn execute_with_agent(
         None => None,
     };
 
+    let headers = request
+        .headers
+        .iter()
+        .map(|(name, value)| Ok((vars.interpolate(name)?, vars.interpolate(value)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let bearer_token = match &request.bearer_token_file {
+        Some(template) => {
+            let path = vars.interpolate(template)?;
+            let token = std::fs::read_to_string(&path)
+                .map_err(|error| format!("read bearer token file `{path}`: {error}"))?;
+            let token = token.trim();
+            if token.is_empty() {
+                return Err(format!("bearer token file `{path}` is empty"));
+            }
+            Some(token.to_string())
+        }
+        None => None,
+    };
+    if bearer_token.is_some()
+        && headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+    {
+        return Err("HTTP request cannot set both `authorization` and `bearer_token_file`".into());
+    }
+
     let method = request.method.to_uppercase();
     let started = Instant::now();
+    let mut outbound = agent.request(&method, &url);
+    if body.is_some() {
+        outbound = outbound.set("content-type", "application/json");
+    }
+    for (name, value) in &headers {
+        outbound = outbound.set(name, value);
+    }
+    if let Some(token) = &bearer_token {
+        outbound = outbound.set("authorization", &format!("Bearer {token}"));
+    }
     let result = match body {
-        Some(ref payload) => agent
-            .request(&method, &url)
-            .set("content-type", "application/json")
-            .send_string(payload),
-        None => agent.request(&method, &url).call(),
+        Some(ref payload) => outbound.send_string(payload),
+        None => outbound.call(),
     };
     let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
 
