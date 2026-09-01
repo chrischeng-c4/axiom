@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 : "${PROJECT_ID:?PROJECT_ID is required}"
 : "${REGION:?REGION is required}"
 : "${GKE_ZONE:?GKE_ZONE is required}"
@@ -354,19 +356,10 @@ jq -e --arg image "$SIFT_IMAGE" '
 delegator="sift.${NAMESPACE}.sift.auth-delegator"
 kubectl get clusterrolebinding "$delegator" -o json \
   > "$EVIDENCE_DIR/kubernetes/auth-delegator-binding.json"
-jq -e --arg namespace "$NAMESPACE" '
-  .roleRef == {
-    apiGroup:"rbac.authorization.k8s.io",
-    kind:"ClusterRole",
-    name:"system:auth-delegator"
-  }
-  and .subjects == [{kind:"ServiceAccount", name:"sift", namespace:$namespace}]
-  and .metadata.labels["app.kubernetes.io/name"] == "sift"
-  and .metadata.labels["app.kubernetes.io/instance"] == "sift"
-  and .metadata.labels["sift.axiom.dev/owner-namespace"] == $namespace
-  and (.metadata.labels["service-k8s.axiom.dev/owner-uid"] | length > 0)
-' "$EVIDENCE_DIR/kubernetes/auth-delegator-binding.json" >/dev/null \
-  || die "operator-managed auth-delegator binding is absent or over-broad"
+jq -e --arg namespace "$NAMESPACE" --arg instance sift \
+  -f "$SCRIPT_DIR/sift-auth-delegator.jq" \
+  "$EVIDENCE_DIR/kubernetes/auth-delegator-binding.json" >/dev/null \
+  || die "operator-managed auth-delegator binding does not match the exact runtime and store subjects"
 
 kubectl -n "$NAMESPACE" get fqdnnetworkpolicy \
   -o json > "$EVIDENCE_DIR/kubernetes/fqdn-network-policies.json"
