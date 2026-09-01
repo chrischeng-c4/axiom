@@ -37,7 +37,7 @@ mkdir -p \
   "$EVIDENCE_DIR/latency" \
   "$EVIDENCE_DIR/restore"
 
-for command in awk curl date gcloud gzip jq kubectl rg sed seq sort; do
+for command in awk curl date dirname gcloud gzip jq kubectl rg sed seq sort; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required command not found: $command" >&2
     exit 1
@@ -164,6 +164,7 @@ start_gateway_forward() {
 
 integrity_to() {
   local output="$1"
+  mkdir -p "$(dirname "$output")"
   auth_curl "${sift_url}/admin/integrity?project=${PROJECT}" > "$output"
   jq -e --arg project "$PROJECT" '
     .version == 1
