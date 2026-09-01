@@ -123,6 +123,10 @@ present "MCP tools/list again sends raw SSE to jq" \
   'extract_sse_json "$list_sse" "$list_body"' "$SIFT_VERIFY_SCRIPT"
 present "nested load evidence directories are no longer prepared" \
   'mkdir -p "$(dirname "$output")"' "$SIFT_VERIFY_SCRIPT"
+present "large Sift load ConfigMaps no longer use create" \
+  'kubectl create -f "$EVIDENCE_DIR/load/${phase}/${signal}/configmap.yaml"' "$SIFT_VERIFY_SCRIPT"
+absent "large Sift load ConfigMaps still use apply and overflow the annotation limit" \
+  'kubectl apply -f "$EVIDENCE_DIR/load/${phase}/${signal}/configmap.yaml"' "$SIFT_VERIFY_SCRIPT"
 present "Sift deployment no longer requires GKE FQDN policy enforcement" \
   'fqdnnetworkpolicies.networking.gke.io' "$DEPLOY_SCRIPT"
 present "Sift verifier lost the operator-managed auth binding proof" \
