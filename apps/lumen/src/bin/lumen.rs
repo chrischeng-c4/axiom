@@ -3569,10 +3569,14 @@ async fn serve(args: ServeArgs) -> Result<()> {
         match &args.data_dir {
             Some(dir) => {
                 let aof_path = std::path::Path::new(dir).join("aof.log");
-                // (b) Replay the AOF over the RDB baseline, advancing the cold-start
-                // sequence to the AOF head `A` so the loop tails the broker from `A+1`.
+                // (b) Replay the AOF over the RDB baseline. `replay_aof_into`
+                // returns only the highest replayed tail sequence (zero when
+                // there is no tail), so retain the checkpoint watermark when
+                // that return value is lower. The loop must always tail from
+                // the first sequence strictly above the durable baseline.
                 let replayed = lumen::aof::replay_aof_into(&engine, &aof_path, start_seq)
                     .context("replay AOF over segment baseline")?;
+                let recovered_head = start_seq.max(replayed);
                 let aof_decision = if replayed > start_seq {
                     "tail_replayed"
                 } else {
@@ -3581,10 +3585,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 tracing::info!(
                     aof_decision,
                     from_seq = start_seq,
-                    to_seq = replayed,
+                    to_seq = recovered_head,
                     "AOF startup decision"
                 );
-                start_seq = replayed;
+                start_seq = recovered_head;
                 // Open the same AOF for continued appends (truncates any torn tail).
                 let w = lumen::aof::AofWriter::open(&aof_path).context("open AOF")?;
                 Some(std::sync::Arc::new(std::sync::Mutex::new(w)))
