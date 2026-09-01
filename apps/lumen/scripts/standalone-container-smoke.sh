@@ -120,6 +120,39 @@ if [[ "$MODE" == "durable" ]]; then
     if ! docker logs "$container" >&2; then :; fi
     return 1
   }
+  port_diagnostics() {
+    local container="$1"
+    echo "ERROR: published 7373/tcp port unavailable for $container" >&2
+    if ! docker inspect --format 'state={{.State.Status}} running={{.State.Running}} exit_code={{.State.ExitCode}} error={{json .State.Error}} ports={{json .NetworkSettings.Ports}}' "$container" >&2; then :; fi
+    if ! docker logs --tail 200 "$container" >&2; then :; fi
+  }
+  published_port() {
+    docker inspect --format '{{with .NetworkSettings.Ports}}{{with index . "7373/tcp"}}{{with index . 0}}{{.HostPort}}{{end}}{{end}}{{end}}' "$1" 2>/dev/null
+  }
+  wait_published_port() {
+    local container="$1" port running
+    for _ in $(seq 1 60); do
+      if ! port="$(published_port "$container")"; then
+        port_diagnostics "$container"
+        return 1
+      fi
+      if [[ "$port" =~ ^[1-9][0-9]*$ ]]; then
+        printf '%s\n' "$port"
+        return 0
+      fi
+      if ! running="$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null)"; then
+        port_diagnostics "$container"
+        return 1
+      fi
+      if [[ "$running" != true ]]; then
+        port_diagnostics "$container"
+        return 1
+      fi
+      sleep 0.25
+    done
+    port_diagnostics "$container"
+    return 1
+  }
   has_legacy_generation() {
     local path base
     [[ -d "$1" ]] || return 1
@@ -154,7 +187,7 @@ if [[ "$MODE" == "durable" ]]; then
   CREATED_OLD="$OLD_CONTAINER"
   docker run -d --name "$OLD_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_DATA_DIR=/var/lib/lumen/data -e LUMEN_PERSISTENCE=segment -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1 \
     -p 127.0.0.1::7373 "$OLD_IMAGE" >/dev/null
-  OLD_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$OLD_CONTAINER")"
+  OLD_PORT="$(wait_published_port "$OLD_CONTAINER")"
   wait_ready "$OLD_CONTAINER" "$OLD_PORT"
   OLD_URL="http://127.0.0.1:${OLD_PORT}"
   request -X PUT "$OLD_URL/collections/durable" -H 'Content-Type: application/json' -d '{"fields":{"tag":{"type":"keyword"}}}' -o "$TEMP_DIR/create"
@@ -172,7 +205,7 @@ if [[ "$MODE" == "durable" ]]; then
   CREATED_CANDIDATE="$CANDIDATE_CONTAINER"
   docker run -d --name "$CANDIDATE_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json \
     -p 127.0.0.1::7373 "$LUMEN_STANDALONE_DURABLE_IMAGE" >/dev/null
-  CANDIDATE_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$CANDIDATE_CONTAINER")"
+  CANDIDATE_PORT="$(wait_published_port "$CANDIDATE_CONTAINER")"
   wait_ready "$CANDIDATE_CONTAINER" "$CANDIDATE_PORT"
   CANDIDATE_URL="http://127.0.0.1:${CANDIDATE_PORT}"
   if ! docker logs "$CANDIDATE_CONTAINER" > "$TEMP_DIR/candidate.log" 2>&1; then :; fi
@@ -192,7 +225,7 @@ if [[ "$MODE" == "durable" ]]; then
   CREATED_REPLACEMENT="$REPLACEMENT_CONTAINER"
   docker run -d --name "$REPLACEMENT_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json \
     -p 127.0.0.1::7373 "$LUMEN_STANDALONE_DURABLE_IMAGE" >/dev/null
-  REPLACEMENT_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$REPLACEMENT_CONTAINER")"
+  REPLACEMENT_PORT="$(wait_published_port "$REPLACEMENT_CONTAINER")"
   wait_ready "$REPLACEMENT_CONTAINER" "$REPLACEMENT_PORT"
   REPLACEMENT_URL="http://127.0.0.1:${REPLACEMENT_PORT}"
   if ! docker logs "$REPLACEMENT_CONTAINER" > "$TEMP_DIR/replacement.log" 2>&1; then :; fi
@@ -211,14 +244,22 @@ if [[ "$MODE" == "durable" ]]; then
   CREATED_REJECTED="$REJECTED_CONTAINER"
   docker run -d --name "$REJECTED_CONTAINER" --mount "type=volume,src=$REJECT_VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off \
     -p 127.0.0.1::7373 "$LUMEN_STANDALONE_DURABLE_IMAGE" >/dev/null
-  REJECTED_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$REJECTED_CONTAINER")"
   wait_for_exit "$REJECTED_CONTAINER"
-  if curl -fsS --noproxy '*' --connect-timeout 2 --max-time 5 "http://127.0.0.1:${REJECTED_PORT}/readyz" -o "$TEMP_DIR/rejected-ready" >/dev/null 2>&1; then
+  if ! REJECTED_PORT="$(published_port "$REJECTED_CONTAINER")"; then
+    port_diagnostics "$REJECTED_CONTAINER"
+    exit 1
+  fi
+  if [[ -n "$REJECTED_PORT" ]] && [[ ! "$REJECTED_PORT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: rejected container has invalid published 7373/tcp port: $REJECTED_PORT" >&2
+    port_diagnostics "$REJECTED_CONTAINER"
+    exit 1
+  fi
+  if [[ -n "$REJECTED_PORT" ]] && curl -fsS --noproxy '*' --connect-timeout 2 --max-time 5 "http://127.0.0.1:${REJECTED_PORT}/readyz" -o "$TEMP_DIR/rejected-ready" >/dev/null 2>&1; then
     echo "ERROR: rejected container served /readyz" >&2
     exit 1
   fi
   if ! docker logs "$REJECTED_CONTAINER" > "$TEMP_DIR/rejected.log" 2>&1; then :; fi
-  grep -Eq 'segment checkpoint root entry.*refusing to initialize CURRENT' "$TEMP_DIR/rejected.log"
+  grep -Eq 'invalid segment checkpoint root inventory .*refusing to initialize CURRENT' "$TEMP_DIR/rejected.log"
   docker cp "$REJECTED_CONTAINER:/var/lib/lumen/data" "$TEMP_DIR/rejected-data"
   [[ ! -e "$TEMP_DIR/rejected-data/CURRENT" ]]
   cmp -s "$TEMP_DIR/foreign-layout/sentinel" "$TEMP_DIR/rejected-data/foreign-layout/sentinel"

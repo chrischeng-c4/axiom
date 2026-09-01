@@ -63,7 +63,7 @@ fn insert_after_first_from(source: &str, instruction: &str) -> String {
 const DURABLE_BEGIN: &str = "  # DURABLE-CONTRACT-BEGIN\n";
 const DURABLE_END: &str = "  # DURABLE-CONTRACT-END\n";
 const DURABLE_BLOCK_SHA256: &str =
-    "dc27b21b6251bb90b679ef42d4a182595f759e6f0e3d280fe9c700ced0af3022";
+    "60f0319e1782721910b141428f06e8a654e5e5a9e23c2ec2195a3a9c060e35d8";
 const CANDIDATE_ROOT_REGEX: &str = "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$";
 const OLD_IMAGE: &str =
     "ghcr.io/chrischeng-c4/lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
@@ -111,6 +111,10 @@ const CANDIDATE_AUTH_LINE: &str = concat!(
 const CURRENT_FIRST_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+\n",b) else 1)' "$TEMP_DIR/current-first""#;
 const CURRENT_REV_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+-rev-[1-9][0-9]*\n",b) else 1)' "$TEMP_DIR/current-rev""#;
 const CURRENT_REPLACEMENT_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+-rev-[1-9][0-9]*\n",b) else 1)' "$TEMP_DIR/current-replacement""#;
+const SAFE_PUBLISHED_PORT_TEMPLATE: &str =
+    "{{with .NetworkSettings.Ports}}{{with index . \"7373/tcp\"}}{{with index . 0}}{{.HostPort}}{{end}}{{end}}{{end}}";
+const PORT_DIAGNOSTIC: &str =
+    "if ! docker inspect --format 'state={{.State.Status}} running={{.State.Running}} exit_code={{.State.ExitCode}} error={{json .State.Error}} ports={{json .NetworkSettings.Ports}}' \"$container\" >&2; then :; fi";
 
 fn durable_script_block(source: &str) -> Result<&str, String> {
     let starts = source.matches(DURABLE_BEGIN).count();
@@ -413,6 +417,72 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
     require_exact_once(&lines, CANDIDATE_RUN, "candidate image command")?;
     require_exact_once(&lines, REPLACEMENT_RUN, "replacement image command")?;
     require_exact_once(&lines, REJECTED_RUN, "rejected image command")?;
+    require_exact_once(
+        &lines,
+        "port_diagnostics() {",
+        "published port diagnostic helper",
+    )?;
+    require_exact_once(
+        &lines,
+        "wait_published_port() {",
+        "bounded published port helper",
+    )?;
+    require_exact_once(
+        &lines,
+        "published_port() {",
+        "nil-safe published port helper",
+    )?;
+    require_exact_once(
+        &lines,
+        &format!("docker inspect --format '{SAFE_PUBLISHED_PORT_TEMPLATE}' \"$1\" 2>/dev/null"),
+        "nil-safe published port lookup",
+    )?;
+    require_exact_once(
+        &lines,
+        "if ! port=\"$(published_port \"$container\")\"; then",
+        "bounded published port lookup",
+    )?;
+    require_exact_once(&lines, PORT_DIAGNOSTIC, "published port state diagnostic")?;
+    require_exact_once(
+        &lines,
+        "if ! docker logs --tail 200 \"$container\" >&2; then :; fi",
+        "published port log diagnostic",
+    )?;
+    require_exact_once(
+        &lines,
+        "if [[ \"$port\" =~ ^[1-9][0-9]*$ ]]; then",
+        "published port validation",
+    )?;
+    for (variable, container) in [
+        ("OLD_PORT", "OLD_CONTAINER"),
+        ("CANDIDATE_PORT", "CANDIDATE_CONTAINER"),
+        ("REPLACEMENT_PORT", "REPLACEMENT_CONTAINER"),
+    ] {
+        require_exact_once(
+            &lines,
+            &format!("{variable}=\"$(wait_published_port \"${container}\")\""),
+            "bounded published port use",
+        )?;
+    }
+    let rejected_exit = require_exact_once(
+        &lines,
+        "wait_for_exit \"$REJECTED_CONTAINER\"",
+        "rejected startup exit",
+    )?;
+    let rejected_port = require_exact_once(
+        &lines,
+        "if ! REJECTED_PORT=\"$(published_port \"$REJECTED_CONTAINER\")\"; then",
+        "rejected optional published port lookup",
+    )?;
+    if rejected_exit >= rejected_port {
+        return Err("rejected port lookup must occur after the nonzero exit proof".to_string());
+    }
+    if lines
+        .iter()
+        .any(|line| line.contains("index (index .NetworkSettings.Ports"))
+    {
+        return Err("durable block uses an unchecked published port lookup".to_string());
+    }
     if lines
         .iter()
         .filter(|line| line.contains(DATA_MOUNT))
@@ -468,12 +538,12 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
     )?;
     require_exact_once(
         &lines,
-        "if curl -fsS --noproxy '*' --connect-timeout 2 --max-time 5 \"http://127.0.0.1:${REJECTED_PORT}/readyz\" -o \"$TEMP_DIR/rejected-ready\" >/dev/null 2>&1; then",
+        "if [[ -n \"$REJECTED_PORT\" ]] && curl -fsS --noproxy '*' --connect-timeout 2 --max-time 5 \"http://127.0.0.1:${REJECTED_PORT}/readyz\" -o \"$TEMP_DIR/rejected-ready\" >/dev/null 2>&1; then",
         "rejected startup never ready",
     )?;
     require_exact_once(
         &lines,
-        "grep -Eq 'segment checkpoint root entry.*refusing to initialize CURRENT' \"$TEMP_DIR/rejected.log\"",
+        "grep -Eq 'invalid segment checkpoint root inventory .*refusing to initialize CURRENT' \"$TEMP_DIR/rejected.log\"",
         "rejected startup reason",
     )?;
     require_exact_once(
@@ -787,6 +857,37 @@ fn test_durable_script_contract_and_negative_mutations() {
         assert_durable_rejected(label, replace_exact(&source, target, replacement));
     }
 
+    assert_durable_rejected(
+        "candidate published port wait removed",
+        replace_exact(
+            &source,
+            "  CANDIDATE_PORT=\"$(wait_published_port \"$CANDIDATE_CONTAINER\")\"\n",
+            "",
+        ),
+    );
+    let safe_port_lookup =
+        format!("    docker inspect --format '{SAFE_PUBLISHED_PORT_TEMPLATE}' \"$1\" 2>/dev/null\n");
+    assert_durable_rejected(
+        "unchecked published port lookup",
+        replace_exact(
+            &source,
+            &safe_port_lookup,
+            "    docker inspect --format '{{(index (index .NetworkSettings.Ports \"7373/tcp\") 0).HostPort}}' \"$1\" 2>/dev/null\n",
+        ),
+    );
+    assert_durable_rejected(
+        "published port state diagnostic removed",
+        replace_exact(&source, &format!("    {PORT_DIAGNOSTIC}\n"), ""),
+    );
+    assert_durable_rejected(
+        "rejected optional published port lookup removed",
+        replace_exact(
+            &source,
+            "  if ! REJECTED_PORT=\"$(published_port \"$REJECTED_CONTAINER\")\"; then\n",
+            "",
+        ),
+    );
+
     for (label, replacement) in [
         ("candidate tag", "\"ghcr.io/chrischeng-c4/lumen:latest\""),
         ("candidate local image", "\"./lumen\""),
@@ -975,7 +1076,7 @@ fn test_durable_script_contract_and_negative_mutations() {
         ("reject exit wait", "  wait_for_exit \"$REJECTED_CONTAINER\"\n"),
         (
             "reject error assertion",
-            "  grep -Eq 'segment checkpoint root entry.*refusing to initialize CURRENT' \"$TEMP_DIR/rejected.log\"\n",
+            "  grep -Eq 'invalid segment checkpoint root inventory .*refusing to initialize CURRENT' \"$TEMP_DIR/rejected.log\"\n",
         ),
         (
             "reject CURRENT absence",
