@@ -3,6 +3,7 @@ name = "service-auth"
 version = "0.1.0"
 edition = "2021"
 description = "Shared request-auth middleware for the ecosystem's HTTP services: the generic extract -> verify -> reject -> inject plumbing plus a `Verifier` trait each service implements. Token crypto lives in `libs/claim-token`; per-resource authorization (RBAC, scope-vs-key) stays in the service handlers. The common shape lumen/keep/relay/loom each hand-roll today."
+autotests = false
 
 [lib]
 name = "service_auth"
@@ -48,3 +49,7 @@ k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 tokio = { workspace = true, features = ["macros"] }
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"
+
+[[test]]
+name = "scoped_authorization"
+path = "e2e/scoped_authorization.rs"

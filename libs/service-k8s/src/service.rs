@@ -2,7 +2,7 @@
 //! The [`ManagedService`] trait a service implements + the shared CRD fragments.
 
 #[cfg(feature = "controller")]
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 #[cfg(feature = "controller")]
 use std::fmt::Debug;
 #[cfg(feature = "controller")]
@@ -148,6 +148,20 @@ pub trait ManagedService:
     fn prunes(&self) -> Vec<PruneTarget> {
         Vec::new()
     }
+
+    /// Cluster-scoped children this namespaced CR may create.
+    ///
+    /// Kubernetes forbids a cluster-scoped object from carrying an owner
+    /// reference to a namespaced CR. Services that render such an object must
+    /// therefore declare it here. The shared controller installs a finalizer
+    /// before the object is applied, removes an undesired object during normal
+    /// reconcile, and removes every declared object before CR deletion.
+    ///
+    /// `expected_labels` and the server-side-apply manager are both checked
+    /// before deletion. A name alone is never accepted as ownership proof.
+    fn cluster_scoped_children(&self) -> Vec<ClusterScopedChild> {
+        Vec::new()
+    }
 }
 
 /// One object a service no longer renders and wants removed (#2603).
@@ -160,6 +174,19 @@ pub struct PruneTarget {
     pub api_version: &'static str,
     pub kind: &'static str,
     pub name: String,
+}
+
+/// One cluster-scoped child whose lifetime follows a namespaced CR.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(feature = "controller")]
+pub struct ClusterScopedChild {
+    pub api_version: &'static str,
+    pub kind: &'static str,
+    pub name: String,
+    pub expected_labels: BTreeMap<String, String>,
+    /// `true` means the current spec renders the child. `false` means a prior
+    /// version may have rendered it and the controller must remove it.
+    pub desired: bool,
 }
 
 #[cfg(all(test, feature = "controller"))]

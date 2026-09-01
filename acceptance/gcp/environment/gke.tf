@@ -3,3 +3,42 @@ data "google_container_cluster" "acceptance" {
   name     = var.cluster_name
   location = var.gke_zone
 }
+
+locals {
+  acceptance_node_service_accounts = [
+    for pool in data.google_container_cluster.acceptance.node_pool :
+    pool.node_config[0].service_account
+    if pool.name == "acceptance-pool"
+  ]
+}
+
+# Sift MVP owns a fixed, run-scoped three-node pool. Required pod
+# anti-affinity can therefore place all three voters at the same time.
+resource "google_container_node_pool" "sift_mvp" {
+  count      = var.acceptance_apps == "sift" ? 1 : 0
+  project    = var.project_id
+  name       = "axo-${var.run_id}-sift"
+  location   = var.gke_zone
+  cluster    = data.google_container_cluster.acceptance.name
+  node_count = 3
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  node_config {
+    machine_type    = "e2-standard-4"
+    service_account = one(local.acceptance_node_service_accounts)
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    metadata        = { disable-legacy-endpoints = "true" }
+    labels = {
+      "axiom-owner"  = "gcp-operator-acceptance"
+      "axiom-run-id" = var.run_id
+      "sift-mvp"     = "true"
+    }
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+  }
+}

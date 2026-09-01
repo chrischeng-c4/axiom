@@ -18,8 +18,8 @@ pub use config::{LogFormat, ObservabilityConfig, ServiceIdentity};
 pub use filesystem::{filesystem_usage, FilesystemUsage};
 pub use jsonl::{
     collector_compatible, service_log_schema_v1, ServiceJsonFormatter, ServiceLogEventV1,
-    ServiceLogIdentityV1, MAX_ATTRIBUTES, MAX_ATTRIBUTE_KEY_BYTES, MAX_ATTRIBUTE_VALUE_BYTES,
-    MAX_EVENT_BYTES, MAX_REQUEST_ID_BYTES, SERVICE_LOG_SCHEMA_V1,
+    ServiceLogIdentityV1, StructuredServiceLogV1, MAX_ATTRIBUTES, MAX_ATTRIBUTE_KEY_BYTES,
+    MAX_ATTRIBUTE_VALUE_BYTES, MAX_EVENT_BYTES, MAX_REQUEST_ID_BYTES, SERVICE_LOG_SCHEMA_V1,
 };
 #[cfg(feature = "otlp")]
 pub use logging::extract_trace_context;

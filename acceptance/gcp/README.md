@@ -1,4 +1,4 @@
-# GCP operator acceptance: Lumen, Sift, or Tape
+# GCP operator acceptance: Lumen, Sift MVP, or Tape
 
 This harness is a low-cost GKE proof for the shared service
 operator shape. In full mode, it completes an independent Lumen acceptance phase first; only
@@ -62,6 +62,16 @@ In Tape-only mode, the boundary is narrower:
 - CPU/memory-driven replica actuation is not claimed.
 - Performance or scaling beyond a single raft group of three replicas is not claimed.
 
+In Sift-only mode, the boundary is the Sift MVP gate:
+
+- `ACCEPTANCE_APPS=sift` creates one run-scoped three-node `e2-standard-4` pool.
+- It uses three store voters, three control voters, one gateway, one query role, and one agent per node.
+- It sends 18,000,000 unique items during a 30-minute, 10,000-item-per-second load.
+- It runs five more minutes at the same rate while it stops the current store leader VM.
+- It checks OTLP, Remote Write, query, correlation, MCP, project isolation, PVC restart, latency, quorum, auto-repair, GCS outage behavior, 29/31/181-day boundaries, and fresh-PVC restore equality.
+- Sift and Rig images must resolve to immutable digests. Rig is only the test runner.
+- The cloud phase has a 90-minute hard limit. Cleanup covers the namespace, node pool, bucket, GSA, Workload Identity binding, disks, and temporary images.
+
 ## Prerequisites
 
 Use a project where billing is enabled and these APIs already exist:
@@ -103,7 +113,7 @@ acceptance/gcp/scripts/run.sh
 ```
 
 `ACCEPTANCE_APPS` selects the mode and its value set is closed: `lumen sift`
-(the default), `lumen auth`, or `tape`. The earlier `LUMEN_ONLY=1` mode no longer exists —
+(the default), `lumen auth`, `sift`, or `tape`. The earlier `LUMEN_ONLY=1` mode no longer exists —
 it was removed when the harness gained Tape mode, and this section documented
 it for several commits afterwards. Passing it today does nothing at all; the
 run proceeds in full `lumen sift` mode, which is not what the caller asked
@@ -118,6 +128,17 @@ to name the exact bytes it proved:
 PROJECT_ID=axiom-502607 \
 LUMEN_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/lumen@sha256:<digest> \
 SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
+acceptance/gcp/scripts/run.sh
+```
+
+To run the dedicated Sift MVP gate, supply both candidate images by immutable
+digest. This is a paid cloud operation:
+
+```bash
+PROJECT_ID=axiom-502607 \
+ACCEPTANCE_APPS=sift \
+SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
+RIG_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/rig@sha256:<digest> \
 acceptance/gcp/scripts/run.sh
 ```
 
@@ -222,8 +243,9 @@ acceptance/gcp/scripts/bootstrap-cluster.sh
    tags/digests and the exact Cloud Build source prefix, and independently
    verify cleanup. The persistent cluster stays available for the next run.
 
-The cloud portion has a hard maximum of 2,700 seconds (45 minutes). `EXIT`,
-`INT`, `TERM`, failures, and the watchdog all enter the same cleanup trap. A
+The normal cloud portion has a hard maximum of 2,700 seconds (45 minutes).
+Sift-only mode has a 5,400-second (90-minute) maximum. `EXIT`, `INT`, `TERM`,
+failures, and the watchdog all enter the same cleanup trap. A
 separate explicit cluster teardown is deliberately required; a normal run
 never deletes the reusable cluster.
 

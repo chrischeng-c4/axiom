@@ -11,13 +11,15 @@ case "$app" in
     lease="lumen-operator"
     app_namespace="lumen"
     statefulset="lumen"
+    desired_replicas=1
     ;;
   sift)
     operator_namespace="sift-system"
     service_account="sift-operator"
     lease="sift-operator"
     app_namespace="sift"
-    statefulset="sift"
+    statefulset="sift-store"
+    desired_replicas=3
     ;;
   tape)
     # Lease name = ManagedService::MANAGER in apps/tape/src/operator/reconcile.rs.
@@ -26,6 +28,7 @@ case "$app" in
     lease="tape-operator"
     app_namespace="tape"
     statefulset="tape"
+    desired_replicas=1
     ;;
   *)
     echo "unknown app '$app'; expected lumen, sift, or tape" >&2
@@ -199,21 +202,23 @@ require_metrics_endpoints_cover_replicas() {
   return 1
 }
 
-wait_statefulset_one() {
+wait_statefulset_desired() {
+  local name="${1:-$statefulset}"
+  local expected="${2:-$desired_replicas}"
   local desired ready
   local deadline=$((SECONDS + 240))
   while (( SECONDS < deadline )); do
-    desired="$(kubectl -n "$app_namespace" get "statefulset/$statefulset" \
+    desired="$(kubectl -n "$app_namespace" get "statefulset/$name" \
       -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
-    ready="$(kubectl -n "$app_namespace" get "statefulset/$statefulset" \
+    ready="$(kubectl -n "$app_namespace" get "statefulset/$name" \
       -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
-    if [[ "$desired" == "1" && "$ready" == "1" ]]; then
+    if [[ "$desired" == "$expected" && "$ready" == "$expected" ]]; then
       return 0
     fi
     sleep 3
   done
-  echo "operator did not restore $app_namespace/statefulset/$statefulset to desired=ready=1" >&2
-  kubectl -n "$app_namespace" get "statefulset/$statefulset" -o yaml >&2 || true
+  echo "operator did not restore $app_namespace/statefulset/$name to desired=ready=$expected" >&2
+  kubectl -n "$app_namespace" get "statefulset/$name" -o yaml >&2 || true
   return 1
 }
 
@@ -221,7 +226,10 @@ tamper_and_require_reconcile() {
   kubectl -n "$app_namespace" patch "statefulset/$statefulset" --type=merge \
     --patch '{"spec":{"replicas":0}}'
   test "$(kubectl -n "$app_namespace" get "statefulset/$statefulset" -o jsonpath='{.spec.replicas}')" = "0"
-  wait_statefulset_one
+  wait_statefulset_desired
+  if [[ "$app" == "sift" ]]; then
+    wait_statefulset_desired sift-control 3
+  fi
 }
 
 assert_can_i get leases.coordination.k8s.io "$operator_namespace"

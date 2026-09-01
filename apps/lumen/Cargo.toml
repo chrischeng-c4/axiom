@@ -32,6 +32,10 @@ path = "e2e/standalone_gke_render.rs"
 name = "standalone_gke_acceptance_contract"
 path = "e2e/standalone_gke_acceptance_contract.rs"
 
+[[test]]
+name = "index_text_parity"
+path = "e2e/index_text_parity.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-nats = { workspace = true }
@@ -80,6 +84,9 @@ service-backup = { path = "../../libs/service-backup" }
 # Shared durable local storage primitives: fsync policy, atomic snapshot replace,
 # and CRC-framed append logs. Lumen owns the domain codecs layered on top.
 storage-durable = { path = "../../libs/storage-durable" }
+# Shared analyzer and rebuildable text-index core. Lumen keeps its collection,
+# routing, scoring, and distributed state above this product-neutral base.
+index-text = { path = "../../libs/index-text" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }
@@ -149,7 +156,7 @@ build-stamp = { path = "../../libs/build-stamp" }
 
 [features]
 default = []
-jieba = ["dep:jieba-rs"]
+jieba = ["dep:jieba-rs", "index-text/jieba"]
 # raft-wal — lumen owns write ordering + replication via libs/raft-core (HA),
 # instead of an external broker. Peer RPCs use the h2c client. (#515)
 # raft-runtime itself is non-optional (#1002; see the dependency comment above) —

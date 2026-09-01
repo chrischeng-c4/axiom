@@ -12,7 +12,7 @@ case "$app" in
     cr_resource="lumen/lumen"
     operator_namespace="lumen-system"
     operator_deployment="lumen-operator"
-    statefulset="lumen"
+    statefulsets=(lumen)
     ;;
   sift)
     crd="sifts.sift.axiom.dev"
@@ -20,7 +20,7 @@ case "$app" in
     cr_resource="sift/sift"
     operator_namespace="sift-system"
     operator_deployment="sift-operator"
-    statefulset="sift"
+    statefulsets=(sift-store sift-control)
     ;;
   tape)
     crd="tapes.tape.dev"
@@ -28,7 +28,7 @@ case "$app" in
     cr_resource="tape/tape"
     operator_namespace="tape-system"
     operator_deployment="tape-operator"
-    statefulset="tape"
+    statefulsets=(tape)
     ;;
   *)
     echo "unknown app '$app'; expected lumen, sift, or tape" >&2
@@ -37,6 +37,14 @@ case "$app" in
 esac
 
 mkdir -p "$EVIDENCE_DIR/kubernetes"
+
+if [[ "$app" == "sift" ]]; then
+  kubectl get customresourcedefinition fqdnnetworkpolicies.networking.gke.io \
+    >/dev/null 2>&1 || {
+      echo "Sift requires GKE Dataplane V2 with FQDN Network Policy enabled; missing fqdnnetworkpolicies.networking.gke.io" >&2
+      exit 1
+    }
+fi
 
 wait_ready_cr() {
   local expected_generation observed_generation phase
@@ -83,7 +91,9 @@ kubectl apply -f "$MANIFEST_DIR/$app/operator.bundle.yaml"
 kubectl wait -n "$operator_namespace" --for=condition=Available "deployment/$operator_deployment" --timeout=600s
 kubectl apply -f "$MANIFEST_DIR/$app/instance.bundle.yaml"
 wait_ready_cr
-kubectl -n "$cr_namespace" rollout status "statefulset/$statefulset" --timeout=600s
+for statefulset in "${statefulsets[@]}"; do
+  kubectl -n "$cr_namespace" rollout status "statefulset/$statefulset" --timeout=600s
+done
 
 kubectl get "$crd" -A -o json > "$EVIDENCE_DIR/kubernetes/${app}-crs.json"
 kubectl get deployment,statefulset,cronjob,pod,pvc,serviceaccount -A -o json \

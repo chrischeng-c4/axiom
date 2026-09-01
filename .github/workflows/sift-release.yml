@@ -346,7 +346,7 @@ jobs:
           - GKE receipt sidecar SHA-256: ${{ needs.verify-inputs.outputs.gke_receipt_sidecar_sha256 }}
           - Release path: landed main -> immutable candidate -> digest-pinned GKE acceptance -> protected annotated tag -> no-rebuild promotion.
           - Compatibility: no HTTP, CLI, wire format, on-disk format, or Kubernetes manifest shape changed in this release.
-          - Install: curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/sift@${{ inputs.version }}/projects/sift/install.sh | sh (the tarballs above, verified by their .sha256 sidecars)
+          - Install: curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/sift@${{ inputs.version }}/apps/sift/install.sh | sh (the tarballs above, verified by their .sha256 sidecars)
           - Image: ghcr.io/chrischeng-c4/sift:${{ inputs.version }} is the root index digest above; latest moves only when this is the newest semver.
           EOF
           gh release create "sift@${{ inputs.version }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "sift@${{ inputs.version }}" --notes-file release-notes.md \

@@ -103,6 +103,10 @@ name = "stateful_adapter_equivalence"
 path = "e2e/stateful_adapter_equivalence.rs"
 
 [[test]]
+name = "workload_plan"
+path = "e2e/workload_plan.rs"
+
+[[test]]
 name = "prune_unserved_api_is_scoped"
 path = "e2e/prune_unserved_api_is_scoped.rs"
 required-features = ["controller"]

@@ -42,6 +42,9 @@ pub mod deployment;
 pub mod projected_token;
 pub mod rbac;
 pub mod stateful_instance;
+pub mod workload_plan;
+
+pub use workload_plan::*;
 
 /// Per-service render identity, threaded through the helpers.
 pub struct RenderCtx<'a> {

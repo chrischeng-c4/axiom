@@ -165,7 +165,33 @@ if grep -q 'lumen-backup' "$scratch_dir/lumen-auth/manifests/lumen/instance.bund
   fail "mode 'lumen auth' unexpectedly rendered lumen-backup ServiceAccount"
 fi
 
-# --- Mode 3: tape ---
+# --- Mode 3: standalone Sift MVP ---
+(
+  export ACCEPTANCE_APPS="sift"
+  export RUN_ID="matrix-test"
+  export MANIFEST_DIR="$scratch_dir/sift/manifests"
+  export GKE_CLUSTER_NAME="matrix-cluster"
+  export GKE_ZONE="asia-east1-a"
+  export PROJECT_ID="matrix-project"
+  export SIFT_CLI="$SIFT_CLI"
+  export SIFT_IMAGE="example-registry/sift@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  export RIG_IMAGE="example-registry/rig@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  export BACKUP_BUCKET="matrix-backup-bucket"
+  export BACKUP_GSA_EMAIL="matrix-backup@example.com"
+  "$RENDER_SCRIPT"
+) || fail "rendering failed for mode 'sift'"
+
+check_app_subtree "sift" "sift" "$scratch_dir/sift/manifests" "sift sift-system"
+
+grep -q 'storeSize: 50Gi' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+  || fail "standalone Sift did not render its 50Gi store volume"
+grep -q 'name: sift-rig' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+  || fail "standalone Sift did not render its isolated Rig service account"
+if grep -q 'system:auth-delegator' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml"; then
+  fail "standalone Sift masks operator-managed auth delegation with a static ClusterRoleBinding"
+fi
+
+# --- Mode 4: tape ---
 (
   export ACCEPTANCE_APPS="tape"
   export RUN_ID="matrix-test"

@@ -112,6 +112,10 @@ path = "e2e/adversarial_recovery.rs"
 name = "publish_preflight"
 path = "e2e/publish_preflight.rs"
 
+[[test]]
+name = "replica_host_builder"
+path = "e2e/replica_host_builder.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 server-lifecycle = { path = "../server-lifecycle" }

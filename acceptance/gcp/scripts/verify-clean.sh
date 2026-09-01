@@ -15,9 +15,10 @@ ACCEPTANCE_APPS="${ACCEPTANCE_APPS:-lumen sift}"
 case "$ACCEPTANCE_APPS" in
   "lumen sift") acceptance_mode="lumen-sift" ;;
   "lumen auth") acceptance_mode="lumen-auth" ;;
+  "sift") acceptance_mode="sift" ;;
   "tape") acceptance_mode="tape" ;;
   *)
-    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', 'sift', or 'tape'" >&2
     exit 1
     ;;
 esac
@@ -62,7 +63,22 @@ if ! gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
   leftovers=1
 fi
 
-if [[ "$acceptance_mode" == "tape" ]]; then
+if [[ "$acceptance_mode" == "sift" ]]; then
+  check_empty "Sift namespace" kubectl get namespace sift --no-headers
+  check_empty "Sift restore namespace" kubectl get namespace sift-restore --no-headers
+  check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
+  check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
+  check_empty "Sift auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+    -l axiom-owner=gcp-operator-acceptance,axiom-run-id="$RUN_ID" --no-headers
+  check_empty "Sift operator-managed auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+    -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=sift --no-headers
+  check_empty "Sift image tag" gcloud artifacts docker images describe \
+    "$REGISTRY/sift:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
+  check_empty "Rig image tag" gcloud artifacts docker images describe \
+    "$REGISTRY/rig:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
+  check_empty "Sift run node pool" gcloud container node-pools describe "axo-${RUN_ID}-sift" \
+    --cluster="$PERSISTENT_CLUSTER_NAME" --project="$PROJECT_ID" --zone="$GKE_ZONE" --format='value(name)'
+elif [[ "$acceptance_mode" == "tape" ]]; then
   check_empty "Tape namespace" kubectl get namespace tape --no-headers
   check_empty "Tape operator namespace" kubectl get namespace tape-system --no-headers
   check_empty "Tape CRD" kubectl get customresourcedefinition tapes.tape.dev --no-headers
@@ -150,6 +166,8 @@ jq -n \
   > "$EVIDENCE_DIR/cleanup.json"
 if [[ "$acceptance_mode" == "tape" ]]; then
   echo "verified: no run-tagged Tape operator acceptance resources remain"
+elif [[ "$acceptance_mode" == "sift" ]]; then
+  echo "verified: no run-tagged Sift MVP acceptance resources remain"
 else
   echo "verified: no run-tagged Lumen/Sift operator acceptance resources remain"
 fi
