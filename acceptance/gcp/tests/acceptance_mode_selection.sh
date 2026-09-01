@@ -19,6 +19,7 @@ CELL_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-operator-cell.sh"
 DEPLOY_SCRIPT="$ACCEPTANCE_ROOT/scripts/deploy.sh"
 BOOTSTRAP_SCRIPT="$ACCEPTANCE_ROOT/scripts/bootstrap-cluster.sh"
 SIFT_VERIFY_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-sift-mvp.sh"
+SIFT_AUTH_DELEGATOR_FILTER="$ACCEPTANCE_ROOT/scripts/sift-auth-delegator.jq"
 ENV_VARIABLES="$ACCEPTANCE_ROOT/environment/variables.tf"
 ENV_GKE="$ACCEPTANCE_ROOT/environment/gke.tf"
 CLUSTER_TF="$ACCEPTANCE_ROOT/cluster/main.tf"
@@ -113,6 +114,44 @@ present "Sift deployment no longer requires GKE FQDN policy enforcement" \
   'fqdnnetworkpolicies.networking.gke.io' "$DEPLOY_SCRIPT"
 present "Sift verifier lost the operator-managed auth binding proof" \
   'auth-delegator-binding.json' "$SIFT_VERIFY_SCRIPT"
+[[ -f "$SIFT_AUTH_DELEGATOR_FILTER" ]] \
+  || fail "Sift auth-delegator contract filter is missing"
+auth_binding="$(jq -n '{
+  roleRef:{
+    apiGroup:"rbac.authorization.k8s.io",
+    kind:"ClusterRole",
+    name:"system:auth-delegator"
+  },
+  subjects:[
+    {kind:"ServiceAccount", name:"sift", namespace:"sift"},
+    {kind:"ServiceAccount", name:"sift-store", namespace:"sift"}
+  ],
+  metadata:{labels:{
+    "app.kubernetes.io/name":"sift",
+    "app.kubernetes.io/instance":"sift",
+    "sift.axiom.dev/owner-namespace":"sift",
+    "service-k8s.axiom.dev/owner-uid":"owner-uid"
+  }}
+}')"
+jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_AUTH_DELEGATOR_FILTER" >/dev/null <<<"$auth_binding" \
+  || fail "Sift auth-delegator contract rejected the exact runtime and store subjects"
+missing_store="$(jq '.subjects = [.subjects[0]]' <<<"$auth_binding")"
+if jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_AUTH_DELEGATOR_FILTER" >/dev/null <<<"$missing_store"; then
+  fail "Sift auth-delegator contract accepted a binding without the store subject"
+fi
+extra_backup="$(jq '.subjects += [{kind:"ServiceAccount", name:"sift-backup", namespace:"sift"}]' \
+  <<<"$auth_binding")"
+if jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_AUTH_DELEGATOR_FILTER" >/dev/null <<<"$extra_backup"; then
+  fail "Sift auth-delegator contract accepted an extra backup subject"
+fi
+wrong_namespace="$(jq '.subjects[1].namespace = "other"' <<<"$auth_binding")"
+if jq -e --arg namespace sift --arg instance sift \
+  -f "$SIFT_AUTH_DELEGATOR_FILTER" >/dev/null <<<"$wrong_namespace"; then
+  fail "Sift auth-delegator contract accepted the store subject from another namespace"
+fi
 present "Sift verifier lost instance-scoped FQDN policy proof" \
   'fqdn-network-policies.json' "$SIFT_VERIFY_SCRIPT"
 rg -q '^\s*datapath_provider\s*=\s*"ADVANCED_DATAPATH"\s*$' "$CLUSTER_TF" \
