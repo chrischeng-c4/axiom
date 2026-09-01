@@ -31,6 +31,10 @@ const RECOVERED_VALUE: &str = "replayed@example.test";
 const CHECKPOINT_COLLECTION: &str = "checkpoint-data";
 const CHECKPOINT_EXTERNAL_ID: &str = "checkpoint-external-id";
 const CHECKPOINT_VALUE: &str = "checkpoint@example.test";
+const POST_ADOPTION_EXTERNAL_ID: &str = "post-adoption-external-id";
+const POST_ADOPTION_VALUE: &str = "post-adoption@example.test";
+const AOF_TAIL_EXTERNAL_ID: &str = "aof-tail-external-id";
+const AOF_TAIL_VALUE: &str = "aof-tail@example.test";
 
 #[derive(Debug, Eq, PartialEq)]
 enum RootEntrySnapshot {
@@ -338,6 +342,29 @@ fn write_aof_tail(root: &Path) {
     aof.sync().expect("sync official AOF writer");
 }
 
+/// Append one sequence strictly after a legacy checkpoint. This exercises the
+/// real AOF replay path over an already-restored collection.
+fn write_checkpoint_aof_tail(root: &Path, sequence: u64) {
+    let mut aof = AofWriter::open(root.join("aof.log")).expect("open official AOF writer");
+    aof.append(
+        sequence,
+        &WalRecord::new(RaftLogEntry::Index {
+            collection_id: CHECKPOINT_COLLECTION.into(),
+            req: IndexRequest {
+                items: vec![IndexItem {
+                    external_id: AOF_TAIL_EXTERNAL_ID.into(),
+                    field: "email".into(),
+                    value: FieldValue::String(AOF_TAIL_VALUE.into()),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        }),
+    )
+    .expect("append official checkpoint AOF tail");
+    aof.sync().expect("sync official checkpoint AOF tail");
+}
+
 fn post_json(port: u16, path: &str, body: Value) -> Value {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -363,18 +390,53 @@ fn post_json(port: u16, path: &str, body: Value) -> Value {
 }
 
 fn assert_checkpoint_document_is_searchable(process: &LumenProcess) {
+    assert_checkpoint_value_is_searchable(process, CHECKPOINT_EXTERNAL_ID, CHECKPOINT_VALUE);
+}
+
+fn assert_checkpoint_value_is_searchable(process: &LumenProcess, external_id: &str, value: &str) {
     let body = post_json(
         process.port,
         &format!("/collections/{CHECKPOINT_COLLECTION}/search"),
         json!({
-            "query": { "term": { "field": "email", "value": CHECKPOINT_VALUE } },
+            "query": { "term": { "field": "email", "value": value } },
             "limit": 10
         }),
     );
     assert_eq!(body["total"], 1, "checkpoint search result: {body}");
     assert_eq!(
-        body["hits"][0]["external_id"], CHECKPOINT_EXTERNAL_ID,
+        body["hits"][0]["external_id"], external_id,
         "checkpoint search result: {body}"
+    );
+}
+
+fn index_checkpoint_value(process: &LumenProcess, external_id: &str, value: &str) {
+    let response = post_json(
+        process.port,
+        &format!("/collections/{CHECKPOINT_COLLECTION}/index"),
+        json!({
+            "items": [{
+                "external_id": external_id,
+                "field": "email",
+                "value": value
+            }]
+        }),
+    );
+    assert_eq!(response["indexed"], 1, "index response: {response}");
+}
+
+fn checkpoint(process: &LumenProcess) {
+    let response = post_json(process.port, "/admin/checkpoint", json!({}));
+    assert_eq!(
+        response["persisted"], true,
+        "checkpoint response: {response}"
+    );
+}
+
+fn assert_current_revision(root: &Path, sequence: u64) {
+    assert_eq!(
+        std::fs::read(root.join("CURRENT")).expect("read checkpoint CURRENT"),
+        format!("generation:gen-{sequence}-rev-1\n").as_bytes(),
+        "checkpoint must advance the adopted legacy generation"
     );
 }
 
@@ -542,6 +604,69 @@ fn exact_0428_legacy_generation_is_adopted_and_searchable() {
             && logs.contains("adopted_legacy_0428"),
         "exact legacy adoption must log its decision:\n{logs}"
     );
+}
+
+#[test]
+fn adopted_legacy_checkpoint_without_aof_tail_advances_past_checkpoint_sequence() {
+    let root = tempfile::tempdir().expect("legacy checkpoint without AOF tail");
+    write_legacy_0428_checkpoint(root.path(), 2);
+
+    let mut process = LumenProcess::spawn(root.path());
+    process.wait_until_ready();
+    assert_checkpoint_document_is_searchable(&process);
+    index_checkpoint_value(&process, POST_ADOPTION_EXTERNAL_ID, POST_ADOPTION_VALUE);
+    checkpoint(&process);
+    assert_current_revision(root.path(), 3);
+    let logs = process.stop_and_logs();
+    assert!(
+        logs.contains("AOF startup decision")
+            && logs.contains("no_tail")
+            && logs.contains("\"to_seq\":2"),
+        "an adopted checkpoint without an AOF tail must retain its checkpoint watermark:\n{logs}"
+    );
+
+    let mut restarted = LumenProcess::spawn(root.path());
+    restarted.wait_until_ready();
+    assert_checkpoint_document_is_searchable(&restarted);
+    assert_checkpoint_value_is_searchable(
+        &restarted,
+        POST_ADOPTION_EXTERNAL_ID,
+        POST_ADOPTION_VALUE,
+    );
+    assert_current_revision(root.path(), 3);
+}
+
+#[test]
+fn adopted_legacy_checkpoint_with_aof_tail_keeps_tail_sequence_monotonic() {
+    let root = tempfile::tempdir().expect("legacy checkpoint with AOF tail");
+    write_legacy_0428_checkpoint(root.path(), 2);
+    write_checkpoint_aof_tail(root.path(), 3);
+
+    let mut process = LumenProcess::spawn(root.path());
+    process.wait_until_ready();
+    assert_checkpoint_document_is_searchable(&process);
+    assert_checkpoint_value_is_searchable(&process, AOF_TAIL_EXTERNAL_ID, AOF_TAIL_VALUE);
+    index_checkpoint_value(&process, POST_ADOPTION_EXTERNAL_ID, POST_ADOPTION_VALUE);
+    checkpoint(&process);
+    assert_current_revision(root.path(), 4);
+    let logs = process.stop_and_logs();
+    assert!(
+        logs.contains("AOF startup decision")
+            && logs.contains("tail_replayed")
+            && logs.contains("\"to_seq\":3"),
+        "an adopted checkpoint must preserve its replayed AOF tail watermark:\n{logs}"
+    );
+
+    let mut restarted = LumenProcess::spawn(root.path());
+    restarted.wait_until_ready();
+    assert_checkpoint_document_is_searchable(&restarted);
+    assert_checkpoint_value_is_searchable(&restarted, AOF_TAIL_EXTERNAL_ID, AOF_TAIL_VALUE);
+    assert_checkpoint_value_is_searchable(
+        &restarted,
+        POST_ADOPTION_EXTERNAL_ID,
+        POST_ADOPTION_VALUE,
+    );
+    assert_current_revision(root.path(), 4);
 }
 
 #[test]

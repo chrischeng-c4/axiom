@@ -139,6 +139,18 @@ if [[ "$MODE" == "durable" ]]; then
       -d "{\"query\":{\"term\":{\"field\":\"tag\",\"value\":\"$value\"}},\"limit\":10}" -o "$response"
     jq -e --arg id "durable-${value}" '.total == 1 and (.hits | length) == 1 and .hits[0].external_id == $id' "$response" >/dev/null
   }
+  assert_startup_decision() {
+    local log_path="$1" expected="$2" matches
+    if ! matches="$(jq -r -s --arg expected "$expected" '[.[] | select(.schema == "axiom.service.log.v1" and .service.name == "lumen" and .message == "segment checkpoint startup decision" and .attributes.decision == $expected)] | length' "$log_path")"; then
+      echo "ERROR: invalid structured startup log" >&2
+      return 1
+    fi
+    if [[ "$matches" == 1 ]]; then
+      return 0
+    fi
+    echo "ERROR: expected one segment checkpoint startup decision '$expected'; found $matches" >&2
+    return 1
+  }
   CREATED_OLD="$OLD_CONTAINER"
   docker run -d --name "$OLD_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_DATA_DIR=/var/lib/lumen/data -e LUMEN_PERSISTENCE=segment -e LUMEN_SNAPSHOT_SECS=1 -e LUMEN_GRACE_SECS=1 \
     -p 127.0.0.1::7373 "$OLD_IMAGE" >/dev/null
@@ -158,13 +170,13 @@ if [[ "$MODE" == "durable" ]]; then
   docker rm -f "$OLD_CONTAINER" >/dev/null
   CREATED_OLD=""
   CREATED_CANDIDATE="$CANDIDATE_CONTAINER"
-  docker run -d --name "$CANDIDATE_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off \
+  docker run -d --name "$CANDIDATE_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json \
     -p 127.0.0.1::7373 "$LUMEN_STANDALONE_DURABLE_IMAGE" >/dev/null
   CANDIDATE_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$CANDIDATE_CONTAINER")"
   wait_ready "$CANDIDATE_CONTAINER" "$CANDIDATE_PORT"
   CANDIDATE_URL="http://127.0.0.1:${CANDIDATE_PORT}"
   if ! docker logs "$CANDIDATE_CONTAINER" > "$TEMP_DIR/candidate.log" 2>&1; then :; fi
-  grep -Eq 'segment checkpoint startup decision.*decision=\"?adopted_legacy_0428\"?' "$TEMP_DIR/candidate.log"
+  assert_startup_decision "$TEMP_DIR/candidate.log" adopted_legacy_0428
   docker cp "$CANDIDATE_CONTAINER:/var/lib/lumen/data/CURRENT" "$TEMP_DIR/current-first"
   python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+\n",b) else 1)' "$TEMP_DIR/current-first"
   assert_search "$CANDIDATE_URL" first
@@ -178,13 +190,13 @@ if [[ "$MODE" == "durable" ]]; then
   docker rm "$CANDIDATE_CONTAINER" >/dev/null
   CREATED_CANDIDATE=""
   CREATED_REPLACEMENT="$REPLACEMENT_CONTAINER"
-  docker run -d --name "$REPLACEMENT_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off \
+  docker run -d --name "$REPLACEMENT_CONTAINER" --mount "type=volume,src=$VOLUME,dst=/var/lib/lumen/data" -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json \
     -p 127.0.0.1::7373 "$LUMEN_STANDALONE_DURABLE_IMAGE" >/dev/null
   REPLACEMENT_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "7373/tcp") 0).HostPort}}' "$REPLACEMENT_CONTAINER")"
   wait_ready "$REPLACEMENT_CONTAINER" "$REPLACEMENT_PORT"
   REPLACEMENT_URL="http://127.0.0.1:${REPLACEMENT_PORT}"
   if ! docker logs "$REPLACEMENT_CONTAINER" > "$TEMP_DIR/replacement.log" 2>&1; then :; fi
-  grep -Eq 'segment checkpoint startup decision.*decision=\"?restored_current_generation\"?' "$TEMP_DIR/replacement.log"
+  assert_startup_decision "$TEMP_DIR/replacement.log" restored_current_generation
   docker cp "$REPLACEMENT_CONTAINER:/var/lib/lumen/data/CURRENT" "$TEMP_DIR/current-replacement"
   python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+-rev-[1-9][0-9]*\n",b) else 1)' "$TEMP_DIR/current-replacement"
   assert_search "$REPLACEMENT_URL" first

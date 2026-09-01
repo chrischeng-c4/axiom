@@ -63,7 +63,7 @@ fn insert_after_first_from(source: &str, instruction: &str) -> String {
 const DURABLE_BEGIN: &str = "  # DURABLE-CONTRACT-BEGIN\n";
 const DURABLE_END: &str = "  # DURABLE-CONTRACT-END\n";
 const DURABLE_BLOCK_SHA256: &str =
-    "d269cc1b8bd8174d5ef97a158daca836f355a9d8ffc842492c297884c5783b4b";
+    "dc27b21b6251bb90b679ef42d4a182595f759e6f0e3d280fe9c700ced0af3022";
 const CANDIDATE_ROOT_REGEX: &str = "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$";
 const OLD_IMAGE: &str =
     "ghcr.io/chrischeng-c4/lumen@sha256:59a85c96d807428c424ec8889ac830b14e02869da49c4b44ae12dcce3786d03d";
@@ -79,13 +79,13 @@ const OLD_RUN: &str = concat!(
 const CANDIDATE_RUN: &str = concat!(
     "docker run -d --name \"$CANDIDATE_CONTAINER\" ",
     "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
-    "-e LUMEN_AUTH=off -p 127.0.0.1::7373 ",
+    "-e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json -p 127.0.0.1::7373 ",
     "\"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null"
 );
 const REPLACEMENT_RUN: &str = concat!(
     "docker run -d --name \"$REPLACEMENT_CONTAINER\" ",
     "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" ",
-    "-e LUMEN_AUTH=off -p 127.0.0.1::7373 ",
+    "-e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json -p 127.0.0.1::7373 ",
     "\"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null"
 );
 const REJECTED_RUN: &str = concat!(
@@ -96,17 +96,17 @@ const REJECTED_RUN: &str = concat!(
 );
 const CANDIDATE_RUN_SOURCE: &str = concat!(
     "  docker run -d --name \"$CANDIDATE_CONTAINER\" ",
-    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off \\\n",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json \\\n",
     "    -p 127.0.0.1::7373 \"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null\n"
 );
 const REPLACEMENT_RUN_SOURCE: &str = concat!(
     "  docker run -d --name \"$REPLACEMENT_CONTAINER\" ",
-    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off \\\n",
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json \\\n",
     "    -p 127.0.0.1::7373 \"$LUMEN_STANDALONE_DURABLE_IMAGE\" >/dev/null\n"
 );
 const CANDIDATE_AUTH_LINE: &str = concat!(
     "  docker run -d --name \"$CANDIDATE_CONTAINER\" ",
-    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off \\\n"
+    "--mount \"type=volume,src=$VOLUME,dst=/var/lib/lumen/data\" -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json \\\n"
 );
 const CURRENT_FIRST_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+\n",b) else 1)' "$TEMP_DIR/current-first""#;
 const CURRENT_REV_ASSERT: &str = r#"python3 -c 'import pathlib,re,sys; b=pathlib.Path(sys.argv[1]).read_bytes(); sys.exit(0 if re.fullmatch(rb"generation:gen-[0-9]+-rev-[1-9][0-9]*\n",b) else 1)' "$TEMP_DIR/current-rev""#;
@@ -488,12 +488,42 @@ fn validate_durable_script_semantics(source: &str) -> Result<(), String> {
     )?;
     require_exact_once(
         &lines,
-        "grep -Eq 'segment checkpoint startup decision.*decision=\\\"?adopted_legacy_0428\\\"?' \"$TEMP_DIR/candidate.log\"",
+        "assert_startup_decision() {",
+        "startup decision helper",
+    )?;
+    require_exact_once(
+        &lines,
+        "local log_path=\"$1\" expected=\"$2\" matches",
+        "startup decision arguments",
+    )?;
+    require_exact_once(
+        &lines,
+        "if ! matches=\"$(jq -r -s --arg expected \"$expected\" '[.[] | select(.schema == \"axiom.service.log.v1\" and .service.name == \"lumen\" and .message == \"segment checkpoint startup decision\" and .attributes.decision == $expected)] | length' \"$log_path\")\"; then",
+        "structured startup decision assertion",
+    )?;
+    require_exact_once(
+        &lines,
+        "echo \"ERROR: invalid structured startup log\" >&2",
+        "invalid startup log diagnostic",
+    )?;
+    require_exact_once(
+        &lines,
+        "if [[ \"$matches\" == 1 ]]; then",
+        "single startup decision assertion",
+    )?;
+    require_exact_once(
+        &lines,
+        "echo \"ERROR: expected one segment checkpoint startup decision '$expected'; found $matches\" >&2",
+        "startup decision mismatch diagnostic",
+    )?;
+    require_exact_once(
+        &lines,
+        "assert_startup_decision \"$TEMP_DIR/candidate.log\" adopted_legacy_0428",
         "legacy adoption startup decision",
     )?;
     require_exact_once(
         &lines,
-        "grep -Eq 'segment checkpoint startup decision.*decision=\\\"?restored_current_generation\\\"?' \"$TEMP_DIR/replacement.log\"",
+        "assert_startup_decision \"$TEMP_DIR/replacement.log\" restored_current_generation",
         "current generation startup decision",
     )?;
 
@@ -657,7 +687,7 @@ fn candidate_with_override(source: &str, variable: &str) -> String {
         source,
         CANDIDATE_AUTH_LINE,
         &format!(
-            "  docker run -d --name \"$CANDIDATE_CONTAINER\" {DATA_MOUNT} -e LUMEN_AUTH=off -e {variable}=forbidden \\\n"
+            "  docker run -d --name \"$CANDIDATE_CONTAINER\" {DATA_MOUNT} -e LUMEN_AUTH=off -e LUMEN_LOG_FORMAT=json -e {variable}=forbidden \\\n"
         ),
     )
 }
@@ -774,6 +804,22 @@ fn test_durable_script_contract_and_negative_mutations() {
             ),
         );
     }
+    assert_durable_rejected(
+        "candidate structured logging removed",
+        replace_exact(
+            &source,
+            CANDIDATE_RUN_SOURCE,
+            &CANDIDATE_RUN_SOURCE.replace(" -e LUMEN_LOG_FORMAT=json", ""),
+        ),
+    );
+    assert_durable_rejected(
+        "replacement structured logging removed",
+        replace_exact(
+            &source,
+            REPLACEMENT_RUN_SOURCE,
+            &REPLACEMENT_RUN_SOURCE.replace(" -e LUMEN_LOG_FORMAT=json", ""),
+        ),
+    );
     assert_durable_rejected(
         "old digest drift",
         replace_exact(
@@ -941,11 +987,23 @@ fn test_durable_script_contract_and_negative_mutations() {
         ),
         (
             "legacy adoption decision log",
-            "  grep -Eq 'segment checkpoint startup decision.*decision=\\\"?adopted_legacy_0428\\\"?' \"$TEMP_DIR/candidate.log\"\n",
+            "  assert_startup_decision \"$TEMP_DIR/candidate.log\" adopted_legacy_0428\n",
         ),
         (
             "current generation decision log",
-            "  grep -Eq 'segment checkpoint startup decision.*decision=\\\"?restored_current_generation\\\"?' \"$TEMP_DIR/replacement.log\"\n",
+            "  assert_startup_decision \"$TEMP_DIR/replacement.log\" restored_current_generation\n",
+        ),
+        (
+            "structured decision parser",
+            "    if ! matches=\"$(jq -r -s --arg expected \"$expected\" '[.[] | select(.schema == \"axiom.service.log.v1\" and .service.name == \"lumen\" and .message == \"segment checkpoint startup decision\" and .attributes.decision == $expected)] | length' \"$log_path\")\"; then\n",
+        ),
+        (
+            "single decision requirement",
+            "    if [[ \"$matches\" == 1 ]]; then\n",
+        ),
+        (
+            "decision mismatch diagnostic",
+            "    echo \"ERROR: expected one segment checkpoint startup decision '$expected'; found $matches\" >&2\n",
         ),
     ] {
         assert_durable_rejected(label, replace_exact(&source, target, ""));
