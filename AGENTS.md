@@ -29,6 +29,9 @@ and the output contract that your answer is parsed against. It is assembled by
 the phase script so that scope is guaranteed by construction rather than by
 asking you to stay in bounds.
 
+The two subsections below apply only when you received a review prompt. They do
+not apply when a human is driving you directly.
+
 - Answer that prompt and nothing else. Do not widen the review by reading the
   rest of the repository, and do not import a standard from anywhere but the
   prompt.
@@ -36,7 +39,7 @@ asking you to stay in bounds.
   parsed mechanically; a well-meaning summary in place of the required lines is
   a refused review, not a lenient one.
 
-## What you must not do to this checkout
+### What a reviewer must not do to this checkout
 
 `.codex/config.toml` sets `sandbox_mode = "workspace-write"`. Nothing mechanical
 stops you from editing, staging, or committing, so the restraint has to be
@@ -54,7 +57,7 @@ yours.
   enables `core.fsmonitor` and a stalled daemon blocks every command that reads
   the index, indefinitely and with no error.
 
-## The limit on this file
+### The limit on the reviewer bootstrap
 
 This file enters your context automatically, and it is **outside every digest a
 phase commit records**. A change here alters what every future Codex session is
