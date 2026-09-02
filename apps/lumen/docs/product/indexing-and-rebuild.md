@@ -50,12 +50,12 @@
 - Open: Define retained-generation limits and rollback detail.
 - Neighbours: Strict schema types and Search v2 migration.
 
-## Strict search schema types
+## Strict search schema types (Milestone #15)
 
 - Problem: Legacy number and set types cannot express the target schema safely.
 - Who: Schema authors.
 - Promise: Collections use explicit scalar types with independent multi-value and facet options.
-- Outcome: `strict-search-schema-types`. Tracking: Not assigned.
+- Outcome: `strict-search-schema-types`. Tracking: [Milestone #15](https://github.com/chrischeng-c4/axiom/milestone/15).
 - Non-goals: Silent rounding or schema coercion.
 - Open: Define each target type and migration refusal.
 - Neighbours: Shadow rebuild generations and Search v2 migration.

@@ -100,7 +100,7 @@ destination without copying tracker state.
   rejection of overflow. Migration tests prove an existing field needs a
   shadow rebuild to become facetable while a new field with no history can be
   added online.
-- Tracking: [#3809](https://github.com/chrischeng-c4/axiom/issues/3809) (`lumen@0.4.47`).
+- Tracking: [Milestone #15](https://github.com/chrischeng-c4/axiom/milestone/15).
 
 ### Unified search contract
 
