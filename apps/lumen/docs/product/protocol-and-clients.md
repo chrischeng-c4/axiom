@@ -50,12 +50,12 @@
 - Open: Define all language-specific Search v2 parity gates.
 - Neighbours: Unified search contract and strict generated-client gates.
 
-## Generated-client request resilience
+## Generated-client request resilience (Milestone #14)
 
 - Problem: Callers need safe retry, deadline, and cancellation behavior.
 - Who: Generated-client consumers.
 - Promise: Clients apply an operation-aware request-resilience contract.
-- Outcome: `generated-client-request-resilience`. Tracking: Not assigned.
+- Outcome: `generated-client-request-resilience`. Tracking: [Milestone #14](https://github.com/chrischeng-c4/axiom/milestone/14).
 - Non-goals: Retrying ambiguous writes without a contract.
 - Open: Define retry and timeout policy.
 - Neighbours: Idempotent write replay.

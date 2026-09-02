@@ -397,7 +397,7 @@ destination without copying tracker state.
   cancellation propagation, read retry, unkeyed write refusal, keyed write
   replay, ambiguous mutation failure, token rotation during a request, typed
   redacted errors, and a strict three-language gate with no silent skip.
-- Tracking: [#3808](https://github.com/chrischeng-c4/axiom/issues/3808) (`lumen@0.4.46`).
+- Tracking: [Milestone #14](https://github.com/chrischeng-c4/axiom/milestone/14).
 
 ### Generated-client source-integration helpers
 
