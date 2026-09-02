@@ -24,7 +24,7 @@ change.
 - Neighbours: none; first section of the area.
 - Status rows: `raft-replication`, `raft-peer-mtls`, `leader-failover`.
 
-## Deterministic failover (#3926)
+## Deterministic failover (Milestone #115)
 
 - Problem: the red forwarding case and the shared deadline above mean the
   group's promise is measured by a clock, not by the group's own state, and
@@ -43,9 +43,9 @@ change.
 - Neighbours: repairs Replicated group with peer mTLS; prerequisite for
   [subscriptions.md](subscriptions.md) § Subscription ack and competing
   subscribers.
-- Outcome: `deterministic-failover`. Tracking: [#3926](https://github.com/chrischeng-c4/axiom/issues/3926)
+- Outcome: `deterministic-failover`. Tracking: [Milestone #115](https://github.com/chrischeng-c4/axiom/milestone/115)
 
-## Live replica membership
+## Live replica membership (Milestone #124)
 
 - Problem: a replica-count change on the custom resource restarts members
   instead of adding a learner live.
@@ -58,9 +58,9 @@ change.
 - Open: none; the ROADMAP boundary is complete.
 - Neighbours: extends Replicated group with peer mTLS and
   [operations.md](operations.md) § Kubernetes operator and direct install.
-- Outcome: `live-replica-membership`. Tracking: not assigned.
+- Outcome: `live-replica-membership`. Tracking: [Milestone #124](https://github.com/chrischeng-c4/axiom/milestone/124)
 
-## Multi-shard topology
+## Multi-shard topology (Milestone #125)
 
 - Problem: `shardCount` is fixed at 1, so one group carries every topic.
 - Who: operators running more topics or throughput than one group holds.
@@ -72,7 +72,7 @@ change.
   under a shard-count change.
 - Neighbours: extends Live replica membership; carries
   [subscriptions.md](subscriptions.md) § Ordering keys across shards.
-- Outcome: `multi-shard-topology`. Tracking: not assigned.
+- Outcome: `multi-shard-topology`. Tracking: [Milestone #125](https://github.com/chrischeng-c4/axiom/milestone/125)
 
 ## Non-goals in this area
 
