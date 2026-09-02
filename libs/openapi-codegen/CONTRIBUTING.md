@@ -39,8 +39,7 @@ write is safe. A required cross-language gate must fail when a selected
 toolchain is missing.
 
 When README, STATUS, or ROADMAP changes, treat them as one document set. Run
-the deterministic check first. Then use `$project-readme-check` for the
-clean-context reader.
+the deterministic check.
 
 ## Verification
 

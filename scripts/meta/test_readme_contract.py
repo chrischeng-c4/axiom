@@ -187,14 +187,15 @@ Status: ready
         self.assertNotIn("Return matching caller IDs", prompt)
 
 
-class RuntimeSkillParityTest(unittest.TestCase):
-    def test_claude_and_codex_skill_bodies_match(self) -> None:
+class RuntimeSkillStaysDeletedTest(unittest.TestCase):
+    def test_no_skill_mirror_reappears(self) -> None:
+        # The project-readme-check skill pair was deleted on 2026-09-02; the
+        # validator script is the whole check now. A resurrected mirror would
+        # silently outrank it again.
         repo = Path(__file__).resolve().parents[2]
-        claude = repo / ".claude/skills/project-readme-check/SKILL.md"
-        codex = repo / ".agents/skills/project-readme-check/SKILL.md"
-        self.assertTrue(claude.is_file(), claude)
-        self.assertTrue(codex.is_file(), codex)
-        self.assertEqual(claude.read_bytes(), codex.read_bytes())
+        for root in (".claude/skills", ".agents/skills"):
+            path = repo / root / "project-readme-check"
+            self.assertFalse(path.exists(), path)
 
 
 if __name__ == "__main__":

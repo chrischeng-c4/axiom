@@ -8,8 +8,8 @@
 ## Non-negotiables
 
 1. **Scope is `apps/mamba/tests/**` only.** Editing `apps/mamba/src/**`
-   is OUT OF SCOPE — that is the separate runtime line (`mamba-jit-worker` /
-   `fix(mamba)` bugs). Sole exception: a `[[test]]` stanza in
+   is OUT OF SCOPE — that is the separate runtime line (`fix(mamba)` bugs;
+   the `mamba-jit-worker` skill that named it is deleted). Sole exception: a `[[test]]` stanza in
    `apps/mamba/Cargo.toml` when a new harness binary is unavoidable.
 2. **Test + harness authoring only — never fix runtime to go green.** A fixture
    that can only pass by changing `src/` STAYS RED.

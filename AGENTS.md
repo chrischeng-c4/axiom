@@ -50,7 +50,8 @@ yours.
   loudly, it silently makes the trailer describe bytes that no longer exist.
 - Never run `git add`, `git commit`, or any other command that writes to the
   index or to a ref.
-- Never run `.claude/aw/scripts/*.py`. Those verbs advance and record the
+- Never run the `aw` CLI (`uv run --project apps/aw aw ...`) or any
+  script under `apps/aw/src/aw/scripts/`. Those verbs advance and record the
   lifecycle. A reviewer that advances the thing it is judging has removed the
   gate it exists to be.
 - Run any git you do need through `git -c core.fsmonitor=false`. This checkout
@@ -131,9 +132,9 @@ may run concurrently, and `bounded-write` tasks may run concurrently only
 across distinct persistent AGY Projects. AGY has not proven per-conversation
 worktree confinement for two concurrent bounded writes in one Project, so
 same-Project bounded-write tasks queue one at a time regardless of how
-disjoint their write ownership looks. The Claude-side controller has a
-`/dispatch-to-agy` skill that enforces this; a Codex-driven controller applies
-the same rule by hand.
+disjoint their write ownership looks. No skill enforces this any more — the
+Claude-side `/dispatch-to-agy` skill was deleted on 2026-09-02 — so every
+controller applies the rule by hand.
 
 The controller freezes the profile, task key, action, snapshot mode, and all
 input digests before dispatch. The snapshot mode is `create`, `reuse`, or
@@ -147,22 +148,25 @@ worktree. It does not run Git, tracker, publication, or cleanup actions.
 
 The controller owns the profile, task contract, oracle, injection, prompt,
 worktree creation, independent verification, semantic acceptance, Git, tracker
-changes, publication, and cleanup. Follow the repo-local
-`.agents/skills/agy-dispatch/SKILL.md` as the source of truth for the AGY model,
-Project, permission, snapshot, command, and write rules. Run every adapter verb
+changes, publication, and cleanup. The `agy-dispatch` skill that carried the
+AGY model, Project, permission, snapshot, command, and write rules was deleted
+on 2026-09-02 with its reference material; the adapter itself is what remains.
+Run every adapter verb
 from the repository root as
-`python3 scripts/agy_dispatch.py ...`. Do not use an installed, skill-local, or
+`python3 scripts/agy_dispatch.py ...`. Do not use an installed or
 legacy dispatcher copy.
 
-One thing that will otherwise waste your time: `aw` names the one script engine
-at `.claude/aw/scripts/`. Codex skills live at `.agents/skills/aw-*/`. Their
+One thing that will otherwise waste your time: `aw` names the Typer CLI at
+`apps/aw`, whose engine scripts live under `apps/aw/src/aw/scripts/`; it runs
+as `uv run --project apps/aw aw <group> ...` from the repository root and is
+not on `PATH`. Codex skills live at `.agents/skills/aw-*/`. Their
 byte-identical Claude Code mirrors live at `.claude/skills/aw-*/`. Release
 Milestones own epic grouping, development order, and version identity.
 `epic.py` is a read-compatible legacy facade and refuses issue-epic writes.
 The Rust application that used to carry the name
-is deleted and its binary is uninstalled, so an `aw` verb you reach for fails
-with "command not found" — correct, but it tells you nothing about what to
-reach for instead.
+is deleted and its binary is uninstalled, so a bare `aw` on `PATH` fails with
+"command not found" — reach for the `uv run --project apps/aw aw ...` form
+instead.
 
 Repo-wide `CONTRIBUTING.md` has been reconciled against that deletion, and the
 result is that several of its chapters now say plainly that a rule is policy

@@ -945,8 +945,9 @@ def agy_project_id(profile: dict) -> str:
 @contextmanager
 def project_concurrency_lock(profile: dict, task_key: str, operation: str):
     """Serialize a persistent AGY Project between at most one exclusive
-    bounded-write task and any number of concurrent measure-only tasks, per
-    dispatch-to-agy's scheduling contract. Nest this outside
+    bounded-write task and any number of concurrent measure-only tasks —
+    the scheduling contract the deleted dispatch-to-agy skill used to
+    enforce; this lock is its surviving mechanism. Nest this outside
     task_operation_lock at any call site that snapshots or launches AGY."""
     project = agy_project_id(profile)
     lock_path = TEMP_ROOT / project / "project.concurrency.lock"

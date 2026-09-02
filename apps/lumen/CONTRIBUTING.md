@@ -44,8 +44,8 @@ edit generated schema as a substitute for changing its source.
 
 Application behavior follows the repository phase ladder `wi → e2e → impl`.
 Write the failing black-box case in `apps/lumen/e2e/` before changing
-`apps/lumen/src/`. Use `/aw-e2e-for-wi` for the e2e phase and
-`/aw-impl-for-wi` for the impl phase when the work is tied to a work item.
+`apps/lumen/src/`. Use `/aw-e2e-for` for the e2e phase and
+`/aw-impl-for` for the impl phase when the work is tied to a work item.
 
 Keep Lumen-specific search, schema, shard, and health policy in `apps/lumen`.
 Put reusable Kubernetes mechanisms in `libs/service-k8s` after their shared
@@ -70,8 +70,8 @@ When README, STATUS, ROADMAP, protocol, generated-client, indexing, querying,
 GKE, client-integration, or migration documentation changes, update the adopted
 product-document set when its claims or links overlap. Keep current behavior
 separate from target behavior. Run the checker from `apps/lumen`, not from a
-nested supporting-doc directory. Then use `$project-readme-check` after the
-deterministic command passes.
+nested supporting-doc directory. (The `$project-readme-check` skill that
+followed it is deleted; the deterministic command is the whole check.)
 
 ## Verification
 
@@ -85,8 +85,7 @@ python3 scripts/meta/project_docs_contract.py check apps/lumen --format json
 
 The first two commands test the validators. The third checks the three core
 documents plus every adopted protocol, generated-client, indexing, querying,
-GKE, client-integration, and linked migration guide. After it passes,
-`$project-readme-check` runs one clean-context reader over those exact files. A
+GKE, client-integration, and linked migration guide. A
 docs-only change does not claim that product gates ran.
 
 ### Product behavior

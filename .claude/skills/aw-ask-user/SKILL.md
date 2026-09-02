@@ -15,7 +15,7 @@ Turn assumptions, silently selected routes, deferred choices, and unresolved
 1. Review the current conversation and the files already read in this session.
 2. Collect only decisions that can change scope, behavior, order, version, or
    acceptance. Treat the default minor Milestone bump returned by
-   `milestone.py next-version` as a readable policy, not a decision. A missing
+   `aw milestone next-version` as a readable policy, not a decision. A missing
    initial version and any major, patch, or exact version override are
    decisions. Do not ask for other facts that can be read safely.
 3. Group dependent questions together. Ask no more than three short questions

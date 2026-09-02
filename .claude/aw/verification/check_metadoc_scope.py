@@ -659,14 +659,14 @@ with tempfile.TemporaryDirectory() as raw:
     out = run(repo, "check", PROJECT).stdout
     line = next((l for l in out.splitlines() if l.startswith("next.command:")), "")
     check("a clean check prints => CLEAN", "=> CLEAN" in out, out)
-    # Matched on the closing quote rather than on the bare names, because
-    # `metadoc.py` contains neither `meta.py` nor `metadoc.py commit` as a
-    # substring -- the path is quoted and the verb sits outside the quote. An
-    # assertion written on the bare names passes or explodes for reasons that
-    # have nothing to do with the ordering it claims to measure.
-    check("the next command runs meta.py check before committing",
-          'meta.py" check' in line
-          and line.index('meta.py" check') < line.index('metadoc.py" commit'),
+    # Since the 2026-09-02 move the printed line chains two CLI commands, so
+    # the ordering is measured on the `aw <group> <verb>` tokens themselves.
+    # `metadoc.py` the source file contains "aw metadoc commit" only inside
+    # the f-string that builds this line, so a match here is a match on the
+    # rendered command, not on a stray docstring.
+    check("the next command runs meta check before committing",
+          "aw meta check" in line
+          and line.index("aw meta check") < line.index("aw metadoc commit"),
           line or out)
 
     # -- the qualified promise --------------------------------------------

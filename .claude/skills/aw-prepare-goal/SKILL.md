@@ -16,8 +16,8 @@ only when the human explicitly asks it to create or set the goal.
 ## How
 
 1. Resolve the input:
-   - a project routes to `aw-grill-me-to-meta` or
-   `aw-grill-meta-to-wis`;
+   - a project routes to `aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`,
+     or `aw-grill-milestone-to-issue`;
    - `#<iid>` routes by type: behavior to e2e then impl, maintenance to maint,
      and intake to intake handling;
    - `milestone:<number>` or `<project>@<version>` routes to its queue head;
@@ -25,7 +25,7 @@ only when the human explicitly asks it to create or set the goal.
 2. For a Milestone, run:
 
    ```bash
-   uv run --python 3.13 --no-project ".claude/aw/scripts/milestone.py" next <milestone-ref> --json
+   uv run --project apps/aw aw milestone next <milestone-ref> --json
    ```
 
    Emit one condition only for the returned queue head and route it by type.
@@ -37,11 +37,11 @@ only when the human explicitly asks it to create or set the goal.
    - the paths or behavior that must not change;
    - one stop clause for an unreachable result.
 4. Use the fixed gate for the selected flow:
-   - product documents: `metadoc.py check`;
-   - tracker alignment: `wis.py gap` plus `milestone.py reconcile`;
-   - behavior e2e: `e2e.py commit` with `E2E-Red:`;
-   - behavior implementation: `impl.py commit` with `Impl-Red:`;
-   - maintenance: `maint.py commit` with `Maint-Contract:`.
+   - product documents: `aw metadoc check`;
+   - tracker alignment: `aw wis gap` plus `aw milestone reconcile`;
+   - behavior e2e: `aw e2e commit` with `E2E-Red:`;
+   - behavior implementation: `aw impl commit` with `Impl-Red:`;
+   - maintenance: `aw maint commit` with `Maint-Contract:`.
 5. Present the conditions as an ordered queue. Say that only one condition is
    active at a time when the runtime has a single-goal limit.
 

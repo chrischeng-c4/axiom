@@ -28,18 +28,18 @@ release planning starts.
 7. Run from the repository root:
 
    ```bash
-   uv run --python 3.13 --no-project ".claude/aw/scripts/metadoc.py" check <project>
-   uv run --python 3.13 --no-project ".claude/aw/scripts/meta.py" check <project>
-   uv run --python 3.13 --no-project ".claude/aw/scripts/metadoc.py" commit <project> --why <path>
+   uv run --project apps/aw aw metadoc check <project>
+   uv run --project apps/aw aw meta check --path <project>
+   uv run --project apps/aw aw metadoc commit <project> --why <path>
    ```
 
 8. Report the document paths, the promise section, and each gate result.
 
 ## Acceptance
 
-- `metadoc.py check` prints a clean result for the four-path allowlist.
-- `meta.py check` reports no finding in the edited document set.
-- The commit is written by `metadoc.py commit` and carries its document
+- `aw metadoc check` prints a clean result for the four-path allowlist.
+- `aw meta check` reports no finding in the edited document set.
+- The commit is written by `aw metadoc commit` and carries its document
   trailers.
 - No tracker binding appears in the edited section.
 
@@ -49,4 +49,4 @@ release planning starts.
 - Never invent a STATUS ID, ROADMAP ID, gate, version, or product answer.
 - Never bind the section to an issue. Issue-based epics are retired.
 - Never bind the section to a Milestone in this skill. That belongs to
-  `aw-grill-meta-to-wis`.
+  `/aw-grill-meta-to-milestone`.

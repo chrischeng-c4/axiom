@@ -29,8 +29,7 @@ Treat mutation replay as unsafe after dispatch. Add a failure test whenever a
 change touches GOAWAY, retry, drain, deadline, or ambiguity accounting.
 
 When README, STATUS, or ROADMAP changes, treat them as one document set. Run
-the deterministic check first. Then use `$project-readme-check` for the
-clean-context reader.
+the deterministic check.
 
 ## Verification
 

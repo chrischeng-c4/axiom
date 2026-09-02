@@ -107,10 +107,8 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 
 ## Build & install
 
-- Debug build: `.claude/skills/mamba-build-debug/scripts/build.sh` (no version bump)
-- Release build (benchmark-grade, base-64 patch bump + tag): `.claude/skills/mamba-build-release/scripts/release.sh`
-- Both scripts install to `~/.cargo/bin/mamba` and codesign on macOS
-- Manual: `cargo build [--release] -p mamba --bin mamba`
+- Build: `cargo build [--release] -p mamba --bin mamba` (or via the `/aw-build` skill)
+- The old `mamba-build-{debug,release}` skill scripts (version bump, `~/.cargo/bin` install, macOS codesign) are deleted; install and codesign are manual steps now
 
 ## Issue tracking
 

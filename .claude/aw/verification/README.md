@@ -1,6 +1,6 @@
 # Verification
 
-Gates for the two seven-skill AW mirrors, the release Milestone contract, and
+Gates for the two ten-skill AW mirrors, the release Milestone contract, and
 the remaining work-item schemas.
 
 ```
@@ -47,7 +47,7 @@ the two readings gets updated.
 The shape under test:
 
 ```
-.claude/aw/
+apps/aw/src/aw/
   scripts/        milestone.py — release epic, version, ownership, and order
                   change.py — typed delivery facade; epic.py — legacy read facade
                   wi_types.py — closed type and flow registry
@@ -58,13 +58,15 @@ The shape under test:
                   meta.py    — read-only META-doc check (M1..M7), not on the ladder
                   metadoc.py — the allowlisted README/STATUS/ROADMAP/docs write + commit
                   wis.py     — read-only work-item/promise gap reader (G1..G7)
+.claude/aw/
   verification/   this directory
 .claude/skills/
-  aw-ask-user/            aw-e2e-for-wi/          aw-grill-me-to-meta/
-  aw-grill-meta-to-wis/   aw-impl-for-wi/         aw-maint-for-wi/
-  aw-prepare-goal/
+  aw-ask-user/                aw-build/                    aw-e2e-for/
+  aw-grill-me-to-meta/        aw-grill-meta-to-milestone/  aw-grill-milestone-to-issue/
+  aw-impl-for/                aw-prepare-goal/             aw-review/
+  aw-test-for/
 .agents/skills/
-  the same seven SKILL.md files, byte-identical for Codex
+  the same ten SKILL.md files, byte-identical for Codex
 ```
 
 This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why
@@ -82,7 +84,7 @@ namespace survived only because it was literally in each directory's name;
 since the rename it means the directory and frontmatter name are both
 `aw-<skill>`.
 
-The thirteen scripts cannot be split across the seven skill directories, and that
+The thirteen scripts cannot be split across the ten skill directories, and that
 is not a preference: `e2e.py` and `impl.py` each load `leg.py` by
 `Path(__file__).parent / "leg.py"`, and `leg.change_module()` loads `change.py`
 the same way. One directory is load-bearing.
@@ -110,10 +112,13 @@ no technical-design step: a design decision lives in the `//!` or `///` block
 of the module or type that owns it
 (`.claude/rules/authoring/source-carries-its-own-design.md`). The three grills
 that used to open and shape work items — `grill-me-to-epic`, `grill-me-to-change`
-and `grill-epic-to-changes` — are folded into the single `grill-meta-to-wis`,
-which runs `wis.py gap <project>` for the seven `G1..G7` rows of what a
-project's META-docs promise and its work-item set disagree about, then closes
-the gap through `milestone.py create|update` and `change.py create|update`.
+and `grill-epic-to-changes` — folded first into a single `grill-meta-to-wis`,
+which split again on 2026-09-02 into `grill-meta-to-milestone` (the
+promise↔Milestone structure) and `grill-milestone-to-issue` (one Milestone's
+typed issue set and order). Both run `wis.py gap <project>` for the seven
+`G1..G7` rows of what a project's META-docs promise and its work-item set
+disagree about, then close their half of the gap through
+`milestone.py create|update` and `change.py create|update`.
 `check-meta` folded into `grill-me-to-meta`'s three-step landing sequence
 instead of surviving as its own skill.
 
@@ -129,7 +134,7 @@ directory for a file none of them owns.
 |---|---|
 | `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
-| `check_plugin.py` | a missing or drifted seven-skill mirror, missing script, legacy issue-epic writer, or incomplete type and Milestone contract |
+| `check_plugin.py` | a missing or drifted ten-skill mirror, missing script, legacy issue-epic writer, or incomplete type and Milestone contract |
 | `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that skips Plan mode |
 | `check_milestone.py` | a malformed SemVer-core title, wrong next-version bump, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
 | `check_type_registry.py` | a missing, duplicate, unknown, intake, or legacy executable type; wrong flow; unsafe retype; or lifecycle close without matching commit evidence |
@@ -341,7 +346,7 @@ proves that the same receipt resumes to `COMPLETE`.
 
 The cutover order is fixed:
 
-1. Prepare the scripts, seven mirrored skills, versioned manifest, and green
+1. Prepare the scripts, ten mirrored skills, versioned manifest, and green
    full verification suite in one reviewed change. Do not publish it yet.
 2. Create every missing canonical GitHub label, then verify that all seven
    delivery labels and both intake labels exist.
@@ -351,7 +356,7 @@ The cutover order is fixed:
 5. Run one apply with a durable receipt path:
 
    ```text
-   uv run --python 3.13 --no-project ".claude/aw/scripts/type_migration.py" --repo chrischeng-c4/axiom --manifest .claude/aw/migrations/open-legacy-types-2026-08-31.json --apply --receipt <durable-receipt.json>
+   uv run --python 3.13 --no-project "apps/aw/src/aw/scripts/type_migration.py" --repo chrischeng-c4/axiom --manifest .claude/aw/migrations/open-legacy-types-2026-08-31.json --apply --receipt <durable-receipt.json>
    ```
 
 6. If it stops, keep the pause and run only
@@ -498,9 +503,9 @@ silently.
 
 ## Who opens a delivery issue
 
-`aw-grill-meta-to-wis` settles the complete issue set, each issue type, and the
-global order with the human in Plan mode. It then uses `milestone.py` and
-`change.py`; no SKILL.md may name a direct
+`aw-grill-milestone-to-issue` settles the complete issue set, each issue type,
+and the global order with the human in Plan mode. It then uses `milestone.py`
+and `change.py`; no SKILL.md may name a direct
 `gh issue|pr create|edit|close|comment|delete|reopen` command. The positive
 control for that detector is the former hand-written `gh issue create` block,
 so the assertion stays pinned to a defect that actually existed.

@@ -71,18 +71,16 @@ AW_DIR = REPO / ".claude/aw"
 SKILLS_DIR = REPO / ".claude/skills"
 
 # The skill directory names are the invocation names -- Claude Code composes the
-# command from the directory and ignores the frontmatter `name:` for that
-# purpose, measured with a probe whose two names disagreed. So each directory is
-# literally `aw-<skill>` and is invoked as `/aw-<skill>`, while the frontmatter
-# `name:` carries the label `aw:<skill>` that the skill list displays. Two
-# prefixes, one namespace: the dash form is what a human types, the colon form
-# is what they read. Naming the seven here rather than globbing keeps a stray
-# directory from silently joining the population under test.
+# command from the directory -- and the frontmatter `name:` is held equal to
+# the directory name by check_plugin.py, so `aw-<skill>/` is invoked as
+# `/aw-<skill>` and listed as `aw-<skill>`. One prefix, one namespace. Naming
+# the ten here rather than globbing keeps a stray directory from silently
+# joining the population under test.
 NAMESPACE = "aw"
-SKILL_PREFIX = f"{NAMESPACE}-"      # directory and invocation: aw-<skill>/ -> /aw-<skill>
-DISPLAY_PREFIX = f"{NAMESPACE}:"    # frontmatter name: the listed label aw:<skill>
-SKILLS = ("ask-user", "e2e-for-wi", "grill-me-to-meta", "grill-meta-to-wis",
-          "impl-for-wi", "maint-for-wi", "prepare-goal")
+SKILL_PREFIX = f"{NAMESPACE}-"      # directory, invocation, and frontmatter name: aw-<skill>
+SKILLS = ("ask-user", "build", "e2e-for", "grill-me-to-meta",
+          "grill-meta-to-milestone", "grill-milestone-to-issue", "impl-for",
+          "prepare-goal", "review", "test-for")
 
 
 def skill_dir(skill: str) -> pathlib.Path:
@@ -94,11 +92,6 @@ def skill_invocation(skill: str) -> str:
     """What a human types to run one skill: the directory name behind a slash."""
     return f"/{SKILL_PREFIX}{skill}"
 
-
-def skill_label(skill: str) -> str:
-    """What the skill list shows for one skill: its frontmatter `name:`."""
-    return f"{DISPLAY_PREFIX}{skill}"
-
 # The `ec -> td -> cb` ladder is gone from this plugin: three scripts, three
 # gates, and the twelve `wi-{ec,td,cb}-*` wrappers, deleted rather than
 # archived. An archive of instructions for scripts that no longer exist is not
@@ -107,14 +100,18 @@ def skill_label(skill: str) -> str:
 #
 # What replaced them is `e2e -> impl`, driven by each verb's printed
 # `next.command` rather than by a skill per step. Two skills front that
-# ladder now, one per PHASE rather than one per work-item type: `e2e-for-wi`
-# runs the e2e phase's four verbs, and `impl-for-wi` runs impl's five. Each
-# handles both work-item types itself -- a change runs the verbs on that one
-# iid, an epic asks `epic.py order --open-only` for the children's sequence
-# and runs the same verbs on each child in turn. The semantic review that
-# used to sit between the phases -- two skills that routed the contract and
-# then the code to a second model for a verdict -- left the ladder on
-# 2026-08-26, and the `review-prompt` and `verdict` verbs went with it.
+# ladder now, one per PHASE rather than one per work-item type: `e2e-for`
+# runs the e2e phase's four verbs on each Milestone's queue head, and
+# `impl-for` runs impl's five for a behavior head or maint's verbs for a
+# maintenance head, closing each issue to advance the queue. Both take one
+# scope reference -- an issue, a Milestone, or a project's open Milestones.
+# The standalone `maint-for-wi` skill folded into `impl-for` on 2026-09-02.
+# The semantic review that used to sit between the phases -- two skills that
+# routed the contract and then the code to a second model for a verdict --
+# left the ladder on 2026-08-26, and the `review-prompt` and `verdict` verbs
+# went with it. The read-only closers arrived on 2026-09-02: `test-for`
+# verifies a scope's lifecycle evidence and reruns the full project gates,
+# `review` audits one project, and `build` wraps cargo for one project.
 #
 # The technical-design step is gone the same way. `grill-change-to-td` and
 # `grill-epic-to-td` wrote `docs/technical/<subsystem>.md` sections and ADRs
@@ -131,14 +128,14 @@ def skill_label(skill: str) -> str:
 # four (`README.md`, `STATUS.md`, `ROADMAP.md`, `docs/**`); see the comment
 # above `METADOC_SCRIPT` below for what enforces that.
 #
-# `grill-me-to-epic`, `grill-me-to-change` and `grill-epic-to-changes` are one
-# skill now: `grill-meta-to-wis` runs `wis.py gap <project>` for the seven
-# G1..G7 rows of what a project's `docs/product/` promises and its work-item
-# set disagree about, then reorganises the work-item set through
-# `epic.py create|update` and `change.py create|update` to close the gap. It
-# also keeps the epic-binding step the deleted `grill-me-to-epic` used to
-# own: the `## <title>` heading gains ` (#<iid>)` and the `Tracking:` line
-# gains the link, in the same run that opens the epic.
+# `grill-me-to-epic`, `grill-me-to-change` and `grill-epic-to-changes`
+# became one skill (`grill-meta-to-wis`), which split again on 2026-09-02
+# into two: `grill-meta-to-milestone` owns the promise<->Milestone structure
+# (version choice, draft Milestone, heading binding -- `wis.py gap` rows G1
+# and G3-G5), and `grill-milestone-to-issue` owns the issue set behind one
+# Milestone (typed issues, the Development Order list, reconcile -- rows G2,
+# G6, G7). Both run `wis.py gap <project>` and write only through
+# `milestone.py` / `change.py`.
 
 # Two kinds of skill, and the difference decides which rules can apply.
 #
@@ -155,20 +152,24 @@ def skill_label(skill: str) -> str:
 # The two lists are asserted exhaustive and disjoint over SKILLS, so a new skill
 # cannot join without someone deciding which kind it is.
 #
-# `e2e-for-wi`, `impl-for-wi`, and `maint-for-wi` are procedural despite the phases they drive
+# `e2e-for` and `impl-for` are procedural despite the phases they drive
 # being model work rather than command work. The line is not "does a model
 # write something", it is whether the skill has anything left to ask. By the
 # time either phase starts, the work item has already said what the change
 # is; what remains is a fixed sequence of verbs and the exit codes they
 # return, and the only question a gate could raise is whether it counts.
+# `test-for`, `review`, and `build` are procedural for the plainer reason:
+# each runs declared commands read-only (or one cargo build) and reports
+# exit codes, with nothing underspecified to resolve.
 #
 # `grill-me-to-meta` is interviewing for the reason `grill-me-to-prd` was: it
 # runs before any work item exists, so everything it writes -- across all
 # four paths in its allowlist now, not the single `docs/product/` path it
 # used to be -- is in the human's head, including how to resolve whatever
 # `meta.py check` surfaces in the landing sequence's second step.
-# `grill-meta-to-wis` is interviewing for a parallel reason: `wis.py gap`
-# prints what is missing, not what to do about it -- only the human can say
+# `grill-meta-to-milestone` and `grill-milestone-to-issue` are interviewing
+# for a parallel reason: `wis.py gap` prints what is missing, not what to do
+# about it -- only the human can say which version a release takes, or
 # whether a gap closes by opening a change, merging two issues, or closing
 # one as no longer wanted. `ask-user` is interviewing by definition: asking
 # is the whole of what it does, and a body without AskUserQuestion would be a
@@ -181,13 +182,14 @@ def skill_label(skill: str) -> str:
 # human's head. Classifying it procedural would forbid the very tool that route
 # is made of, and would leave the no-iid case answered by whatever the agent
 # guessed the human meant.
-INTERVIEWING = ("ask-user", "grill-me-to-meta", "grill-meta-to-wis",
-                "prepare-goal")
-PROCEDURAL = ("e2e-for-wi", "impl-for-wi", "maint-for-wi")
+INTERVIEWING = ("ask-user", "grill-me-to-meta", "grill-meta-to-milestone",
+                "grill-milestone-to-issue", "prepare-goal")
+PROCEDURAL = ("build", "e2e-for", "impl-for", "review", "test-for")
 
 # The nine scripts sit in one directory, not inside a skill. They were under
-# `wi-epic-grill/scripts/` (then `grill-me-to-epic`, now folded into
-# `grill-meta-to-wis`) while it was the only skill running them, which made
+# `wi-epic-grill/scripts/` (then `grill-me-to-epic`, folded into
+# `grill-meta-to-wis`, since split in two) while it was the only skill
+# running them, which made
 # the epic grill look like their owner; reconcile already reached across into
 # it, and the change grill would have been a second skill reaching into a third
 # one's directory. A shared dependency belongs beside the skills, not inside
@@ -199,7 +201,14 @@ PROCEDURAL = ("e2e-for-wi", "impl-for-wi", "maint-for-wi")
 # and `leg.change_module()` loads `change.py` the same way. One directory is a
 # load-bearing requirement,
 # not a tidiness preference.
-SCRIPTS = AW_DIR / "scripts"
+#
+# That directory moved on 2026-09-02 from `.claude/aw/scripts/` into the
+# `apps/aw` uv project, where each script is also a typer subcommand group of
+# the `aw` entry point (`uv run --project apps/aw aw <group> ...`). The
+# `__file__`-relative loading above moved with them unchanged, and every
+# script still runs standalone by path -- which is how the gates here spawn
+# them.
+SCRIPTS = REPO / "apps/aw/src/aw/scripts"
 SCRIPT = SCRIPTS / "epic.py"
 CHANGE_SCRIPT = SCRIPTS / "change.py"
 LEG_SCRIPT = SCRIPTS / "leg.py"
@@ -253,9 +262,10 @@ META_SCRIPT = SCRIPTS / "meta.py"
 METADOC_SCRIPT = SCRIPTS / "metadoc.py"
 
 # The read-only work-item/promise gap reader, and also not on the ladder: it
-# owns no work item and writes nothing. `grill-meta-to-wis` runs its one verb,
-# `gap <project>`, for the seven G1..G7 rows before reorganising the work-item
-# set through `epic.py` / `change.py` -- every write the skill makes goes
+# owns no work item and writes nothing. `grill-meta-to-milestone` and
+# `grill-milestone-to-issue` each run its one verb, `gap <project>`, for the
+# seven G1..G7 rows before reorganising their half of the work-item set
+# through `milestone.py` / `change.py` -- every write those skills make goes
 # through those two, never through this one.
 WIS_SCRIPT = SCRIPTS / "wis.py"
 
@@ -314,6 +324,13 @@ def load_script_module(path, name):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+# The one spelling of the CLI a printed `next.command:` or a SKILL.md launcher
+# line starts with, read from the engine's own registry rather than restated --
+# a gate asserting a copy of this string would go on passing after the engine
+# changed its spelling.
+AW_CLI = load_script_module(WI_TYPES_SCRIPT, "_paths_wi_types").AW_CLI
 
 
 def load_epic_module():

@@ -16,12 +16,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _paths import pinned_interpreter  # noqa: E402
+from _paths import AW_CLI, SCRIPTS, pinned_interpreter  # noqa: E402
 
 
 Path = pathlib.Path
 HERE = Path(__file__).resolve().parent
-MAINT = HERE.parent / "scripts" / "maint.py"
+MAINT = SCRIPTS / "maint.py"
 PYTHON = pinned_interpreter()
 GIT = ("git", "-c", "core.fsmonitor=false")
 WI = 41
@@ -212,8 +212,8 @@ def positive_refactor(tmp: Path) -> None:
         "landed commit preserves evidence and prints complete follow-ups",
         landed.returncode == 0
         and all(token in message for token in required)
-        and "next.command: change.py lifecycle" in landed.stdout
-        and "after.lifecycle.command: change.py close" in landed.stdout,
+        and f"next.command: {AW_CLI} change lifecycle" in landed.stdout
+        and f"after.lifecycle.command: {AW_CLI} change close" in landed.stdout,
         landed.stdout + landed.stderr + message,
     )
     check(

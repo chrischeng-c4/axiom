@@ -1322,8 +1322,8 @@ def main() -> int:
             `T5`, which runs the same case against `HEAD`, can tell "this made
             it pass" from "it was already passing".
 
-            This is also the row the epic batch order runs into. `e2e-for-wi`
-            over an epic lands every child's cases before any child's `impl`
+            This is also the row the Milestone batch order runs into. `e2e-for`
+            over a Milestone lands every child's cases before any child's `impl`
             phase starts, so a sibling that goes first can leave this child's
             cases already green. `T5` refuses that, and its message says so --
             which makes it a report about the child's cases not

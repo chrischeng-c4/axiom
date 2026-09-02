@@ -12,13 +12,15 @@ it. Epics are carved from these sections, not the other way round.
 - A shipped promise names the [STATUS](../../STATUS.md) rows that measure it.
   A future promise names the [ROADMAP](../../ROADMAP.md) outcome that owns it
   and ends with `Tracking: not assigned` until its epic exists.
-- A future section is written before its epic. When the epic is opened with
-  `/aw-grill-meta-to-wis`, the epic title is the section title and the section
-  heading gains ` (#<iid>)`. The epic's `## Requirements` are carved from the
-  section's Promise, so nothing is promised here that an epic cannot measure.
+- A future section is written before its release Milestone. When the
+  Milestone is opened with `/aw-grill-meta-to-milestone`, the Milestone title
+  carries the version and the section heading gains ` (Milestone #<number>)`.
+  Its issue set is carved from the section's Promise by
+  `/aw-grill-milestone-to-issue`, so nothing is promised here that the
+  tracker cannot measure.
 - Every section carries the five parts `/aw-grill-me-to-meta` interviews
   for — Problem, Who, Promise, Non-goals, Neighbours — plus `Open:` lines for
-  decisions `/aw-grill-meta-to-wis` still has to settle. An `Open:` line is a
+  decisions the downstream grills still have to settle. An `Open:` line is a
   question, not a default; the epic body answers it or the human does.
 - A new capability area is a change to this index first and to the README
   `### Capability index` when the area ships.

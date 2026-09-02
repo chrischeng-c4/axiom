@@ -10,7 +10,9 @@ import tempfile
 from pathlib import Path
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _paths import SCRIPTS  # noqa: E402
+
 VERSIONED_MANIFEST = (
     Path(__file__).resolve().parents[1]
     / "migrations"

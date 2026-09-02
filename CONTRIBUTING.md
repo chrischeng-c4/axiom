@@ -275,9 +275,9 @@ anti-boilerplate check rejected only seven literals (`(fill)`,
 `(replace-this)`, `tbd`, `todo`, `maybe`, `unclear`, `uncertain`). A title echo
 was accepted by construction.
 
-That generator is deleted with the crate that held it. `.claude/aw/scripts/change.py
-skeleton` emits the empty GHAN template in its place and `change.py validate`
-is what refuses a body now. The numbers above still describe the tracker,
+That generator is deleted with the crate that held it. `aw change skeleton`
+(`uv run --project apps/aw aw ...`) emits the empty GHAN template in its
+place and `aw change validate` is what refuses a body now. The numbers above still describe the tracker,
 though — those bodies were written under the old generator and nothing has
 rewritten them.
 
@@ -299,13 +299,13 @@ maintenance phase has landed, and what it was measured against — is the
   commit to parse a trailer back out of — it is the ladder's last phase, and
   there is no earlier `impl` commit — so the evidence moves to a mid-phase
   record instead: `red` writes it to `.aw/impl-red/<iid>.json`, and
-  `.claude/aw/scripts/impl.py:581-645` (`C2`) reads that record back and
+  `apps/aw/src/aw/scripts/impl.py:581-645` (`C2`) reads that record back and
   refuses a run with no record on file, a record naming no failing test, a HEAD
   that has moved since the record was measured, or a test file whose bytes have
   changed since then.
 - *reviewed against which bytes?* → `E2E-Change-Digest:`, which carries
   `leg.change_digest` — one sha256 over the work-item body **and** every path
-  under review (`.claude/aw/scripts/leg.py:331`).
+  under review (`apps/aw/src/aw/scripts/leg.py:331`).
 - *which maintenance evidence?* → `Maint-Contract:` and
   `Maint-Change-Digest:` name the maintenance contract and its measured bytes.
 
@@ -336,12 +336,12 @@ Each is specified as *required content · machine consumer · refusal conditions
 Not "improve X", not "support Y", not "make Z better". If there is no value to
 name on either side, the work is not yet bounded.
 
-**Consumer.** `change.py validate` (`.claude/aw/scripts/change.py:289-294`).
+**Consumer.** `aw change validate` (`apps/aw/src/aw/scripts/change.py:289-294`).
 
 **Refused when** the section still carries the skeleton placeholder, is written
 as a list, or runs to more than one paragraph. That is the whole of what a
 script can see. The rest of the shape — an observation point, a current value,
-a target value, and exactly one of each — is what `/aw-grill-meta-to-wis`
+a target value, and exactly one of each — is what `/aw-grill-milestone-to-issue`
 interviews for; nothing measures it, so a one-paragraph sentence naming nothing
 passes `validate` and is still an unbounded goal.
 
@@ -1670,8 +1670,9 @@ contract. A capability can name several sources, and a source can support
 several capabilities. The source list is not an ownership class.
 
 The deterministic validator is
-`scripts/meta/readme_contract.py`. The matching Claude and Codex skill is
-`project-readme-check`; it adds a clean-context reader after the script passes.
+`scripts/meta/readme_contract.py`. The `project-readme-check` skill that added
+a clean-context reader after it was deleted on 2026-09-02; the script is now
+the whole check, and a semantic read is a review step a human asks for.
 The script checks format, links, source paths, and resolvable gate names. It
 does not execute the gates or decide whether their behavior proves the promise.
 
@@ -1768,9 +1769,10 @@ linked from the README remain outside the adopted product-document set.
 The full-set validator is `scripts/meta/project_docs_contract.py`. It applies
 the README validator, checks both companion formats, resolves gates and
 anchors, validates adopted supporting guides, and rejects deterministic
-cross-document conflicts. The same `project-readme-check` skill then gives only
-the exact adopted files to one clean-context reader. That reader checks meaning
-and contradictions that a script cannot decide.
+cross-document conflicts. The clean-context read that used to follow it (the
+deleted `project-readme-check` skill) is now a review step a human asks for:
+give only the exact adopted files to one context-free reader when meaning or
+contradictions — what a script cannot decide — need checking.
 
 `apps/<name>/CONTRIBUTING.md` / `projects/<name>/CONTRIBUTING.md` is the local
 operating guide. It does not restate root authoring rules and does not carry
@@ -1841,10 +1843,12 @@ summary drift from it", not "run a projector".
 
 ## Project build and release contract
 
-Every project build skill and project `build.sh` must use the same two-mode
-contract. The agent-facing entry points are `<project>:build:debug` and
-`<project>:build:release`; the generic dispatcher is `aw:build:{debug,release}`
-using the project entry in `aw.toml`.
+Every project `build.sh` must use the same two-mode contract. The per-project
+`<project>-build-{debug,release}` skill wrappers are deleted (2026-09-02;
+only `/lumen-build-release` survives, and it is Lumen's own candidate-receipt
+release workflow, not this contract). A plain compile goes through `/aw-build`
+or `cargo build -p <crate>` directly; the versioned debug/release modes below
+run the project's own `apps/<name>/build.sh` from the repository root.
 
 ### Debug builds
 
@@ -1867,8 +1871,8 @@ Debug builds are local install checkpoints:
 Release builds are not complete until the GitHub Release is visible. The
 required chain is:
 
-1. **release-prep**: run the project `build.sh release` through the relevant
-   skill wrapper. The script checks local and remote tag collisions for
+1. **release-prep**: run the project `build.sh release` from the repository
+   root. The script checks local and remote tag collisions for
    `<project>@<version>`, advances the version with the same base-64 carry rule
    when needed, runs the Cargo release build, installs the local release binary,
    commits version files as `release(<project>): <project>@X.Y.Z`, and prints

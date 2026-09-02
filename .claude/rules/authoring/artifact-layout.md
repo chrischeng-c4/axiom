@@ -15,8 +15,8 @@ Make paths and filenames a reliable table of contents so agents can locate one c
 
 - Inspect the changed directory listing and confirm each path identifies its role without opening the file.
 - Under `.claude/skills/aw-*/`, run `.claude/aw/verification/check_plugin.py`: it
-  asserts the skill directories on disk are exactly the eleven `_paths.SKILLS`
-  names, so a twelfth directory that nobody registered fails rather than loading
+  asserts the `aw-*` skill directories on disk are exactly the ten `_paths.SKILLS`
+  names, so an eleventh directory that nobody registered fails rather than loading
   unnoticed. Outside that tree there is no such check and the listing is the
   whole of it. Note the caller problem: nothing in this repository runs
   `.claude/aw/verification/run_all.py`, so this is a check a human runs.
