@@ -18,3 +18,4 @@ outcome and remains unbound until its release work is ready.
 | Unified search contract | querying-and-facets.md |
 | Exact search facets metrics | querying-and-facets.md |
 | Facet resource governance | querying-and-facets.md |
+| Distributed facet convergence | querying-and-facets.md |

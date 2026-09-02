@@ -40,6 +40,16 @@
 - Open: Define budgets and refusal classes.
 - Neighbours: Exact facets and runtime configuration.
 
+## Distributed facet convergence
+
+- Problem: Shards must merge exact facet state safely.
+- Who: Distributed-search callers.
+- Promise: Routed search merges declared exact facet state across shards.
+- Outcome: `distributed-facet-convergence`. Tracking: Not assigned.
+- Non-goals: Best-effort partial answers.
+- Open: Define shard-failure and cleanup behavior.
+- Neighbours: Distributed routing and merge.
+
 ## Non-goals in this area
 
 Lumen does not execute embedding models or become an OLAP engine.
