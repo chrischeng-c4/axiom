@@ -20,12 +20,12 @@
 - Open: Define one contract across every selected persistent backend.
 - Neighbours: Idempotency and recovery consume this acknowledgement.
 
-## Idempotent write replay
+## Idempotent write replay (Milestone #10)
 
 - Problem: A retry can otherwise apply a write twice.
 - Who: HTTP and generated-client writers.
 - Promise: A durable payload-bound key replays the first result safely.
-- Outcome: `idempotent-write-replay`. Tracking: Not assigned.
+- Outcome: `idempotent-write-replay`. Tracking: [Milestone #10](https://github.com/chrischeng-c4/axiom/milestone/10).
 - Non-goals: Unbounded key retention.
 - Open: Define retention and conflict reporting.
 - Neighbours: Durable writes and generated-client resilience.

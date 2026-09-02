@@ -39,7 +39,7 @@ destination without copying tracker state.
   prove default and caller-supplied keys, exact response replay, `409` for a
   different payload, restart and multi-process retention, expiry after the
   stated window, redaction, and no second mutation under concurrent retry.
-- Tracking: [#3805](https://github.com/chrischeng-c4/axiom/issues/3805) (`lumen@0.4.43`).
+- Tracking: [Milestone #10](https://github.com/chrischeng-c4/axiom/milestone/10).
 
 ### Item-atomic batch writes
 
