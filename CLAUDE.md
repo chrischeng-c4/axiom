@@ -68,8 +68,8 @@ rule refuses a doc whose `aw` invocation names anything else.
 ## Skills
 
 Ten entry points: the `aw-*` skills below. Each is invoked by a human.
-(`/git-commit`, `/git-rebase`, `/git-push`, `/git-land`,
-`/lumen-build-release` and `/ui-ux-pro-max`
+(`/git-commit`, `/git-rebase`, `/git-push`, `/git-land`, `/gh-create-pr`,
+`/gh-merge-pr`, `/lumen-build-release` and `/ui-ux-pro-max`
 exist beside them as standalone utilities outside the AW system;
 `/project-readme-check` was deleted on 2026-09-02 — its deterministic
 validators under `scripts/meta/` remain and run directly.) `grill-me-to-meta`
