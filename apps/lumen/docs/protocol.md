@@ -16,7 +16,7 @@ keep current behavior separate from the Search v2 target.
 |---|---|---|
 | HTTP methods, paths, operation IDs, declared request and response schemas, status codes, media types, and security | [`lumen spec` OpenAPI](../clients/openapi.json) | Run `lumen spec` or request `GET /openapi.json`. |
 | QUERY and POST twins, read-consistency header, and routed response behavior | This protocol guide and current OpenAPI | Run `lumen spec`, then use `lumen llm --topic local-search` or `select-query`. |
-| Current and target schema, write, durability, rebuild, and activation meaning | [Indexing guide](indexing.md) | Read the current and 0.5 subsections separately. |
+| Current and target schema, write, durability, rebuild, and activation meaning | [Indexing guide](indexing.md) | Read the current and Search v2 subsections separately. |
 | Source ownership, current query navigation, and target query, result, facet, metric, and limit meaning | [Querying guide](querying.md) | Run `lumen llm --topic querying --format json`. |
 | Source-database adapter boundary | [Architecture](../ARCHITECTURE.md#source-data-flow) | Run `lumen llm --topic integrate-source-db`. |
 | Current wire contract to Search v2 activation | [Search v2 migration](migration-search-v2.md) | Follow the compatibility table before changing a caller. |
@@ -90,7 +90,7 @@ important protocol and generated-client boundaries are:
   rule.
 - Generated-client token rotation is a separate authentication outcome. It is
   not part of protocol parity and is not implemented.
-- The 0.5 scoring/filter split, strict result contract, facets, metrics, and
+- The Search v2 scoring/filter split, strict result contract, facets, metrics, and
   capability activation are documented targets. They are not current OpenAPI
   operations or schemas.
 

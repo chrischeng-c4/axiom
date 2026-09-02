@@ -3029,7 +3029,7 @@ async fn scale_preflight_fixture(client: &reqwest::Client, base: &str, documents
         .collect();
     // Current 0.4 constant-score filters use posting/internal-docid order. This
     // fixture indexes d0..dN sequentially, so document ordinal is the stable
-    // hard oracle. External-id ordering is a separate 0.5 target contract.
+    // hard oracle. External-id ordering is a separate Search v2 target contract.
     assert_eq!(
         scale_response_ids(&range, "range"),
         expected_range,

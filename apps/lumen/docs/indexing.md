@@ -77,7 +77,7 @@ orthogonal multi-value contract below.
 
 ### Search v2 target schema
 
-The 0.5 schema separates storage type from multi-value and facet behavior.
+The Search v2 schema separates storage type from multi-value and facet behavior.
 
 | Type | Contract |
 |---|---|
@@ -86,8 +86,8 @@ The 0.5 schema separates storage type from multi-value and facet behavior.
 | `int64` | A signed 64-bit integer. |
 | `float64` | An IEEE 754 binary floating-point value. |
 | `decimal(p,s)` | An exact decimal with declared precision and scale. |
-| `timestamp` | One timestamp value with the 0.5 canonical wire form. |
-| `date` | One calendar date with the 0.5 canonical wire form. |
+| `timestamp` | One timestamp value with the Search v2 canonical wire form. |
+| `date` | One calendar date with the Search v2 canonical wire form. |
 | `boolean` | One true or false value. |
 | `vector` | A fixed-length vector with a declared metric and backend. |
 | `hash` | A caller-computed hash used by Hamming search. |
@@ -153,7 +153,7 @@ replacement can carry a document external version. These mechanisms provide
 partial last-write-wins protection against older arrivals. They do not yet
 provide one collection-wide ownership and versioning contract.
 
-The current batch behavior is not the 0.5 item-atomic partial-success
+The current batch behavior is not the Search v2 item-atomic partial-success
 contract. A caller must not infer a stable per-item commit and error model from
 the current batch response.
 
@@ -247,7 +247,7 @@ directly into the active collection. The current runtime has no shadow
 generation, seal step, atomic activation, or generation rollback.
 
 A current rebuild can therefore affect the active index while the stream is
-still running. The endpoint does not provide the 0.5 dual-write and activation
+still running. The endpoint does not provide the Search v2 dual-write and activation
 contract.
 
 ### Search v2 target rebuild
@@ -285,7 +285,7 @@ of these shadow-generation behaviors are implemented today.
 - Write acknowledgement is not uniform across in-memory and persistent modes.
 - Stream reindex writes to the active collection. There is no shadow
   generation, seal, activation, or rollback.
-- The strict 0.5 schema types and orthogonal `multi` and `facetable` options are
+- The strict Search v2 schema types and orthogonal `multi` and `facetable` options are
   not supported.
 
 The [support matrix](../STATUS.md#support-matrix) is authoritative for these

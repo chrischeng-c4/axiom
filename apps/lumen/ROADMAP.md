@@ -179,7 +179,7 @@ destination without copying tracker state.
   cancellation, resource cleanup, and no partial response.
 - Tracking: [Milestone #21](https://github.com/chrischeng-c4/axiom/milestone/21).
 
-### Generated-client search v2 parity
+### Generated-client Search v2 parity
 
 - ID: `generated-client-search-v2-parity`
 - Outcome: Generated TypeScript, Python, and Rust clients expose the complete

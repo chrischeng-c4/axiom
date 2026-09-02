@@ -1601,10 +1601,10 @@ fn dx_querying_topic_separates_current_and_target_contracts() {
     let markdown = dx::render_llm("querying", cli_std::llm::Format::Md).unwrap();
     for needle in [
         "current query API",
-        "0.5 target",
+        "Search v2 target",
         "facets, metrics, strict result controls, and capability activation are not current",
         "caller owns CDC, freshness, and source-record hydration",
-        "Do not send 0.5 request fields",
+        "Do not send Search v2 request fields",
     ] {
         assert!(
             markdown.contains(needle),

@@ -39,8 +39,8 @@ A normal integration has four steps:
 3. Search and receive `external_id` values.
 4. Bulk-load the full records by ID and restore Lumen's result order.
 
-The request and response examples below use the current 0.4 contract. The 0.5
-target is documented separately and is not implemented.
+The request and response examples below use the current 0.4 contract. The
+Search v2 target is documented separately and is not implemented.
 
 ### 1. Declare a collection
 
@@ -240,8 +240,8 @@ contract. Each source below states its direct contribution.
 - Sources:
   - [`apps/lumen`](./) defines field behavior, analyzers, mutation rules,
     segment formats, and the derived-index lifecycle. The
-    [indexing guide](docs/indexing.md) separates current behavior from the 0.5
-    schema, write, durability, and rebuild target.
+    [indexing guide](docs/indexing.md) separates current behavior from the
+    Search v2 schema, write, durability, and rebuild target.
   - [`libs/storage-durable`](../../libs/storage-durable/README.md) provides
     durable files, atomic replacement, fsync, and framed logs.
   - [`libs/raft-core`](../../libs/raft-core/README.md) orders replicated writes.
@@ -259,8 +259,8 @@ contract. Each source below states its direct contribution.
 - Sources:
   - [`apps/lumen`](./) defines query validation, planning, scoring, filtering,
     grouping, sorting, pagination, and read-consistency behavior. The
-    [querying guide](docs/querying.md) owns source hydration and the 0.5 query,
-    result, facet, metric, and limit target.
+    [querying guide](docs/querying.md) owns source hydration and the Search v2
+    query, result, facet, metric, and limit target.
 - Gate: `cargo test -p lumen --test api_e2e --test coverage_gaps_e2e --test prefix_query`
 - Gate: `cargo test -p lumen --test vector_e2e --test hash_hamming --test hybrid_rrf --test collapse_nested`
 

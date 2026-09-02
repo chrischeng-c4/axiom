@@ -51,9 +51,9 @@ hydration helpers. The caller still owns source access and freshness.
 | Current HTTP methods and wire schemas | [`lumen spec` OpenAPI](../clients/openapi.json) | Run `lumen spec` or request `GET /openapi.json`. |
 | Source ownership, selection, and hydration | [Data ownership](#data-ownership) | Use this flow when integrating a source database. |
 | Current query nodes and controls | Current OpenAPI and `lumen spec --shapes` | Run `lumen spec --shapes` for current request examples. |
-| 0.5 query, scoring, and filter semantics | [Search model](#search-model) | Run `lumen llm --topic querying --format json` for current-versus-target navigation. |
-| 0.5 ordering, pagination, totals, and collapse | [Result controls](#result-controls) | Use the versioned result contract before changing a caller. |
-| 0.5 facets, metrics, precision, and wire names | [Facets and metrics](#facets-and-metrics) | Treat these definitions as target behavior until STATUS changes. |
+| Search v2 query, scoring, and filter semantics | [Search model](#search-model) | Run `lumen llm --topic querying --format json` for current-versus-target navigation. |
+| Search v2 ordering, pagination, totals, and collapse | [Result controls](#result-controls) | Use the versioned result contract before changing a caller. |
+| Search v2 facets, metrics, precision, and wire names | [Facets and metrics](#facets-and-metrics) | Treat these definitions as target behavior until STATUS changes. |
 | Search v2 complexity, failure, admission, and cache rules | [Limits and failures](#limits-and-failures) | Handle the exact error status and `Retry-After` rules. |
 | Current contract to Search v2 caller changes | [Search v2 migration](migration-search-v2.md) | Use the compatibility table and future offline migration tools. |
 | Current implementation support | [STATUS.md](../STATUS.md) | Read each query support row and its evidence. |
@@ -65,13 +65,13 @@ hydration helpers. The caller still owns source access and freshness.
 
 The current SearchRequest has one combined query tree. Nodes such as `term`,
 `range`, `match`, `knn`, `rrf`, `and`, `or`, and `not` can participate in that
-tree. The current wire model does not provide the 0.5 typed separation between
+tree. The current wire model does not provide the Search v2 typed separation between
 scoring and filtering.
 
 Use `lumen spec --shapes` and current OpenAPI for the implemented nodes. Do not
-send the new 0.5 fields to a mixed-version runtime.
+send the new Search v2 fields to a mixed-version runtime.
 
-### 0.5 selection and scoring
+### Search v2 selection and scoring
 
 A Search v2 request has two optional top-level inputs:
 
@@ -117,7 +117,7 @@ Cross-collection search returns independent result sets. It does not perform a
 join, merged ranking, or merged cursor across collections.
 
 See [Unified search contract](../ROADMAP.md#unified-search-contract). None of
-the typed 0.5 separation is supported today.
+the typed Search v2 separation is supported today.
 
 ## Result controls
 
@@ -130,7 +130,7 @@ The current API supports `limit`, `cursor`, `offset`, `sort`, boolean
 The result contract below replaces several current shapes in Search v2. Use the
 [migration guide](migration-search-v2.md) before adopting it.
 
-### 0.5 ordering and pagination
+### Search v2 ordering and pagination
 
 - Filter-only search defaults to `external_id ASC`.
 - Ranked search defaults to score descending, then `external_id` as a stable
@@ -146,13 +146,13 @@ mismatch returns `400 invalid_cursor`. A changed collection UID or active
 generation returns `409 stale_cursor`. An expired PIT returns
 `410 cursor_expired`.
 
-### 0.5 totals
+### Search v2 totals
 
 `track_total` accepts `none`, `up_to`, or `exact`. The default is
 `up_to(10000)`. A returned total uses a decimal string and an `eq` or `gte`
 relation. When totals are disabled, the total is `null`.
 
-### 0.5 collapse
+### Search v2 collapse
 
 Collapse is result de-duplication. It does not change source identity.
 
@@ -252,7 +252,7 @@ discriminator.
 
 ## Limits and failures
 
-These limits are part of the 0.5 exact-or-fail target. The current runtime does
+These limits are part of the Search v2 exact-or-fail target. The current runtime does
 not yet enforce the complete set as one contract.
 
 ### Definition and memory limits
@@ -322,29 +322,29 @@ level objectives.
 
 ## Compatibility and migration
 
-Version 0.5 changes schema types, request fields, totals, sort missing behavior,
+Search v2 changes schema types, request fields, totals, sort missing behavior,
 collapse, and duplicate discovery. It also adds a Managed capability activation
 boundary.
 
 Read [Search v2 migration](migration-search-v2.md) before sending a Search v2
 request or schema to a mixed-version runtime. The migration guide owns the
-compatibility window and caller actions. This guide owns the final 0.5 query
+compatibility window and caller actions. This guide owns the final Search v2 query
 semantics.
 
 Generated clients do not yet expose typed facets or metrics. They also do not
-yet model the complete 0.5 discriminated query and result unions. See
+yet model the complete Search v2 discriminated query and result unions. See
 [Generated-client search v2 parity](../ROADMAP.md#generated-client-search-v2-parity).
 
 ## Current boundaries
 
-- The current request has one combined query tree. It does not expose the 0.5
+- The current request has one combined query tree. It does not expose the Search v2
   `ScoringQuery` and `FilterExpr` separation.
-- The strict 0.5 result ordering, cursor errors, total shape, and collapse
+- The strict Search v2 result ordering, cursor errors, total shape, and collapse
   contract are not supported.
 - Exact terms facets, range facets, and top-level metrics are not supported.
 - Facet precision, resource governance, distributed convergence, and result
   caching are target behavior.
-- Phrase and fuzzy queries in the 0.5 scoring model are not current query
+- Phrase and fuzzy queries in the Search v2 scoring model are not current query
   nodes.
 - Generated clients have no typed facet or metric API.
 - Managed capability activation for `search_facets_v1` is not supported.
