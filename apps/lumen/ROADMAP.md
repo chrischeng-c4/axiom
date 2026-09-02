@@ -52,7 +52,7 @@ destination without copying tracker state.
   failures between the fields of an item. They prove no partial item becomes
   visible, accepted siblings remain committed, response order is stable, and a
   safe retry uses the idempotency contract.
-- Tracking: [#3806](https://github.com/chrischeng-c4/axiom/issues/3806) (`lumen@0.4.44`).
+- Tracking: [Milestone #11](https://github.com/chrischeng-c4/axiom/milestone/11).
 
 ### Versioned deletes and tombstones
 

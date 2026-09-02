@@ -30,12 +30,12 @@
 - Open: Define retention and conflict reporting.
 - Neighbours: Durable writes and generated-client resilience.
 
-## Item-atomic batch writes
+## Item-atomic batch writes (Milestone #11)
 
 - Problem: One failed field must not leave part of an item visible.
 - Who: Batch-write callers.
 - Promise: Each accepted item becomes visible in full or not at all.
-- Outcome: `item-atomic-batch-writes`. Tracking: Not assigned.
+- Outcome: `item-atomic-batch-writes`. Tracking: [Milestone #11](https://github.com/chrischeng-c4/axiom/milestone/11).
 - Non-goals: A transaction across unrelated batch items.
 - Open: Define stable per-item results and retries.
 - Neighbours: Idempotent replay and versioned tombstones.
