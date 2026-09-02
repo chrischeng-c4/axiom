@@ -40,6 +40,16 @@
 - Open: Verify restart and legacy-PVC adoption through the release oracle.
 - Neighbours: Managed data retention and deterministic consensus conformance.
 
+## Search capability activation
+
+- Problem: Managed mixed versions cannot safely enable a new search contract.
+- Who: Managed Lumen operators.
+- Promise: Managed Lumen activates a capability only after serving-member convergence and final compatibility version.
+- Outcome: `search-capability-activation`. Tracking: Not assigned.
+- Non-goals: Version-aware routing around an incompatible member.
+- Open: Activate Search v2 at `lumen@0.37.0` after the required convergence evidence.
+- Neighbours: Search v2 migration and distributed search routing.
+
 ## Non-goals in this area
 
 Standalone deployment is not a high-availability promise.
