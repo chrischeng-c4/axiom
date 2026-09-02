@@ -50,6 +50,16 @@
 - Open: Define the safe transition actuator.
 - Neighbours: Quorum-safe runtime rollout.
 
+## High-availability shard expansion
+
+- Problem: Shard splitting must work with replicated shards.
+- Who: High-availability runtime operators.
+- Promise: Shard expansion keeps a Raft quorum while it moves ownership.
+- Outcome: `high-availability-shard-expansion`. Tracking: Not assigned.
+- Non-goals: Unsafe split during replica transition.
+- Open: Define restart and rollback evidence.
+- Neighbours: Automatic shard splitting.
+
 ## Non-goals in this area
 
 Generic HorizontalPodAutoscaler control is not a Lumen topology contract.
