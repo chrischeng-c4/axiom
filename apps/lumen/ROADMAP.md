@@ -212,7 +212,7 @@ destination without copying tracker state.
   numeric and set schema rebuild requirements, ambiguous request refusal, no
   network or runtime write, stable reports, and round-trip validation against
   the Search v2 schema.
-- Tracking: [#3813](https://github.com/chrischeng-c4/axiom/issues/3813) (`lumen@0.4.51`).
+- Tracking: [Milestone #41](https://github.com/chrischeng-c4/axiom/milestone/41).
 
 ### Search capability activation
 
