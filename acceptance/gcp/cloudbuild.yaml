@@ -4,6 +4,7 @@ steps:
     args:
       - build
       - --file=acceptance/gcp/images/Dockerfile.services
+      - --build-arg=SOURCE_REVISION=${_GIT_SHA}
       - --target=lumen
       - --tag=${_REGISTRY}/lumen:${_TAG}
       - .
@@ -14,6 +15,7 @@ steps:
     args:
       - build
       - --file=acceptance/gcp/images/Dockerfile.services
+      - --build-arg=SOURCE_REVISION=${_GIT_SHA}
       - --target=sift
       - --tag=${_REGISTRY}/sift:${_TAG}
       - .
@@ -21,6 +23,10 @@ steps:
 images:
   - ${_REGISTRY}/lumen:${_TAG}
   - ${_REGISTRY}/sift:${_TAG}
+
+tags:
+  - axiom-gcp-operator-acceptance
+  - axiom-run-${_RUN_ID}
 
 timeout: 2700s
 

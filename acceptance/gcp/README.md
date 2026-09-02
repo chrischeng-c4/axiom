@@ -89,7 +89,7 @@ storage.googleapis.com
 The caller needs permission to submit Cloud Builds, create/delete the initial Standard GKE
 cluster, bind IAM, create/delete one bucket, and push to
 the existing Docker repository. Required local commands are `cargo`, `curl`,
-`gcloud`, `git`, `jq`, `kubectl`, and `terraform`.
+`gcloud`, `git`, `jq`, `kubectl`, `python3`, and `terraform`.
 
 ## Exact lifecycle
 
@@ -299,8 +299,10 @@ Default evidence root:
 ```
 
 [`evidence/schema.json`](evidence/schema.json) defines the terminal
-`acceptance.json` contract. `cleanup.json` is separate and mandatory: a green
-functional result without a green cleanup result is a failed run.
+`acceptance.json` contract. Sift first writes `sift-mvp-verification.json`.
+Cleanup then writes `cleanup.json`. Only the finalizer can create
+`acceptance.json` after both files pass. A green functional result without a
+green cleanup result is a failed run.
 
 ## Extension rule
 

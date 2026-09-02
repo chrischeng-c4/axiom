@@ -5,6 +5,7 @@
 # classic Cloud Build Docker daemon evaluates preceding stages even with
 # --target, so a separate Dockerfile is the only reliable pruning boundary.
 FROM rust:1.96-bookworm AS service-builder
+ARG SOURCE_REVISION
 WORKDIR /workspace
 COPY . .
 # `delegated-auth` carries lumen's TokenReview/SubjectAccessReview transport.
@@ -12,9 +13,10 @@ COPY . .
 # start rather than serve unauthenticated -- so omitting it here crash-loops
 # every auth-mode instance the run deploys. This is the default build path:
 # both images at once, taken whenever neither was supplied by digest.
-RUN cargo build --locked --release -p lumen --bin lumen \
+RUN test -n "${SOURCE_REVISION}" \
+ && cargo build --locked --release -p lumen --bin lumen \
       --features "otel operator raft-wal jieba delegated-auth" \
- && cargo build --locked --release -p sift --bin sift \
+ && SIFT_SOURCE_REVISION="${SOURCE_REVISION}" cargo build --locked --release -p sift --bin sift \
  && install -D -m 0755 target/release/lumen /out/lumen \
  && install -D -m 0755 target/release/sift /out/sift
 

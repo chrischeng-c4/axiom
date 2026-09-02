@@ -4,13 +4,56 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$ACCEPTANCE_ROOT/../.." && pwd)"
+source "$SCRIPT_DIR/process-tree.sh"
+if [[ "${AXIOM_GCP_ACCEPTANCE_ISOLATED_SESSION:-0}" != "1" ]]; then
+  command -v python3 >/dev/null 2>&1 || {
+    echo "python3 is required to isolate the acceptance process group" >&2
+    exit 1
+  }
+  export AXIOM_GCP_ACCEPTANCE_ISOLATED_SESSION=1
+  exec python3 -c '
+import os
+import signal
+import subprocess
+import sys
+
+child = None
+pending_signal = None
+
+def forward(signum, _frame):
+    global pending_signal
+    pending_signal = signum
+    if child is not None:
+        try:
+            os.killpg(child.pid, signum)
+        except ProcessLookupError:
+            pass
+
+signal.signal(signal.SIGINT, forward)
+signal.signal(signal.SIGTERM, forward)
+child = subprocess.Popen(sys.argv[1:], start_new_session=True)
+if pending_signal is not None:
+    forward(pending_signal, None)
+status = child.wait()
+try:
+    os.killpg(child.pid, signal.SIGKILL)
+except ProcessLookupError:
+    pass
+sys.exit(128 + (-status) if status < 0 else status)
+' "$SCRIPT_DIR/run.sh" "$@"
+fi
+run_process_group="$(process_group_id "$$")"
+[[ "$run_process_group" == "$$" ]] || {
+  echo "acceptance run is not the leader of its isolated process group" >&2
+  exit 1
+}
 : "${PROJECT_ID:?Set PROJECT_ID explicitly to the disposable GCP billing project}"
 REGION="${REGION:-asia-east1}"
 GKE_ZONE="${GKE_ZONE:-asia-east1-a}"
 PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
 ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-courier}"
 RUN_ID="${RUN_ID:-$(date -u +%m%d%H%M%S)}"
-GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
+GIT_SHA="$(git -c core.fsmonitor=false -C "$REPO_ROOT" rev-parse HEAD)"
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-${RUN_ID}}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}"
 ACCEPTANCE_APPS="${ACCEPTANCE_APPS:-lumen sift}"
@@ -18,14 +61,16 @@ INPUT_LUMEN_IMAGE="${LUMEN_IMAGE:-}"
 INPUT_SIFT_IMAGE="${SIFT_IMAGE:-}"
 INPUT_RIG_IMAGE="${RIG_IMAGE:-}"
 INPUT_TAPE_IMAGE="${TAPE_IMAGE:-}"
+INPUT_SIFT_CLI="${SIFT_CLI:-}"
 LUMEN_PRIOR_ACCEPTANCE="${LUMEN_PRIOR_ACCEPTANCE:-}"
 LUMEN_AUTH_ISSUER_GSA="${LUMEN_AUTH_ISSUER_GSA:-}"
 # Pre-declared so `export` under `set -u` never fails; each mode branch below
-# fills in only the names it owns. Caller-supplied *_CLI overrides are
-# preserved; the *_IMAGE runtime variables are reset because their caller
-# inputs were already captured into INPUT_* above.
+# fills in only the names it owns. Sift-only acceptance rejects a caller CLI;
+# the other modes keep their existing local CLI override behavior. The
+# *_IMAGE runtime variables are reset because their caller inputs were already
+# captured into INPUT_* above.
 LUMEN_CLI="${LUMEN_CLI:-}"
-SIFT_CLI="${SIFT_CLI:-}"
+SIFT_CLI=""
 TAPE_CLI="${TAPE_CLI:-}"
 LUMEN_IMAGE=""
 SIFT_IMAGE=""
@@ -47,6 +92,12 @@ KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
 cleanup_armed=0
 cleanup_started=0
 watchdog_pid=""
+watchdog_descendants="$STATE_DIR/watchdog-descendants.txt"
+watchdog_pid_file="$STATE_DIR/watchdog-pid.txt"
+CANDIDATE_SOURCE_ARCHIVE=""
+CANDIDATE_SOURCE_SHA256=""
+CANDIDATE_CLOUD_BUILD_ID=""
+CANDIDATE_SOURCE_URI=""
 # Completion sentinel: bash expansion errors (set -u unbound variable)
 # abort the script WITHOUT updating $?, so the EXIT trap's `local ec=$?`
 # reads the PREVIOUS command's 0 — a false-green exit (runs 0724151638
@@ -78,14 +129,30 @@ require_empty_list() {
 
 cleanup() {
   local ec=$?
+  local watchdog_was_started=0
+  local scan_attempt
   if [[ "$ec" -eq 0 && "$run_completed" != "1" ]]; then
     echo "run aborted before completion (likely an expansion error above) — forcing failure exit" >&2
     ec=1
   fi
   trap - EXIT INT TERM
   if [[ -n "$watchdog_pid" ]]; then
+    watchdog_was_started=1
     kill "$watchdog_pid" >/dev/null 2>&1 || true
     wait "$watchdog_pid" >/dev/null 2>&1 || true
+    watchdog_pid=""
+  fi
+  if [[ "$watchdog_was_started" == "1" || -f "$watchdog_descendants" ]]; then
+    # The foreground command can exit as soon as TERM reaches it. That starts
+    # this EXIT trap while the watchdog is still in its grace period. Rescan
+    # the isolated group here after stopping the watchdog, so a TERM handler
+    # cannot fork and reparent an unrecorded child between the two paths.
+    for scan_attempt in 1 2 3 4 5; do
+      append_process_group_members \
+        "$run_process_group" "$$" "" "$watchdog_descendants"
+      signal_recorded_processes "$watchdog_descendants" KILL
+      [[ "$scan_attempt" == "5" ]] || sleep 1
+    done
   fi
   if [[ "$cleanup_armed" == "1" && "$cleanup_started" == "0" ]]; then
     cleanup_started=1
@@ -113,9 +180,13 @@ else
   trap 'echo "45-minute cloud acceptance cap reached" >&2; exit 124' TERM
 fi
 
-for command in cargo curl gcloud git gzip jq kubectl openssl terraform; do
+for command in awk cargo curl gcloud git gzip jq kubectl openssl ps python3 sort tar terraform; do
   require "$command"
 done
+python3 -c 'import jsonschema' >/dev/null 2>&1 || {
+  echo "python package 'jsonschema' is required for Sift evidence validation" >&2
+  exit 1
+}
 [[ "$RUN_ID" =~ ^[a-z0-9][a-z0-9-]{0,17}$ ]] || {
   echo "RUN_ID must be 1-18 lowercase letters, digits, or hyphens" >&2
   exit 1
@@ -142,19 +213,11 @@ if [[ "$acceptance_mode" != "tape" && "$acceptance_mode" != "sift" ]]; then
   : "${LUMEN_AUTH_ISSUER_GSA:?LUMEN_AUTH_ISSUER_GSA is required for auth-running modes}"
 fi
 if [[ "$acceptance_mode" == "sift" ]]; then
-  for input_image in "$INPUT_SIFT_IMAGE" "$INPUT_RIG_IMAGE"; do
-    [[ -z "$input_image" || "$input_image" == *@sha256:* ]] || {
-      echo "caller-supplied Sift and Rig images must be immutable @sha256 digest references" >&2
-      exit 1
-    }
-  done
-  if [[ -n "$INPUT_SIFT_IMAGE" && -n "$INPUT_RIG_IMAGE" ]]; then
-    IMAGE_PROVENANCE="prebuilt"
-  elif [[ -n "$INPUT_SIFT_IMAGE" || -n "$INPUT_RIG_IMAGE" ]]; then
-    IMAGE_PROVENANCE="mixed"
-  else
-    IMAGE_PROVENANCE="cloud-build"
-  fi
+  [[ -z "$INPUT_SIFT_IMAGE" && -z "$INPUT_RIG_IMAGE" && -z "$INPUT_SIFT_CLI" ]] || {
+    echo "ACCEPTANCE_APPS=sift builds Sift, Rig, and the local CLI from one clean candidate archive; prebuilt images are not accepted, and a caller-supplied SIFT_CLI is not accepted" >&2
+    exit 1
+  }
+  IMAGE_PROVENANCE="cloud-build"
   [[ -z "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
     echo "LUMEN_PRIOR_ACCEPTANCE is meaningless in ACCEPTANCE_APPS=sift mode" >&2
     exit 1
@@ -313,53 +376,46 @@ for image in "${image_list[@]}"; do
   fi
 done
 
-git -C "$REPO_ROOT" status --porcelain=v1 > "$EVIDENCE_DIR/source-git-status.txt"
+git -c core.fsmonitor=false -C "$REPO_ROOT" status --porcelain=v1 \
+  > "$EVIDENCE_DIR/source-git-status.txt"
 if [[ -s "$EVIDENCE_DIR/source-git-status.txt" ]]; then
   echo "refusing Cloud Build from a dirty tree; commit the exact source before GCP acceptance" >&2
   cat "$EVIDENCE_DIR/source-git-status.txt" >&2
   exit 1
 fi
 
-echo ">> persistent Standard GKE cluster bootstrap or reuse"
-PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" \
-  PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
-  "$SCRIPT_DIR/bootstrap-cluster.sh" > "$EVIDENCE_DIR/persistent-cluster-name.txt"
-# The whole file, not just its first line: bootstrap-cluster.sh contracts to
-# emit the cluster name and nothing else, so anything extra means its stdout
-# got polluted and the name we are about to trust is not the name it produced.
-# A bare `test` here used to swallow that -- it prints nothing on failure, so
-# the run aborted mute after paying for a full ~10-minute cluster creation.
-bootstrapped_cluster="$(cat "$EVIDENCE_DIR/persistent-cluster-name.txt")"
-[[ "$bootstrapped_cluster" == "$PERSISTENT_CLUSTER_NAME" ]] || {
-  echo "bootstrap-cluster.sh must emit exactly '$PERSISTENT_CLUSTER_NAME' on stdout" >&2
-  echo "got $(wc -l < "$EVIDENCE_DIR/persistent-cluster-name.txt" | tr -d ' ') line(s); first and last:" >&2
-  sed -n '1p;$p' "$EVIDENCE_DIR/persistent-cluster-name.txt" >&2
-  exit 1
-}
-gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
-  --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json \
-  > "$EVIDENCE_DIR/persistent-cluster.json"
-
-jq -n \
-  --arg schema "axiom.gcp.operator.run.v1" \
-  --arg project_id "$PROJECT_ID" \
-  --arg region "$REGION" \
-  --arg gke_zone "$GKE_ZONE" \
-  --arg run_id "$RUN_ID" \
-  --arg git_sha "$GIT_SHA" \
-  --arg image_tag "$IMAGE_TAG" \
-  --arg registry "$REGISTRY" \
-  --arg image_provenance "$IMAGE_PROVENANCE" \
-  --arg cluster_name "$PERSISTENT_CLUSTER_NAME" \
-  --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, persistent_cluster:$cluster_name, run_id:$run_id, git_sha:$git_sha, git_dirty:false, image_tag:$image_tag, registry:$registry, image_provenance:$image_provenance, started_at:$started_at}' \
-  > "$EVIDENCE_DIR/run.json"
+if [[ "$acceptance_mode" == "sift" ]]; then
+  CANDIDATE_SOURCE_ARCHIVE="$STATE_DIR/sift-candidate-${GIT_SHA}.tar.gz"
+  candidate_source_dir="$STATE_DIR/sift-candidate-source"
+  candidate_target_dir="$STATE_DIR/sift-candidate-target"
+  git -c core.fsmonitor=false -C "$REPO_ROOT" archive \
+    --format=tar.gz --output="$CANDIDATE_SOURCE_ARCHIVE" "$GIT_SHA"
+  chmod 0400 "$CANDIDATE_SOURCE_ARCHIVE"
+  CANDIDATE_SOURCE_SHA256="$(
+    openssl dgst -sha256 "$CANDIDATE_SOURCE_ARCHIVE" | awk '{print $NF}'
+  )"
+  [[ "$CANDIDATE_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "could not calculate the candidate source archive SHA-256" >&2
+    exit 1
+  }
+  mkdir -p "$candidate_source_dir" "$candidate_target_dir"
+  tar -xzf "$CANDIDATE_SOURCE_ARCHIVE" -C "$candidate_source_dir"
+  chmod -R a-w "$candidate_source_dir"
+  jq -n \
+    --arg git_sha "$GIT_SHA" \
+    --arg source_archive "$CANDIDATE_SOURCE_ARCHIVE" \
+    --arg source_bundle_sha256 "$CANDIDATE_SOURCE_SHA256" \
+    --argjson source_bundle_bytes "$(wc -c < "$CANDIDATE_SOURCE_ARCHIVE" | tr -d ' ')" \
+    '{git_sha:$git_sha,source_archive:$source_archive,source_bundle_sha256:$source_bundle_sha256,source_bundle_bytes:$source_bundle_bytes}' \
+    > "$EVIDENCE_DIR/candidate-source.json"
+fi
 
 echo ">> local deployment CLI build and render-surface preflight"
 if [[ "$acceptance_mode" == "sift" ]]; then
-  cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
-    -p sift --bin sift
-  SIFT_CLI="${SIFT_CLI:-$REPO_ROOT/target/debug/sift}"
+  SIFT_SOURCE_REVISION="$GIT_SHA" cargo build --locked \
+    --manifest-path "$candidate_source_dir/Cargo.toml" \
+    --target-dir "$candidate_target_dir" -p sift --bin sift
+  SIFT_CLI="$candidate_target_dir/debug/sift"
 elif [[ "$acceptance_mode" == "tape" ]]; then
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
     -p tape --bin tape --features "operator backup"
@@ -380,6 +436,7 @@ else
 fi
 
 cleanup_armed=1
+
 # The watchdog polls its parent between short sleeps and disarms itself the
 # moment the parent is gone. A single long sleep followed by an unconditional
 # `kill -TERM $$` outlives a parent that died without reaching cleanup(), and
@@ -387,15 +444,26 @@ cleanup_armed=1
 # 0723113842 was killed exactly that way by a prior run's leftover.
 run_main_pid="$$"
 (
+  watchdog_self="$(wait_for_process_id_file "$watchdog_pid_file" "$run_main_pid")" \
+    || exit 0
   waited=0
   while (( waited < MAX_CLOUD_SECONDS )); do
     sleep 10
     waited=$((waited + 10))
     kill -0 "$run_main_pid" >/dev/null 2>&1 || exit 0
   done
+  record_process_group_members \
+    "$run_process_group" "$run_main_pid" "$watchdog_self" "$watchdog_descendants"
+  signal_recorded_processes "$watchdog_descendants" TERM
+  sleep 10
+  append_process_group_members \
+    "$run_process_group" "$run_main_pid" "$watchdog_self" "$watchdog_descendants"
+  signal_recorded_processes "$watchdog_descendants" KILL
   kill -TERM "$run_main_pid" >/dev/null 2>&1 || true
 ) &
 watchdog_pid="$!"
+printf '%s\n' "$watchdog_pid" > "${watchdog_pid_file}.tmp"
+mv "${watchdog_pid_file}.tmp" "$watchdog_pid_file"
 
 resolve_digest() {
   local image="$1"
@@ -424,12 +492,7 @@ if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
   fi
 else
   if [[ "$acceptance_mode" == "sift" ]]; then
-    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.sift-mvp.yaml"
-    if [[ -n "$INPUT_SIFT_IMAGE" ]]; then
-      CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.rig.yaml"
-    elif [[ -n "$INPUT_RIG_IMAGE" ]]; then
-      CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.sift.yaml"
-    fi
+    CLOUD_BUILD_CONFIG="$candidate_source_dir/acceptance/gcp/cloudbuild.sift-mvp.yaml"
   elif [[ "$acceptance_mode" == "tape" ]]; then
     CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.tape.yaml"
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
@@ -442,16 +505,36 @@ else
       CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.lumen.yaml"
     fi
   fi
+  cloud_build_substitutions="_REGISTRY=$REGISTRY,_TAG=$IMAGE_TAG,_RUN_ID=$RUN_ID"
+  case "${CLOUD_BUILD_CONFIG##*/}" in
+    cloudbuild.sift-mvp.yaml|cloudbuild.sift.yaml|cloudbuild.yaml)
+      cloud_build_substitutions="${cloud_build_substitutions},_GIT_SHA=$GIT_SHA"
+      ;;
+  esac
+  if [[ "$acceptance_mode" == "sift" ]]; then
+    cloud_build_substitutions="${cloud_build_substitutions},_SOURCE_BUNDLE_SHA256=$CANDIDATE_SOURCE_SHA256"
+  fi
   echo ">> Cloud Build: source candidate only for service image(s) not supplied by digest"
-  build_id="$(gcloud builds submit "$REPO_ROOT" \
-    --async \
-    --project="$PROJECT_ID" \
-    --region="$REGION" \
-    --config="$CLOUD_BUILD_CONFIG" \
-    --gcs-source-staging-dir="$GCS_SOURCE_PREFIX" \
-    --ignore-file="$ACCEPTANCE_ROOT/gcloudignore" \
-    --substitutions="_REGISTRY=$REGISTRY,_TAG=$IMAGE_TAG" \
-    --format='value(id)')"
+  if [[ "$acceptance_mode" == "sift" ]]; then
+    build_id="$(gcloud builds submit "$CANDIDATE_SOURCE_ARCHIVE" \
+      --async \
+      --project="$PROJECT_ID" \
+      --region="$REGION" \
+      --config="$CLOUD_BUILD_CONFIG" \
+      --gcs-source-staging-dir="$GCS_SOURCE_PREFIX" \
+      --substitutions="$cloud_build_substitutions" \
+      --format='value(id)')"
+  else
+    build_id="$(gcloud builds submit "$REPO_ROOT" \
+      --async \
+      --project="$PROJECT_ID" \
+      --region="$REGION" \
+      --config="$CLOUD_BUILD_CONFIG" \
+      --gcs-source-staging-dir="$GCS_SOURCE_PREFIX" \
+      --ignore-file="$ACCEPTANCE_ROOT/gcloudignore" \
+      --substitutions="$cloud_build_substitutions" \
+      --format='value(id)')"
+  fi
   [[ -n "$build_id" && "$build_id" != "null" ]] || {
     echo "Cloud Build did not return a build id" >&2
     exit 1
@@ -467,6 +550,27 @@ else
   }
   gcloud storage objects describe "gs://${source_object_bucket}/${source_object_name}" \
     --format=json > "$EVIDENCE_DIR/cloud-build-source-object.json"
+  if [[ "$acceptance_mode" == "sift" ]]; then
+    staged_source="$STATE_DIR/cloud-build-staged-source.tar.gz"
+    gcloud storage cp "gs://${source_object_bucket}/${source_object_name}" \
+      "$staged_source" >/dev/null
+    staged_source_sha256="$(
+      openssl dgst -sha256 "$staged_source" | awk '{print $NF}'
+    )"
+    [[ "$staged_source_sha256" == "$CANDIDATE_SOURCE_SHA256" ]] || {
+      echo "Cloud Build staged source does not match the fixed candidate archive" >&2
+      exit 1
+    }
+    CANDIDATE_CLOUD_BUILD_ID="$build_id"
+    CANDIDATE_SOURCE_URI="gs://${source_object_bucket}/${source_object_name}"
+    jq -n \
+      --arg build_id "$CANDIDATE_CLOUD_BUILD_ID" \
+      --arg git_sha "$GIT_SHA" \
+      --arg source_uri "$CANDIDATE_SOURCE_URI" \
+      --arg source_bundle_sha256 "$CANDIDATE_SOURCE_SHA256" \
+      '{build_id:$build_id,git_sha:$git_sha,source_uri:$source_uri,source_bundle_sha256:$source_bundle_sha256,staged_source_sha256:$source_bundle_sha256}' \
+      > "$EVIDENCE_DIR/cloud-build-source-binding.json"
+  fi
 
   while true; do
     build_status="$(gcloud builds describe "$build_id" --project="$PROJECT_ID" \
@@ -485,16 +589,8 @@ else
   gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
     --format=json > "$EVIDENCE_DIR/cloud-build-final.json"
   if [[ "$acceptance_mode" == "sift" ]]; then
-    if [[ -n "$INPUT_SIFT_IMAGE" ]]; then
-      SIFT_IMAGE="$INPUT_SIFT_IMAGE"
-    else
-      SIFT_IMAGE="$(resolve_digest sift)"
-    fi
-    if [[ -n "$INPUT_RIG_IMAGE" ]]; then
-      RIG_IMAGE="$INPUT_RIG_IMAGE"
-    else
-      RIG_IMAGE="$(resolve_digest rig)"
-    fi
+    SIFT_IMAGE="$(resolve_digest sift)"
+    RIG_IMAGE="$(resolve_digest rig)"
   elif [[ "$acceptance_mode" == "tape" ]]; then
     TAPE_IMAGE="$(resolve_digest tape)"
   elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
@@ -511,6 +607,46 @@ else
       SIFT_IMAGE="$(resolve_digest sift)"
     fi
   fi
+fi
+if [[ "$acceptance_mode" == "sift" ]]; then
+  source_object_bucket="$(jq -r '.source.storageSource.bucket' "$EVIDENCE_DIR/cloud-build-submit.json")"
+  source_object_name="$(jq -r '.source.storageSource.object' "$EVIDENCE_DIR/cloud-build-submit.json")"
+  jq -e \
+    --arg git_sha "$GIT_SHA" \
+    --arg run_id "$RUN_ID" \
+    --arg source_bundle_sha256 "$CANDIDATE_SOURCE_SHA256" \
+    --arg source_bucket "$source_object_bucket" \
+    --arg source_object "$source_object_name" \
+    --arg run_tag "axiom-run-${RUN_ID}" \
+    --arg source_tag "axiom-source-${CANDIDATE_SOURCE_SHA256}" '
+      .status == "SUCCESS"
+      and .substitutions._GIT_SHA == $git_sha
+      and .substitutions._RUN_ID == $run_id
+      and .substitutions._SOURCE_BUNDLE_SHA256 == $source_bundle_sha256
+      and .source.storageSource.bucket == $source_bucket
+      and .source.storageSource.object == $source_object
+      and ((.tags // []) | index("sift-mvp") != null)
+      and ((.tags // []) | index($run_tag) != null)
+      and ((.tags // []) | index($source_tag) != null)
+    ' "$EVIDENCE_DIR/cloud-build-final.json" >/dev/null || {
+      echo "Cloud Build final receipt is not bound to this candidate source and run" >&2
+      exit 1
+    }
+  for built_image in sift rig; do
+    if [[ "$built_image" == "sift" ]]; then
+      digest_ref="$SIFT_IMAGE"
+    else
+      digest_ref="$RIG_IMAGE"
+    fi
+    jq -e \
+      --arg name "$REGISTRY/$built_image:$IMAGE_TAG" \
+      --arg digest "${digest_ref##*@}" '
+        any(.results.images[]?; .name == $name and .digest == $digest)
+      ' "$EVIDENCE_DIR/cloud-build-final.json" >/dev/null || {
+      echo "Cloud Build receipt does not contain the deployed $built_image digest" >&2
+      exit 1
+    }
+  done
 fi
 if [[ "$acceptance_mode" == "sift" ]]; then
   jq -n --arg sift "$SIFT_IMAGE" --arg rig "$RIG_IMAGE" \
@@ -542,7 +678,9 @@ export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
 # Export mode-specific CLIs and images only
 if [[ "$acceptance_mode" == "sift" ]]; then
-  export SIFT_CLI SIFT_IMAGE RIG_IMAGE
+  CANDIDATE_GIT_SHA="$GIT_SHA"
+  export SIFT_CLI SIFT_IMAGE RIG_IMAGE CANDIDATE_GIT_SHA
+  export CANDIDATE_SOURCE_SHA256 CANDIDATE_CLOUD_BUILD_ID CANDIDATE_SOURCE_URI
 elif [[ "$acceptance_mode" == "tape" ]]; then
   export TAPE_CLI TAPE_IMAGE
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
@@ -554,6 +692,39 @@ fi
   echo "manifest rendering failed" >&2
   exit 1
 }
+
+echo ">> persistent Standard GKE cluster bootstrap or reuse"
+PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" \
+  PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
+  "$SCRIPT_DIR/bootstrap-cluster.sh" > "$EVIDENCE_DIR/persistent-cluster-name.txt"
+# The whole file, not just its first line: bootstrap-cluster.sh contracts to
+# emit the cluster name and nothing else, so anything extra means its stdout
+# got polluted and the name we are about to trust is not the name it produced.
+bootstrapped_cluster="$(cat "$EVIDENCE_DIR/persistent-cluster-name.txt")"
+[[ "$bootstrapped_cluster" == "$PERSISTENT_CLUSTER_NAME" ]] || {
+  echo "bootstrap-cluster.sh must emit exactly '$PERSISTENT_CLUSTER_NAME' on stdout" >&2
+  echo "got $(wc -l < "$EVIDENCE_DIR/persistent-cluster-name.txt" | tr -d ' ') line(s); first and last:" >&2
+  sed -n '1p;$p' "$EVIDENCE_DIR/persistent-cluster-name.txt" >&2
+  exit 1
+}
+gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
+  --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json \
+  > "$EVIDENCE_DIR/persistent-cluster.json"
+
+jq -n \
+  --arg schema "axiom.gcp.operator.run.v1" \
+  --arg project_id "$PROJECT_ID" \
+  --arg region "$REGION" \
+  --arg gke_zone "$GKE_ZONE" \
+  --arg run_id "$RUN_ID" \
+  --arg git_sha "$GIT_SHA" \
+  --arg image_tag "$IMAGE_TAG" \
+  --arg registry "$REGISTRY" \
+  --arg image_provenance "$IMAGE_PROVENANCE" \
+  --arg cluster_name "$PERSISTENT_CLUSTER_NAME" \
+  --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, persistent_cluster:$cluster_name, run_id:$run_id, git_sha:$git_sha, git_dirty:false, image_tag:$image_tag, registry:$registry, image_provenance:$image_provenance, started_at:$started_at}' \
+  > "$EVIDENCE_DIR/run.json"
 
 if [[ "$acceptance_mode" == "lumen-auth" ]]; then
   echo ">> Terraform: auth-only Lumen resources on persistent Standard GKE"
@@ -602,6 +773,14 @@ test "$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")" = "$
 if [[ "$acceptance_mode" != "lumen-auth" ]]; then
   test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
   test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
+fi
+if [[ "$acceptance_mode" == "sift" ]]; then
+  SIFT_NODE_POOL="$(jq -r '.sift_node_pool.value' "$EVIDENCE_DIR/terraform-output.json")"
+  [[ "$SIFT_NODE_POOL" == "axo-${RUN_ID}-sift" ]] || {
+    echo "Terraform did not create the exact run-scoped Sift node pool" >&2
+    exit 1
+  }
+  export SIFT_NODE_POOL
 fi
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"

@@ -12,6 +12,8 @@ for script in "$SCRIPT_DIR"/*.sh "$ACCEPTANCE_ROOT"/tests/*.sh; do
   }
 done
 jq empty "$ACCEPTANCE_ROOT/evidence/schema.json"
+python3 "$SCRIPT_DIR/validate-sift-mvp-evidence.py" \
+  --schema "$ACCEPTANCE_ROOT/evidence/schema.json" --schema-only
 
 # The Lumen CRD defaults `spec.auth` to `required`, and a lumen built without
 # `delegated-auth` refuses to start in that mode rather than serve

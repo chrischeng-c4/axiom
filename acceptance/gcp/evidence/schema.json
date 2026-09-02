@@ -84,11 +84,15 @@
           "oneOf": [
             {
               "required": [
+                "schema",
                 "operator_reconcile_1x1",
                 "scheduled_backup",
                 "gcs_backup",
                 "topology_beyond_1x1"
-              ]
+              ],
+              "properties": {
+                "schema": {"const": "axiom.gcp.sift.acceptance.v1"}
+              }
             },
             {
               "required": [
@@ -101,6 +105,7 @@
                 "latency",
                 "failover",
                 "archive",
+                "idempotency",
                 "retention",
                 "restore",
                 "cleanup_evidence"
@@ -111,11 +116,15 @@
                 "status": {"const": "passed"},
                 "candidate": {
                   "type": "object",
-                  "required": ["sift_image", "rig_image", "immutable"],
+                  "required": ["sift_image", "rig_image", "git_sha", "source_bundle_sha256", "cloud_build_id", "source_object_uri", "immutable"],
                   "additionalProperties": false,
                   "properties": {
                     "sift_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
                     "rig_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+                    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"},
+                    "source_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "cloud_build_id": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,128}$"},
+                    "source_object_uri": {"type": "string", "pattern": "^gs://"},
                     "immutable": {"const": true}
                   }
                 },
@@ -134,7 +143,7 @@
                 },
                 "protocols": {
                   "type": "object",
-                  "required": ["otlp_http_json", "otlp_http_protobuf", "otlp_gzip", "otlp_grpc", "partial_success", "remote_write_1", "remote_write_2_rejected_415", "mcp_read_only_tools", "mcp_host_origin", "cross_project_denied"],
+                  "required": ["otlp_http_json", "otlp_http_protobuf", "otlp_gzip", "otlp_grpc", "partial_success", "remote_write_1", "remote_write_2_rejected_415", "mcp_read_only_tools", "mcp_host_origin", "cross_project_denied", "cross_project_same_id"],
                   "additionalProperties": false,
                   "properties": {
                     "otlp_http_json": {"const": "passed"},
@@ -146,12 +155,13 @@
                     "remote_write_2_rejected_415": {"const": "passed"},
                     "mcp_read_only_tools": {"const": "passed"},
                     "mcp_host_origin": {"const": "passed"},
-                    "cross_project_denied": {"const": "passed"}
+                    "cross_project_denied": {"const": "passed"},
+                    "cross_project_same_id": {"const": "passed"}
                   }
                 },
                 "load": {
                   "type": "object",
-                  "required": ["duration_seconds", "offered_items_per_second", "expected_unique_items", "expected_logs", "expected_metric_points", "expected_spans", "observed"],
+                  "required": ["duration_seconds", "offered_items_per_second", "expected_unique_items", "expected_logs", "expected_metric_points", "expected_spans", "observed", "event_id_digest"],
                   "additionalProperties": false,
                   "properties": {
                     "duration_seconds": {"const": 1800},
@@ -163,12 +173,24 @@
                     "observed": {
                       "type": "object",
                       "required": ["requests", "failed", "achieved_items_per_second", "p95_ms", "p99_ms"],
+                      "additionalProperties": false,
                       "properties": {
                         "requests": {"const": 18000},
                         "failed": {"const": 0},
                         "achieved_items_per_second": {"type": "number", "minimum": 9500},
                         "p95_ms": {"type": "number", "maximum": 250},
                         "p99_ms": {"type": "number", "maximum": 1000}
+                      }
+                    },
+                    "event_id_digest": {
+                      "type": "object",
+                      "required": ["algorithm", "expected", "observed", "match"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "algorithm": {"const": "xor-sha256-v1"},
+                        "expected": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "observed": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "match": {"const": true}
                       }
                     }
                   }
@@ -185,7 +207,7 @@
                 },
                 "failover": {
                   "type": "object",
-                  "required": ["duration_seconds", "expected_unique_items", "leader_before", "leader_after", "stopped_vm", "observed", "acknowledged_data_loss", "auto_repair"],
+                  "required": ["duration_seconds", "expected_unique_items", "leader_before", "leader_after", "stopped_vm", "observed", "event_id_digest", "acknowledged_data_loss", "auto_repair"],
                   "additionalProperties": false,
                   "properties": {
                     "duration_seconds": {"const": 300},
@@ -196,6 +218,7 @@
                     "observed": {
                       "type": "object",
                       "required": ["requests", "failed", "achieved_items_per_second", "p95_ms", "p99_ms"],
+                      "additionalProperties": false,
                       "properties": {
                         "requests": {"const": 3000},
                         "failed": {"const": 0},
@@ -204,28 +227,54 @@
                         "p99_ms": {"type": "number", "maximum": 1000}
                       }
                     },
+                    "event_id_digest": {
+                      "type": "object",
+                      "required": ["algorithm", "expected", "observed", "match"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "algorithm": {"const": "xor-sha256-v1"},
+                        "expected": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "observed": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "match": {"const": true}
+                      }
+                    },
                     "acknowledged_data_loss": {"const": 0},
                     "auto_repair": {"const": "passed"}
                   }
                 },
                 "archive": {
                   "type": "object",
-                  "required": ["gcs_iam_outage", "wal_preserved", "manifest_uri"],
+                  "required": ["gcs_iam_outage", "wal_preserved", "quorum_recovered_after_leader_restart", "manifest_uri"],
                   "additionalProperties": false,
                   "properties": {
                     "gcs_iam_outage": {"const": "passed"},
                     "wal_preserved": {"const": "passed"},
+                    "quorum_recovered_after_leader_restart": {"const": true},
                     "manifest_uri": {"type": "string", "pattern": "^gs://"}
+                  }
+                },
+                "idempotency": {
+                  "type": "object",
+                  "required": ["signals", "immediate_retry", "after_steady_load", "after_vm_failover", "after_telemetry_expiration"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "signals": {"const": ["logs", "metrics", "traces"]},
+                    "immediate_retry": {"const": "passed"},
+                    "after_steady_load": {"const": "passed"},
+                    "after_vm_failover": {"const": "passed"},
+                    "after_telemetry_expiration": {"const": "passed"}
                   }
                 },
                 "retention": {
                   "type": "object",
-                  "required": ["day_29", "day_31", "day_181"],
+                  "required": ["day_29", "day_31", "day_181", "day_180_rollover", "scan_completed"],
                   "additionalProperties": false,
                   "properties": {
                     "day_29": {"const": "hot-query-passed"},
                     "day_31": {"const": "cold-query-passed"},
-                    "day_181": {"const": "non-retryable-partial-rejection-passed"}
+                    "day_181": {"const": "non-retryable-partial-rejection-passed"},
+                    "day_180_rollover": {"const": "bounded-generation-passed"},
+                    "scan_completed": {"const": true}
                   }
                 },
                 "restore": {
@@ -244,7 +293,38 @@
                     "restored_watermark": {"type": "integer", "minimum": 1}
                   }
                 },
-                "cleanup_evidence": {"const": "cleanup.json"}
+                "cleanup_evidence": {
+                  "type": "object",
+                  "required": [
+                    "schema",
+                    "project_id",
+                    "region",
+                    "gke_zone",
+                    "run_id",
+                    "verified_at",
+                    "status",
+                    "preserved"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema": {"const": "axiom.gcp.operator.cleanup.v1"},
+                    "project_id": {"type": "string", "minLength": 6},
+                    "region": {"type": "string", "minLength": 1},
+                    "gke_zone": {"type": "string", "minLength": 1},
+                    "run_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,17}$"},
+                    "verified_at": {"type": "string", "minLength": 20},
+                    "status": {"const": "clean"},
+                    "preserved": {
+                      "type": "object",
+                      "required": ["artifact_registry", "preexisting_apis"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifact_registry": {"const": true},
+                        "preexisting_apis": {"const": true}
+                      }
+                    }
+                  }
+                }
               }
             }
           ]

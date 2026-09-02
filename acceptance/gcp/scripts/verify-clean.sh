@@ -11,6 +11,8 @@ set -euo pipefail
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
 ACCEPTANCE_APPS="${ACCEPTANCE_APPS:-lumen sift}"
+PERSISTENT_CLUSTER_CHECK_REQUIRED="${PERSISTENT_CLUSTER_CHECK_REQUIRED:-1}"
+KUBERNETES_CHECK_REQUIRED="${KUBERNETES_CHECK_REQUIRED:-1}"
 
 case "$ACCEPTANCE_APPS" in
   "lumen sift") acceptance_mode="lumen-sift" ;;
@@ -27,11 +29,35 @@ prefix="axo-${RUN_ID}"
 bucket="${PROJECT_ID}-${prefix}-backup"
 leftovers=0
 
+inventory_output() {
+  local label="$1"
+  shift
+  local error_file output
+  error_file="$(mktemp "${TMPDIR:-/tmp}/sift-verify-clean.XXXXXX")"
+  if output="$("$@" 2>"$error_file")"; then
+    rm -f "$error_file"
+    printf '%s' "$output"
+    return 0
+  fi
+  if grep -Eiq '(^|[^[:alpha:]])(not[ _-]?found|404)([^[:alpha:]]|$)|matched no (objects|URLs)|no URLs matched' \
+      "$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+  echo "could not verify cleanup for ${label}:" >&2
+  cat "$error_file" >&2
+  rm -f "$error_file"
+  return 1
+}
+
 check_empty() {
   local label="$1"
   shift
   local output
-  output="$("$@" 2>/dev/null || true)"
+  if ! output="$(inventory_output "$label" "$@")"; then
+    leftovers=1
+    return 0
+  fi
   if [[ -n "$output" ]]; then
     echo "leftover ${label}:" >&2
     echo "$output" >&2
@@ -45,7 +71,10 @@ wait_for_empty() {
   local deadline=$((SECONDS + 90))
   local output
   while true; do
-    output="$("$@" 2>/dev/null || true)"
+    if ! output="$(inventory_output "$label" "$@")"; then
+      leftovers=1
+      return 0
+    fi
     [[ -z "$output" ]] && return 0
     if (( SECONDS >= deadline )); then
       echo "leftover ${label} after 90-second propagation wait:" >&2
@@ -57,21 +86,25 @@ wait_for_empty() {
   done
 }
 
-if ! gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
-  --project="$PROJECT_ID" --zone="$GKE_ZONE" >/dev/null 2>&1; then
-  echo "persistent GKE cluster is missing: $PERSISTENT_CLUSTER_NAME" >&2
-  leftovers=1
+if [[ "$PERSISTENT_CLUSTER_CHECK_REQUIRED" == "1" ]]; then
+  if ! gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
+    --project="$PROJECT_ID" --zone="$GKE_ZONE" >/dev/null 2>&1; then
+    echo "persistent GKE cluster is missing: $PERSISTENT_CLUSTER_NAME" >&2
+    leftovers=1
+  fi
 fi
 
 if [[ "$acceptance_mode" == "sift" ]]; then
-  check_empty "Sift namespace" kubectl get namespace sift --no-headers
-  check_empty "Sift restore namespace" kubectl get namespace sift-restore --no-headers
-  check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
-  check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
-  check_empty "Sift auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
-    -l axiom-owner=gcp-operator-acceptance,axiom-run-id="$RUN_ID" --no-headers
-  check_empty "Sift operator-managed auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
-    -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=sift --no-headers
+  if [[ "$KUBERNETES_CHECK_REQUIRED" == "1" ]]; then
+    check_empty "Sift namespace" kubectl get namespace sift --no-headers
+    check_empty "Sift restore namespace" kubectl get namespace sift-restore --no-headers
+    check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
+    check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
+    check_empty "Sift auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+      -l axiom-owner=gcp-operator-acceptance,axiom-run-id="$RUN_ID" --no-headers
+    check_empty "Sift operator-managed auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+      -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=sift --no-headers
+  fi
   check_empty "Sift image tag" gcloud artifacts docker images describe \
     "$REGISTRY/sift:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
   check_empty "Rig image tag" gcloud artifacts docker images describe \
@@ -79,41 +112,40 @@ if [[ "$acceptance_mode" == "sift" ]]; then
   check_empty "Sift run node pool" gcloud container node-pools describe "axo-${RUN_ID}-sift" \
     --cluster="$PERSISTENT_CLUSTER_NAME" --project="$PROJECT_ID" --zone="$GKE_ZONE" --format='value(name)'
 elif [[ "$acceptance_mode" == "tape" ]]; then
-  check_empty "Tape namespace" kubectl get namespace tape --no-headers
-  check_empty "Tape operator namespace" kubectl get namespace tape-system --no-headers
-  check_empty "Tape CRD" kubectl get customresourcedefinition tapes.tape.dev --no-headers
+  if [[ "$KUBERNETES_CHECK_REQUIRED" == "1" ]]; then
+    check_empty "Tape namespace" kubectl get namespace tape --no-headers
+    check_empty "Tape operator namespace" kubectl get namespace tape-system --no-headers
+    check_empty "Tape CRD" kubectl get customresourcedefinition tapes.tape.dev --no-headers
+  fi
   check_empty "Tape image tag" gcloud artifacts docker images describe \
     "$REGISTRY/tape:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
-  check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
-  check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
-  check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
-  check_empty "Lumen auth client namespace" kubectl get namespace lumen-auth-client --no-headers
-  check_empty "Lumen auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
-    -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=lumen --no-headers
+  if [[ "$KUBERNETES_CHECK_REQUIRED" == "1" ]]; then
+    check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
+    check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
+    check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
+    check_empty "Lumen auth client namespace" kubectl get namespace lumen-auth-client --no-headers
+    check_empty "Lumen auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+      -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=lumen --no-headers
+  fi
   check_empty "Lumen image tag" gcloud artifacts docker images describe \
     "$REGISTRY/lumen:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
 else
-  check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
-  check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
-  check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
-  # The fleet is cluster-scoped and materializes into namespaces of its own, so
-  # it can leak in two directions this gate would otherwise never look in: a
-  # LumenFleet object surviving on the cluster, and data-plane namespaces whose
-  # PVCs keep billing as Persistent Disks long after the run they belonged to.
-  check_empty "LumenFleet CRD" kubectl get customresourcedefinition lumenfleets.lumen.dev --no-headers
-  check_empty "Lumen fleet namespace a" kubectl get namespace lumen-fleet-a --no-headers
-  check_empty "Lumen fleet namespace b" kubectl get namespace lumen-fleet-b --no-headers
-  check_empty "Lumen auth client namespace" kubectl get namespace lumen-auth-client --no-headers
-  # The delegated-review binding (#2876) is cluster-scoped, so no namespace
-  # deletion reaches it: a Lumen whose namespace was force-removed would leave
-  # a live `system:auth-delegator` grant behind with nothing left to audit it
-  # against. The label is the only link back to the instance.
-  check_empty "Lumen auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
-    -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=lumen --no-headers
-  check_empty "Sift namespace" kubectl get namespace sift --no-headers
-  check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
-  check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
+  if [[ "$KUBERNETES_CHECK_REQUIRED" == "1" ]]; then
+    check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
+    check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
+    check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
+    # The fleet is cluster-scoped and materializes into namespaces of its own.
+    check_empty "LumenFleet CRD" kubectl get customresourcedefinition lumenfleets.lumen.dev --no-headers
+    check_empty "Lumen fleet namespace a" kubectl get namespace lumen-fleet-a --no-headers
+    check_empty "Lumen fleet namespace b" kubectl get namespace lumen-fleet-b --no-headers
+    check_empty "Lumen auth client namespace" kubectl get namespace lumen-auth-client --no-headers
+    check_empty "Lumen auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+      -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=lumen --no-headers
+    check_empty "Sift namespace" kubectl get namespace sift --no-headers
+    check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
+    check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
+  fi
   check_empty "auth+CSI Secret Manager secret" gcloud secrets list --project="$PROJECT_ID" \
     --filter="name:${prefix}-lumen-tokens" --format='value(name)'
   check_empty "Lumen image tag" gcloud artifacts docker images describe \
@@ -121,6 +153,21 @@ else
   check_empty "Sift image tag" gcloud artifacts docker images describe \
     "$REGISTRY/sift:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
 fi
+
+shopt -s nullglob
+deleted_digest_markers=("$EVIDENCE_DIR"/deleted-image-*.txt)
+shopt -u nullglob
+for marker in "${deleted_digest_markers[@]}"; do
+  digest_ref="$(sed -n '1p' "$marker")"
+  if [[ "$digest_ref" != *@sha256:* ]]; then
+    echo "invalid deleted image digest marker: $marker" >&2
+    leftovers=1
+    continue
+  fi
+  check_empty "deleted image digest $digest_ref" \
+    gcloud artifacts docker images describe "$digest_ref" \
+      --project="$PROJECT_ID" --format='value(image_summary.digest)'
+done
 
 if [[ "$acceptance_mode" != "lumen-auth" ]]; then
   check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
@@ -135,6 +182,19 @@ fi
 check_empty "persistent disk" gcloud compute disks list --project="$PROJECT_ID" \
   --filter="name~'${prefix}|gke-${prefix}'" --format='value(name)'
 check_empty "Cloud Build source" gcloud storage ls --recursive "${GCS_SOURCE_PREFIX}/**"
+
+run_builds=""
+if ! run_builds="$(inventory_output "run-tagged Cloud Builds" \
+  gcloud builds list --project="$PROJECT_ID" --region="$REGION" \
+    --filter="tags=axiom-run-${RUN_ID}" --format=json)"; then
+  leftovers=1
+elif ! jq -e '
+  all(.[]; (.status | IN("SUCCESS","FAILURE","INTERNAL_ERROR","TIMEOUT","CANCELLED","EXPIRED")))
+' >/dev/null <<<"$run_builds"; then
+  echo "a run-tagged Cloud Build is still active or has an unknown status:" >&2
+  jq -r '.[] | "\(.id) \(.status)"' <<<"$run_builds" >&2 || true
+  leftovers=1
+fi
 
 # The repository and APIs predate this run and are deliberately not Terraform
 # resources. Their continued presence is part of cleanup acceptance.

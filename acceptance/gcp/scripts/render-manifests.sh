@@ -245,7 +245,7 @@ metadata:
 rules:
   - apiGroups: ["sift.axiom.dev"]
     resources: ["projects"]
-    resourceNames: ["sift-mvp"]
+    resourceNames: ["sift-mvp", "sift-mvp-alt"]
     verbs: ["get", "create", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

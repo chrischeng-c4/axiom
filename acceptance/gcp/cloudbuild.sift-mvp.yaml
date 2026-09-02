@@ -4,6 +4,7 @@ steps:
     args:
       - build
       - --file=acceptance/gcp/images/Dockerfile.sift
+      - --build-arg=SOURCE_REVISION=${_GIT_SHA}
       - --tag=${_REGISTRY}/sift:${_TAG}
       - .
   - id: rig
@@ -17,6 +18,12 @@ steps:
 images:
   - ${_REGISTRY}/sift:${_TAG}
   - ${_REGISTRY}/rig:${_TAG}
+
+tags:
+  - axiom-gcp-operator-acceptance
+  - sift-mvp
+  - axiom-run-${_RUN_ID}
+  - axiom-source-${_SOURCE_BUNDLE_SHA256}
 
 timeout: 5400s
 

@@ -52,6 +52,78 @@ capture_failure_evidence() {
   fi
 }
 
+cloud_build_status() {
+  local build_id="$1"
+  gcloud builds describe "$build_id" --project="$PROJECT_ID" \
+    --region="$REGION" --format='value(status)'
+}
+
+cloud_build_is_terminal() {
+  case "$1" in
+    SUCCESS|FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+cancel_and_wait_cloud_build() {
+  local build_id="$1"
+  local status attempt
+  status="$(cloud_build_status "$build_id")" || {
+    echo "could not read Cloud Build $build_id during cleanup" >&2
+    return 1
+  }
+  if cloud_build_is_terminal "$status"; then
+    printf '%s %s\n' "$build_id" "$status" >> "$EVIDENCE_DIR/cloud-build-cleanup.log"
+    return 0
+  fi
+  case "$status" in
+    QUEUED|PENDING|WORKING)
+      if ! gcloud builds cancel "$build_id" --project="$PROJECT_ID" \
+        --region="$REGION" --quiet >/dev/null; then
+        status="$(cloud_build_status "$build_id")" || return 1
+        cloud_build_is_terminal "$status" || {
+          echo "could not cancel active Cloud Build $build_id (status $status)" >&2
+          return 1
+        }
+      fi
+      ;;
+    *)
+      echo "Cloud Build $build_id has unknown non-terminal status: $status" >&2
+      return 1
+      ;;
+  esac
+  for ((attempt = 1; attempt <= 120; attempt++)); do
+    status="$(cloud_build_status "$build_id")" || return 1
+    if cloud_build_is_terminal "$status"; then
+      printf '%s %s\n' "$build_id" "$status" >> "$EVIDENCE_DIR/cloud-build-cleanup.log"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "Cloud Build $build_id did not reach a terminal state after cancellation" >&2
+  return 1
+}
+
+stop_run_cloud_builds() {
+  local ids="$STATE_DIR/cloud-build-ids.txt"
+  local sorted="${ids}.sorted"
+  : > "$ids"
+  if [[ -f "$STATE_DIR/cloud-build-id.txt" ]]; then
+    sed -n '1p' "$STATE_DIR/cloud-build-id.txt" >> "$ids"
+  fi
+  if ! gcloud builds list --project="$PROJECT_ID" --region="$REGION" \
+    --filter="tags=axiom-run-${RUN_ID}" --format='value(id)' >> "$ids"; then
+    echo "could not inventory run-tagged Cloud Builds during cleanup" >&2
+    return 1
+  fi
+  sort -u "$ids" > "$sorted"
+  mv "$sorted" "$ids"
+  while IFS= read -r build_id; do
+    [[ -n "$build_id" ]] || continue
+    cancel_and_wait_cloud_build "$build_id"
+  done < "$ids"
+}
+
 delete_sift_instance() {
   local namespace="$1"
   local name="$2"
@@ -74,11 +146,36 @@ delete_sift_instance() {
     --timeout=60s >/dev/null 2>&1 || true
 }
 
+delete_allow_not_found() {
+  local label="$1"
+  shift
+  local error_file
+  error_file="$(mktemp "${TMPDIR:-/tmp}/sift-cleanup-delete.XXXXXX")"
+  if "$@" >/dev/null 2>"$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+  if grep -Eiq '(^|[^[:alpha:]])(not[ _-]?found|404)([^[:alpha:]]|$)' \
+      "$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+  echo "failed to delete ${label}:" >&2
+  cat "$error_file" >&2
+  rm -f "$error_file"
+  return 1
+}
+
 delete_run_image() {
   local image="$1"
   local tagged="$REGISTRY/$image:$IMAGE_TAG"
-  local digest_ref digest preexisting inventory tags
-  digest_ref="$(jq -r --arg image "$image" '.[$image] // empty' "$EVIDENCE_DIR/images.json" 2>/dev/null || true)"
+  local digest_ref digest inventory tags
+  if [[ -f "$EVIDENCE_DIR/images.json" ]]; then
+    digest_ref="$(jq -r --arg image "$image" '.[$image] // ""' \
+      "$EVIDENCE_DIR/images.json")"
+  else
+    digest_ref=""
+  fi
   digest="${digest_ref##*@}"
 
   # A tag is the only artifact this run can conclusively own. Never delete a
@@ -86,8 +183,8 @@ delete_run_image() {
   # the same digest. Remove the tag first, then delete the digest only when the
   # before-run inventory proves it was new and the post-removal version has no
   # remaining tags.
-  gcloud artifacts docker tags delete "$tagged" --project="$PROJECT_ID" --quiet \
-    >/dev/null 2>&1 || true
+  delete_allow_not_found "image tag $tagged" \
+    gcloud artifacts docker tags delete "$tagged" --project="$PROJECT_ID" --quiet
   [[ "$digest" == sha256:* ]] || return 0
 
   inventory="$EVIDENCE_DIR/preexisting-${image}-images.json"
@@ -98,15 +195,23 @@ delete_run_image() {
 
   local current
   current="$(gcloud artifacts docker images list "$REGISTRY/$image" \
-    --project="$PROJECT_ID" --include-tags --format=json 2>/dev/null || true)"
-  tags="$(jq -r --arg digest "$digest" '
+    --project="$PROJECT_ID" --include-tags --format=json)"
+  tags="$(jq -er --arg digest "$digest" '
     [.[] | select((tojson | contains($digest))) | (.tags // [])[]] | length
-  ' <<<"$current" 2>/dev/null || printf '1')"
+  ' <<<"$current")"
   if [[ "$tags" == "0" ]]; then
-    gcloud artifacts docker images delete "$REGISTRY/$image@$digest" \
-      --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+    printf '%s\n' "$REGISTRY/$image@$digest" \
+      > "$EVIDENCE_DIR/deleted-image-${image}.txt"
+    delete_allow_not_found "image digest $REGISTRY/$image@$digest" \
+      gcloud artifacts docker images delete "$REGISTRY/$image@$digest" \
+        --project="$PROJECT_ID" --quiet
   fi
 }
+
+# Stop every build bound to this run before deleting images or staged source.
+# The tag lookup also finds a build when the async submit returned but the
+# process died before it could persist cloud-build-id.txt.
+stop_run_cloud_builds
 
 if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   capture_failure_evidence
@@ -200,18 +305,6 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   fi
 fi
 
-if [[ -f "$STATE_DIR/cloud-build-id.txt" ]]; then
-  build_id="$(sed -n '1p' "$STATE_DIR/cloud-build-id.txt")"
-  build_status="$(gcloud builds describe "$build_id" --project="$PROJECT_ID" \
-    --region="$REGION" --format='value(status)' 2>/dev/null || true)"
-  case "$build_status" in
-    QUEUED|PENDING|WORKING)
-      gcloud builds cancel "$build_id" --project="$PROJECT_ID" \
-        --region="$REGION" --quiet >/dev/null 2>&1 || true
-      ;;
-  esac
-fi
-
 if [[ -f "$state" ]]; then
   destroy_args=(
     -state="$state"
@@ -260,15 +353,14 @@ PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" RUN_ID="$RUN_ID" 
   REGISTRY="$REGISTRY" IMAGE_TAG="$IMAGE_TAG" \
   GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
   PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
+  PERSISTENT_CLUSTER_CHECK_REQUIRED="$([[ -s "$STATE_DIR/persistent-cluster-name.txt" ]] && echo 1 || echo 0)" \
+  KUBERNETES_CHECK_REQUIRED="$([[ -f "$STATE_DIR/kube-context-ready.txt" ]] && echo 1 || echo 0)" \
   ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
   "$ACCEPTANCE_ROOT/scripts/verify-clean.sh"
 
 if [[ "$acceptance_mode" == "sift" \
-  && -f "$EVIDENCE_DIR/acceptance.json" \
+  && -f "$EVIDENCE_DIR/sift-mvp-verification.json" \
   && -f "$EVIDENCE_DIR/cleanup.json" ]]; then
-  acceptance_tmp="$(mktemp "$EVIDENCE_DIR/.acceptance.json.XXXXXX")"
-  jq '.acceptance.sift.cleanup_evidence = "cleanup.json"' \
-    "$EVIDENCE_DIR/acceptance.json" > "$acceptance_tmp"
-  mv "$acceptance_tmp" "$EVIDENCE_DIR/acceptance.json"
-  cp "$EVIDENCE_DIR/acceptance.json" "$EVIDENCE_DIR/sift-mvp-acceptance.json"
+  EVIDENCE_DIR="$EVIDENCE_DIR" \
+    "$ACCEPTANCE_ROOT/scripts/finalize-sift-mvp-acceptance.sh"
 fi

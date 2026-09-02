@@ -15,6 +15,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${SIFT_CLI:?SIFT_CLI is required}"
 : "${SIFT_IMAGE:?SIFT_IMAGE is required}"
 : "${RIG_IMAGE:?RIG_IMAGE is required}"
+: "${CANDIDATE_GIT_SHA:?CANDIDATE_GIT_SHA is required}"
+: "${CANDIDATE_SOURCE_SHA256:?CANDIDATE_SOURCE_SHA256 is required}"
+: "${CANDIDATE_CLOUD_BUILD_ID:?CANDIDATE_CLOUD_BUILD_ID is required}"
+: "${CANDIDATE_SOURCE_URI:?CANDIDATE_SOURCE_URI is required}"
+: "${SIFT_NODE_POOL:?SIFT_NODE_POOL is required}"
 
 LOAD_SECONDS=1800
 ITEMS_PER_SECOND=10000
@@ -26,6 +31,7 @@ FAILOVER_SECONDS=300
 FAILOVER_ITEMS=3000000
 BATCH_ITEMS=1000
 PROJECT=sift-mvp
+PROJECT_ALT=sift-mvp-alt
 NAMESPACE=sift
 RESTORE_NAMESPACE=sift-restore
 SIFT_PORT=17380
@@ -37,7 +43,7 @@ mkdir -p \
   "$EVIDENCE_DIR/latency" \
   "$EVIDENCE_DIR/restore"
 
-for command in awk curl date dirname gcloud gzip jq kubectl rg sed seq sort; do
+for command in awk curl date dirname gcloud gzip jq kubectl openssl python3 rg sed seq sort; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required command not found: $command" >&2
     exit 1
@@ -55,9 +61,22 @@ done
   echo "RIG_IMAGE must use an immutable digest" >&2
   exit 1
 }
+[[ "$CANDIDATE_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "CANDIDATE_SOURCE_SHA256 must be a SHA-256 hex digest" >&2
+  exit 1
+}
+[[ "$CANDIDATE_CLOUD_BUILD_ID" =~ ^[A-Za-z0-9-]{1,128}$ ]] || {
+  echo "CANDIDATE_CLOUD_BUILD_ID is invalid" >&2
+  exit 1
+}
+[[ "$CANDIDATE_SOURCE_URI" == gs://* ]] || {
+  echo "CANDIDATE_SOURCE_URI must be a gs:// object URI" >&2
+  exit 1
+}
 
 forward_pids=()
 archive_iam_removed=0
+wrong_peer_dir=""
 token_file="$EVIDENCE_DIR/kubernetes/sift-rig.token"
 sift_url="http://127.0.0.1:${SIFT_PORT}"
 
@@ -65,6 +84,28 @@ die() {
   echo "Sift MVP acceptance failed: $*" >&2
   capture_diagnostics
   exit 1
+}
+
+verify_pods_on_run_nodes() {
+  local namespace="$1"
+  local selector="$2"
+  local stem="$3"
+  local pods="$EVIDENCE_DIR/kubernetes/${stem}-pods.json"
+  local nodes="$EVIDENCE_DIR/kubernetes/${stem}-nodes.json"
+  kubectl -n "$namespace" get pods -l "$selector" -o json > "$pods"
+  kubectl get nodes -l "axiom-run-id=${RUN_ID}" -o json > "$nodes"
+  jq -e \
+    --arg run_id "$RUN_ID" \
+    --slurpfile nodes "$nodes" '
+    (.items | length) > 0
+    and all(.items[]; . as $pod
+      | .spec.nodeSelector["axiom-run-id"] == $run_id
+      and .spec.nodeName != null
+      and any($nodes[0].items[];
+        .metadata.name == $pod.spec.nodeName
+        and .metadata.labels["axiom-run-id"] == $run_id))
+  ' "$pods" >/dev/null \
+    || die "${stem} pods did not run only on this run's Sift nodes"
 }
 
 restore_archive_iam() {
@@ -90,10 +131,15 @@ stop_forwards() {
 cleanup_local() {
   restore_archive_iam
   stop_forwards
+  if [[ -n "$wrong_peer_dir" && -d "$wrong_peer_dir" ]]; then
+    find "$wrong_peer_dir" -type f -delete
+    find "$wrong_peer_dir" -depth -type d -empty -delete
+  fi
 }
 trap cleanup_local EXIT INT
-# The parent owns the 90-minute deadline and the cloud cleanup trap.
-trap '' TERM
+# The parent owns the 90-minute deadline and sends TERM after stopping the
+# verifier's process tree. Never ignore that deadline signal.
+trap 'exit 124' TERM
 
 capture_diagnostics() {
   {
@@ -126,16 +172,28 @@ refresh_token() {
 }
 
 auth_curl() {
+  project_curl "$PROJECT" "$@"
+}
+
+project_curl() {
+  local project="$1"
+  shift
   curl --silent --show-error --fail-with-body \
     -H "authorization: Bearer $(sed -n '1p' "$token_file")" \
-    -H "x-sift-project: ${PROJECT}" \
+    -H "x-sift-project: ${project}" \
     "$@"
 }
 
 auth_curl_status() {
+  project_curl_status "$PROJECT" "$@"
+}
+
+project_curl_status() {
+  local project="$1"
+  shift
   curl --silent --show-error \
     -H "authorization: Bearer $(sed -n '1p' "$token_file")" \
-    -H "x-sift-project: ${PROJECT}" \
+    -H "x-sift-project: ${project}" \
     "$@"
 }
 
@@ -171,6 +229,59 @@ integrity_to() {
     and .project == $project
     and .event_id_digest_algorithm == "xor-sha256-v1"
   ' "$output" >/dev/null
+}
+
+verify_idempotency_retry() {
+  local phase="$1"
+  local before="$EVIDENCE_DIR/kubernetes/integrity-before-idempotency-${phase}.json"
+  local after="$EVIDENCE_DIR/kubernetes/integrity-after-idempotency-${phase}.json"
+  local query="$EVIDENCE_DIR/kubernetes/query-idempotency-${phase}.json"
+  local signal response
+  integrity_to "$before"
+  for signal in logs metrics traces; do
+    response="$EVIDENCE_DIR/kubernetes/otlp-idempotency-${signal}-${phase}-response.json"
+    auth_curl -X POST "${sift_url}/v1/${signal}" \
+      -H 'content-type: application/json' \
+      --data-binary "@$EVIDENCE_DIR/kubernetes/otlp-idempotency-${signal}.json" \
+      > "$response"
+    jq -e 'type == "object" and (.partialSuccess == null)' "$response" >/dev/null \
+      || die "the ${phase} ${signal} idempotency retry did not return a normal acknowledgement"
+  done
+  integrity_to "$after"
+  jq -s -e '
+    .[0] as $before | .[1] as $after
+    | $after.event_count == $before.event_count
+      and $after.event_id_sha256 == $before.event_id_sha256
+      and $after.watermark == $before.watermark
+      and $after.signals == $before.signals
+  ' "$before" "$after" >/dev/null \
+    || die "the ${phase} idempotency retry changed durable project identity"
+  auth_curl -X POST "${sift_url}/api/v1/query" \
+    -H 'content-type: application/json' \
+    --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"smoke-idempotency-log"}},"limit":10,"mode":"sync"}' \
+    > "$query"
+  jq -e '(.data.records | map(select(.event_id == "smoke-idempotency-log")) | length) == 1' \
+    "$query" >/dev/null \
+    || die "the ${phase} idempotency retry changed the stored row"
+}
+
+verify_load_digest() {
+  local phase="$1"
+  local duration="$2"
+  local before="$3"
+  local after="$4"
+  local output="$EVIDENCE_DIR/load/${phase}/event-id-digest.json"
+  local expected observed
+  expected="$(python3 "$SCRIPT_DIR/sift-load-digest.py" phase \
+    --name "$phase" --duration "$duration" --batch-items "$BATCH_ITEMS")"
+  observed="$(python3 "$SCRIPT_DIR/sift-load-digest.py" xor \
+    "$(jq -r '.event_id_sha256' "$before")" \
+    "$(jq -r '.event_id_sha256' "$after")")"
+  jq -n --arg expected "$expected" --arg observed "$observed" \
+    '{algorithm:"xor-sha256-v1",expected:$expected,observed:$observed,match:($expected == $observed)}' \
+    > "$output"
+  [[ "$observed" == "$expected" ]] \
+    || die "${phase} load event-ID digest did not match the independently generated digest"
 }
 
 wait_for_integrity_count() {
@@ -223,10 +334,15 @@ snapshot_restarts() {
   kubectl -n "$NAMESPACE" get pods \
     -l app.kubernetes.io/name=sift -o json \
     | jq '[
-        .items[] |
+        .items[]
+        | select((.metadata.labels["sift.axiom.dev/role"] // "") as $role
+            | ["store","control","gateway","query","agent"] | index($role))
+        |
         {
           pod: .metadata.name,
           uid: .metadata.uid,
+          node: .spec.nodeName,
+          role: (.metadata.labels["sift.axiom.dev/role"] // ""),
           restarts: ([.status.containerStatuses[]?.restartCount] | add // 0),
           waiting: [.status.containerStatuses[]?.state.waiting.reason // empty],
           terminated: [.status.containerStatuses[]?.lastState.terminated.reason // empty]
@@ -237,13 +353,55 @@ snapshot_restarts() {
 assert_no_unexpected_restarts() {
   local before="$1"
   local after="$2"
-  jq -e --slurpfile before "$before" '
-    ($before[0] | map({key:.pod, value:.}) | from_entries) as $old
-    | all(.[];
+  jq -n -e --slurpfile before "$before" --slurpfile after "$after" '
+    ($after[0] | map({key:.pod, value:.}) | from_entries) as $new
+    | ($before[0] | length) == ($after[0] | length)
+      and all($after[0][];
         (.waiting | index("CrashLoopBackOff") | not)
-        and (.terminated | index("OOMKilled") | not)
-        and (($old[.pod] == null) or (.restarts == $old[.pod].restarts)))
-  ' "$after" >/dev/null || die "a Sift pod restarted unexpectedly or was OOM-killed"
+        and (.terminated | index("OOMKilled") | not))
+      and all($before[0][];
+        $new[.pod] != null
+        and $new[.pod].uid == .uid
+        and $new[.pod].restarts == .restarts)
+  ' >/dev/null || die "a Sift pod was replaced, restarted, crash-looped, or OOM-killed"
+}
+
+assert_failover_restart_evidence() {
+  local before="$1"
+  local after="$2"
+  local failed_node="$3"
+  jq -n -e \
+    --arg failed_node "$failed_node" \
+    --slurpfile before "$before" \
+    --slurpfile after "$after" '
+    ($after[0] | map({key:.pod, value:.}) | from_entries) as $new
+    | ($before[0] | map(.uid)) as $old_uids
+    | ([ $after[0][] | select(.role == "store") ] | length) == 3
+      and ([ $after[0][] | select(.role == "control") ] | length) == 3
+      and ([ $after[0][] | select(.role == "gateway") ] | length) == 1
+      and ([ $after[0][] | select(.role == "query") ] | length) == 1
+      and ([ $after[0][] | select(.role == "agent") ] | length) == 3
+      and all($after[0][];
+        (.waiting | index("CrashLoopBackOff") | not)
+        and (.terminated | index("OOMKilled") | not))
+      and all($before[0][];
+        if .node == $failed_node then
+          if .role == "agent" then
+            any($after[0][];
+              .role == "agent"
+              and (.uid as $uid | $old_uids | index($uid) == null))
+          else
+            $new[.pod] != null
+            and $new[.pod].uid != .uid
+            and $new[.pod].restarts == 0
+          end
+        else
+          $new[.pod] != null
+          and $new[.pod].uid == .uid
+          and $new[.pod].restarts == .restarts
+        end)
+  ' >/dev/null \
+    || die "failover changed a pod outside the stopped VM or caused a hidden restart"
 }
 
 wait_role_ready() {
@@ -253,8 +411,13 @@ wait_role_ready() {
   local deadline=$((SECONDS + 900))
   local ready
   while (( SECONDS < deadline )); do
-    ready="$(kubectl -n "$NAMESPACE" get "$kind/$name" \
-      -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+    if [[ "$kind" == "daemonset" ]]; then
+      ready="$(kubectl -n "$NAMESPACE" get "$kind/$name" \
+        -o jsonpath='{.status.numberReady}' 2>/dev/null || true)"
+    else
+      ready="$(kubectl -n "$NAMESPACE" get "$kind/$name" \
+        -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+    fi
     [[ "$ready" == "$want" ]] && return 0
     sleep 5
   done
@@ -313,6 +476,137 @@ store_raftz() {
     "https://${host}:${port}/raftz"
 }
 
+verify_peer_mtls_rejection() {
+  local ordinal=0
+  local port host peer_dir
+  port="$(store_peer_port "$ordinal")"
+  host="sift-store-${ordinal}.sift-store-headless.sift.svc.cluster.local"
+  peer_dir="$MANIFEST_DIR/sift/peer-pki"
+
+  if curl --noproxy '*' --max-time 5 --silent --show-error \
+      --cacert "$peer_dir/ca.crt" \
+      --resolve "${host}:${port}:127.0.0.1" \
+      --output "$EVIDENCE_DIR/kubernetes/peer-mtls-no-client.body" \
+      "https://${host}:${port}/raftz" \
+      2> "$EVIDENCE_DIR/kubernetes/peer-mtls-no-client.stderr"; then
+    die "peer port accepted a client without a certificate"
+  fi
+
+  wrong_peer_dir="$(mktemp -d "${TMPDIR:-/tmp}/sift-wrong-peer.XXXXXX")"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+    -subj '/CN=sift-untrusted-acceptance-client' \
+    -keyout "$wrong_peer_dir/tls.key" \
+    -out "$wrong_peer_dir/tls.crt" >/dev/null 2>&1
+  if curl --noproxy '*' --max-time 5 --silent --show-error \
+      --cacert "$peer_dir/ca.crt" \
+      --cert "$wrong_peer_dir/tls.crt" \
+      --key "$wrong_peer_dir/tls.key" \
+      --resolve "${host}:${port}:127.0.0.1" \
+      --output "$EVIDENCE_DIR/kubernetes/peer-mtls-wrong-ca.body" \
+      "https://${host}:${port}/raftz" \
+      2> "$EVIDENCE_DIR/kubernetes/peer-mtls-wrong-ca.stderr"; then
+    die "peer port accepted a client certificate from an untrusted CA"
+  fi
+
+  store_raftz "$ordinal" \
+    > "$EVIDENCE_DIR/kubernetes/peer-mtls-positive-after-negatives.json"
+  jq -e '.durability_error == null' \
+    "$EVIDENCE_DIR/kubernetes/peer-mtls-positive-after-negatives.json" >/dev/null \
+    || die "peer port was unavailable after the mTLS rejection probes"
+  find "$wrong_peer_dir" -type f -delete
+  find "$wrong_peer_dir" -depth -type d -empty -delete
+  wrong_peer_dir=""
+}
+
+verify_sift_image_provenance() {
+  local pod="sift-candidate-provenance-${RUN_ID}"
+  local phase deadline
+  "$SIFT_CLI" acceptance-build-info \
+    > "$EVIDENCE_DIR/kubernetes/sift-local-build-info.json"
+  jq -e --arg expected "$CANDIDATE_GIT_SHA" \
+    '.git_sha == $expected and .next == "done"' \
+    "$EVIDENCE_DIR/kubernetes/sift-local-build-info.json" >/dev/null \
+    || die "local Sift CLI does not match the candidate Git revision"
+
+  kubectl -n "$NAMESPACE" delete "pod/${pod}" --ignore-not-found \
+    --wait=true --timeout=60s >/dev/null
+  kubectl -n "$NAMESPACE" run "$pod" \
+    --image="$SIFT_IMAGE" \
+    --restart=Never \
+    --labels="axiom-owner=gcp-operator-acceptance,axiom-run-id=${RUN_ID},sift-acceptance-probe=provenance" \
+    --overrides="$(jq -nc --arg run_id "$RUN_ID" \
+      '{spec:{nodeSelector:{"axiom-run-id":$run_id}}}')" \
+    --command -- /usr/local/bin/sift acceptance-build-info >/dev/null
+  deadline=$((SECONDS + 180))
+  phase=""
+  while (( SECONDS < deadline )); do
+    phase="$(kubectl -n "$NAMESPACE" get "pod/${pod}" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    [[ "$phase" == "Succeeded" || "$phase" == "Failed" ]] && break
+    sleep 2
+  done
+  kubectl -n "$NAMESPACE" logs "pod/${pod}" \
+    > "$EVIDENCE_DIR/kubernetes/sift-image-build-info.json" 2>/dev/null || true
+  [[ "$phase" == "Succeeded" ]] \
+    || die "candidate Sift image could not report its build provenance"
+  jq -e --arg expected "$CANDIDATE_GIT_SHA" \
+    '.git_sha == $expected and .next == "done"' \
+    "$EVIDENCE_DIR/kubernetes/sift-image-build-info.json" >/dev/null \
+    || die "candidate Sift image does not match the candidate Git revision"
+  verify_pods_on_run_nodes "$NAMESPACE" \
+    'sift-acceptance-probe=provenance' sift-candidate-provenance
+  kubectl -n "$NAMESPACE" delete "pod/${pod}" --wait=true --timeout=60s >/dev/null
+}
+
+wait_for_store_convergence() {
+  local expected="$1"
+  local output_dir="$2"
+  local require_snapshot="${3:-true}"
+  local deadline=$((SECONDS + 900))
+  local ordinal
+  mkdir -p "$output_dir"
+  while (( SECONDS < deadline )); do
+    local complete=true
+    for ordinal in 0 1 2; do
+      store_integrity_to "$ordinal" "$output_dir/store-${ordinal}-integrity.json" \
+        2>/dev/null || complete=false
+      store_raftz "$ordinal" > "$output_dir/store-${ordinal}-raftz.json" \
+        2>/dev/null || complete=false
+    done
+    if [[ "$complete" == true ]] \
+      && jq -s -e --slurpfile expected "$expected" '
+        length == 3
+        and (.[0] as $first | all(.[];
+          .event_count == $first.event_count
+          and .event_id_sha256 == $first.event_id_sha256
+          and .watermark == $first.watermark
+          and .signals == $first.signals))
+        and all(.[];
+          .event_count == $expected[0].event_count
+          and .event_id_sha256 == $expected[0].event_id_sha256
+          and .watermark == $expected[0].watermark
+          and .signals == $expected[0].signals)
+      ' "$output_dir"/store-*-integrity.json >/dev/null \
+      && jq -s -e --argjson require_snapshot "$require_snapshot" '
+        length == 3
+        and (map(.committed_voters | length == 3) | all)
+        and (map(.durability_error == null) | all)
+        and (map(.applied_index) | unique | length == 1)
+        and (map(.commit_index) | unique | length == 1)
+        and all(.[];
+          .applied_index == .commit_index
+          and .snapshot_index <= .applied_index
+          and ((($require_snapshot | not) or .snapshot_index > 0))
+          and .resident_log_bytes <= 536870912
+          and .resident_log_bytes < .max_resident_log_bytes)
+      ' "$output_dir"/store-*-raftz.json >/dev/null; then
+      return 0
+    fi
+    sleep 5
+  done
+  die "the three store voters did not converge on integrity and bounded Raft state"
+}
+
 find_store_leader() {
   local ordinal
   for ordinal in 0 1 2; do
@@ -338,7 +632,91 @@ wait_store_leader() {
   die "the three-store Raft group did not expose a durable leader"
 }
 
+verify_outage_quorum_recovery() {
+  local stopped_leader="$1"
+  local expected="$2"
+  local manifest="$3"
+  local manifest_hash="$4"
+  local old_uid new_uid new_uid_deadline new_ready voter
+
+  wait_for_store_convergence "$expected" \
+    "$EVIDENCE_DIR/gcs/voters-after-outage-ack" false
+  for voter in 0 1 2; do
+    jq -e \
+      --arg manifest "$manifest" \
+      --arg hash "$manifest_hash" '
+      .storage.archive.manifest_uri == $manifest
+      and .storage.archive.manifest_sha256 == $hash
+      and .storage.wal_bytes.logs > 0
+      and .storage.archive.watermarks.logs < .signals.logs.watermark
+    ' "$EVIDENCE_DIR/gcs/voters-after-outage-ack/store-${voter}-integrity.json" >/dev/null \
+      || die "store voter ${voter} did not retain the acknowledged outage WAL"
+  done
+
+  old_uid="$(kubectl -n "$NAMESPACE" get "pod/sift-store-${stopped_leader}" \
+    -o jsonpath='{.metadata.uid}')"
+  stop_forwards
+  kubectl -n "$NAMESPACE" delete "pod/sift-store-${stopped_leader}" \
+    --wait=true --timeout=240s
+  new_uid_deadline=$((SECONDS + 300))
+  new_uid=""
+  while (( SECONDS < new_uid_deadline )); do
+    new_uid="$(kubectl -n "$NAMESPACE" get "pod/sift-store-${stopped_leader}" \
+      -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
+    new_ready="$(kubectl -n "$NAMESPACE" get "pod/sift-store-${stopped_leader}" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    if [[ -n "$new_uid" && "$new_uid" != "$old_uid" && "$new_ready" == "True" ]]; then
+      break
+    fi
+    sleep 3
+  done
+  [[ -n "$old_uid" && -n "$new_uid" && "$old_uid" != "$new_uid" ]] \
+    || die "the GCS-outage leader process was not replaced"
+  wait_role_ready statefulset sift-store 3
+
+  start_gateway_forward
+  start_store_forwards
+  refresh_token
+  wait_for_store_convergence "$expected" \
+    "$EVIDENCE_DIR/gcs/voters-after-outage-leader-restart" false
+  archive_leader="$(wait_store_leader)"
+  for voter in 0 1 2; do
+    jq -e \
+      --arg manifest "$manifest" \
+      --arg hash "$manifest_hash" \
+      --slurpfile before "$EVIDENCE_DIR/gcs/voters-after-outage-ack/store-${voter}-integrity.json" '
+      .storage.archive.manifest_uri == $manifest
+      and .storage.archive.manifest_sha256 == $hash
+      and .storage.wal_bytes.logs >= $before[0].storage.wal_bytes.logs
+      and .storage.archive.watermarks.logs < .signals.logs.watermark
+    ' "$EVIDENCE_DIR/gcs/voters-after-outage-leader-restart/store-${voter}-integrity.json" >/dev/null \
+      || die "store voter ${voter} compacted or lost outage WAL after leader restart"
+  done
+  jq -n \
+    --arg stopped_ordinal "$stopped_leader" \
+    --arg old_uid "$old_uid" \
+    --arg new_uid "$new_uid" \
+    --arg leader_after "$archive_leader" \
+    '{stopped_ordinal:$stopped_ordinal,old_uid:$old_uid,new_uid:$new_uid,leader_after:$leader_after,quorum_recovered:true}' \
+    > "$EVIDENCE_DIR/gcs/outage-leader-restart.json"
+}
+
 echo ">> Sift MVP: validate topology and immutable candidate"
+gcloud container node-pools describe "$SIFT_NODE_POOL" \
+  --cluster="$GKE_CLUSTER_NAME" \
+  --zone="$GKE_ZONE" \
+  --project="$PROJECT_ID" \
+  --format=json > "$EVIDENCE_DIR/kubernetes/sift-node-pool.json"
+jq -e \
+  --arg name "$SIFT_NODE_POOL" \
+  --arg run_id "$RUN_ID" '
+  .name == $name
+  and .initialNodeCount == 3
+  and .config.machineType == "e2-standard-4"
+  and .config.labels["axiom-run-id"] == $run_id
+  and .management.autoRepair == true
+' "$EVIDENCE_DIR/kubernetes/sift-node-pool.json" >/dev/null \
+  || die "run-scoped Sift node pool did not match the three-node MVP contract"
 wait_role_ready statefulset sift-store 3
 wait_role_ready statefulset sift-control 3
 wait_role_ready deployment sift-gateway 1
@@ -367,6 +745,9 @@ jq -e --arg image "$SIFT_IMAGE" '
     and ($pvc["sift-query-data"] == "2Gi")
 ' "$EVIDENCE_DIR/kubernetes/sift-topology.json" >/dev/null \
   || die "Sift topology, PVC sizes, or immutable image did not match the MVP contract"
+verify_pods_on_run_nodes "$NAMESPACE" \
+  'app.kubernetes.io/name=sift' sift-topology
+verify_sift_image_provenance
 
 delegator="sift.${NAMESPACE}.sift.auth-delegator"
 kubectl get clusterrolebinding "$delegator" -o json \
@@ -398,6 +779,7 @@ jq -s -e '
   and (map(select(.is_leader == true)) | length == 1)
 ' "$EVIDENCE_DIR"/kubernetes/store-*-raftz-initial.json >/dev/null \
   || die "Sift did not form one three-voter durable Raft group"
+verify_peer_mtls_rejection
 
 run_grpc_smoke() {
   local job="sift-grpc-${RUN_ID}"
@@ -423,7 +805,7 @@ spec:
       automountServiceAccountToken: false
       restartPolicy: Never
       nodeSelector:
-        cloud.google.com/gke-nodepool: acceptance-pool
+        axiom-run-id: ${RUN_ID}
       containers:
         - name: sift
           image: ${SIFT_IMAGE}
@@ -460,6 +842,7 @@ EOF
     and .compression == "gzip"
   ' "$EVIDENCE_DIR/kubernetes/sift-grpc-smoke.json" >/dev/null \
     || die "OTLP/gRPC gzip and partial-success contract failed"
+  verify_pods_on_run_nodes "$NAMESPACE" "job-name=${job}" "${job}"
 }
 
 run_mcp_smoke() {
@@ -469,9 +852,49 @@ run_mcp_smoke() {
   local list_body="$EVIDENCE_DIR/kubernetes/mcp-tools.json"
   local list_sse="$EVIDENCE_DIR/kubernetes/mcp-tools.sse"
   local session
+  local mcp_last_result=""
   local allowed_host="sift.sift.svc.cluster.local"
   local allowed_origin="http://sift.sift.svc.cluster.local:7380"
   local initialize='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"sift-gke-acceptance","version":"1"}}}'
+
+  mcp_call() {
+    local request_id="$1"
+    local tool_name="$2"
+    local arguments="$3"
+    local stem="$EVIDENCE_DIR/kubernetes/mcp-call-${request_id}-${tool_name}"
+    local payload
+    payload="$(jq -nc \
+      --argjson id "$request_id" \
+      --arg name "$tool_name" \
+      --argjson arguments "$arguments" \
+      '{jsonrpc:"2.0",id:$id,method:"tools/call",params:{name:$name,arguments:$arguments}}')"
+    curl --silent --show-error --fail-with-body \
+      -X POST "${sift_url}/mcp" \
+      -H "host: ${allowed_host}" \
+      -H "origin: ${allowed_origin}" \
+      -H "authorization: Bearer $(sed -n '1p' "$token_file")" \
+      -H "mcp-session-id: ${session}" \
+      -H 'mcp-protocol-version: 2025-11-25' \
+      -H 'content-type: application/json' \
+      -H 'accept: application/json, text/event-stream' \
+      --data "$payload" > "${stem}.sse"
+    extract_sse_json "${stem}.sse" "${stem}.json"
+    jq -e --argjson id "$request_id" '
+      .jsonrpc == "2.0"
+      and .id == $id
+      and (has("error") | not)
+      and .result != null
+      and ((.result.isError // false) == false)
+      and ((.result.content // []) | length) > 0
+    ' "${stem}.json" >/dev/null \
+      || die "MCP tool ${tool_name} did not return a successful result"
+    mcp_last_result="${stem}.result.json"
+    jq -er '[.result.content[]? | select(.type == "text") | .text][0]' \
+      "${stem}.json" > "$mcp_last_result" \
+      || die "MCP tool ${tool_name} did not return JSON text content"
+    jq -e 'type == "object"' "$mcp_last_result" >/dev/null \
+      || die "MCP tool ${tool_name} returned text that was not a JSON object"
+  }
 
   curl --silent --show-error --fail-with-body \
     -D "$init_headers" \
@@ -523,10 +946,50 @@ run_mcp_smoke() {
     ["sift_correlate","sift_get_trace","sift_list_services","sift_query","sift_tail_logs"]
   ' "$list_body" >/dev/null || die "MCP did not expose exactly five read-only tools"
 
+  mcp_call 3 sift_query \
+    '{"request":{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"smoke-log"}},"limit":10,"mode":"sync"}}'
+  jq -e '.partial == false and any(.data.records[]?; .event_id == "smoke-log")' \
+    "$mcp_last_result" >/dev/null \
+    || die "MCP sift_query did not return the known smoke log"
+  mcp_call 4 sift_get_trace \
+    '{"project":"sift-mvp","trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+  jq -e '
+    .trace_id == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    and any(.spans[]?; .span_id == "bbbbbbbbbbbbbbbb")
+  ' "$mcp_last_result" >/dev/null \
+    || die "MCP sift_get_trace did not return the known smoke span"
+  mcp_call 5 sift_correlate \
+    '{"request":{"version":1,"project":"sift-mvp","environment":"gke","trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","limit":10}}'
+  jq -e '
+    .partial == false
+    and any(.logs[]?; .event_id == "smoke-log")
+    and any(.traces[]?; .trace_id == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  ' "$mcp_last_result" >/dev/null \
+    || die "MCP sift_correlate did not return known correlated signals"
+  mcp_call 6 sift_list_services \
+    '{"project":"sift-mvp","environment":"gke"}'
+  jq -e '
+    any(.services[]?;
+      .name == "sift-acceptance"
+      and (.signals | sort) == ["logs","metrics","traces"])
+  ' "$mcp_last_result" >/dev/null \
+    || die "MCP sift_list_services did not return the three-signal smoke service"
+  mcp_call 7 sift_tail_logs \
+    '{"request":{"version":1,"project":"sift-mvp","environment":"gke","filter":{"op":"eq","field":"event_id","value":"smoke-log"},"wait_ms":0,"limit":10}}'
+  jq -e '.partial == false and any(.data.records[]?; .event_id == "smoke-log")' \
+    "$mcp_last_result" >/dev/null \
+    || die "MCP sift_tail_logs did not return the known smoke log"
+  mcp_call 8 sift_query \
+    '{"request":{"version":1,"project":"sift-mvp-alt","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"smoke-log"}},"limit":10,"mode":"sync"}}'
+  jq -e '.partial == false and (.data.records | length) == 0' \
+    "$mcp_last_result" >/dev/null \
+    || die "MCP sift_query leaked the smoke log into another project"
+
   bad_origin_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     -X POST "${sift_url}/mcp" \
     -H "host: ${allowed_host}" \
     -H 'origin: https://evil.example' \
+    -H "authorization: Bearer $(sed -n '1p' "$token_file")" \
     -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
     --data "$initialize")"
@@ -535,6 +998,7 @@ run_mcp_smoke() {
     -X POST "${sift_url}/mcp" \
     -H 'host: evil.example' \
     -H "origin: ${allowed_origin}" \
+    -H "authorization: Bearer $(sed -n '1p' "$token_file")" \
     -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
     --data "$initialize")"
@@ -664,6 +1128,75 @@ jq -e 'type == "object" and (.partialSuccess == null)' \
   "$EVIDENCE_DIR/kubernetes/otlp-gzip-response.json" >/dev/null \
   || die "OTLP gzip returned unexpected partial success"
 
+jq -nc --arg ts "$((timestamp_nanos + 31))" '
+  {resourceLogs:[{
+    resource:{attributes:[
+      {key:"service.name",value:{stringValue:"sift-acceptance"}},
+      {key:"deployment.environment.name",value:{stringValue:"gke"}}
+    ]},
+    scopeLogs:[{logRecords:[{
+      timeUnixNano:$ts,
+      body:{stringValue:"idempotency probe"},
+      attributes:[{key:"sift.event_id",value:{stringValue:"smoke-idempotency-log"}}]
+    }]}]
+  }]}' > "$EVIDENCE_DIR/kubernetes/otlp-idempotency-logs.json"
+auth_curl -X POST "${sift_url}/v1/logs" \
+  -H 'content-type: application/json' \
+  --data-binary "@$EVIDENCE_DIR/kubernetes/otlp-idempotency-logs.json" \
+  > "$EVIDENCE_DIR/kubernetes/otlp-idempotency-logs-first-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/kubernetes/otlp-idempotency-logs-first-response.json" >/dev/null \
+  || die "the first log idempotency probe was not accepted"
+
+jq -nc --arg ts "$((timestamp_nanos + 32))" '
+  {resourceMetrics:[{
+    resource:{attributes:[
+      {key:"service.name",value:{stringValue:"sift-acceptance"}},
+      {key:"deployment.environment.name",value:{stringValue:"gke"}}
+    ]},
+    scopeMetrics:[{metrics:[{
+      name:"sift.idempotency.gauge",
+      gauge:{dataPoints:[{
+        timeUnixNano:$ts,
+        asDouble:1.0,
+        attributes:[{key:"sift.event_id",value:{stringValue:"smoke-idempotency-metric"}}]
+      }]}
+    }]}]
+  }]}' > "$EVIDENCE_DIR/kubernetes/otlp-idempotency-metrics.json"
+auth_curl -X POST "${sift_url}/v1/metrics" \
+  -H 'content-type: application/json' \
+  --data-binary "@$EVIDENCE_DIR/kubernetes/otlp-idempotency-metrics.json" \
+  > "$EVIDENCE_DIR/kubernetes/otlp-idempotency-metrics-first-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/kubernetes/otlp-idempotency-metrics-first-response.json" >/dev/null \
+  || die "the first metric idempotency probe was not accepted"
+
+jq -nc \
+  --arg ts "$((timestamp_nanos + 33))" \
+  --arg end "$((timestamp_nanos + 1000033))" '
+  {resourceSpans:[{
+    resource:{attributes:[
+      {key:"service.name",value:{stringValue:"sift-acceptance"}},
+      {key:"deployment.environment.name",value:{stringValue:"gke"}}
+    ]},
+    scopeSpans:[{spans:[{
+      traceId:"33333333333333333333333333333333",
+      spanId:"4444444444444444",
+      name:"GET /idempotency",
+      startTimeUnixNano:$ts,
+      endTimeUnixNano:$end,
+      status:{code:1},
+      attributes:[{key:"sift.event_id",value:{stringValue:"smoke-idempotency-span"}}]
+    }]}]
+  }]}' > "$EVIDENCE_DIR/kubernetes/otlp-idempotency-traces.json"
+auth_curl -X POST "${sift_url}/v1/traces" \
+  -H 'content-type: application/json' \
+  --data-binary "@$EVIDENCE_DIR/kubernetes/otlp-idempotency-traces.json" \
+  > "$EVIDENCE_DIR/kubernetes/otlp-idempotency-traces-first-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/kubernetes/otlp-idempotency-traces-first-response.json" >/dev/null \
+  || die "the first trace idempotency probe was not accepted"
+
 "$SIFT_CLI" acceptance-payload \
   --kind otlp-logs-protobuf \
   --items 2 \
@@ -693,8 +1226,9 @@ remote_write_status="$(auth_curl --output /dev/null --write-out '%{http_code}' \
   --data-binary "@$EVIDENCE_DIR/kubernetes/remote-write-v1.snappy")"
 [[ "$remote_write_status" == "204" ]] || die "Remote Write 1.0 did not return 204"
 
-wait_for_integrity_count "$((smoke_start + 9))" \
+wait_for_integrity_count "$((smoke_start + 12))" \
   "$EVIDENCE_DIR/kubernetes/integrity-after-smoke.json"
+verify_idempotency_retry immediate-retry
 metric_before_v2="$(jq -r '.signals.metrics.count' \
   "$EVIDENCE_DIR/kubernetes/integrity-after-smoke.json")"
 remote_write_v2_status="$(auth_curl_status --output "$EVIDENCE_DIR/kubernetes/remote-write-v2-response.json" \
@@ -723,6 +1257,14 @@ jq -e '
   and (.stats.returned >= 1)
 ' "$EVIDENCE_DIR/kubernetes/query-logs.json" >/dev/null \
   || die "structured log regex query failed"
+
+auth_curl -X POST "${sift_url}/api/v1/query" \
+  -H 'content-type: application/json' \
+  --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"smoke-idempotency-log"}},"limit":10,"mode":"sync"}' \
+  > "$EVIDENCE_DIR/kubernetes/query-idempotency.json"
+jq -e '(.data.records | map(select(.event_id == "smoke-idempotency-log")) | length) == 1' \
+  "$EVIDENCE_DIR/kubernetes/query-idempotency.json" >/dev/null \
+  || die "idempotency retry produced zero or multiple stored rows"
 
 auth_curl -X POST "${sift_url}/api/v1/query" \
   -H 'content-type: application/json' \
@@ -772,11 +1314,22 @@ jq -e '
 ' "$EVIDENCE_DIR/kubernetes/services.json" >/dev/null \
   || die "service inventory did not correlate all three signals"
 
-auth_curl "${sift_url}/prometheus/api/v1/query?project=${PROJECT}&environment=acceptance&query=sum%28sift_acceptance_total%29&time=${epoch_seconds}" \
-  > "$EVIDENCE_DIR/kubernetes/prometheus-query.json"
-jq -e '.status == "success" and .data.resultType == "vector"' \
-  "$EVIDENCE_DIR/kubernetes/prometheus-query.json" >/dev/null \
-  || die "Prometheus query endpoint failed"
+  auth_curl --get "${sift_url}/prometheus/api/v1/query" \
+    --data-urlencode "project=${PROJECT}" \
+    --data-urlencode 'environment=acceptance' \
+    --data-urlencode 'query=sift_acceptance_total{fixture="smoke-remote-write"}' \
+    --data-urlencode "time=$((epoch_seconds + 1))" \
+    > "$EVIDENCE_DIR/kubernetes/prometheus-query.json"
+  jq -e '
+    .status == "success"
+    and .data.resultType == "vector"
+    and (.data.result | length) == 1
+    and .data.result[0].metric.__name__ == "sift_acceptance_total"
+    and .data.result[0].metric.fixture == "smoke-remote-write"
+    and .data.result[0].value[1] == "1"
+  ' \
+    "$EVIDENCE_DIR/kubernetes/prometheus-query.json" >/dev/null \
+    || die "Prometheus query did not return the newly written series and value"
 
 cross_project_status="$(curl --silent --output "$EVIDENCE_DIR/kubernetes/cross-project.json" \
   --write-out '%{http_code}' \
@@ -785,7 +1338,53 @@ cross_project_status="$(curl --silent --output "$EVIDENCE_DIR/kubernetes/cross-p
   -H 'x-sift-project: denied-project' \
   -H 'content-type: application/json' \
   --data '{"version":1,"project":"denied-project","signal":{"kind":"logs"},"limit":1,"mode":"sync"}')"
-[[ "$cross_project_status" == "403" ]] || die "cross-project access was not denied"
+  [[ "$cross_project_status" == "403" ]] || die "cross-project access was not denied"
+
+  allowed_header_denied_body_status="$(project_curl_status "$PROJECT" \
+    --output "$EVIDENCE_DIR/kubernetes/cross-project-allowed-header-denied-body.json" \
+    --write-out '%{http_code}' \
+    -X POST "${sift_url}/api/v1/query" \
+    -H 'content-type: application/json' \
+    --data '{"version":1,"project":"denied-project","signal":{"kind":"logs"},"limit":1,"mode":"sync"}')"
+  [[ "$allowed_header_denied_body_status" == "403" ]] \
+    || die "allowed project header could authorize a different body project"
+  denied_header_allowed_body_status="$(project_curl_status denied-project \
+    --output "$EVIDENCE_DIR/kubernetes/cross-project-denied-header-allowed-body.json" \
+    --write-out '%{http_code}' \
+    -X POST "${sift_url}/api/v1/query" \
+    -H 'content-type: application/json' \
+    --data '{"version":1,"project":"sift-mvp","signal":{"kind":"logs"},"limit":1,"mode":"sync"}')"
+  [[ "$denied_header_allowed_body_status" == "403" ]] \
+    || die "denied project header could query an allowed body project"
+
+jq -nc --arg ts "$((timestamp_nanos + 60))" '
+  {resourceLogs:[{
+    resource:{attributes:[
+      {key:"service.name",value:{stringValue:"sift-project-isolation"}},
+      {key:"deployment.environment.name",value:{stringValue:"gke"}}
+    ]},
+    scopeLogs:[{logRecords:[{
+      timeUnixNano:$ts,
+      body:{stringValue:"same ID in two authorized projects"},
+      attributes:[{key:"sift.event_id",value:{stringValue:"cross-project-same-id"}}]
+    }]}]
+  }]}' > "$EVIDENCE_DIR/kubernetes/cross-project-same-id.json"
+for allowed_project in "$PROJECT" "$PROJECT_ALT"; do
+  project_curl "$allowed_project" -X POST "${sift_url}/v1/logs" \
+    -H 'content-type: application/json' \
+    --data-binary "@$EVIDENCE_DIR/kubernetes/cross-project-same-id.json" \
+    > "$EVIDENCE_DIR/kubernetes/cross-project-${allowed_project}-ingest.json"
+  jq -e 'type == "object" and (.partialSuccess == null)' \
+    "$EVIDENCE_DIR/kubernetes/cross-project-${allowed_project}-ingest.json" >/dev/null \
+    || die "same-ID ingest failed for authorized project ${allowed_project}"
+  project_curl "$allowed_project" -X POST "${sift_url}/api/v1/query" \
+    -H 'content-type: application/json' \
+    --data "{\"version\":1,\"project\":\"${allowed_project}\",\"environment\":\"gke\",\"signal\":{\"kind\":\"logs\",\"filter\":{\"op\":\"eq\",\"field\":\"event_id\",\"value\":\"cross-project-same-id\"}},\"limit\":10,\"mode\":\"sync\"}" \
+    > "$EVIDENCE_DIR/kubernetes/cross-project-${allowed_project}-query.json"
+  jq -e '(.data.records | map(select(.event_id == "cross-project-same-id")) | length) == 1' \
+    "$EVIDENCE_DIR/kubernetes/cross-project-${allowed_project}-query.json" >/dev/null \
+    || die "same event ID was not retained independently for ${allowed_project}"
+done
 
 run_mcp_smoke
 
@@ -795,9 +1394,22 @@ make_load_scenario() {
   local qps="$3"
   local duration="$4"
   local output="$5"
-  local body path case_name base_seconds
+  local body path case_name base_seconds trace_prefix span_prefix
   case_name="${phase}_${signal}"
   base_seconds="$(date -u +%s)"
+  case "$phase" in
+    steady)
+      trace_prefix=57ead0000000
+      span_prefix=57ea
+      ;;
+    failover)
+      trace_prefix=fa1100000000
+      span_prefix=fa11
+      ;;
+    *)
+      die "unknown load phase: $phase"
+      ;;
+  esac
   case "$signal" in
     logs)
       path=v1/logs
@@ -855,6 +1467,7 @@ make_load_scenario() {
                     timeUnixNano:($base + $seq6 + ($i|pad3)),
                     asDouble:(($i + 1) * 1.0),
                     attributes:[
+                      {key:"sift.event_id",value:{stringValue:($phase + "-metric-" + $seq + "-" + ($i|tostring))}},
                       {key:"load.phase",value:{stringValue:$phase}},
                       {key:"load.request",value:{stringValue:$seq}}
                     ]
@@ -871,7 +1484,9 @@ make_load_scenario() {
         --arg base "$base_seconds" \
         --arg seq '{{rig.sequence_016x}}' \
         --arg seq6 '{{rig.sequence_06}}' \
-        --arg phase "$phase" '
+        --arg phase "$phase" \
+        --arg trace_prefix "$trace_prefix" \
+        --arg span_prefix "$span_prefix" '
         def pad3: tostring as $s | ("000" + $s)[-3:];
         def pad4: tostring as $s | ("0000" + $s)[-4:];
         {
@@ -883,13 +1498,16 @@ make_load_scenario() {
             ]},
             scopeSpans:[{scope:{name:"sift.load"},spans:[
               range(0;1000) as $i | {
-                traceId:("c0ffee000000" + $seq + ($i|pad4)),
-                spanId:$seq,
+                traceId:($trace_prefix + $seq + ($i|pad4)),
+                spanId:($span_prefix + $seq[-8:] + ($i|pad4)),
                 name:"POST /load",
                 startTimeUnixNano:($base + $seq6 + ($i|pad3)),
                 endTimeUnixNano:($base + $seq6 + ($i|pad3)),
                 status:{code:1},
-                attributes:[{key:"load.phase",value:{stringValue:$phase}}]
+                attributes:[
+                  {key:"sift.event_id",value:{stringValue:($phase + "-span-" + $seq + "-" + ($i|tostring))}},
+                  {key:"load.phase",value:{stringValue:$phase}}
+                ]
               }
             ]}]
           }]
@@ -928,6 +1546,9 @@ x-sift-project = "${PROJECT}"
 [load.request.expect]
 status = 200
 timeout_ms = 5000
+
+[load.request.expect.jsonpath]
+"$.partialSuccess" = "absent"
 EOF
 }
 
@@ -973,7 +1594,7 @@ spec:
       automountServiceAccountToken: false
       restartPolicy: Never
       nodeSelector:
-        cloud.google.com/gke-nodepool: acceptance-pool
+        axiom-run-id: ${RUN_ID}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -1079,7 +1700,6 @@ wait_load_phase() {
     validate_load_report "$signal" "$qps" "$duration" "$report"
   done
   jq -s '{
-    reports: .,
     requests: ([.[].findings[] | select(.kind == "load_observation") | .evidence.total] | add),
     failed: ([.[].findings[] | select(.kind == "load_observation") | .evidence.failed] | add),
     achieved_items_per_second:
@@ -1091,6 +1711,8 @@ wait_load_phase() {
     "$EVIDENCE_DIR/load/${phase}/metrics/report.json" \
     "$EVIDENCE_DIR/load/${phase}/traces/report.json" \
     > "$EVIDENCE_DIR/load/${phase}/summary.json"
+  verify_pods_on_run_nodes "$NAMESPACE" \
+    "sift-load-phase=${phase}" "sift-load-${phase}"
 }
 
 echo ">> Sift MVP: persistent async query job and PVC restart"
@@ -1168,6 +1790,9 @@ jq -e \
   and (.signals.traces.count - $before[0].signals.traces.count) == $traces
 ' "$EVIDENCE_DIR/load/steady/integrity-after.json" >/dev/null \
   || die "steady load did not retain the exact 50/30/20 signal mix"
+verify_load_digest steady "$LOAD_SECONDS" \
+  "$EVIDENCE_DIR/load/steady/integrity-before.json" \
+  "$EVIDENCE_DIR/load/steady/integrity-after.json"
 jq -e --argjson expected "$EXPECTED_ITEMS" --argjson rate "$ITEMS_PER_SECOND" '
   .failed == 0
   and (.requests * 1000) == $expected
@@ -1180,6 +1805,8 @@ snapshot_restarts "$EVIDENCE_DIR/kubernetes/restarts-after-steady.json"
 assert_no_unexpected_restarts \
   "$EVIDENCE_DIR/kubernetes/restarts-before-steady.json" \
   "$EVIDENCE_DIR/kubernetes/restarts-after-steady.json"
+refresh_token
+verify_idempotency_retry after-steady-load
 
 echo ">> Sift MVP: recent query, trace read, and log-tail latency"
 latency_epoch="$(date -u +%s)"
@@ -1200,7 +1827,11 @@ jq -nc --arg ts "$latency_nanos" '
   }]}' > "$EVIDENCE_DIR/latency/log.json"
 auth_curl -X POST "${sift_url}/v1/logs" \
   -H 'content-type: application/json' \
-  --data-binary "@$EVIDENCE_DIR/latency/log.json" >/dev/null
+  --data-binary "@$EVIDENCE_DIR/latency/log.json" \
+  > "$EVIDENCE_DIR/latency/log-ingest-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/latency/log-ingest-response.json" >/dev/null \
+  || die "latency log was not fully accepted"
 jq -nc \
   --arg ts "$((latency_nanos + 10))" \
   --arg end "$((latency_nanos + 2000010))" \
@@ -1222,20 +1853,40 @@ jq -nc \
   }]}' > "$EVIDENCE_DIR/latency/trace.json"
 auth_curl -X POST "${sift_url}/v1/traces" \
   -H 'content-type: application/json' \
-  --data-binary "@$EVIDENCE_DIR/latency/trace.json" >/dev/null
+  --data-binary "@$EVIDENCE_DIR/latency/trace.json" \
+  > "$EVIDENCE_DIR/latency/trace-ingest-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/latency/trace-ingest-response.json" >/dev/null \
+  || die "latency trace was not fully accepted"
 
 query_payload='{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"latency-log"}},"limit":10,"mode":"sync"}'
 : > "$EVIDENCE_DIR/latency/query-seconds.txt"
 : > "$EVIDENCE_DIR/latency/trace-seconds.txt"
 for sample in $(seq 1 40); do
-  auth_curl --output /dev/null --write-out '%{time_total}\n' \
+  query_seconds="$(auth_curl \
+    --output "$EVIDENCE_DIR/latency/query-response-${sample}.json" \
+    --write-out '%{time_total}' \
     -X POST "${sift_url}/api/v1/query" \
     -H 'content-type: application/json' \
-    --data "$query_payload" \
-    >> "$EVIDENCE_DIR/latency/query-seconds.txt"
-  auth_curl --output /dev/null --write-out '%{time_total}\n' \
-    "${sift_url}/api/v1/traces/${latency_trace}?project=${PROJECT}" \
-    >> "$EVIDENCE_DIR/latency/trace-seconds.txt"
+    --data "$query_payload")"
+  jq -e '
+    (.data.records | map(select(.event_id == "latency-log")) | length) == 1
+    and .partial == false
+  ' "$EVIDENCE_DIR/latency/query-response-${sample}.json" >/dev/null \
+    || die "recent query latency sample ${sample} returned the wrong body"
+  printf '%s\n' "$query_seconds" >> "$EVIDENCE_DIR/latency/query-seconds.txt"
+
+  trace_seconds="$(auth_curl \
+    --output "$EVIDENCE_DIR/latency/trace-response-${sample}.json" \
+    --write-out '%{time_total}' \
+    "${sift_url}/api/v1/traces/${latency_trace}?project=${PROJECT}")"
+  jq -e --arg trace "$latency_trace" '
+    .trace_id == $trace
+    and (.spans | length) == 1
+    and .partial == false
+  ' "$EVIDENCE_DIR/latency/trace-response-${sample}.json" >/dev/null \
+    || die "trace-read latency sample ${sample} returned the wrong body"
+  printf '%s\n' "$trace_seconds" >> "$EVIDENCE_DIR/latency/trace-seconds.txt"
 done
 query_p95_ms="$(percentile_ms "$EVIDENCE_DIR/latency/query-seconds.txt" 0.95)"
 trace_p95_ms="$(percentile_ms "$EVIDENCE_DIR/latency/trace-seconds.txt" 0.95)"
@@ -1255,10 +1906,15 @@ jq -nc --arg ts "$tail_nanos" '
       attributes:[{key:"sift.event_id",value:{stringValue:"latency-tail"}}]
     }]}]
   }]}' > "$EVIDENCE_DIR/latency/tail-log.json"
-tail_ingest_seconds="$(auth_curl --output /dev/null --write-out '%{time_total}' \
+tail_ingest_seconds="$(auth_curl \
+  --output "$EVIDENCE_DIR/latency/tail-ingest-response.json" \
+  --write-out '%{time_total}' \
   -X POST "${sift_url}/v1/logs" \
   -H 'content-type: application/json' \
   --data-binary "@$EVIDENCE_DIR/latency/tail-log.json")"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/latency/tail-ingest-response.json" >/dev/null \
+  || die "tail latency log was not fully accepted"
 tail_query_seconds="$(auth_curl --output "$EVIDENCE_DIR/latency/tail-response.json" \
   --write-out '%{time_total}' \
   -X POST "${sift_url}/api/v1/logs/tail" \
@@ -1305,6 +1961,7 @@ start_store_forwards
 refresh_token
 [[ "$(wait_store_leader)" == "$failover_leader" ]] \
   || die "Raft leadership changed before the failover drill began"
+snapshot_restarts "$EVIDENCE_DIR/kubernetes/restarts-before-failover.json"
 
 gcloud compute instances describe "$failover_node" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json \
@@ -1347,6 +2004,9 @@ jq -e --slurpfile before "$EVIDENCE_DIR/load/failover/integrity-before.json" '
   and (.signals.traces.count - $before[0].signals.traces.count) == 600000
 ' "$EVIDENCE_DIR/load/failover/integrity-after.json" >/dev/null \
   || die "failover load lost acknowledged signal data"
+verify_load_digest failover "$FAILOVER_SECONDS" \
+  "$EVIDENCE_DIR/load/failover/integrity-before.json" \
+  "$EVIDENCE_DIR/load/failover/integrity-after.json"
 
 node_deadline=$((SECONDS + 1200))
 while (( SECONDS < node_deadline )); do
@@ -1362,17 +2022,35 @@ done
 kubectl uncordon "$failover_node" >/dev/null 2>&1 || true
 wait_role_ready statefulset sift-store 3
 wait_role_ready statefulset sift-control 3
+wait_role_ready deployment sift-gateway 1
+wait_role_ready deployment sift-query 1
+wait_role_ready daemonset sift-agent 3
+stop_forwards
+start_gateway_forward
+start_store_forwards
+refresh_token
+wait_store_leader >/dev/null
+wait_for_store_convergence \
+  "$EVIDENCE_DIR/load/failover/integrity-after.json" \
+  "$EVIDENCE_DIR/load/failover/voters-after-recovery" \
+  true
 gcloud compute instances describe "$failover_node" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json \
   > "$EVIDENCE_DIR/kubernetes/failover-vm-after.json" 2>/dev/null || true
 kubectl -n "$NAMESPACE" get pods -o json \
   > "$EVIDENCE_DIR/kubernetes/pods-after-failover.json"
+snapshot_restarts "$EVIDENCE_DIR/kubernetes/restarts-after-failover.json"
+assert_failover_restart_evidence \
+  "$EVIDENCE_DIR/kubernetes/restarts-before-failover.json" \
+  "$EVIDENCE_DIR/kubernetes/restarts-after-failover.json" \
+  "$failover_node"
 jq -e '
   all(.items[];
     ([.status.containerStatuses[]?.state.waiting.reason // empty] | index("CrashLoopBackOff") | not)
     and ([.status.containerStatuses[]?.lastState.terminated.reason // empty] | index("OOMKilled") | not))
 ' "$EVIDENCE_DIR/kubernetes/pods-after-failover.json" >/dev/null \
   || die "failover caused an OOMKill or CrashLoopBackOff"
+verify_idempotency_retry after-vm-failover
 
 wait_archive_covers_project() {
   local leader="$1"
@@ -1406,10 +2084,12 @@ now_seconds="$(date -u +%s)"
 day29_nanos="$(((now_seconds - 29 * 86400) * 1000000000))"
 day31_nanos="$(((now_seconds - 31 * 86400) * 1000000000))"
 day181_nanos="$(((now_seconds - 181 * 86400) * 1000000000))"
+rollover_nanos="$(((now_seconds - 180 * 86400 + 120) * 1000000000))"
 jq -nc \
   --arg day29 "$day29_nanos" \
   --arg day31 "$day31_nanos" \
-  --arg day181 "$day181_nanos" '
+  --arg day181 "$day181_nanos" \
+  --arg rollover "$rollover_nanos" '
   {resourceLogs:[{
     resource:{attributes:[
       {key:"service.name",value:{stringValue:"sift-retention"}},
@@ -1430,9 +2110,26 @@ jq -nc \
         timeUnixNano:$day181,
         body:{stringValue:"181-day boundary"},
         attributes:[{key:"sift.event_id",value:{stringValue:"retention-181d"}}]
+      },
+      {
+        timeUnixNano:$rollover,
+        body:{stringValue:"retention rollover"},
+        attributes:[{key:"sift.event_id",value:{stringValue:"retention-rollover"}}]
       }
     ]}]
   }]}' > "$EVIDENCE_DIR/kubernetes/retention-boundaries.json"
+jq -nc --arg rollover "$rollover_nanos" '
+  {resourceLogs:[{
+    resource:{attributes:[
+      {key:"service.name",value:{stringValue:"sift-retention"}},
+      {key:"deployment.environment.name",value:{stringValue:"gke"}}
+    ]},
+    scopeLogs:[{logRecords:[{
+      timeUnixNano:$rollover,
+      body:{stringValue:"retention rollover"},
+      attributes:[{key:"sift.event_id",value:{stringValue:"retention-rollover"}}]
+    }]}]
+  }]}' > "$EVIDENCE_DIR/kubernetes/retention-rollover.json"
 auth_curl -X POST "${sift_url}/v1/logs" \
   -H 'content-type: application/json' \
   --data-binary "@$EVIDENCE_DIR/kubernetes/retention-boundaries.json" \
@@ -1442,18 +2139,84 @@ jq -e '
   and (.partialSuccess.errorMessage | contains("180-day retention"))
 ' "$EVIDENCE_DIR/kubernetes/retention-boundaries-response.json" >/dev/null \
   || die "181-day telemetry was not rejected as non-retryable partial success"
-wait_for_integrity_count "$((retention_start + 2))" \
+wait_for_integrity_count "$((retention_start + 3))" \
   "$EVIDENCE_DIR/kubernetes/integrity-after-retention.json"
 auth_curl -X POST "${sift_url}/api/v1/query" \
   -H 'content-type: application/json' \
-  --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"in","field":"event_id","values":["retention-29d","retention-31d","retention-181d"]}},"limit":10,"mode":"sync"}' \
+  --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"in","field":"event_id","values":["retention-29d","retention-31d","retention-181d","retention-rollover"]}},"limit":10,"mode":"sync"}' \
   > "$EVIDENCE_DIR/kubernetes/query-retention-boundaries.json"
 jq -e '
-  ([.data.records[].event_id] | sort) == ["retention-29d","retention-31d"]
+  ([.data.records[].event_id] | sort) == ["retention-29d","retention-31d","retention-rollover"]
   and .partial == false
 ' "$EVIDENCE_DIR/kubernetes/query-retention-boundaries.json" >/dev/null \
   || die "retention boundary query returned the wrong event set"
 
+wait_archive_covers_project "$archive_leader" \
+  "$EVIDENCE_DIR/gcs/integrity-before-rollover-expiry.json"
+retention_generation_before="$(jq -r '.storage.archive.retention_generation' \
+  "$EVIDENCE_DIR/gcs/integrity-before-rollover-expiry.json")"
+rollover_deadline=$((SECONDS + 900))
+rollover_removed=0
+while (( SECONDS < rollover_deadline )); do
+  if integrity_to "$EVIDENCE_DIR/gcs/integrity-after-rollover-expiry.json" 2>/dev/null; then
+    rollover_query_status="$(auth_curl_status \
+      --output "$EVIDENCE_DIR/kubernetes/query-retention-rollover-expired.json" \
+      --write-out '%{http_code}' \
+      -X POST "${sift_url}/api/v1/query" \
+      -H 'content-type: application/json' \
+      --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"retention-rollover"}},"limit":10,"mode":"sync"}' \
+      || true)"
+    if [[ "$rollover_query_status" == "200" ]] \
+      && jq -e \
+        --argjson expected "$((retention_start + 2))" \
+        --argjson before "$retention_generation_before" '
+          .event_count == $expected
+          and .storage.archive.retention_generation > $before
+          and .storage.archive.retention_scan_pending == false
+        ' "$EVIDENCE_DIR/gcs/integrity-after-rollover-expiry.json" >/dev/null 2>&1 \
+      && jq -e '
+        (.data.records | map(select(.event_id == "retention-rollover")) | length) == 0
+        and .partial == false
+      ' "$EVIDENCE_DIR/kubernetes/query-retention-rollover-expired.json" >/dev/null 2>&1; then
+      rollover_removed=1
+      break
+    fi
+  fi
+  sleep 5
+done
+[[ "$rollover_removed" == "1" ]] \
+  || die "the 180-day rollover did not produce a complete retention generation"
+
+cp "$EVIDENCE_DIR/gcs/integrity-after-rollover-expiry.json" \
+  "$EVIDENCE_DIR/kubernetes/integrity-before-expired-idempotency-retry.json"
+auth_curl -X POST "${sift_url}/v1/logs" \
+  -H 'content-type: application/json' \
+  --data-binary "@$EVIDENCE_DIR/kubernetes/retention-rollover.json" \
+  > "$EVIDENCE_DIR/kubernetes/retention-rollover-retry-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/kubernetes/retention-rollover-retry-response.json" >/dev/null \
+  || die "the active six-hour receipt did not win over telemetry retention"
+integrity_to "$EVIDENCE_DIR/kubernetes/integrity-after-expired-idempotency-retry.json"
+jq -s -e '
+  .[0] as $before | .[1] as $after
+  | $after.event_count == $before.event_count
+    and $after.event_id_sha256 == $before.event_id_sha256
+    and $after.watermark == $before.watermark
+    and $after.signals == $before.signals
+' "$EVIDENCE_DIR/kubernetes/integrity-before-expired-idempotency-retry.json" \
+  "$EVIDENCE_DIR/kubernetes/integrity-after-expired-idempotency-retry.json" >/dev/null \
+  || die "retrying an expired event changed durable project identity"
+auth_curl -X POST "${sift_url}/api/v1/query" \
+  -H 'content-type: application/json' \
+  --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"retention-rollover"}},"limit":10,"mode":"sync"}' \
+  > "$EVIDENCE_DIR/kubernetes/query-retention-rollover-after-retry.json"
+jq -e '
+  (.data.records | map(select(.event_id == "retention-rollover")) | length) == 0
+  and .partial == false
+' "$EVIDENCE_DIR/kubernetes/query-retention-rollover-after-retry.json" >/dev/null \
+  || die "retrying an expired event reintroduced telemetry"
+
+archive_leader="$(wait_store_leader)"
 wait_archive_covers_project "$archive_leader" \
   "$EVIDENCE_DIR/gcs/integrity-before-iam-outage.json"
 gcloud storage ls --recursive "gs://${BACKUP_BUCKET}/sift/${RUN_ID}/**" \
@@ -1490,7 +2253,11 @@ jq -nc --arg ts "$outage_nanos" '
   }]}' > "$EVIDENCE_DIR/gcs/archive-outage-log.json"
 auth_curl -X POST "${sift_url}/v1/logs" \
   -H 'content-type: application/json' \
-  --data-binary "@$EVIDENCE_DIR/gcs/archive-outage-log.json" >/dev/null
+  --data-binary "@$EVIDENCE_DIR/gcs/archive-outage-log.json" \
+  > "$EVIDENCE_DIR/gcs/archive-outage-log-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/gcs/archive-outage-log-response.json" >/dev/null \
+  || die "the outage log was not fully acknowledged"
 store_integrity_to "$archive_leader" \
   "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json"
 archive_wal_after_ack="$(jq -r '.storage.wal_bytes.logs' \
@@ -1530,37 +2297,9 @@ jq -e \
 ' "$EVIDENCE_DIR/gcs/integrity-during-iam-outage.json" >/dev/null \
   || die "GCS outage changed the manifest, compacted WAL, or hid archive lag"
 
-outage_restart_voter="$(((archive_leader + 1) % 3))"
-stop_forwards
-kubectl -n "$NAMESPACE" delete "pod/sift-store-${outage_restart_voter}" \
-  --wait=true --timeout=240s
-wait_role_ready statefulset sift-store 3
-start_gateway_forward
-start_store_forwards
-refresh_token
-outage_restart_deadline=$((SECONDS + 300))
-while (( SECONDS < outage_restart_deadline )); do
-  if store_integrity_to "$outage_restart_voter" \
-      "$EVIDENCE_DIR/gcs/integrity-after-outage-voter-restart.json" 2>/dev/null \
-      && jq -e \
-        --slurpfile expected "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json" '
-        .event_count == $expected[0].event_count
-        and .event_id_sha256 == $expected[0].event_id_sha256
-        and .watermark == $expected[0].watermark
-      ' "$EVIDENCE_DIR/gcs/integrity-after-outage-voter-restart.json" >/dev/null; then
-    break
-  fi
-  sleep 3
-done
-jq -e \
-  --slurpfile expected "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json" '
-  .event_count == $expected[0].event_count
-  and .event_id_sha256 == $expected[0].event_id_sha256
-  and .watermark == $expected[0].watermark
-' "$EVIDENCE_DIR/gcs/integrity-after-outage-voter-restart.json" >/dev/null \
-  || die "a voter did not recover acknowledged WAL during the GCS outage"
-[[ "$(wait_store_leader)" == "$archive_leader" ]] \
-  || die "archive leadership changed after the isolated follower restart"
+verify_outage_quorum_recovery "$archive_leader" \
+  "$EVIDENCE_DIR/gcs/integrity-after-outage-ack.json" \
+  "$archive_manifest_before" "$archive_hash_before"
 
 cold_query_start="$(jq -nr --argjson epoch "$((now_seconds - 32 * 86400))" \
   '$epoch | strftime("%Y-%m-%dT%H:%M:%SZ")')"
@@ -1600,9 +2339,15 @@ gcloud storage objects describe "$archive_manifest" --format=json \
 gcloud storage cat "$archive_manifest" \
   > "$EVIDENCE_DIR/gcs/final-manifest.json"
 jq -e '
-  .format_version >= 1
+  .format_version == 10
   and .event_count > 0
-  and (.segments | length) > 0
+  and (.catalog_uri | startswith("gs://"))
+  and .catalog_root.format_version == 1
+  and .catalog_root.entry_count == (.segment_count + .blob_count + .dedupe_receipt_count)
+  and .segment_count > 0
+  and (has("segments") | not)
+  and (has("blobs") | not)
+  and (has("gc_object_uris") | not)
   and (.event_id_sha256 | length) == 64
 ' "$EVIDENCE_DIR/gcs/final-manifest.json" >/dev/null \
   || die "final GCS archive manifest is incomplete"
@@ -1692,7 +2437,7 @@ spec:
     maxConcurrentRequests: 32
   placement:
     nodeSelector:
-      cloud.google.com/gke-nodepool: acceptance-pool
+      axiom-run-id: ${RUN_ID}
   gcpProjectId: ${PROJECT_ID}
   gkeClusterName: ${GKE_CLUSTER_NAME}
   gkeLocation: ${GKE_ZONE}
@@ -1737,6 +2482,8 @@ jq -e '
     and (all($pvcs[]; .metadata.creationTimestamp != null))
 ' "$EVIDENCE_DIR/restore/topology.json" >/dev/null \
   || die "restore did not use eight fresh bound PVCs"
+verify_pods_on_run_nodes "$RESTORE_NAMESPACE" \
+  'app.kubernetes.io/name=sift' sift-restore-topology
 
 RESTORE_PORT=17580
 kubectl -n "$RESTORE_NAMESPACE" port-forward service/sift-restore \
@@ -1776,6 +2523,115 @@ jq -e \
 ' "$EVIDENCE_DIR/restore/integrity.json" >/dev/null \
   || die "fresh-PVC restore count, digest, watermark, signals, or cluster identity did not match"
 
+cp "$EVIDENCE_DIR/restore/integrity.json" \
+  "$EVIDENCE_DIR/restore/integrity-before-expired-idempotency-retry.json"
+restore_auth_curl -X POST "${restore_url}/v1/logs" \
+  -H 'content-type: application/json' \
+  --data-binary "@$EVIDENCE_DIR/kubernetes/retention-rollover.json" \
+  > "$EVIDENCE_DIR/restore/retention-rollover-retry-response.json"
+jq -e 'type == "object" and (.partialSuccess == null)' \
+  "$EVIDENCE_DIR/restore/retention-rollover-retry-response.json" >/dev/null \
+  || die "fresh-PVC restore lost the active six-hour receipt"
+restore_auth_curl "${restore_url}/admin/integrity?project=${PROJECT}" \
+  > "$EVIDENCE_DIR/restore/integrity-after-expired-idempotency-retry.json"
+jq -s -e '
+  .[0] as $before | .[1] as $after
+  | $after.event_count == $before.event_count
+    and $after.event_id_sha256 == $before.event_id_sha256
+    and $after.watermark == $before.watermark
+    and $after.signals == $before.signals
+' "$EVIDENCE_DIR/restore/integrity-before-expired-idempotency-retry.json" \
+  "$EVIDENCE_DIR/restore/integrity-after-expired-idempotency-retry.json" >/dev/null \
+  || die "fresh-PVC retry changed restored project identity"
+restore_auth_curl -X POST "${restore_url}/api/v1/query" \
+  -H 'content-type: application/json' \
+  --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"retention-rollover"}},"limit":10,"mode":"sync"}' \
+  > "$EVIDENCE_DIR/restore/query-retention-rollover-after-retry.json"
+jq -e '
+  (.data.records | map(select(.event_id == "retention-rollover")) | length) == 0
+  and .partial == false
+' "$EVIDENCE_DIR/restore/query-retention-rollover-after-retry.json" >/dev/null \
+  || die "fresh-PVC retry reintroduced expired telemetry"
+
+for ordinal in 0 1 2; do
+  restore_http_port=$((17600 + ordinal))
+  restore_peer_port=$((18600 + ordinal))
+  kubectl -n "$RESTORE_NAMESPACE" port-forward \
+    "pod/sift-restore-store-${ordinal}" "${restore_http_port}:7380" \
+    >> "$EVIDENCE_DIR/restore/store-${ordinal}-http-forward.log" 2>&1 &
+  forward_pids+=("$!")
+  kubectl -n "$RESTORE_NAMESPACE" port-forward \
+    "pod/sift-restore-store-${ordinal}" "${restore_peer_port}:7381" \
+    >> "$EVIDENCE_DIR/restore/store-${ordinal}-peer-forward.log" 2>&1 &
+  forward_pids+=("$!")
+done
+sleep 3
+restore_peer_dir="$MANIFEST_DIR/sift/peer-pki"
+restore_voters_deadline=$((SECONDS + 900))
+restore_voters_converged=false
+while (( SECONDS < restore_voters_deadline )); do
+  restore_voters_complete=true
+  for ordinal in 0 1 2; do
+    restore_http_port=$((17600 + ordinal))
+    restore_peer_port=$((18600 + ordinal))
+    restore_host="sift-restore-store-${ordinal}.sift-restore-store-headless.sift-restore.svc.cluster.local"
+    curl --max-time 30 --silent --show-error --fail-with-body \
+      -H "authorization: Bearer $(sed -n '1p' "$token_file")" \
+      -H "x-sift-project: ${PROJECT}" \
+      "http://127.0.0.1:${restore_http_port}/admin/integrity?project=${PROJECT}" \
+      > "$EVIDENCE_DIR/restore/store-${ordinal}-integrity.json" \
+      2>/dev/null || restore_voters_complete=false
+    curl --noproxy '*' --max-time 5 --silent --show-error --fail \
+      --cacert "$restore_peer_dir/ca.crt" \
+      --cert "$restore_peer_dir/tls.crt" \
+      --key "$restore_peer_dir/tls.key" \
+      --resolve "${restore_host}:${restore_peer_port}:127.0.0.1" \
+      "https://${restore_host}:${restore_peer_port}/raftz" \
+      > "$EVIDENCE_DIR/restore/store-${ordinal}-raftz.json" \
+      2>/dev/null || restore_voters_complete=false
+  done
+  if [[ "$restore_voters_complete" == true ]] \
+    && jq -s -e --slurpfile source "$EVIDENCE_DIR/gcs/source-integrity-for-restore.json" \
+      --arg manifest "$archive_manifest" '
+        length == 3
+        and (map(.cluster_id) | unique | length == 1)
+        and all(.[];
+          .restored_from == $manifest
+          and .cluster_id != $source[0].cluster_id
+          and .event_count == $source[0].event_count
+          and .event_id_sha256 == $source[0].event_id_sha256
+          and .watermark == $source[0].watermark
+          and .signals == $source[0].signals)
+      ' "$EVIDENCE_DIR"/restore/store-*-integrity.json >/dev/null \
+    && jq -s -e '
+        length == 3
+        and (map(.committed_voters | length == 3) | all)
+        and (map(.durability_error == null) | all)
+        and (map(.applied_index) | unique | length == 1)
+        and (map(.commit_index) | unique | length == 1)
+        and all(.[];
+          .applied_index == .commit_index
+          and .snapshot_index <= .applied_index
+          and .resident_log_bytes <= 536870912
+          and .resident_log_bytes < .max_resident_log_bytes)
+      ' "$EVIDENCE_DIR"/restore/store-*-raftz.json >/dev/null; then
+    restore_voters_converged=true
+    break
+  fi
+  sleep 5
+done
+[[ "$restore_voters_converged" == true ]] \
+  || die "fresh-PVC restore voters did not converge on integrity and bounded Raft state"
+jq -s -e --slurpfile source "$EVIDENCE_DIR/gcs/source-integrity-for-restore.json" '
+  length == 3
+  and all(.[];
+    .event_count == $source[0].event_count
+    and .event_id_sha256 == $source[0].event_id_sha256
+    and .watermark == $source[0].watermark
+    and .signals == $source[0].signals)
+' "$EVIDENCE_DIR"/restore/store-*-integrity.json >/dev/null \
+  || die "fresh-PVC restore voters disagree with the source archive"
+
 restore_auth_curl -X POST "${restore_url}/api/v1/query" \
   -H 'content-type: application/json' \
   --data '{"version":1,"project":"sift-mvp","environment":"gke","signal":{"kind":"logs","filter":{"op":"eq","field":"event_id","value":"retention-31d"}},"limit":10,"mode":"sync"}' \
@@ -1798,7 +2654,7 @@ jq -e '(.data.traces | length) >= 1' \
   "$EVIDENCE_DIR/restore/trace-sample.json" >/dev/null \
   || die "restored trace sample was not queryable"
 
-echo ">> Sift MVP: write acceptance evidence"
+echo ">> Sift MVP: write pre-cleanup verification evidence"
 jq -n \
   --arg project_id "$PROJECT_ID" \
   --arg region "$REGION" \
@@ -1807,17 +2663,24 @@ jq -n \
   --arg bucket "$BACKUP_BUCKET" \
   --arg sift_image "$SIFT_IMAGE" \
   --arg rig_image "$RIG_IMAGE" \
+  --arg candidate_git_sha "$CANDIDATE_GIT_SHA" \
+  --arg source_bundle_sha256 "$CANDIDATE_SOURCE_SHA256" \
+  --arg cloud_build_id "$CANDIDATE_CLOUD_BUILD_ID" \
+  --arg source_object_uri "$CANDIDATE_SOURCE_URI" \
   --arg manifest "$archive_manifest" \
   --arg leader_before "$failover_leader" \
   --arg leader_after "$new_leader" \
   --arg stopped_vm "$failover_node" \
   --slurpfile steady "$EVIDENCE_DIR/load/steady/summary.json" \
+  --slurpfile steady_digest "$EVIDENCE_DIR/load/steady/event-id-digest.json" \
   --slurpfile failover "$EVIDENCE_DIR/load/failover/summary.json" \
+  --slurpfile failover_digest "$EVIDENCE_DIR/load/failover/event-id-digest.json" \
   --slurpfile latency "$EVIDENCE_DIR/latency/summary.json" \
+  --slurpfile outage_restart "$EVIDENCE_DIR/gcs/outage-leader-restart.json" \
   --slurpfile source "$EVIDENCE_DIR/gcs/source-integrity-for-restore.json" \
   --slurpfile restored "$EVIDENCE_DIR/restore/integrity.json" '
   {
-    schema:"axiom.gcp.operator.acceptance.v1",
+    schema:"axiom.gcp.operator.verification.v1",
     project_id:$project_id,
     region:$region,
     gke_zone:$zone,
@@ -1825,11 +2688,15 @@ jq -n \
     backup_bucket:$bucket,
     acceptance:{
       sift:{
-        schema:"axiom.gcp.sift.mvp.acceptance.v1",
-        status:"passed",
+        schema:"axiom.gcp.sift.mvp.verification.v1",
+        status:"verification-passed",
         candidate:{
           sift_image:$sift_image,
           rig_image:$rig_image,
+          git_sha:$candidate_git_sha,
+          source_bundle_sha256:$source_bundle_sha256,
+          cloud_build_id:$cloud_build_id,
+          source_object_uri:$source_object_uri,
           immutable:true
         },
         topology:{
@@ -1850,7 +2717,8 @@ jq -n \
           remote_write_2_rejected_415:"passed",
           mcp_read_only_tools:"passed",
           mcp_host_origin:"passed",
-          cross_project_denied:"passed"
+          cross_project_denied:"passed",
+          cross_project_same_id:"passed"
         },
         load:{
           duration_seconds:1800,
@@ -1859,7 +2727,8 @@ jq -n \
           expected_logs:9000000,
           expected_metric_points:5400000,
           expected_spans:3600000,
-          observed:$steady[0]
+          observed:$steady[0],
+          event_id_digest:$steady_digest[0]
         },
         latency:$latency[0],
         failover:{
@@ -1869,18 +2738,29 @@ jq -n \
           leader_after:$leader_after,
           stopped_vm:$stopped_vm,
           observed:$failover[0],
+          event_id_digest:$failover_digest[0],
           acknowledged_data_loss:0,
           auto_repair:"passed"
         },
         archive:{
           gcs_iam_outage:"passed",
           wal_preserved:"passed",
+          quorum_recovered_after_leader_restart:$outage_restart[0].quorum_recovered,
           manifest_uri:$manifest
+        },
+        idempotency:{
+          signals:["logs","metrics","traces"],
+          immediate_retry:"passed",
+          after_steady_load:"passed",
+          after_vm_failover:"passed",
+          after_telemetry_expiration:"passed"
         },
         retention:{
           day_29:"hot-query-passed",
           day_31:"cold-query-passed",
-          day_181:"non-retryable-partial-rejection-passed"
+          day_181:"non-retryable-partial-rejection-passed",
+          day_180_rollover:"bounded-generation-passed",
+          scan_completed:true
         },
         restore:{
           fresh_pvc:"passed",
@@ -1893,11 +2773,14 @@ jq -n \
           source_watermark:$source[0].watermark,
           restored_watermark:$restored[0].watermark
         },
-        cleanup_evidence:"pending-exit-trap"
+        cleanup_evidence:null
       }
     }
-  }' > "$EVIDENCE_DIR/sift-mvp-acceptance.json"
-cp "$EVIDENCE_DIR/sift-mvp-acceptance.json" "$EVIDENCE_DIR/acceptance.json"
+  }' > "$EVIDENCE_DIR/sift-mvp-verification.json"
+python3 "$SCRIPT_DIR/validate-sift-mvp-evidence.py" \
+  --schema "$SCRIPT_DIR/../evidence/schema.json" \
+  --document "$EVIDENCE_DIR/sift-mvp-verification.json" \
+  --mode verification
 date -u +%Y-%m-%dT%H:%M:%SZ \
-  > "$EVIDENCE_DIR/kubernetes/sift-mvp-acceptance-completed-at.txt"
-echo "Sift MVP cloud acceptance passed. Mandatory cleanup will now produce cleanup.json."
+  > "$EVIDENCE_DIR/kubernetes/sift-mvp-verification-completed-at.txt"
+echo "Sift MVP cloud checks passed. Cleanup must finish before terminal evidence exists."
