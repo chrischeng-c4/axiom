@@ -30,6 +30,16 @@
 - Open: Define recovery and aggregate readiness evidence.
 - Neighbours: Fleet safe rollout and foundation extraction.
 
+## Fleet safe rollout
+
+- Problem: Fleet changes need a safe rollout boundary.
+- Who: Fleet operators.
+- Promise: Fleet rolls declared changes forward only when readiness evidence permits.
+- Outcome: `fleet-safe-rollout`. Tracking: Not assigned.
+- Non-goals: Using workload ordering as a quorum proof.
+- Open: Define per-instance rollout controls.
+- Neighbours: Quorum-safe runtime rollout.
+
 ## Non-goals in this area
 
 Fleet does not replace stateful membership safety with generic rollout order.

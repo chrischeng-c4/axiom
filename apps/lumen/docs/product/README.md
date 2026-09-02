@@ -44,3 +44,4 @@ outcome and remains unbound until its release work is ready.
 | Fleet and runtime configuration | fleet-and-runtime-configuration.md |
 | Runtime configuration parity | fleet-and-runtime-configuration.md |
 | Fleet production convergence | fleet-and-runtime-configuration.md |
+| Fleet safe rollout | fleet-and-runtime-configuration.md |
