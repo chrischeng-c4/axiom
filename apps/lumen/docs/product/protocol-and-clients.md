@@ -50,6 +50,16 @@
 - Open: Define all language-specific Search v2 parity gates.
 - Neighbours: Unified search contract and strict generated-client gates.
 
+## Generated-client request resilience
+
+- Problem: Callers need safe retry, deadline, and cancellation behavior.
+- Who: Generated-client consumers.
+- Promise: Clients apply an operation-aware request-resilience contract.
+- Outcome: `generated-client-request-resilience`. Tracking: Not assigned.
+- Non-goals: Retrying ambiguous writes without a contract.
+- Open: Define retry and timeout policy.
+- Neighbours: Idempotent write replay.
+
 ## Non-goals in this area
 
 Lumen does not publish generated SDK packages today.
