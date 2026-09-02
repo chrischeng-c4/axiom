@@ -40,6 +40,16 @@
 - Open: Define per-instance rollout controls.
 - Neighbours: Quorum-safe runtime rollout.
 
+## Fleet foundation extraction
+
+- Problem: Fleet-specific foundations must be reusable without moving Lumen policy out of the app.
+- Who: Fleet and platform maintainers.
+- Promise: The shared Fleet foundation has a clear reusable boundary.
+- Outcome: `fleet-foundation-extraction`. Tracking: Not assigned.
+- Non-goals: Extracting Lumen search or Raft policy into a generic library.
+- Open: Define the reusable API and migration boundary.
+- Neighbours: Fleet production convergence.
+
 ## Non-goals in this area
 
 Fleet does not replace stateful membership safety with generic rollout order.

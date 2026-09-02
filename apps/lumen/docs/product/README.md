@@ -45,3 +45,4 @@ outcome and remains unbound until its release work is ready.
 | Runtime configuration parity | fleet-and-runtime-configuration.md |
 | Fleet production convergence | fleet-and-runtime-configuration.md |
 | Fleet safe rollout | fleet-and-runtime-configuration.md |
+| Fleet foundation extraction | fleet-and-runtime-configuration.md |
