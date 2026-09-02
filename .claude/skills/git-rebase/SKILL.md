@@ -6,88 +6,41 @@ user-invocable: true
 
 # /git:rebase
 
-Rebase the current branch onto one target ref, then stop. This skill does not
-commit, push, stash, or open a PR.
+Rebase the current branch onto one target ref, then stop. The mechanics live
+in `scripts/git/rebase.sh`; your job is the one thing it cannot do — resolve
+conflicts correctly.
 
 ## Rules
 
-- The argument is the target branch. With no argument the target is
-  `origin/main`, fetched first.
-- Run every git command through `git -c core.fsmonitor=false`. This checkout
-  enables `core.fsmonitor`, and a stalled daemon blocks any command that reads
-  the index — indefinitely, with no error.
-- Never run bare `git stash` / `git stash pop`. The stash stack is shared
-  across worktrees and other sessions. A dirty tree stops this skill instead.
-- Do not push. Report the post-rebase divergence and leave publishing to the
-  user (or `/git:land`).
-- Preserve persistent refs: `main`, `app/*`, `lib/*`, `project-mamba`,
-  `project-lumen`, `examples`. Rebasing the current branch is fine; never
-  delete or force-move any other ref.
-- If conflicts occur, resolve them correctly, stage the resolved files, and
-  continue the rebase. Ask only when the right resolution cannot be
-  determined. Abort (`git rebase --abort`) rather than guess.
+- The argument is the target branch; no argument means a freshly fetched
+  `origin/main`. The script resolves a named branch locally first, then as
+  `origin/<branch>`.
+- Do not push afterwards. Report the divergence the script prints and leave
+  publishing to the user (or `/git:push`, `/git:land`).
+- A `refused:` exit is the user's to fix — a dirty tree means they commit or
+  set work aside; never commit or stash for them, and never bare
+  `git stash` / `git stash pop`.
+- On conflicts, resolve each file correctly from both sides' intent. Ask
+  only when the right resolution cannot be determined; abort
+  (`git -c core.fsmonitor=false rebase --abort`) rather than guess.
 
 ## Instructions
 
-### Step 0: Preflight
+1. Run the script:
 
 ```bash
-git -c core.fsmonitor=false status --short
-git -c core.fsmonitor=false branch --show-current
+scripts/git/rebase.sh [branch]
 ```
 
-Stop and report — without starting the rebase — when any of these holds:
-
-- the working tree or index is dirty (the user must commit or set the work
-  aside first; do not commit or stash for them);
-- a merge, rebase, cherry-pick, or revert is already in progress;
-- the current branch is the target itself.
-
-### Step 1: Resolve the target
-
-No argument:
-
-```bash
-git -c core.fsmonitor=false fetch origin main
-```
-
-The target is `origin/main`.
-
-With an argument `<branch>`: verify it resolves with
-`git -c core.fsmonitor=false rev-parse --verify --quiet <branch>`. If it does
-not resolve locally, fetch and try `origin/<branch>`. If neither resolves,
-stop and report.
-
-### Step 2: Rebase
-
-```bash
-git -c core.fsmonitor=false rebase <target>
-```
-
-On conflict:
-
-```bash
-git -c core.fsmonitor=false diff --name-only --diff-filter=U
-```
-
-Read each conflicted file, resolve the conflict, then:
-
-```bash
-git -c core.fsmonitor=false add <resolved-file>
-git -c core.fsmonitor=false rebase --continue
-```
-
-Repeat until the rebase completes.
-
-### Step 3: Report
-
-```bash
-git -c core.fsmonitor=false status --short
-git -c core.fsmonitor=false rev-list --left-right --count HEAD...<target>
-git -c core.fsmonitor=false log --oneline -5
-```
-
-The clean finish is an empty status and `HEAD...<target>` reading `N 0`
-(local commits ahead, nothing behind). Report the exact counts, and — if the
-branch has an upstream the rebase diverged from — say that the next push
-needs `--force-with-lease`, without running it.
+2. Read its exit:
+   - `0` — rebased (or already up to date); it printed the status, the
+     `HEAD...<target>` and `HEAD...@{u}` counts, and the last five commits.
+     Clean is an empty status and `N 0` against the target. If the upstream
+     count shows `N M` with `M > 0`, say the next push needs
+     `--force-with-lease` — without running it.
+   - `2` — refused (dirty tree, in-progress operation, unresolvable target,
+     or target is the current branch). Report the printed reason.
+   - `3` — conflicts. It listed the conflicted files: read each one, resolve
+     it, stage it, run `git -c core.fsmonitor=false rebase --continue`,
+     repeat until the rebase completes, then rerun the script — a completed
+     rebase makes the rerun a no-op that just prints the report.

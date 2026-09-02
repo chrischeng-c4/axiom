@@ -6,69 +6,34 @@ user-invocable: true
 
 # /gh:merge-pr
 
-Merge one pull request, verify it merged, then stop. This skill does not
-commit, rebase, push, create a PR, or sync the local branch afterwards.
+Merge one pull request, verify it merged, then stop. The mechanics live in
+`scripts/gh/merge-pr.sh`: it watches pending checks to completion, refuses
+failing ones, merges with an explicit strategy, and verifies `MERGED`.
 
 ## Rules
 
-- The argument is the PR (number or URL). With no argument, resolve the one
-  open PR whose head is the current branch; zero or several matches stop the
-  skill.
-- Run every git command through `git -c core.fsmonitor=false`. This checkout
-  enables `core.fsmonitor`, and a stalled daemon blocks any command that reads
-  the index — indefinitely, with no error.
-- Do not merge while required checks are failing. Report the failing checks
-  verbatim and stop. Pending checks are waited on, not skipped.
-- Use the user-requested merge strategy when provided; otherwise follow
-  discoverable repository policy; otherwise squash. Always pass the strategy
-  explicitly.
-- Never pass `--delete-branch` unless the user explicitly asked to delete the
-  branch. Preserve persistent refs: `main`, `app/*`, `lib/*`,
-  `project-mamba`, `project-lumen`, `examples`.
-- Merging rewrites what `origin/main` holds; syncing the working branch back
-  is `/git:rebase` + `/git:push` (or `/git:land`), not this skill.
+- The argument is the PR number or URL; no argument means the one open PR
+  whose head is the current branch (zero or several matches refuse).
+- Strategy: pass `--strategy` from the user's request or discoverable
+  repository policy; otherwise the script's `squash` default stands.
+- Pass `--delete-branch` only when the user explicitly asked to delete the
+  branch. Persistent refs (`main`, `app/*`, `lib/*`, `project-mamba`,
+  `project-lumen`, `examples`) stay.
+- A `refused: failing checks` exit is final here — report the named checks
+  verbatim and stop; fixing them is separate work the user directs.
+- Merging moves `origin/main`; syncing the local branch back is
+  `/git:rebase` + `/git:push` (or `/git:land`), not this skill.
 
 ## Instructions
 
-### Step 0: Resolve the PR
-
-With no argument:
+1. Run the script (it may sit in the check-watch loop for a while):
 
 ```bash
-gh pr list --head "$(git -c core.fsmonitor=false branch --show-current)" --base main --state open --json number,url
+scripts/gh/merge-pr.sh [pr]
 ```
 
-Exactly one row is the PR; zero or several, stop and report.
-
-### Step 1: Gate on checks
-
-```bash
-gh pr view <pr> --json number,url,state,mergeable,mergeStateStatus,statusCheckRollup
-```
-
-If checks are pending, watch them to completion:
-
-```bash
-gh pr checks <pr> --watch --interval 15
-```
-
-If any required check fails, report the failing checks and stop.
-
-### Step 2: Merge
-
-```bash
-gh pr merge <pr> --squash
-```
-
-Substitute the explicit user-requested or repository-policy strategy when one
-applies.
-
-### Step 3: Verify
-
-```bash
-gh pr view <pr> --json state,mergedAt,mergeCommit,url
-```
-
-The clean finish is `state` `MERGED` with a merge commit. Report the merge
-commit and remind that the local branch now trails the merged base until it
-is rebased and pushed.
+2. Read its exit:
+   - `0` — merged and verified; it printed the merge commit and a reminder
+     that the local branch now trails the merged base. Report both.
+   - `2` — refused: could not resolve exactly one PR, or checks failed (the
+     failing names were printed). Report verbatim and stop.

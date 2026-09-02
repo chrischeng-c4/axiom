@@ -6,56 +6,32 @@ user-invocable: true
 
 # /gh:create-pr
 
-Open or reuse one pull request from the current branch to GitHub base `main`,
-report its state, then stop. This skill does not commit, rebase, push, or
-merge.
+Open — or reuse — one pull request from the current branch to a base branch,
+report its state, then stop. The mechanics live in `scripts/gh/create-pr.sh`;
+one PR per head is its invariant, so it reuses an existing open PR instead of
+creating a second.
 
 ## Rules
 
-- The argument is the base branch. With no argument the base is `main`.
-- Run every git command through `git -c core.fsmonitor=false`. This checkout
-  enables `core.fsmonitor`, and a stalled daemon blocks any command that reads
-  the index — indefinitely, with no error.
-- The head is always the current branch. Never open a PR for another ref.
-- The branch must already be pushed and in sync with its upstream. If it is
-  not, stop and point at `/git:push`; do not push from this skill.
-- One PR per head: if an open PR from the current branch to the base already
-  exists, reuse it instead of creating a second one.
-- Do not merge, close, or edit the PR beyond creation. Report and stop.
+- The argument is the base branch; no argument means `main`. The head is
+  always the current branch — never open a PR for another ref.
+- The script refuses an unpushed or out-of-sync branch; the fix is
+  `/git:push`, not pushing from here.
+- Do not merge, close, or edit the PR beyond creation, and do not wait for
+  pending checks — merging is `/gh:merge-pr`'s job.
 
 ## Instructions
 
-### Step 0: Preflight
+1. Run the script:
 
 ```bash
-git -c core.fsmonitor=false branch --show-current
-git -c core.fsmonitor=false rev-list --left-right --count HEAD...@{u}
+scripts/gh/create-pr.sh [base]
 ```
 
-Stop and report — without touching GitHub — when any of these holds:
-
-- the current branch is the base itself;
-- the branch has no upstream, or the divergence is not `0 0` (run
-  `/git:push` first).
-
-### Step 1: Reuse or create
-
-```bash
-gh pr list --head "$(git -c core.fsmonitor=false branch --show-current)" --base <base> --state open --json number,url
-```
-
-If an open PR exists, reuse it. Otherwise create one:
-
-```bash
-gh pr create --base <base> --head "$(git -c core.fsmonitor=false branch --show-current)" --fill
-```
-
-### Step 2: Report
-
-```bash
-gh pr view <pr> --json number,url,state,mergeable,mergeStateStatus,statusCheckRollup
-```
-
-Report the PR number, URL, whether it was created or reused, its
-mergeability, and each check's status. Do not wait for pending checks and do
-not merge; that is `/gh:merge-pr`'s job.
+2. Read its exit:
+   - `0` — it said whether the PR was created or reused, then printed the
+     PR's JSON state. Report the number, URL, created-vs-reused,
+     mergeability, and each check's status.
+   - `2` — refused (on the base branch itself, no upstream, or not `0 0`
+     against the upstream). Report the printed reason; if it points at
+     `scripts/git/push.sh`, run `/git:push` first when the user wants the PR.
