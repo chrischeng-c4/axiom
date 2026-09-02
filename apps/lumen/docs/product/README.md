@@ -28,3 +28,4 @@ outcome and remains unbound until its release work is ready.
 | Generated-client request resilience | protocol-and-clients.md |
 | Generated-client source-integration helpers | protocol-and-clients.md |
 | Versioned client workload template | protocol-and-clients.md |
+| Protocol compatibility policy | protocol-and-clients.md |

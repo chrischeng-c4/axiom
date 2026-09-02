@@ -80,6 +80,16 @@
 - Open: Define projection and upgrade inputs.
 - Neighbours: Managed KSA access.
 
+## Protocol compatibility policy
+
+- Problem: HTTP changes need a published compatibility rule.
+- Who: API and client maintainers.
+- Promise: Lumen defines additive, deprecated, and breaking protocol changes.
+- Outcome: `protocol-compatibility-policy`. Tracking: Not assigned.
+- Non-goals: Published packages.
+- Open: Define release-note and overlap requirements.
+- Neighbours: Search v2 migration.
+
 ## Non-goals in this area
 
 Lumen does not publish generated SDK packages today.
