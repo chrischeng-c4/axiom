@@ -10,6 +10,16 @@
 - Non-goals: Published SDK packages.
 - Neighbours: Querying owns Search v2 semantics; access owns credential behavior.
 
+## Protocol contract completeness
+
+- Problem: Declared shapes omit some cross-request behavior.
+- Who: HTTP callers.
+- Promise: OpenAPI and maintained guides describe the complete supported protocol.
+- Outcome: `protocol-contract-completeness`. Tracking: Not assigned.
+- Non-goals: Undocumented compatibility guesses.
+- Open: Complete shared errors, streaming, and consistency declarations.
+- Neighbours: Protocol compatibility policy.
+
 ## Non-goals in this area
 
 Lumen does not publish generated SDK packages today.
