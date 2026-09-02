@@ -10,12 +10,12 @@
 - Non-goals: Reserved identity, topology, storage, or security overrides.
 - Neighbours: Topology owns in-runtime quorum transitions.
 
-## Runtime configuration parity
+## Runtime configuration parity (Milestone #24)
 
 - Problem: Standalone and Managed configuration can diverge.
 - Who: Runtime and Fleet operators.
 - Promise: Both paths use one classified configuration contract.
-- Outcome: `runtime-configuration-parity`. Tracking: Not assigned.
+- Outcome: `runtime-configuration-parity`. Tracking: [Milestone #24](https://github.com/chrischeng-c4/axiom/milestone/24).
 - Non-goals: Unrestricted raw overrides.
 - Open: Classify every option and restart effect.
 - Neighbours: Fleet production convergence.

@@ -248,7 +248,7 @@ destination without copying tracker state.
   Secret values do not enter status, and a stable effective-config hash rolls
   pods only when restart-required inputs change. Referenced Secret and
   ConfigMap resource versions affect that hash. TLS file rotation stays hot.
-- Tracking: [#3795](https://github.com/chrischeng-c4/axiom/issues/3795) (`lumen@0.4.32`).
+- Tracking: [Milestone #24](https://github.com/chrischeng-c4/axiom/milestone/24).
 
 ### Managed runtime KSA access
 
