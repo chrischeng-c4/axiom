@@ -484,15 +484,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p lumen --features operator --test capacity_catalog_client
-          cargo test -p lumen --features operator --test capacity_catalog_contract
-          cargo test -p lumen --test cli_convention
-          cargo test -p lumen --test release_artifacts
-          cargo test -p lumen --test release_candidate
-          cargo test -p lumen
-          cargo test -p lumen --features "operator delegated-auth"
+          cargo test --locked -p lumen --features operator --test capacity_catalog_client
+          cargo test --locked -p lumen --features operator --test capacity_catalog_contract
+          cargo test --locked -p lumen --features operator --test operator_render
+          cargo test --locked -p lumen --test segment_startup_fail_closed_e2e
+          cargo test --locked -p lumen --test cli_convention
+          cargo test --locked -p lumen --test release_artifacts
+          cargo test --locked -p lumen --features raft-wal --lib raft_sm
+          cargo test --locked -p lumen --features raft-wal --test legacy-3073-app
+          cargo test --locked -p lumen --features raft-wal --bin lumen cluster_state_poller_converges_role_to_live_election_result
+          cargo test --locked -p lumen --test release_candidate
+          cargo test --locked -p lumen
+          cargo test --locked -p lumen --features "operator delegated-auth"
           cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture
-          cargo test -p lumen --locked --features release --test release_feature_set
+          cargo test --locked -p lumen --features release --test release_feature_set
           cargo clean
           bash apps/lumen/scripts/standalone-container-smoke.sh bind
           LUMEN_STANDALONE_DURABLE_IMAGE="${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}" bash apps/lumen/scripts/standalone-container-smoke.sh durable
@@ -528,18 +533,30 @@ jobs:
         with:
           ref: ${{ needs.identity.outputs.commit }}
           fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.12.1
+          enable-cache: false
       - name: Run required service and Raft library gates without GKE
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p service-k8s
-          cargo test -p storage-durable
-          cargo test -p service-backup --features http-client
+          cargo test --locked -p service-k8s --test stateful_instance_render
+          cargo test --locked -p service-k8s --test stateful_adapter_equivalence
+          cargo test --locked -p service-k8s
+          cargo test --locked -p storage-durable
+          cargo test --locked -p service-backup --features http-client
+          cargo test --locked -p raft-runtime --test adversarial_recovery
+          cargo test --locked -p raft-core
+          cargo test --locked -p raft-runtime
           bash scripts/raft-implementor-build.sh
-          cargo test -p raft-runtime
           python3 scripts/meta/test_readme_contract.py
           python3 scripts/meta/test_project_docs_contract.py
-          python3 scripts/meta/project_docs_contract.py check apps/lumen libs/service-k8s --format json
+          python3 .claude/aw/verification/check_wis.py
+          uv run --python 3.13 --no-project .claude/aw/scripts/metadoc.py check apps/lumen --format json
+          uv run --python 3.13 --no-project .claude/aw/scripts/meta.py check --path apps/lumen --format json
+          uv run --python 3.13 --no-project scripts/meta/project_docs_contract.py check apps/lumen --format json
+          uv run --python 3.13 --no-project .claude/aw/scripts/wis.py gap apps/lumen
           git -c core.fsmonitor=false diff --check
 
   kind-amd64:

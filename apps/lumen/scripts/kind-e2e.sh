@@ -5,8 +5,9 @@
 # Implements the Lumen-only kind happy path: spin up a single-node kind
 # cluster, apply the `dev` overlay or operator CR, keep the serving fleet
 # on the binary's WAL auto-selection, drive the public HTTP API (:7373)
-# through schema → index 10k → search → duplicates, then kill all serving pods
-# and verify the replacement pod becomes reachable and accepts fresh writes.
+# through schema → index 10k → search → duplicates. It then checkpoints one
+# unique document, replaces the serving pod, reads the old document before any
+# new write, and finally proves that the replacement accepts a fresh write.
 #
 # Usage:  scripts/kind-e2e.sh
 #         LUMEN_E2E_MODE=operator scripts/kind-e2e.sh   # deploy via the CRD
@@ -405,8 +406,9 @@ assert_operator_topology() {
   if [[ "$E2E_MODE" != "operator" ]]; then
     return 0
   fi
-  local actual_replicas
-  actual_replicas="$(kubectl -n "$NAMESPACE" get statefulset/"${LUMEN_CR_NAME}" -o json | jq '.spec.replicas')"
+  local stateful_json actual_replicas
+  stateful_json="$(kubectl -n "$NAMESPACE" get statefulset/"${LUMEN_CR_NAME}" -o json)"
+  actual_replicas="$(jq '.spec.replicas' <<<"$stateful_json")"
   echo "   StatefulSet replicas: ${actual_replicas} (expected ${EXPECTED_STORAGE_PODS})"
   if [[ "$actual_replicas" -ne "$EXPECTED_STORAGE_PODS" ]]; then
     echo "!! expected StatefulSet/${LUMEN_CR_NAME} replicas=${EXPECTED_STORAGE_PODS}, got ${actual_replicas}" >&2
@@ -418,6 +420,31 @@ assert_operator_topology() {
       exit 1
     fi
   fi
+  jq -e '
+    (.spec.volumeClaimTemplates | length) == 1 and
+    .spec.volumeClaimTemplates[0].metadata.name == "raft" and
+    ([.spec.template.spec.containers[] | select(.name == "server")] | length) == 1
+  ' <<<"$stateful_json" >/dev/null \
+    || die "operator StatefulSet must render exactly one raft PVC and one server container"
+  if (( REPLICAS_PER_SHARD <= 1 )); then
+    jq -e '
+      ([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")]) == [
+        {"mountPath":"/var/lib/lumen","name":"raft","readOnly":false},
+        {"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":false,"subPath":"data"}
+      ] and
+      ([.spec.template.spec.containers[] | select(.name == "server") | .env[] | select(.name == "LUMEN_DATA_DIR" and .value == "/var/lib/lumen/data")] | length) == 1 and
+      ([.spec.template.spec.containers[] | select(.name == "server") | .env[] | select(.name == "LUMEN_PERSISTENCE" and .value == "segment")] | length) == 1
+    ' <<<"$stateful_json" >/dev/null \
+      || die "single-replica operator StatefulSet lost the exact raft parent/data child mount contract"
+  else
+    jq -e '
+      ([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")]) == [
+        {"mountPath":"/var/lib/lumen","name":"raft","readOnly":false}
+      ] and
+      ([.spec.template.spec.containers[] | select(.name == "server") | .env[] | select(.name == "LUMEN_DATA_DIR" or .name == "LUMEN_PERSISTENCE")] | length) == 0
+    ' <<<"$stateful_json" >/dev/null \
+      || die "replicated operator StatefulSet must not render embedded persistence mounts or env"
+  fi
   local cm_shards cm_bucket_count cm_map_version
   cm_shards="$(kubectl -n "$NAMESPACE" get cm/"${LUMEN_CR_NAME}-config" -o json | jq -r '.data.SHARD_COUNT')"
   cm_bucket_count="$(kubectl -n "$NAMESPACE" get cm/"${LUMEN_CR_NAME}-config" -o json | jq -r '.data.VIRTUAL_BUCKET_COUNT')"
@@ -427,6 +454,29 @@ assert_operator_topology() {
     echo "!! ConfigMap topology keys are missing or wrong" >&2
     exit 1
   fi
+}
+
+assert_operator_storage_live() {
+  if [[ "$E2E_MODE" != "operator" || "$SHARD_COUNT" -ne 1 || "$REPLICAS_PER_SHARD" -ne 1 ]]; then
+    return 0
+  fi
+  local pod_json pvc_json
+  pod_json="$(kubectl -n "$NAMESPACE" get pod/"${LUMEN_CR_NAME}-0" -o json)"
+  pvc_json="$(kubectl -n "$NAMESPACE" get pvc/"raft-${LUMEN_CR_NAME}-0" -o json)"
+  jq -e '
+    ([.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")]) == [
+      {"mountPath":"/var/lib/lumen","name":"raft","readOnly":false},
+      {"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":false,"subPath":"data"}
+    ] and
+    ([.spec.volumes[] | select(.name == "raft" and .persistentVolumeClaim.claimName == "raft-lumen-0")] | length) == 1
+  ' <<<"$pod_json" >/dev/null || die "live serving pod lost the exact raft PVC parent/data child mounts"
+  jq -e '
+    .metadata.name == "raft-lumen-0" and
+    .status.phase == "Bound" and
+    (.spec.volumeName | type) == "string" and
+    (.spec.volumeName | length) > 0
+  ' <<<"$pvc_json" >/dev/null || die "raft-lumen-0 PVC is not bound"
+  echo "   live pod mounts the bound raft-lumen-0 PVC at parent and exact data child paths"
 }
 
 # Create the kind cluster with a host→node port mapping so the host can
@@ -556,16 +606,49 @@ api_duplicates_status() {
     -d '{"field": "email", "min_group_size": 2, "limit": 100}'
 }
 
-# Index a single distinctive doc + search for it after the serving pod restart.
-api_index_probe() {
-  curl -fsS --max-time 30 -X POST "$(base_url)/collections/users/index" \
-    -H 'content-type: application/json' \
-    -d '{"items":[{"external_id":"restart-probe","field":"email","value":"restart-probe@x.com"}]}'
+# Index and search one exact document without embedding shell data into JSON.
+api_index_exact() {
+  local external_id="$1" value="$2"
+  jq -nc --arg id "$external_id" --arg value "$value" \
+    '{items:[{external_id:$id,field:"email",value:$value}]}' | \
+    curl -fsS --max-time 30 -X POST "$(base_url)/collections/users/index" \
+      -H 'content-type: application/json' --data-binary @-
 }
-api_search_probe() {
+api_search_exact() {
+  local value="$1"
+  local body
+  body="$(jq -nc --arg value "$value" '{query:{term:{field:"email",value:$value}},limit:5}')"
   curl -fsS --max-time 30 -X POST "$(base_url)/collections/users/search" \
     -H 'content-type: application/json' \
-    -d '{"query":{"term":{"field":"email","value":"restart-probe@x.com"}},"limit":5}'
+    -d "$body"
+}
+api_checkpoint() {
+  curl -fsS --max-time 120 -X POST "$(base_url)/admin/checkpoint" \
+    -H 'content-type: application/json' -d '{}'
+}
+
+# This function is a release oracle. Keep its operation lines direct and in
+# order so the static candidate test can reject comments, prose, dead branches,
+# reordered checks, or ignored failures.
+durable_restart_oracle() {
+  local pre_id="pre-restart-${CLUSTER_NAME}-$$"
+  local pre_value="${pre_id}@example.invalid"
+  local post_id="post-restart-${CLUSTER_NAME}-$$"
+  local post_value="${post_id}@example.invalid"
+  local checkpoint old_hits post_hits
+  api_index_exact "$pre_id" "$pre_value"
+  checkpoint="$(api_checkpoint)"
+  jq -e '.persisted == true' <<<"$checkpoint" >/dev/null || die "/admin/checkpoint did not return persisted=true"
+  kubectl -n "$NAMESPACE" delete pod -l "$APP_LABEL" --wait=true
+  wait_lumen_ready 240
+  expose_nodeport
+  assert_cluster_identity
+  old_hits="$(api_search_exact "$pre_value" | jq --arg id "$pre_id" '[.hits[] | select(.external_id == $id)] | length')"
+  [[ "$old_hits" -eq 1 ]] || die "pre-restart document was not readable before any new write"
+  api_index_exact "$post_id" "$post_value"
+  post_hits="$(api_search_exact "$post_value" | jq --arg id "$post_id" '[.hits[] | select(.external_id == $id)] | length')"
+  [[ "$post_hits" -eq 1 ]] || die "replacement pod did not accept the post-restart write"
+  echo "   durable restart preserved $pre_id and accepted $post_id"
 }
 
 # ---------------------------------------------------------------------------
@@ -667,6 +750,7 @@ step "2c. assert operator storage topology" assert_operator_topology
 # ---------------------------------------------------------------------------
 
 step "3. wait for serving pods Ready" wait_lumen_ready 240
+step "3b. assert live operator PVC and mounts" assert_operator_storage_live
 
 # ---------------------------------------------------------------------------
 # 4. Drive the public HTTP API
@@ -747,42 +831,11 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Kill all serving pods and wait until the old pod objects are gone before
-#    looking for replacements. Without `--wait=true`, `kubectl wait` can bind
-#    to an old Ready pod during its termination race and then fail by name.
-#    The replacement pod uses embedded WAL, so this proves k8s
-#    rollout/recovery and fresh-write readiness for the single-node dogfood
-#    path.
+# 5. Persist one unique document. Replace the serving pod. Read the old
+#    document before any new write. Then prove the replacement accepts a write.
 # ---------------------------------------------------------------------------
 
-step "5. kubectl delete pod -l $APP_LABEL (serving-pod restart)" \
-  kubectl -n "$NAMESPACE" delete pod -l "$APP_LABEL" --wait=true
-
-# ---------------------------------------------------------------------------
-# 6. Wait for the replacement serving pods to come back and catch up
-# ---------------------------------------------------------------------------
-
-step "6. wait for serving pods Ready (post restart)" wait_lumen_ready 240
-
-# The NodePort mapping survives pod churn, but the new Service endpoints need a
-# moment to register; re-confirm the API is reachable before fresh writes.
-step "6b. re-confirm API reachable post-recovery" expose_nodeport
-step "6c. assert cluster identity and /version post-recovery" assert_cluster_identity
-
-# ---------------------------------------------------------------------------
-# 7. Re-create the collection and assert fresh writes work after restart.
-# ---------------------------------------------------------------------------
-
-step "7a. PUT /collections/users after restart" api_put_collection
-step "7b. index a probe doc after restart" api_index_probe
-PROBE_HITS="$(api_search_probe | jq '.hits | length')"
-echo "   probe hits: $PROBE_HITS"
-if [[ "${PROBE_HITS:-0}" -lt 1 ]]; then
-  echo "!! probe write never applied after serving-pod restart" >&2
-  exit 1
-fi
-
-echo ">> 7. serving restart recovered + fresh writes work — PASS"
+step "5. checkpoint, replace serving pod, and prove durable recovery" durable_restart_oracle
 
 # ---------------------------------------------------------------------------
 # 11. Cleanup happens via the trap.

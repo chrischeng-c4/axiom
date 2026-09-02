@@ -120,9 +120,24 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     let first = input.kind.find("step \"4a2. assert cluster identity and /version\" assert_cluster_identity");
     let mutation = input.kind.find("step \"4b. PUT /collections/users\" api_put_collection");
     require!(first.zip(mutation).is_some_and(|(a, b)| a < b), "KIND_ORDER", "identity must precede first API mutation");
-    let second = input.kind.find("step \"6c. assert cluster identity and /version post-recovery\" assert_cluster_identity");
-    let fresh = input.kind.find("step \"7a. PUT /collections/users after restart\" api_put_collection");
-    require!(second.zip(fresh).is_some_and(|(a, b)| a < b), "KIND_POST_RESTART", "post-restart identity must precede fresh write");
+    let topology = shell_fn(&input.kind, "assert_operator_topology");
+    for needle in ["(.spec.volumeClaimTemplates | length) == 1", ".spec.volumeClaimTemplates[0].metadata.name == \"raft\"", "{\"mountPath\":\"/var/lib/lumen\",\"name\":\"raft\",\"readOnly\":false}", "{\"mountPath\":\"/var/lib/lumen/data\",\"name\":\"raft\",\"readOnly\":false,\"subPath\":\"data\"}"] {
+        require!(topology.contains(needle), "KIND_STORAGE", format!("operator storage topology proof missing: {needle}"));
+    }
+    let live_storage = shell_fn(&input.kind, "assert_operator_storage_live");
+    for needle in ["get pod/\"${LUMEN_CR_NAME}-0\" -o json", "get pvc/\"raft-${LUMEN_CR_NAME}-0\" -o json", ".persistentVolumeClaim.claimName == \"raft-lumen-0\"", ".status.phase == \"Bound\""] {
+        require!(live_storage.contains(needle), "KIND_STORAGE", format!("live operator storage proof missing: {needle}"));
+    }
+    require!(input.kind.matches("step \"3b. assert live operator PVC and mounts\" assert_operator_storage_live").count() == 1, "KIND_STORAGE", "live PVC proof must run exactly once after readiness");
+    let restart = shell_fn(&input.kind, "durable_restart_oracle");
+    let checkpoint = restart.find("checkpoint=\"$(api_checkpoint)\"");
+    let persisted = restart.find("jq -e '.persisted == true'");
+    let deleted = restart.find("kubectl -n \"$NAMESPACE\" delete pod -l \"$APP_LABEL\" --wait=true");
+    let identity = restart.find("assert_cluster_identity");
+    let old_read = restart.find("old_hits=\"$(api_search_exact");
+    let fresh = restart.find("api_index_exact \"$post_id\" \"$post_value\"");
+    require!(checkpoint.zip(persisted).is_some_and(|(a, b)| a < b) && persisted.zip(deleted).is_some_and(|(a, b)| a < b) && deleted.zip(identity).is_some_and(|(a, b)| a < b) && identity.zip(old_read).is_some_and(|(a, b)| a < b) && old_read.zip(fresh).is_some_and(|(a, b)| a < b), "KIND_POST_RESTART", "checkpoint, restart, old-document read, and fresh write are missing or out of order");
+    require!(!restart.contains("api_put_collection") && input.kind.matches("step \"5. checkpoint, replace serving pod, and prove durable recovery\" durable_restart_oracle").count() == 1, "KIND_POST_RESTART", "durable restart oracle must run once without recreating the collection");
 
     for needle in ["{{json .Manifest}}' | jq -er '.digest'", "[[ \"$RAW_DIGEST\" =~ ^sha256:[0-9a-f]{64}$ ]]", "IMAGE=\"ghcr.io/chrischeng-c4/lumen@${RAW_DIGEST}\"", "--candidate-run-id <id>", "--mode public", "--output /tmp/lumen-public-release.json", "protected annotated `lumen@<version>` tag", "discovery-only", "native amd64 and arm64 kind runs before publication"] {
         require!(input.docs.contains(needle), "DEPLOYMENT_DIGEST", format!("deployment proof missing: {needle}"));
@@ -745,7 +760,7 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
         let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "assert_cluster_identity", from, to); expect(fixture, "KIND_DESIRED_STATE");
     }
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "step \"4a2. assert cluster identity and /version\" assert_cluster_identity\nstep \"4b. PUT /collections/users\" api_put_collection", "step \"4b. PUT /collections/users\" api_put_collection\nstep \"4a2. assert cluster identity and /version\" assert_cluster_identity"); expect(fixture, "KIND_ORDER");
-    let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "step \"6c. assert cluster identity and /version post-recovery\" assert_cluster_identity", "echo post-restart-identity-omitted"); expect(fixture, "KIND_POST_RESTART");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "durable_restart_oracle", "  assert_cluster_identity\n", "  : post-restart identity omitted\n"); expect(fixture, "KIND_POST_RESTART");
     let mut fixture = live(); fixture.cargo = replace_once(&fixture.cargo, "name = \"release_artifacts\"", "name = \"release_artifacts_disabled\""); expect(fixture, "CARGO_REGISTRATION");
     let mut fixture = live(); fixture.installer = replace_once(&fixture.installer, "|| die \"checksum download failed: ${sha_url}\"", "|| true"); expect(fixture, "INSTALLER_INTEGRITY");
     let mut fixture = live(); fixture.installer = replace_once(&fixture.installer, "expected=\"$(awk 'NR == 1 { print $1; exit }' \"${tmpdir}/${asset}.sha256\")\"", "expected=\"$(cat \"${tmpdir}/${asset}.sha256\")\""); expect(fixture, "INSTALLER_INTEGRITY");
