@@ -32,3 +32,4 @@ outcome and remains unbound until its release work is ready.
 | Search v2 migration | protocol-and-clients.md |
 | Runtime and deployment | runtime-and-deployment.md |
 | GKE regional production profile | runtime-and-deployment.md |
+| GKE Autopilot certification | runtime-and-deployment.md |

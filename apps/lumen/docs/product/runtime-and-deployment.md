@@ -20,6 +20,16 @@
 - Open: Complete topology, disruption, backup, and recovery drills.
 - Neighbours: Regional migration and upgrade recovery.
 
+## GKE Autopilot certification
+
+- Problem: Autopilot has different stateful constraints.
+- Who: GKE Autopilot operators.
+- Promise: Lumen has a separate evidence-backed Autopilot support tier.
+- Outcome: `gke-autopilot-certification`. Tracking: Not assigned.
+- Non-goals: Assuming Standard Regional certification applies unchanged.
+- Open: Define Autopilot topology and operational evidence.
+- Neighbours: GKE regional production profile.
+
 ## Non-goals in this area
 
 Standalone deployment is not a high-availability promise.
