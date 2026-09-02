@@ -36,3 +36,4 @@ outcome and remains unbound until its release work is ready.
 | Managed embedded data durability | runtime-and-deployment.md |
 | Search capability activation | runtime-and-deployment.md |
 | Managed access and trust | managed-access-and-trust.md |
+| Managed runtime KSA access | managed-access-and-trust.md |

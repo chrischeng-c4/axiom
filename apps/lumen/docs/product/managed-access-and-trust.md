@@ -10,6 +10,16 @@
 - Non-goals: Storing bearer tokens in a CRD or status.
 - Neighbours: Client templates project identity; runtime deployment mounts trusted material.
 
+## Managed runtime KSA access
+
+- Problem: A Managed runtime needs explicit whole-runtime access grants.
+- Who: Kubernetes ServiceAccount users.
+- Promise: Direct Managed and Fleet declarations converge exact runtime access.
+- Outcome: `managed-runtime-ksa-access`. Tracking: Not assigned.
+- Non-goals: Per-collection authorization.
+- Open: Define complete grant replacement and cleanup rules.
+- Neighbours: Managed auth unification.
+
 ## Non-goals in this area
 
 Lumen never places bearer-token values in declarative runtime state.
