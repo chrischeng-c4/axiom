@@ -31,6 +31,20 @@ impl Drop for Node {
     }
 }
 
+/// Every wait mints its own budget at the moment it starts: no two phases
+/// (and no two nodes within a phase) share one `Instant`, so a slow election
+/// cannot eat a later phase's replication window. Generous on purpose -- the
+/// shape being retired is the shared budget, not the size (#4007).
+const PHASE_BUDGET: Duration = Duration::from_secs(60);
+
+fn phase_deadline() -> Instant {
+    Instant::now() + PHASE_BUDGET
+}
+
+/// Bounds one HTTP round trip in the concurrent-ingress test, not a wait
+/// phase; the per-phase convergence deadline owns the overall budget.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Bind an ephemeral port and immediately release it for the child process
 /// to rebind -- a small, accepted race in this style of subprocess test.
 fn free_addr() -> String {
@@ -69,7 +83,8 @@ fn spawn_node(id: u32, bind: &str, data_dir: &std::path::Path, peers_csv: &str) 
     }
 }
 
-async fn wait_healthy(client: &reqwest::Client, base: &str, deadline: Instant) {
+async fn wait_healthy(client: &reqwest::Client, base: &str) {
+    let deadline = phase_deadline();
     loop {
         if let Ok(resp) = client.get(format!("{base}/healthz")).send().await {
             if resp.status().is_success() {
@@ -91,11 +106,8 @@ async fn is_leader(client: &reqwest::Client, base: &str) -> bool {
     body["is_leader"].as_bool().unwrap_or(false)
 }
 
-async fn wait_leader<'a>(
-    client: &reqwest::Client,
-    bases: &[&'a str],
-    deadline: Instant,
-) -> &'a str {
+async fn wait_leader<'a>(client: &reqwest::Client, bases: &[&'a str]) -> &'a str {
+    let deadline = phase_deadline();
     loop {
         for base in bases {
             if is_leader(client, base).await {
@@ -135,6 +147,26 @@ async fn replayed_ns(client: &reqwest::Client, base: &str) -> Vec<i64> {
         .collect()
 }
 
+/// Poll one node's replay until `done` accepts the observed payloads, on a
+/// per-call budget: each node's convergence wait starts from its own now.
+async fn wait_replay<F>(client: &reqwest::Client, base: &str, done: F, what: &str)
+where
+    F: Fn(&[i64]) -> bool,
+{
+    let deadline = phase_deadline();
+    loop {
+        let got = replayed_ns(client, base).await;
+        if done(&got) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{base} never converged to {what}, got {got:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 /// Kill the leader with SIGKILL (`kill -9`, not a graceful SIGTERM the
 /// process could drain/checkpoint against) via the real `kill` system
 /// command -- proving the durable applied-marker + journal-snapshot recovery
@@ -163,17 +195,13 @@ async fn kill_9_leader_survivors_reelect_with_no_committed_event_loss() {
         .build()
         .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(20);
     for n in &nodes {
-        wait_healthy(&client, &n.base_url(), deadline).await;
+        wait_healthy(&client, &n.base_url()).await;
     }
 
     let base_urls: Vec<String> = nodes.iter().map(Node::base_url).collect();
     let base_refs: Vec<&str> = base_urls.iter().map(String::as_str).collect();
-    let leader_deadline = Instant::now() + Duration::from_secs(15);
-    let leader_url = wait_leader(&client, &base_refs, leader_deadline)
-        .await
-        .to_string();
+    let leader_url = wait_leader(&client, &base_refs).await.to_string();
 
     // Commit two events through the leader before the crash.
     for n in [1, 2] {
@@ -202,10 +230,7 @@ async fn kill_9_leader_survivors_reelect_with_no_committed_event_loss() {
     let survivor_refs: Vec<&str> = survivor_urls.iter().map(String::as_str).collect();
 
     // Survivors still form a quorum (2 of 3 voters) and re-elect.
-    let reelect_deadline = Instant::now() + Duration::from_secs(15);
-    let new_leader = wait_leader(&client, &survivor_refs, reelect_deadline)
-        .await
-        .to_string();
+    let new_leader = wait_leader(&client, &survivor_refs).await.to_string();
     assert_ne!(new_leader, leader_url, "a survivor took over leadership");
 
     // The new leader keeps accepting appends post-crash.
@@ -214,20 +239,14 @@ async fn kill_9_leader_survivors_reelect_with_no_committed_event_loss() {
 
     // No committed event loss: every survivor eventually replays all three
     // events, including the two committed before the crash.
-    let converge_deadline = Instant::now() + Duration::from_secs(15);
     for base in &survivor_urls {
-        loop {
-            let got = replayed_ns(&client, base).await;
-            let has_all = [1, 2, 3].iter().all(|n| got.contains(n));
-            if has_all {
-                break;
-            }
-            assert!(
-                Instant::now() < converge_deadline,
-                "{base} never converged to all pre- and post-crash events, got {got:?}"
-            );
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
+        wait_replay(
+            &client,
+            base,
+            |got| [1, 2, 3].iter().all(|n| got.contains(n)),
+            "all pre- and post-crash events",
+        )
+        .await;
     }
 
     // Clean up survivor processes; `Node::drop` also best-effort kills, but
@@ -253,22 +272,16 @@ async fn concurrent_ingress_across_all_replicas_commits_without_raft_timeouts() 
         .collect();
     let client = reqwest::Client::builder()
         .http2_prior_knowledge()
-        .timeout(Duration::from_secs(15))
+        .timeout(REQUEST_TIMEOUT)
         .build()
         .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(20);
     for node in &nodes {
-        wait_healthy(&client, &node.base_url(), deadline).await;
+        wait_healthy(&client, &node.base_url()).await;
     }
     let base_urls: Vec<String> = nodes.iter().map(Node::base_url).collect();
     let base_refs: Vec<&str> = base_urls.iter().map(String::as_str).collect();
-    wait_leader(
-        &client,
-        &base_refs,
-        Instant::now() + Duration::from_secs(15),
-    )
-    .await;
+    wait_leader(&client, &base_refs).await;
 
     let writes = futures::stream::iter(0..EVENTS)
         .map(|n| {
@@ -299,21 +312,14 @@ async fn concurrent_ingress_across_all_replicas_commits_without_raft_timeouts() 
         panic!("concurrent append failed: {error:#}");
     }
 
-    let converge_deadline = Instant::now() + Duration::from_secs(15);
     for base in &base_urls {
-        loop {
-            let got = replayed_ns(&client, base).await;
-            if got.len() == EVENTS {
-                break;
-            }
-            assert!(
-                Instant::now() < converge_deadline,
-                "{base} converged to {}/{} concurrent events",
-                got.len(),
-                EVENTS
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        wait_replay(
+            &client,
+            base,
+            |got| got.len() == EVENTS,
+            "all 256 concurrent events",
+        )
+        .await;
     }
 }
 // HANDWRITE-END
