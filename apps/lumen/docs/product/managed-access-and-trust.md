@@ -20,6 +20,16 @@
 - Open: Define complete grant replacement and cleanup rules.
 - Neighbours: Managed auth unification.
 
+## Projected KSA client auth
+
+- Problem: Clients need an explicit, rotation-safe managed credential input.
+- Who: In-cluster generated-client users.
+- Promise: A Managed KSA profile reads the projected token without exposing it.
+- Outcome: `projected-ksa-client-auth`. Tracking: Not assigned.
+- Non-goals: Anonymous fallback after authorization failure.
+- Open: Define the final projected-token and CA contract.
+- Neighbours: Generated-client request resilience.
+
 ## Non-goals in this area
 
 Lumen never places bearer-token values in declarative runtime state.
