@@ -55,3 +55,4 @@ outcome and remains unbound until its release work is ready.
 | Bounded Raft shutdown and failover | topology-and-availability.md |
 | Deterministic consensus conformance | topology-and-availability.md |
 | Distributed search routing and merge | topology-and-availability.md |
+| Recovery and operations | recovery-and-operations.md |
