@@ -121,10 +121,22 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     let mutation = input.kind.find("step \"4b. PUT /collections/users\" api_put_collection");
     require!(first.zip(mutation).is_some_and(|(a, b)| a < b), "KIND_ORDER", "identity must precede first API mutation");
     let topology = shell_fn(&input.kind, "assert_operator_topology");
+    let normalize_api_default =
+        "map(if has(\"readOnly\") then . else . + {\"readOnly\": false} end)";
+    require!(
+        topology.matches(normalize_api_default).count() == 2,
+        "KIND_STORAGE",
+        "StatefulSet mount checks must preserve explicit readOnly and normalize only the omitted false API default"
+    );
     for needle in ["(.spec.volumeClaimTemplates | length) == 1", ".spec.volumeClaimTemplates[0].metadata.name == \"raft\"", "{\"mountPath\":\"/var/lib/lumen\",\"name\":\"raft\",\"readOnly\":false}", "{\"mountPath\":\"/var/lib/lumen/data\",\"name\":\"raft\",\"readOnly\":false,\"subPath\":\"data\"}"] {
         require!(topology.contains(needle), "KIND_STORAGE", format!("operator storage topology proof missing: {needle}"));
     }
     let live_storage = shell_fn(&input.kind, "assert_operator_storage_live");
+    require!(
+        live_storage.matches(normalize_api_default).count() == 1,
+        "KIND_STORAGE",
+        "live Pod mount check must preserve explicit readOnly and normalize only the omitted false API default"
+    );
     for needle in ["get pod/\"${LUMEN_CR_NAME}-0\" -o json", "get pvc/\"raft-${LUMEN_CR_NAME}-0\" -o json", ".persistentVolumeClaim.claimName == \"raft-lumen-0\"", ".status.phase == \"Bound\""] {
         require!(live_storage.contains(needle), "KIND_STORAGE", format!("live operator storage proof missing: {needle}"));
     }
@@ -729,6 +741,9 @@ fn fixture_batch_paths_cover_gnu_and_bsd_mktemp_shapes() {
 #[test]
 #[rustfmt::skip]
 fn scoped_negative_mutations_fail_with_stable_findings() {
+    let mount_default = "map(if has(\"readOnly\") then . else . + {\"readOnly\": false} end)";
+    let mut fixture = live(); fixture.kind = replace_nth(&fixture.kind, mount_default, "map(. + {\"readOnly\": false})", 0); expect(fixture, "KIND_STORAGE");
+    let mut fixture = live(); fixture.kind = replace_nth(&fixture.kind, mount_default, "map(.)", 2); expect(fixture, "KIND_STORAGE");
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$", "^ghcr\\.io/chrischeng-c4/lumen:.+$"); expect(fixture, "KIND_INPUTS");
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "[[ \"$EXPECTED_RUNTIME_DIGEST\" != \"$ROOT_DIGEST\" ]] || die \"runtime child digest must differ from root index digest\"", ": distinct root and child precondition omitted"); expect(fixture, "KIND_INPUTS");
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "normalize_runtime_image_id", "^ghcr\\.io/chrischeng-c4/lumen@", "^ghcr\\.io/.+@"); expect(fixture, "KIND_RUNTIME_ID");
