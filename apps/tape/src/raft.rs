@@ -492,7 +492,7 @@ impl RaftStateMachine for TapeStateMachine {
 /// One running raft group over a tape journal -- the single-group wrapper the
 /// serve path (and tests) hold. Dropping it aborts the host's tick/pump tasks.
 pub struct TapeRaft {
-    host: RaftHost,
+    host: Arc<RaftHost>,
     sm: Arc<TapeStateMachine>,
     node_id: NodeId,
     session: u64,
@@ -584,7 +584,7 @@ impl TapeRaft {
             ^ ((std::process::id() as u64) << 32)
             ^ NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
         Ok(TapeRaft {
-            host,
+            host: Arc::new(host),
             sm,
             node_id,
             session,
@@ -648,8 +648,33 @@ impl TapeRaft {
 
     /// Peer raft RPCs + leader forwarding + `/raftz`. The h2c compatibility
     /// path merges this onto the public app; mTLS serves it independently.
+    ///
+    /// `POST /raft/publish` answers 421 with a leader hint before any body
+    /// extraction runs on a non-leader: a misdirected publish is a routing
+    /// error, and content negotiation or deserialization verdicts (415/400/
+    /// 422) from a node that cannot accept the proposal would misreport it.
     pub fn router(&self) -> Router {
-        self.host.router()
+        let host = Arc::clone(&self.host);
+        self.host.router().layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let host = Arc::clone(&host);
+                async move {
+                    if req.method() == axum::http::Method::POST
+                        && req.uri().path() == "/raft/publish"
+                        && !host.is_leader().await
+                    {
+                        return axum::response::IntoResponse::into_response((
+                            axum::http::StatusCode::MISDIRECTED_REQUEST,
+                            axum::Json(serde_json::json!({
+                                "error": "not-leader",
+                                "leader": host.leader().await,
+                            })),
+                        ));
+                    }
+                    next.run(req).await
+                }
+            },
+        ))
     }
 
     /// Propose an append (leader-local or forwarded to the leader by the
