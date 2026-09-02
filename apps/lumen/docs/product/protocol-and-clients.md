@@ -30,12 +30,12 @@
 - Open: Define typed streaming and errors for each language.
 - Neighbours: Strict generated-client gates.
 
-## Strict generated-client gates
+## Strict generated-client gates (Milestone #13)
 
 - Problem: Missing local toolchains can hide a skipped client journey.
 - Who: Release engineers and client consumers.
 - Promise: Required language gates fail when a required client does not run.
-- Outcome: `strict-generated-client-gates`. Tracking: Not assigned.
+- Outcome: `strict-generated-client-gates`. Tracking: [Milestone #13](https://github.com/chrischeng-c4/axiom/milestone/13).
 - Non-goals: Optional silent skips.
 - Open: Define the required toolchain matrix.
 - Neighbours: Generated-client protocol parity.

@@ -378,7 +378,7 @@ destination without copying tracker state.
   prerequisite and proves the required gate fails. The normal gate records all
   three executed languages and passes create, index, QUERY with POST fallback,
   search, stats, delete, and collection-drop behavior for each generated client.
-- Tracking: [#3807](https://github.com/chrischeng-c4/axiom/issues/3807) (`lumen@0.4.45`).
+- Tracking: [Milestone #13](https://github.com/chrischeng-c4/axiom/milestone/13).
 
 ### Generated-client request resilience
 
