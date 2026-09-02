@@ -29,7 +29,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "9a96662f6bb0a09dcaf83f6ed75455d4cc90fb65e46817bea554a293d79b554d";
+    "5a2c619bf5a28083bc8e337cd7f7d97e1baf3c76ec6e6c646be19e055064e664";
 const KIND_E2E_BYTES_SHA256: &str =
     "811b549732e49c9c2087e395f9a64923042009498f4bc965581716a6ec7f6913";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
@@ -1111,21 +1111,35 @@ fn validate_product_gate_partition(workflow: &Yaml, _source: &str) -> Result<(),
             run,
             &[
                 "set -euo pipefail",
+                "export CARGO_INCREMENTAL=0",
                 "cargo test --locked -p lumen --features operator --test capacity_catalog_client",
                 "cargo test --locked -p lumen --features operator --test capacity_catalog_contract",
                 "cargo test --locked -p lumen --features operator --test operator_render",
+                "cargo clean",
+                "df -h /",
                 "cargo test --locked -p lumen --test segment_startup_fail_closed_e2e",
                 "cargo test --locked -p lumen --test cli_convention",
                 "cargo test --locked -p lumen --test release_artifacts",
+                "cargo clean",
+                "df -h /",
                 "cargo test --locked -p lumen --features raft-wal --lib raft_sm",
                 "cargo test --locked -p lumen --features raft-wal --test legacy-3073-app",
                 "cargo test --locked -p lumen --features raft-wal --bin lumen cluster_state_poller_converges_role_to_live_election_result",
+                "cargo clean",
+                "df -h /",
                 "cargo test --locked -p lumen --test release_candidate",
                 "cargo test --locked -p lumen",
+                "cargo clean",
+                "df -h /",
                 "cargo test --locked -p lumen --features \"operator delegated-auth\"",
+                "cargo clean",
+                "df -h /",
                 RELEASE_PERF_GATE,
+                "cargo clean",
+                "df -h /",
                 "cargo test --locked -p lumen --features release --test release_feature_set",
                 "cargo clean",
+                "df -h /",
                 "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
                 "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
             ],

@@ -388,18 +388,12 @@ jobs:
           ref: ${{ needs.identity.outputs.commit }}
           fetch-depth: 0
       - name: Reclaim runner disk before the cargo gates
-        # The gate step below runs nine cargo invocations -- five feature
-        # combinations plus a --release perf gate -- into one target directory,
-        # and its `cargo clean` is the LAST line of that step. On 0.4.30 the e2e
-        # tree crossed the point where that no longer fits: run 33311330220 died
-        # mid-step with the runner itself unable to write its own diagnostic log
-        # ("No space left on device"), which surfaces as an unexplained job crash
-        # rather than as a disk failure. Delete the preinstalled toolchains this
-        # job never touches, before the artifact downloads and before anything
-        # installs into hostedtoolcache -- only CodeQL is removed from there,
-        # because setup-uv and setup-ruby put their runtimes in that same tree a
-        # few steps below. The two `df -h` lines are the evidence: without them a
-        # step that silently reclaimed nothing looks identical to one that worked.
+        # The product gate below uses several Cargo feature and profile groups.
+        # A single shared target directory can exhaust the hosted runner even
+        # after this reclaim; run 33679658820 proved that failure mode. Delete
+        # only preinstalled toolchains this job never uses. The product gate
+        # then disables incremental output and cleans between build groups.
+        # Keep the `df -h` lines as direct free-space evidence.
         shell: bash
         run: |
           set -euo pipefail
@@ -484,21 +478,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export CARGO_INCREMENTAL=0
           cargo test --locked -p lumen --features operator --test capacity_catalog_client
           cargo test --locked -p lumen --features operator --test capacity_catalog_contract
           cargo test --locked -p lumen --features operator --test operator_render
+          cargo clean
+          df -h /
           cargo test --locked -p lumen --test segment_startup_fail_closed_e2e
           cargo test --locked -p lumen --test cli_convention
           cargo test --locked -p lumen --test release_artifacts
+          cargo clean
+          df -h /
           cargo test --locked -p lumen --features raft-wal --lib raft_sm
           cargo test --locked -p lumen --features raft-wal --test legacy-3073-app
           cargo test --locked -p lumen --features raft-wal --bin lumen cluster_state_poller_converges_role_to_live_election_result
+          cargo clean
+          df -h /
           cargo test --locked -p lumen --test release_candidate
           cargo test --locked -p lumen
+          cargo clean
+          df -h /
           cargo test --locked -p lumen --features "operator delegated-auth"
+          cargo clean
+          df -h /
           cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture
+          cargo clean
+          df -h /
           cargo test --locked -p lumen --features release --test release_feature_set
           cargo clean
+          df -h /
           bash apps/lumen/scripts/standalone-container-smoke.sh bind
           LUMEN_STANDALONE_DURABLE_IMAGE="${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}" bash apps/lumen/scripts/standalone-container-smoke.sh durable
       - name: Verify full run-scoped candidate supply chain
