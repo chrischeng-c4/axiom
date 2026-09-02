@@ -493,7 +493,7 @@ destination without copying tracker state.
   KSA auth, WIF-backed operator duties, certificate and CA rotation, backup and
   restore, node drain, Pod loss, zone loss, interrupted rollout, recovery, and
   deterministic teardown without using a GCE machine type in the core CRD.
-- Tracking: [#3803](https://github.com/chrischeng-c4/axiom/issues/3803) (`lumen@0.4.41`).
+- Tracking: [Milestone #33](https://github.com/chrischeng-c4/axiom/milestone/33).
 
 ### Per-shard failure-domain placement
 
