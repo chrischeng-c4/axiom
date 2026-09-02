@@ -10,6 +10,16 @@
 - Non-goals: Reserved identity, topology, storage, or security overrides.
 - Neighbours: Topology owns in-runtime quorum transitions.
 
+## Runtime configuration parity
+
+- Problem: Standalone and Managed configuration can diverge.
+- Who: Runtime and Fleet operators.
+- Promise: Both paths use one classified configuration contract.
+- Outcome: `runtime-configuration-parity`. Tracking: Not assigned.
+- Non-goals: Unrestricted raw overrides.
+- Open: Classify every option and restart effect.
+- Neighbours: Fleet production convergence.
+
 ## Non-goals in this area
 
 Fleet does not replace stateful membership safety with generic rollout order.
