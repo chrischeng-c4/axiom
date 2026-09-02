@@ -10,12 +10,12 @@
 - Non-goals: Broad PVC deletion or recovery of already-lost node-local data.
 - Neighbours: Runtime deployment mounts data; topology protects quorum.
 
-## Versioned deletes and tombstones
+## Versioned deletes and tombstones (Milestone #11)
 
 - Problem: A delayed write can resurrect deleted data.
 - Who: Versioned-write callers.
 - Promise: Versioned deletes retain tombstones that block old writes.
-- Outcome: `versioned-deletes-and-tombstones`. Tracking: Not assigned.
+- Outcome: `versioned-deletes-and-tombstones`. Tracking: [Milestone #11](https://github.com/chrischeng-c4/axiom/milestone/11).
 - Non-goals: Unbounded tombstone retention.
 - Open: Define compaction and retention bounds.
 - Neighbours: Idempotent replay and rebuild generations.

@@ -65,7 +65,7 @@ destination without copying tracker state.
 - Completion evidence: Ordered and out-of-order tests cover document and field
   deletes, equal and older versions, restart, compaction, replication, rebuild,
   and retention. No accepted old write resurrects a deleted value.
-- Tracking: [#3806](https://github.com/chrischeng-c4/axiom/issues/3806) (`lumen@0.4.44`).
+- Tracking: [Milestone #11](https://github.com/chrischeng-c4/axiom/milestone/11).
 
 ### Shadow rebuild generations
 
