@@ -10,6 +10,16 @@
 - Non-goals: Broad PVC deletion or recovery of already-lost node-local data.
 - Neighbours: Runtime deployment mounts data; topology protects quorum.
 
+## Versioned deletes and tombstones
+
+- Problem: A delayed write can resurrect deleted data.
+- Who: Versioned-write callers.
+- Promise: Versioned deletes retain tombstones that block old writes.
+- Outcome: `versioned-deletes-and-tombstones`. Tracking: Not assigned.
+- Non-goals: Unbounded tombstone retention.
+- Open: Define compaction and retention bounds.
+- Neighbours: Idempotent replay and rebuild generations.
+
 ## Non-goals in this area
 
 Lumen cannot recover data that a prior node-local runtime already lost.

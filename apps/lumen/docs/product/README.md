@@ -56,3 +56,4 @@ outcome and remains unbound until its release work is ready.
 | Deterministic consensus conformance | topology-and-availability.md |
 | Distributed search routing and merge | topology-and-availability.md |
 | Recovery and operations | recovery-and-operations.md |
+| Versioned deletes and tombstones | recovery-and-operations.md |
