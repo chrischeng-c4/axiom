@@ -24,3 +24,4 @@ outcome and remains unbound until its release work is ready.
 | Protocol contract completeness | protocol-and-clients.md |
 | Generated-client protocol parity | protocol-and-clients.md |
 | Strict generated-client gates | protocol-and-clients.md |
+| Generated-client Search v2 parity | protocol-and-clients.md |
