@@ -59,3 +59,4 @@ outcome and remains unbound until its release work is ready.
 | Versioned deletes and tombstones | recovery-and-operations.md |
 | Managed data retention | recovery-and-operations.md |
 | Regional topology migration and backup | recovery-and-operations.md |
+| Regional upgrade rollback and recovery | recovery-and-operations.md |

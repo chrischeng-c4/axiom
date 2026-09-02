@@ -40,6 +40,16 @@
 - Open: Define backup consistency and migration cutover.
 - Neighbours: Regional production profile.
 
+## Regional upgrade rollback and recovery
+
+- Problem: A regional upgrade needs a tested rollback path.
+- Who: Regional production operators.
+- Promise: Lumen can upgrade, roll back, and recover a regional runtime safely.
+- Outcome: `regional-upgrade-rollback-and-recovery`. Tracking: Not assigned.
+- Non-goals: Unverified forward-only upgrades.
+- Open: Define rollback and recovery oracles.
+- Neighbours: Regional topology migration and backup.
+
 ## Non-goals in this area
 
 Lumen cannot recover data that a prior node-local runtime already lost.
