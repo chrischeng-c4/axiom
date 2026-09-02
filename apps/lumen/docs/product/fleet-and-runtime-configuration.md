@@ -40,12 +40,12 @@
 - Open: Define per-instance rollout controls.
 - Neighbours: Quorum-safe runtime rollout.
 
-## Fleet foundation extraction
+## Fleet foundation extraction (Milestone #37)
 
 - Problem: Fleet-specific foundations must be reusable without moving Lumen policy out of the app.
 - Who: Fleet and platform maintainers.
 - Promise: The shared Fleet foundation has a clear reusable boundary.
-- Outcome: `fleet-foundation-extraction`. Tracking: Not assigned.
+- Outcome: `fleet-foundation-extraction`. Tracking: [Milestone #37](https://github.com/chrischeng-c4/axiom/milestone/37).
 - Non-goals: Extracting Lumen search or Raft policy into a generic library.
 - Open: Define the reusable API and migration boundary.
 - Neighbours: Fleet production convergence.

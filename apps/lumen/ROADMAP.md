@@ -681,7 +681,7 @@ destination without copying tracker state.
   Fleet mechanism.
 - Completion evidence: Compatibility and integration tests prove the extracted
   API preserves declared Fleet convergence behavior.
-- Tracking: Not assigned.
+- Tracking: [Milestone #37](https://github.com/chrischeng-c4/axiom/milestone/37).
 
 ## Later outcomes
 
