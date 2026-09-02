@@ -57,3 +57,4 @@ outcome and remains unbound until its release work is ready.
 | Distributed search routing and merge | topology-and-availability.md |
 | Recovery and operations | recovery-and-operations.md |
 | Versioned deletes and tombstones | recovery-and-operations.md |
+| Managed data retention | recovery-and-operations.md |

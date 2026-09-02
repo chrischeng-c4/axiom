@@ -20,6 +20,16 @@
 - Open: Define compaction and retention bounds.
 - Neighbours: Idempotent replay and rebuild generations.
 
+## Managed data retention
+
+- Problem: PVC lifecycle needs a deliberate user choice.
+- Who: Managed Lumen operators.
+- Promise: Managed deletion retains or deletes only the declared instance PVCs.
+- Outcome: `managed-data-retention`. Tracking: Not assigned.
+- Non-goals: Broad namespace PVC deletion.
+- Open: Define finalizer and retry evidence.
+- Neighbours: Managed embedded data durability.
+
 ## Non-goals in this area
 
 Lumen cannot recover data that a prior node-local runtime already lost.
