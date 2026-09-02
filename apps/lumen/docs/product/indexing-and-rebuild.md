@@ -50,6 +50,16 @@
 - Open: Define retained-generation limits and rollback detail.
 - Neighbours: Strict schema types and Search v2 migration.
 
+## Strict search schema types
+
+- Problem: Legacy number and set types cannot express the target schema safely.
+- Who: Schema authors.
+- Promise: Collections use explicit scalar types with independent multi-value and facet options.
+- Outcome: `strict-search-schema-types`. Tracking: Not assigned.
+- Non-goals: Silent rounding or schema coercion.
+- Open: Define each target type and migration refusal.
+- Neighbours: Shadow rebuild generations and Search v2 migration.
+
 ## Non-goals in this area
 
 Lumen does not own caller source documents.

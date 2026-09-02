@@ -13,3 +13,4 @@ outcome and remains unbound until its release work is ready.
 | Idempotent write replay | indexing-and-rebuild.md |
 | Item-atomic batch writes | indexing-and-rebuild.md |
 | Shadow rebuild generations | indexing-and-rebuild.md |
+| Strict search schema types | indexing-and-rebuild.md |
