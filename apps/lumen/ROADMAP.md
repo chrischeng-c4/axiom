@@ -456,7 +456,7 @@ destination without copying tracker state.
   failure isolation, ready and degraded counts, desired and observed generation
   reporting, retained-orphan warnings, and recovery after a failed dependency
   returns.
-- Tracking: [#3796](https://github.com/chrischeng-c4/axiom/issues/3796) (`lumen@0.4.33`).
+- Tracking: [Milestone #38](https://github.com/chrischeng-c4/axiom/milestone/38).
 
 ### Fleet safe rollout
 

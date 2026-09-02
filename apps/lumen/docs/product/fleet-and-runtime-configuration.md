@@ -20,12 +20,12 @@
 - Open: Classify every option and restart effect.
 - Neighbours: Fleet production convergence.
 
-## Fleet production convergence
+## Fleet production convergence (Milestone #38)
 
 - Problem: Fleet needs durable, observable convergence across runtimes.
 - Who: Fleet operators.
 - Promise: Fleet converges declared instances and publishes complete readiness.
-- Outcome: `fleet-production-convergence`. Tracking: Not assigned.
+- Outcome: `fleet-production-convergence`. Tracking: [Milestone #38](https://github.com/chrischeng-c4/axiom/milestone/38).
 - Non-goals: Replacing in-runtime Raft safety.
 - Open: Define recovery and aggregate readiness evidence.
 - Neighbours: Fleet safe rollout and foundation extraction.
