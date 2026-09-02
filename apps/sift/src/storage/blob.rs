@@ -162,39 +162,18 @@ impl BlobStore {
         Ok(paths)
     }
 
-    /// Delete local blobs that are no longer referenced by the committed
-    /// retained event set. The archive manifest is the commit point. Callers
-    /// must not use this before that manifest is durable.
-    pub fn prune_except(&self, retained_hashes: &BTreeSet<String>) -> Result<usize> {
-        let mut removed = 0_usize;
-        for path in self.blob_paths()? {
-            let digest = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .context("blob file name is not valid UTF-8")?;
-            let hash = format!("sha256:{digest}");
-            if self.path_for_hash(&hash)? != path {
-                bail!(
-                    "blob path does not match its content address: {}",
-                    path.display()
-                );
+    pub(crate) fn remove(&self, hash: &str) -> Result<bool> {
+        let path = self.path_for_hash(hash)?;
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                storage_durable::sync_parent_dir(&path)?;
+                Ok(true)
             }
-            if retained_hashes.contains(&hash) {
-                continue;
-            }
-            match fs::remove_file(&path) {
-                Ok(()) => {
-                    storage_durable::sync_parent_dir(&path)?;
-                    removed += 1;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("remove expired blob {}", path.display()));
-                }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => {
+                Err(error).with_context(|| format!("remove expired blob {}", path.display()))
             }
         }
-        Ok(removed)
     }
 }
 // HANDWRITE-END

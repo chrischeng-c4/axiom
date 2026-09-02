@@ -14,20 +14,27 @@ mod wal;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 
 use crate::{ContentBlobRef, OperationalEventV2, SignalKind, StoredEvent};
 
 pub use blob::BlobStore;
 pub use capacity::{CapacityLevel, LocalCapacity, LocalCapacityError};
-pub use dedupe::DedupeIndex;
+pub(crate) use dedupe::DedupeReceipt;
+pub use dedupe::{DedupeIndex, IDEMPOTENCY_WINDOW_SECONDS};
 pub use head::JournalHead;
 pub use layout::{DataLayout, LayoutManifest, StorageRole, DEFAULT_DATA_DIR};
 pub use segment::{AppendLocation, SegmentManifest, SegmentState};
 pub use shard::{EpochMap, Route, VIRTUAL_BUCKETS};
-pub use wal::SignalWal;
+pub use wal::{SignalWal, SignalWalReader};
 
-use segment::SegmentStore;
+pub(crate) trait BlobHashSet {
+    fn insert_hash(&mut self, hash: &str) -> anyhow::Result<()>;
+    fn contains_hash(&self, hash: &str) -> anyhow::Result<bool>;
+}
+
+use segment::{SegmentEventReader, SegmentStore};
 use shard::ShardRouter;
 
 #[derive(Clone, Debug)]
@@ -56,10 +63,20 @@ pub struct RawStorage {
     segments: SignalSegmentStores,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetainedPrefixReconcileStats {
+    pub max_buffered_events: usize,
+}
+
 struct SignalSegmentStores {
     logs: SegmentStore,
     metrics: SegmentStore,
     traces: SegmentStore,
+}
+
+pub(crate) struct RawStorageReader {
+    streams: Vec<(SignalKind, SegmentEventReader)>,
+    peeked: Vec<Option<StoredEvent>>,
 }
 
 impl RawStorage {
@@ -191,6 +208,17 @@ impl RawStorage {
         Ok(events)
     }
 
+    pub(crate) fn reader(&self, after: u64) -> Result<RawStorageReader> {
+        let streams = SignalKind::ALL
+            .into_iter()
+            .map(|signal| Ok((signal, self.segments.for_signal(signal)?.reader(after)?)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(RawStorageReader {
+            peeked: vec![None; streams.len()],
+            streams,
+        })
+    }
+
     pub fn seal_all(&self) -> Result<Vec<SegmentManifest>> {
         Ok(self
             .seal_all_with_signal()?
@@ -217,49 +245,26 @@ impl RawStorage {
     /// Replace the local archived prefix with the exact retained rows from a
     /// hash-verified restore. Rows after `snapshot_index` are a Raft suffix and
     /// remain untouched.
-    pub(crate) fn reconcile_retained_prefix(
+    #[doc(hidden)]
+    pub fn reconcile_retained_prefix(
         &self,
         retained: &RawStorage,
         snapshot_index: u64,
-    ) -> Result<()> {
-        let mut installed = std::collections::BTreeSet::<(u8, u64)>::new();
+    ) -> Result<RetainedPrefixReconcileStats> {
+        let mut stats = RetainedPrefixReconcileStats::default();
+
+        // First remove every local row in the authoritative checkpoint
+        // prefix. Keep only the post-checkpoint Raft suffix. One immutable
+        // segment is materialized at a time, so memory does not grow with the
+        // total retained row count.
         for (signal, manifest) in self.seal_all_with_signal()? {
             let events = self.read_segment_events(signal, &manifest)?;
-            let retained_by_cursor = collect_range(
-                retained,
-                signal,
-                manifest.first_cursor,
-                manifest.last_cursor.min(snapshot_index),
-            )?
-            .into_iter()
-            .map(|event| (event.cursor, event))
-            .collect::<std::collections::BTreeMap<_, _>>();
-            let local_by_cursor = events
+            stats.max_buffered_events = stats.max_buffered_events.max(events.len());
+            let replacement = events
                 .iter()
-                .filter(|event| event.cursor <= snapshot_index)
-                .map(|event| (event.cursor, event))
-                .collect::<std::collections::BTreeMap<_, _>>();
-            let mut replacement = retained_by_cursor
-                .values()
-                .map(|expected| {
-                    local_by_cursor
-                        .get(&expected.cursor)
-                        .filter(|local| same_logical_event(local, expected))
-                        .map(|local| (*local).clone())
-                        .unwrap_or_else(|| expected.clone())
-                })
+                .filter(|event| event.cursor > snapshot_index)
+                .cloned()
                 .collect::<Vec<_>>();
-            replacement.extend(
-                events
-                    .iter()
-                    .filter(|event| event.cursor > snapshot_index)
-                    .cloned(),
-            );
-            replacement.sort_by_key(|event| event.cursor);
-            replacement.dedup_by_key(|event| event.cursor);
-            for cursor in retained_by_cursor.keys() {
-                installed.insert((signal_tag(signal), *cursor));
-            }
             if replacement == events {
                 continue;
             }
@@ -271,37 +276,41 @@ impl RawStorage {
             self.evict_segment(signal, &manifest.segment_id)?;
         }
 
+        // Rebuild the exact retained prefix from the verified restore source.
+        // The source reader owns one frame at a time. The append batch is also
+        // bounded by item count and encoded bytes.
         for signal in SignalKind::ALL {
-            let mut after = 0_u64;
-            loop {
-                let page = retained.query_events(Some(signal), after, 10_000)?;
-                let mut missing = Vec::new();
-                let mut page_last = None;
-                for event in page {
-                    if event.cursor > snapshot_index {
-                        break;
-                    }
-                    page_last = Some(event.cursor);
-                    if !installed.contains(&(signal_tag(signal), event.cursor)) {
-                        installed.insert((signal_tag(signal), event.cursor));
-                        missing.push(event);
-                    }
+            let mut reader = retained.segments.for_signal(signal)?.reader(0)?;
+            let mut batch = Vec::with_capacity(1_000);
+            let mut batch_bytes = 0_usize;
+            while let Some(event) = reader.next_event()? {
+                if event.event.signal != signal {
+                    anyhow::bail!("retained archive contains the wrong signal");
                 }
-                if !missing.is_empty() {
-                    self.append_batch(&missing)?;
-                }
-                let Some(last) = page_last else {
+                if event.cursor > snapshot_index {
                     break;
-                };
-                if last <= after {
-                    anyhow::bail!("retained-prefix reconciliation made no progress");
                 }
-                after = last;
+                let encoded = serde_json::to_vec(&event)?.len();
+                if !batch.is_empty()
+                    && (batch.len() == 1_000
+                        || batch_bytes.saturating_add(encoded) > 16 * 1024 * 1024)
+                {
+                    stats.max_buffered_events = stats.max_buffered_events.max(batch.len());
+                    self.append_batch(&batch)?;
+                    batch.clear();
+                    batch_bytes = 0;
+                }
+                batch_bytes = batch_bytes.saturating_add(encoded);
+                batch.push(event);
+            }
+            if !batch.is_empty() {
+                stats.max_buffered_events = stats.max_buffered_events.max(batch.len());
+                self.append_batch(&batch)?;
             }
         }
 
         verify_local_retained_exact(self, retained, snapshot_index)?;
-        Ok(())
+        Ok(stats)
     }
 
     pub fn read_segment_events(
@@ -319,15 +328,47 @@ impl RawStorage {
         Ok(events)
     }
 
-    pub(crate) fn write_retained_segment(
+    /// Remove only local cache rows older than a committed retention cutoff.
+    /// Rows after the archived Raft prefix stay intact. The remote manifest is
+    /// still the authority for every cold row while a bounded scan continues.
+    pub(crate) fn evict_expired_before(
         &self,
-        signal: SignalKind,
-        source_segment_id: &str,
-        retained: &[StoredEvent],
-    ) -> Result<Option<SegmentManifest>> {
-        self.segments
-            .for_signal(signal)?
-            .write_retained_segment(source_segment_id, retained)
+        cutoff: DateTime<Utc>,
+        snapshot_index: u64,
+    ) -> Result<u64> {
+        let cutoff_nanos = cutoff
+            .timestamp_nanos_opt()
+            .context("local retention cutoff is outside the nanosecond range")?;
+        let mut removed = 0_u64;
+        for (signal, manifest) in self.seal_all_with_signal()? {
+            if manifest.first_cursor > snapshot_index
+                || manifest.min_event_time_unix_nano >= cutoff_nanos
+            {
+                continue;
+            }
+            let events = self.read_segment_events(signal, &manifest)?;
+            let mut retained = Vec::with_capacity(events.len());
+            for event in events {
+                let occurred = DateTime::parse_from_rfc3339(&event.event.occurred_at)
+                    .context("local retained event occurred_at must be RFC3339")?
+                    .with_timezone(&Utc);
+                if event.cursor <= snapshot_index && occurred < cutoff {
+                    removed = removed.saturating_add(1);
+                } else {
+                    retained.push(event);
+                }
+            }
+            if retained.len() as u64 == manifest.event_count {
+                continue;
+            }
+            if !retained.is_empty() {
+                self.segments
+                    .for_signal(signal)?
+                    .write_reconciled_segment(&manifest.segment_id, &retained)?;
+            }
+            self.evict_segment(signal, &manifest.segment_id)?;
+        }
+        Ok(removed)
     }
 
     pub(crate) fn evict_segment(
@@ -395,15 +436,52 @@ impl RawStorage {
         self.blobs.blob_paths()
     }
 
-    pub(crate) fn prune_blobs_except(
-        &self,
-        retained_hashes: &std::collections::BTreeSet<String>,
-    ) -> Result<usize> {
-        self.blobs.prune_except(retained_hashes)
+    pub(crate) fn remove_blob(&self, hash: &str) -> Result<bool> {
+        self.blobs.remove(hash)
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+}
+
+impl RawStorageReader {
+    pub(crate) fn next_event(&mut self) -> Result<Option<StoredEvent>> {
+        for index in 0..self.streams.len() {
+            if self.peeked[index].is_none() {
+                let (signal, stream) = &mut self.streams[index];
+                let event = stream.next_event()?;
+                if event
+                    .as_ref()
+                    .is_some_and(|event| event.event.signal != *signal)
+                {
+                    anyhow::bail!("raw segment contains the wrong signal");
+                }
+                self.peeked[index] = event;
+            }
+        }
+        let Some((selected, cursor)) = self
+            .peeked
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| event.as_ref().map(|event| (index, event.cursor)))
+            .min_by_key(|(_, cursor)| *cursor)
+        else {
+            return Ok(None);
+        };
+        let event = self.peeked[selected]
+            .take()
+            .expect("selected raw segment event exists");
+        for (index, duplicate) in self.peeked.iter_mut().enumerate() {
+            if index == selected || duplicate.as_ref().map(|row| row.cursor) != Some(cursor) {
+                continue;
+            }
+            let duplicate = duplicate.take().expect("matched raw segment event exists");
+            if duplicate != event {
+                anyhow::bail!("raw signal segments disagree at cursor {cursor}");
+            }
+        }
+        Ok(Some(event))
     }
 }
 
@@ -413,83 +491,37 @@ fn verify_local_retained_exact(
     snapshot_index: u64,
 ) -> Result<()> {
     for signal in SignalKind::ALL {
-        let mut after = 0_u64;
+        let mut local_reader = local.segments.for_signal(signal)?.reader(0)?;
+        let mut retained_reader = retained.segments.for_signal(signal)?.reader(0)?;
         loop {
-            let local_page = local
-                .query_events(Some(signal), after, 10_000)?
-                .into_iter()
-                .take_while(|event| event.cursor <= snapshot_index)
-                .collect::<Vec<_>>();
-            let retained_page = retained
-                .query_events(Some(signal), after, 10_000)?
-                .into_iter()
-                .take_while(|event| event.cursor <= snapshot_index)
-                .collect::<Vec<_>>();
-            if local_page.len() != retained_page.len()
-                || local_page
-                    .iter()
-                    .zip(&retained_page)
-                    .any(|(local, expected)| !same_logical_event(local, expected))
-            {
+            let local_event = next_prefix_event(&mut local_reader, signal, snapshot_index)?;
+            let retained_event = next_prefix_event(&mut retained_reader, signal, snapshot_index)?;
+            if local_event != retained_event {
                 anyhow::bail!(
                     "local {} prefix does not equal the retained archive through cursor {snapshot_index}",
                     signal
                 );
             }
-            let Some(last) = local_page.last().map(|event| event.cursor) else {
+            if local_event.is_none() {
                 break;
-            };
-            if last <= after {
-                anyhow::bail!("local retained-prefix verification made no progress");
             }
-            after = last;
         }
     }
     Ok(())
 }
 
-fn signal_tag(signal: SignalKind) -> u8 {
-    match signal {
-        SignalKind::Log => 0,
-        SignalKind::Metric => 1,
-        SignalKind::Span => 2,
-    }
-}
-
-fn same_logical_event(left: &StoredEvent, right: &StoredEvent) -> bool {
-    left.cursor == right.cursor && left.event == right.event
-}
-
-fn collect_range(
-    storage: &RawStorage,
+fn next_prefix_event(
+    reader: &mut SegmentEventReader,
     signal: SignalKind,
-    first_cursor: u64,
-    last_cursor: u64,
-) -> Result<Vec<StoredEvent>> {
-    if first_cursor > last_cursor {
-        return Ok(Vec::new());
+    snapshot_index: u64,
+) -> Result<Option<StoredEvent>> {
+    let Some(event) = reader.next_event()? else {
+        return Ok(None);
+    };
+    if event.event.signal != signal {
+        anyhow::bail!("retained-prefix verification found the wrong signal");
     }
-    let mut events = Vec::new();
-    let mut after = first_cursor.saturating_sub(1);
-    loop {
-        let page = storage.query_events(Some(signal), after, 10_000)?;
-        let Some(page_last) = page.last().map(|event| event.cursor) else {
-            break;
-        };
-        for event in page {
-            if event.cursor > last_cursor {
-                return Ok(events);
-            }
-            if event.cursor >= first_cursor {
-                events.push(event);
-            }
-        }
-        if page_last <= after || page_last >= last_cursor {
-            break;
-        }
-        after = page_last;
-    }
-    Ok(events)
+    Ok((event.cursor <= snapshot_index).then_some(event))
 }
 
 impl SignalSegmentStores {

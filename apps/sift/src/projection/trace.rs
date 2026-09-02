@@ -14,7 +14,7 @@ use crate::{AttributeValue, InstrumentationScope, SignalKind, StoredEvent};
 use super::{model::ProjectionDescriptor, runtime::Projection};
 
 pub const PROJECTION_TRACE_STORE: &str = "trace-store";
-pub const TRACE_SCHEMA_VERSION: u32 = 1;
+pub const TRACE_SCHEMA_VERSION: u32 = 3;
 pub const MAX_TRACE_QUERY_LIMIT: usize = 1_000;
 pub const DEFAULT_RETAINED_TRACE_SPANS: usize = 100_000;
 
@@ -175,11 +175,8 @@ pub struct TracePage {
 #[derive(Default, Deserialize, Serialize)]
 struct TraceState {
     traces: BTreeMap<String, BTreeMap<String, SpanRecordV1>>,
-    cursor_by_event_id: BTreeMap<String, u64>,
     #[serde(default)]
-    event_id_by_cursor: BTreeMap<u64, String>,
-    #[serde(default)]
-    location_by_event_id: BTreeMap<String, TraceLocation>,
+    location_by_cursor: BTreeMap<u64, TraceLocation>,
     conflicts: BTreeMap<String, BTreeSet<String>>,
     #[serde(default)]
     projection_cursor: u64,
@@ -449,11 +446,7 @@ impl Projection for TraceProjection {
         };
         let key = trace_key(&event.project, trace_id);
         let mut state = self.state.write().expect("trace projection lock poisoned");
-        if state
-            .cursor_by_event_id
-            .get(&event.event_id)
-            .is_some_and(|cursor| *cursor >= stored.cursor)
-        {
+        if state.projection_cursor >= stored.cursor {
             return Ok(());
         }
         state.projection_cursor = state.projection_cursor.max(stored.cursor);
@@ -462,15 +455,14 @@ impl Projection for TraceProjection {
             .get(&key)
             .and_then(|trace| trace.get(span_id))
             .is_some_and(|existing| existing != &record);
-        if let Some(previous_event_id) = state
+        if let Some(previous_cursor) = state
             .traces
             .get(&key)
             .and_then(|trace| trace.get(span_id))
-            .map(|previous| previous.event_id.clone())
+            .map(|previous| previous.cursor)
         {
-            remove_tracked_event(&mut state, &previous_event_id);
+            remove_tracked_cursor(&mut state, previous_cursor);
         }
-        remove_tracked_event(&mut state, &event.event_id);
         if conflicting {
             state
                 .conflicts
@@ -483,24 +475,18 @@ impl Projection for TraceProjection {
             .entry(key.clone())
             .or_default()
             .insert(span_id.into(), record);
-        state
-            .cursor_by_event_id
-            .insert(event.event_id.clone(), stored.cursor);
-        state
-            .event_id_by_cursor
-            .insert(stored.cursor, event.event_id.clone());
-        state.location_by_event_id.insert(
-            event.event_id.clone(),
+        state.location_by_cursor.insert(
+            stored.cursor,
             TraceLocation {
                 trace_key: key,
                 span_id: span_id.into(),
             },
         );
-        while state.cursor_by_event_id.len() > self.max_spans {
-            let Some(oldest_event_id) = state.event_id_by_cursor.values().next().cloned() else {
+        while state.location_by_cursor.len() > self.max_spans {
+            let Some(oldest_cursor) = state.location_by_cursor.keys().next().copied() else {
                 break;
             };
-            remove_tracked_event(&mut state, &oldest_event_id);
+            remove_tracked_cursor(&mut state, oldest_cursor);
         }
         Ok(())
     }
@@ -518,7 +504,6 @@ impl Projection for TraceProjection {
             for (span_id, record) in trace {
                 rows.push((
                     record.cursor,
-                    record.event_id.clone(),
                     TraceLocation {
                         trace_key: trace_key.clone(),
                         span_id: span_id.clone(),
@@ -526,20 +511,16 @@ impl Projection for TraceProjection {
                 ));
             }
         }
-        state.cursor_by_event_id.clear();
-        state.event_id_by_cursor.clear();
-        state.location_by_event_id.clear();
-        for (cursor, event_id, location) in rows {
+        state.location_by_cursor.clear();
+        for (cursor, location) in rows {
             state.projection_cursor = state.projection_cursor.max(cursor);
-            state.cursor_by_event_id.insert(event_id.clone(), cursor);
-            state.event_id_by_cursor.insert(cursor, event_id.clone());
-            state.location_by_event_id.insert(event_id, location);
+            state.location_by_cursor.insert(cursor, location);
         }
-        while state.cursor_by_event_id.len() > self.max_spans {
-            let Some(oldest_event_id) = state.event_id_by_cursor.values().next().cloned() else {
+        while state.location_by_cursor.len() > self.max_spans {
+            let Some(oldest_cursor) = state.location_by_cursor.keys().next().copied() else {
                 break;
             };
-            remove_tracked_event(&mut state, &oldest_event_id);
+            remove_tracked_cursor(&mut state, oldest_cursor);
         }
         *self.state.write().expect("trace projection lock poisoned") = state;
         Ok(())
@@ -554,18 +535,15 @@ fn trace_key(project: &str, trace_id: &str) -> String {
     format!("{project}\u{1f}{trace_id}")
 }
 
-fn remove_tracked_event(state: &mut TraceState, event_id: &str) {
-    if let Some(cursor) = state.cursor_by_event_id.remove(event_id) {
-        state.event_id_by_cursor.remove(&cursor);
-    }
-    let Some(location) = state.location_by_event_id.remove(event_id) else {
+fn remove_tracked_cursor(state: &mut TraceState, cursor: u64) {
+    let Some(location) = state.location_by_cursor.remove(&cursor) else {
         return;
     };
     let mut remove_trace = false;
     if let Some(trace) = state.traces.get_mut(&location.trace_key) {
         if trace
             .get(&location.span_id)
-            .is_some_and(|record| record.event_id == event_id)
+            .is_some_and(|record| record.cursor == cursor)
         {
             trace.remove(&location.span_id);
         }

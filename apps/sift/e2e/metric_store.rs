@@ -400,4 +400,148 @@ fn metric_projection_rebuilds_equal_from_raw_events() {
     assert!(comparison.equal);
     assert_eq!(comparison.source_cursor, 2);
 }
+
+#[test]
+fn identical_metric_event_ids_are_isolated_by_project() {
+    let projection = MetricProjection::new();
+    let project_a = metric(
+        1,
+        "shared-id",
+        "requests",
+        2.0,
+        MetricTemporality::Delta,
+        "2026-07-14T00:00:00Z",
+        "/a",
+        serde_json::json!({}),
+    );
+    let mut project_b = metric(
+        2,
+        "shared-id",
+        "requests",
+        3.0,
+        MetricTemporality::Delta,
+        "2026-07-14T00:00:01Z",
+        "/a",
+        serde_json::json!({}),
+    );
+    project_b.event.project = "project-b".into();
+
+    Projection::apply_idempotent(&projection, &project_a).unwrap();
+    Projection::apply_idempotent(&projection, &project_b).unwrap();
+
+    assert_eq!(
+        projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap()
+            .series
+            .len(),
+        1
+    );
+    assert_eq!(
+        projection
+            .query(&MetricQuery::for_project("project-b"))
+            .unwrap()
+            .series
+            .len(),
+        1
+    );
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&Projection::snapshot(&projection).unwrap()).unwrap();
+    assert_eq!(snapshot["state"]["series"].as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn event_id_reuse_after_the_receipt_window_keeps_both_accepted_points() {
+    let projection = MetricProjection::new();
+    for row in [
+        metric(
+            1,
+            "reused-id",
+            "requests",
+            2.0,
+            MetricTemporality::Delta,
+            "2026-07-14T00:00:00Z",
+            "/reuse",
+            serde_json::json!({}),
+        ),
+        metric(
+            2,
+            "reused-id",
+            "requests",
+            3.0,
+            MetricTemporality::Delta,
+            "2026-07-14T07:00:00Z",
+            "/reuse",
+            serde_json::json!({}),
+        ),
+    ] {
+        Projection::apply_idempotent(&projection, &row).unwrap();
+    }
+    let page = projection
+        .query(&MetricQuery::for_project("project-a"))
+        .unwrap();
+    assert_eq!(
+        page.series[0]
+            .points
+            .iter()
+            .map(|point| (point.cursor, point.value))
+            .collect::<Vec<_>>(),
+        [(1, 2.0), (2, 3.0)]
+    );
+
+    Projection::apply_idempotent(
+        &projection,
+        &metric(
+            2,
+            "reused-id",
+            "requests",
+            3.0,
+            MetricTemporality::Delta,
+            "2026-07-14T07:00:00Z",
+            "/reuse",
+            serde_json::json!({}),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap()
+            .series[0]
+            .points
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn broad_metric_query_materializes_only_limit_plus_one_matching_series() {
+    let projection = MetricProjection::with_limits(1_000, 10).unwrap();
+    for cursor in 1..=100_u64 {
+        Projection::apply_idempotent(
+            &projection,
+            &metric(
+                cursor,
+                &format!("event-{cursor}"),
+                "requests",
+                cursor as f64,
+                MetricTemporality::Delta,
+                "2026-07-14T00:00:00Z",
+                &format!("/{cursor}"),
+                serde_json::json!({}),
+            ),
+        )
+        .unwrap();
+    }
+
+    let mut query = MetricQuery::for_project("project-a");
+    query.limit = 3;
+    let first = projection.query(&query).unwrap();
+    assert_eq!(first.series.len(), 3);
+    assert!(first.has_more);
+    query.after_series_id = first.next_series_id;
+    let second = projection.query(&query).unwrap();
+    assert_eq!(second.series.len(), 3);
+    assert!(first.series.last().unwrap().series_id < second.series.first().unwrap().series_id);
+}
 // HANDWRITE-END

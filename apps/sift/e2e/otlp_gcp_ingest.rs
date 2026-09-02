@@ -209,6 +209,72 @@ async fn otlp_json_endpoints_accept_logs_metrics_and_traces() {
 }
 
 #[tokio::test]
+async fn otlp_event_id_override_is_identical_for_logs_metrics_and_traces() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = Arc::new(ServiceState::open(temp.path()).unwrap());
+    let app = router(state.clone());
+    let fixtures = [
+        (
+            "/v1/logs",
+            "client-log-id",
+            serde_json::json!({"resourceLogs":[{"scopeLogs":[{"logRecords":[{
+                "timeUnixNano":"1783987200000000000",
+                "body":{"stringValue":"client ID"},
+                "attributes":[{"key":"sift.event_id","value":{"stringValue":"client-log-id"}}]
+            }]}]}]}),
+        ),
+        (
+            "/v1/metrics",
+            "client-metric-id",
+            serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{
+                "name":"client.id.metric",
+                "gauge":{"dataPoints":[{
+                    "timeUnixNano":"1783987200000000001",
+                    "asDouble":1.0,
+                    "attributes":[{"key":"sift.event_id","value":{"stringValue":"client-metric-id"}}]
+                }]}
+            }]}]}]}),
+        ),
+        (
+            "/v1/traces",
+            "client-span-id",
+            serde_json::json!({"resourceSpans":[{"scopeSpans":[{"spans":[{
+                "traceId":"11111111111111111111111111111111",
+                "spanId":"2222222222222222",
+                "name":"client ID",
+                "startTimeUnixNano":"1783987200000000002",
+                "endTimeUnixNano":"1783987200000000003",
+                "attributes":[{"key":"sift.event_id","value":{"stringValue":"client-span-id"}}]
+            }]}]}]}),
+        ),
+    ];
+
+    for (path, event_id, fixture) in fixtures {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .header("x-sift-project", "project-a")
+                    .body(Body::from(serde_json::to_vec(&fixture).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert!(json_body(response).await["partialSuccess"].is_null());
+        assert!(state
+            .journal()
+            .query(Default::default())
+            .unwrap()
+            .iter()
+            .any(|row| row.event.event_id == event_id));
+    }
+}
+
+#[tokio::test]
 async fn otlp_protobuf_gzip_round_trips_an_official_log_envelope() {
     let temp = tempfile::tempdir().unwrap();
     let state = Arc::new(ServiceState::open(temp.path()).unwrap());

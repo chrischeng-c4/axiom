@@ -69,6 +69,9 @@ enum Command {
     /// Emit deterministic protocol bytes for the isolated acceptance runner.
     #[command(hide = true)]
     AcceptancePayload(AcceptancePayloadArgs),
+    /// Emit immutable build provenance for candidate verification.
+    #[command(hide = true)]
+    AcceptanceBuildInfo,
     /// Send one valid and one invalid log through OTLP/gRPC for acceptance.
     #[command(hide = true)]
     AcceptanceGrpc(AcceptanceGrpcArgs),
@@ -705,6 +708,12 @@ async fn main() -> Result<()> {
         }
         Command::Issue(args) => issue(args).await,
         Command::AcceptancePayload(args) => acceptance_payload(args),
+        Command::AcceptanceBuildInfo => print_json_terminal(serde_json::json!({
+            "version": TOOL.version,
+            "git_sha": TOOL.git_sha,
+            "target": TOOL.target,
+            "built_at": TOOL.built_at,
+        })),
         Command::AcceptanceGrpc(args) => acceptance_grpc(args).await,
     }
 }

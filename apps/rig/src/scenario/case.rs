@@ -192,11 +192,12 @@ const VALID_DIMENSIONS: &[&str] = &[
     "api",
 ];
 
-/// True when `pred` is a compare-only predicate (`<op> <literal>`) or `exists`
+/// True when `pred` is a compare-only predicate (`<op> <literal>`), `exists`,
+/// or `absent`
 /// — the bound (rule 4) that keeps the expect grammar from growing control flow.
 fn is_compare_predicate(pred: &str) -> bool {
     let p = pred.trim();
-    if p == "exists" {
+    if matches!(p, "exists" | "absent") {
         return true;
     }
     for op in ["==", "!=", "<=", ">=", "<", ">"] {
@@ -298,7 +299,7 @@ pub fn lint_case(path: &Path, case: &TestCase) -> Vec<LintViolation> {
             if !is_compare_predicate(pred) {
                 v.push(LintViolation {
                     message: format!(
-                        "expect `{jp}` = `{pred}` must be a compare predicate (== != < <= > >= or `exists`); no and/or/if/fns"
+                        "expect `{jp}` = `{pred}` must be a compare predicate (== != < <= > >=, `exists`, or `absent`); no and/or/if/fns"
                     ),
                 });
             }
@@ -432,6 +433,16 @@ delegate = "vat-cow"
         let text = BEHAVIOR.replace(
             "status = 200",
             "status = 200\njsonpath = { \"$.total\" = \">= 1\" }",
+        );
+        let p = PathBuf::from("cases/api/search_basic.toml");
+        assert!(parse_case(&p, &text).is_ok());
+    }
+
+    #[test]
+    fn absent_predicate_expect_passes() {
+        let text = BEHAVIOR.replace(
+            "status = 200",
+            "status = 200\njsonpath = { \"$.partialSuccess\" = \"absent\" }",
         );
         let p = PathBuf::from("cases/api/search_basic.toml");
         assert!(parse_case(&p, &text).is_ok());

@@ -1,9 +1,12 @@
 // HANDWRITE-BEGIN gap="sift-metric-projection" tracker="1667" reason="Define series identity, chunks, temporality, histograms, exemplars, overflow, rollups, typed query, snapshot, and rebuild."
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs,
+    ops::Bound::{Excluded, Unbounded},
+    path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        RwLock,
+        Mutex, RwLock,
     },
 };
 
@@ -20,8 +23,9 @@ use crate::{
 use super::{model::ProjectionDescriptor, runtime::Projection};
 
 pub const PROJECTION_METRIC_STORE: &str = "metric-store";
-pub const METRIC_SCHEMA_VERSION: u32 = 2;
+pub const METRIC_SCHEMA_VERSION: u32 = 5;
 pub const METRIC_CHUNK_POINTS: usize = 256;
+pub const DEFAULT_METRIC_MEMTABLE_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_METRIC_CARDINALITY_LIMIT: usize = 10_000;
 pub const DEFAULT_RETAINED_POINTS_PER_SERIES: usize = 100_000;
 pub const MAX_METRIC_QUERY_LIMIT: usize = 1_000;
@@ -300,24 +304,47 @@ struct StoredMetricSeries {
     resource: BTreeMap<String, String>,
     attributes: BTreeMap<String, AttributeValue>,
     overflow: bool,
+    #[serde(default)]
+    sealed_chunks: Vec<SealedMetricChunk>,
     chunks: Vec<MetricChunkV1>,
     #[serde(default)]
     point_count: usize,
     rollups: Vec<MetricRollupV1>,
+    #[serde(skip)]
+    resident_bytes: usize,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct SealedMetricChunk {
+    key: String,
+    start_time_unix_nano: i64,
+    end_time_unix_nano: i64,
+    point_count: usize,
+    sha256: String,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct MetricState {
     series: BTreeMap<String, StoredMetricSeries>,
-    cursor_by_event_id: BTreeMap<String, u64>,
     exact_identities: BTreeMap<String, BTreeSet<String>>,
     overflowed_identities: BTreeSet<String>,
     overflowed_points: u64,
+    #[serde(default)]
+    projection_cursor: u64,
+    #[serde(skip)]
+    memtable_bytes: usize,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 struct MetricSnapshot {
     state: MetricState,
+    cardinality_limit: usize,
+    retained_points_per_series: usize,
+}
+
+#[derive(Serialize)]
+struct MetricSnapshotRef<'a> {
+    state: &'a MetricState,
     cardinality_limit: usize,
     retained_points_per_series: usize,
 }
@@ -332,7 +359,14 @@ pub struct MetricProjection {
     state: RwLock<MetricState>,
     cardinality_limit: usize,
     retained_points_per_series: usize,
+    memtable_limit_bytes: usize,
+    chunk_store: Option<MetricChunkStore>,
     maintenance_work_points: AtomicU64,
+}
+
+struct MetricChunkStore {
+    root: PathBuf,
+    obsolete: Mutex<storage_durable::FramedLogWriter>,
 }
 
 impl MetricProjection {
@@ -348,13 +382,63 @@ impl MetricProjection {
         cardinality_limit: usize,
         retained_points_per_series: usize,
     ) -> Result<Self> {
+        Self::build(
+            cardinality_limit,
+            retained_points_per_series,
+            usize::MAX,
+            None,
+        )
+    }
+
+    pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_limits(
+            data_dir,
+            DEFAULT_METRIC_CARDINALITY_LIMIT,
+            DEFAULT_RETAINED_POINTS_PER_SERIES,
+            DEFAULT_METRIC_MEMTABLE_BYTES,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn open_with_limits(
+        data_dir: impl AsRef<Path>,
+        cardinality_limit: usize,
+        retained_points_per_series: usize,
+        memtable_limit_bytes: usize,
+    ) -> Result<Self> {
+        let chunk_store = MetricChunkStore::open(
+            data_dir
+                .as_ref()
+                .join("indexes")
+                .join(PROJECTION_METRIC_STORE)
+                .join("chunks"),
+        )?;
+        Self::build(
+            cardinality_limit,
+            retained_points_per_series,
+            memtable_limit_bytes,
+            Some(chunk_store),
+        )
+    }
+
+    fn build(
+        cardinality_limit: usize,
+        retained_points_per_series: usize,
+        memtable_limit_bytes: usize,
+        chunk_store: Option<MetricChunkStore>,
+    ) -> Result<Self> {
         if cardinality_limit == 0 || retained_points_per_series == 0 {
             bail!("metric cardinality and retention limits must be non-zero");
+        }
+        if memtable_limit_bytes == 0 {
+            bail!("metric memtable limit must be non-zero");
         }
         Ok(Self {
             state: RwLock::new(MetricState::default()),
             cardinality_limit,
             retained_points_per_series,
+            memtable_limit_bytes,
+            chunk_store,
             maintenance_work_points: AtomicU64::new(0),
         })
     }
@@ -364,21 +448,146 @@ impl MetricProjection {
         self.maintenance_work_points.load(Ordering::Relaxed)
     }
 
+    #[doc(hidden)]
+    pub fn memtable_bytes(&self) -> usize {
+        self.state
+            .read()
+            .expect("metric projection lock poisoned")
+            .memtable_bytes
+    }
+
+    #[doc(hidden)]
+    pub fn sealed_chunk_count(&self) -> usize {
+        self.state
+            .read()
+            .expect("metric projection lock poisoned")
+            .series
+            .values()
+            .map(|series| series.sealed_chunks.len())
+            .sum()
+    }
+
+    fn all_points(&self, series: &StoredMetricSeries) -> Result<Vec<MetricPointV1>> {
+        let mut points = Vec::with_capacity(series.point_count);
+        for sealed in &series.sealed_chunks {
+            points.extend(self.read_sealed_chunk(sealed)?.points);
+        }
+        points.extend(
+            series
+                .chunks
+                .iter()
+                .flat_map(|chunk| chunk.points.iter().cloned()),
+        );
+        Ok(points)
+    }
+
+    fn last_point(&self, series: &StoredMetricSeries) -> Result<Option<MetricPointV1>> {
+        if let Some(point) = series.chunks.last().and_then(|chunk| chunk.points.last()) {
+            return Ok(Some(point.clone()));
+        }
+        let Some(sealed) = series.sealed_chunks.last() else {
+            return Ok(None);
+        };
+        Ok(self.read_sealed_chunk(sealed)?.points.last().cloned())
+    }
+
+    fn read_sealed_chunk(&self, sealed: &SealedMetricChunk) -> Result<MetricChunkV1> {
+        self.chunk_store
+            .as_ref()
+            .context("metric projection has no disk chunk store")?
+            .read(sealed)
+    }
+
+    fn seal_full_chunks(&self, series: &mut StoredMetricSeries) -> Result<()> {
+        let Some(store) = &self.chunk_store else {
+            return Ok(());
+        };
+        while series
+            .chunks
+            .first()
+            .is_some_and(|chunk| chunk.points.len() >= METRIC_CHUNK_POINTS)
+        {
+            let resident_bytes = metric_chunk_memory_bytes(&series.chunks[0])?;
+            let sealed = store.write(&series.series_id, &series.chunks[0])?;
+            series.chunks.remove(0);
+            series.resident_bytes = series.resident_bytes.saturating_sub(resident_bytes);
+            series.sealed_chunks.push(sealed);
+        }
+        Ok(())
+    }
+
+    fn evict_series_to_limit(
+        &self,
+        series: &mut StoredMetricSeries,
+        mutation_cursor: u64,
+    ) -> Result<u64> {
+        let mut work = 0_u64;
+        while series.point_count > self.retained_points_per_series {
+            if let Some(sealed) = series.sealed_chunks.first().cloned() {
+                let chunk = self.read_sealed_chunk(&sealed)?;
+                if let Some(store) = &self.chunk_store {
+                    store.mark_obsolete(mutation_cursor, std::slice::from_ref(&sealed.key))?;
+                }
+                series.sealed_chunks.remove(0);
+                series.point_count = series.point_count.saturating_sub(chunk.points.len());
+                work = work.saturating_add(chunk.points.len() as u64);
+                continue;
+            }
+            let Some(_) = pop_oldest_metric_point(series)? else {
+                break;
+            };
+            work = work.saturating_add(1);
+        }
+        Ok(work)
+    }
+
+    fn enforce_memtable_limit(&self, state: &mut MetricState) -> Result<()> {
+        let Some(store) = &self.chunk_store else {
+            if state.memtable_bytes > self.memtable_limit_bytes {
+                bail!("metric memtable exceeded its limit without a disk chunk store");
+            }
+            return Ok(());
+        };
+        while state.memtable_bytes > self.memtable_limit_bytes {
+            let series_id = state
+                .series
+                .iter()
+                .find(|(_, series)| !series.chunks.is_empty())
+                .map(|(series_id, _)| series_id.clone())
+                .context("metric memtable accounting exceeds limit without resident chunks")?;
+            let series = state
+                .series
+                .get_mut(&series_id)
+                .context("selected metric series disappeared")?;
+            let resident_bytes = metric_chunk_memory_bytes(&series.chunks[0])?;
+            let sealed = store.write(&series.series_id, &series.chunks[0])?;
+            series.chunks.remove(0);
+            series.resident_bytes = series.resident_bytes.saturating_sub(resident_bytes);
+            series.sealed_chunks.push(sealed);
+            state.memtable_bytes = state.memtable_bytes.saturating_sub(resident_bytes);
+        }
+        Ok(())
+    }
+
     pub fn query(&self, query: &MetricQuery) -> Result<MetricPage> {
         let (start, end) = query.validate()?;
         let state = self.state.read().expect("metric projection lock poisoned");
-        let mut results = Vec::new();
-        for series in state.series.values() {
+        let start_series = query
+            .after_series_id
+            .as_ref()
+            .map_or(Unbounded, |series_id| Excluded(series_id.clone()));
+        let mut results = Vec::with_capacity(query.limit.saturating_add(1));
+        for series in state
+            .series
+            .range((start_series, Unbounded))
+            .map(|(_, series)| series)
+        {
             if series.project != query.project
                 || query
                     .environment
                     .as_ref()
                     .is_some_and(|environment| &series.environment != environment)
                 || query.name.as_ref().is_some_and(|name| &series.name != name)
-                || query
-                    .after_series_id
-                    .as_ref()
-                    .is_some_and(|after| &series.series_id <= after)
                 || !query
                     .resource_equals
                     .iter()
@@ -390,7 +599,7 @@ impl MetricProjection {
             {
                 continue;
             }
-            let all_points = flatten_points(series);
+            let all_points = self.all_points(series)?;
             let points = all_points
                 .iter()
                 .filter(|point| start.is_none_or(|start| point.time_unix_nano >= start))
@@ -437,19 +646,16 @@ impl MetricProjection {
                 reset_count,
                 rollups,
             });
+            if results.len() > query.limit {
+                break;
+            }
         }
-        results.sort_by(|left, right| left.series_id.cmp(&right.series_id));
         let has_more = results.len() > query.limit;
         results.truncate(query.limit);
         Ok(MetricPage {
             next_series_id: results.last().map(|series| series.series_id.clone()),
             series: results,
-            projection_cursor: state
-                .cursor_by_event_id
-                .values()
-                .copied()
-                .max()
-                .unwrap_or(0),
+            projection_cursor: state.projection_cursor,
             has_more,
             overflowed_series: state.overflowed_identities.len() as u64,
             overflowed_points: state.overflowed_points,
@@ -502,14 +708,9 @@ impl Projection for MetricProjection {
             .as_bytes(),
         );
         let mut state = self.state.write().expect("metric projection lock poisoned");
-        if state
-            .cursor_by_event_id
-            .get(&event.event_id)
-            .is_some_and(|cursor| *cursor >= stored.cursor)
-        {
+        if state.projection_cursor >= stored.cursor {
             return Ok(());
         }
-        let replaces_existing = state.cursor_by_event_id.remove(&event.event_id).is_some();
         let known = state.series.contains_key(&exact_id);
         let current_count = state
             .exact_identities
@@ -548,7 +749,7 @@ impl Projection for MetricProjection {
             histogram: payload.histogram,
             exemplars: metric.exemplars.clone(),
         };
-        let (removed_event_ids, current_retained, touched) = {
+        let (touched, before, after) = {
             let series =
                 state
                     .series
@@ -571,75 +772,79 @@ impl Projection for MetricProjection {
                             event.attributes.clone()
                         },
                         overflow,
+                        sealed_chunks: Vec::new(),
                         chunks: Vec::new(),
                         point_count: 0,
                         rollups: Vec::new(),
+                        resident_bytes: 0,
                     });
             if series.temporality != metric.temporality {
                 bail!("metric series temporality changed without changing identity");
             }
-            if series.point_count == 0 && !series.chunks.is_empty() {
-                series.point_count = series.chunks.iter().map(|chunk| chunk.points.len()).sum();
+            if series.point_count == 0
+                && (!series.sealed_chunks.is_empty() || !series.chunks.is_empty())
+            {
+                series.point_count = series
+                    .sealed_chunks
+                    .iter()
+                    .map(|chunk| chunk.point_count)
+                    .chain(series.chunks.iter().map(|chunk| chunk.points.len()))
+                    .sum();
             }
-            let append_in_order = !replaces_existing
-                && last_point(series).is_none_or(|last| point_order(last, &point).is_le());
-            let (removed, current_retained, touched) = if append_in_order {
-                push_metric_point(series, point);
-                let mut removed = Vec::new();
-                while series.point_count > self.retained_points_per_series {
-                    if let Some(event_id) = pop_oldest_metric_point(series) {
-                        removed.push(event_id);
-                    } else {
-                        break;
-                    }
-                }
+            let before = series.resident_bytes;
+            let last_point = self.last_point(series)?;
+            let append_in_order = last_point
+                .as_ref()
+                .is_none_or(|last| point_order(last, &point).is_le());
+            let touched = if append_in_order {
+                push_metric_point(series, point)?;
+                self.seal_full_chunks(series)?;
+                let eviction_work = self.evict_series_to_limit(series, stored.cursor)?;
                 series.rollups.clear();
-                let touched = 1_u64.saturating_add(removed.len() as u64);
-                (removed, true, touched)
+                1_u64.saturating_add(eviction_work)
             } else {
-                let mut points = flatten_points(series);
-                points.retain(|existing| existing.event_id != event.event_id);
+                let mut points = self.all_points(series)?;
                 points.push(point);
                 points.sort_by(point_order);
-                let removed = if points.len() > self.retained_points_per_series {
-                    points
-                        .drain(..points.len() - self.retained_points_per_series)
-                        .map(|point| point.event_id)
-                        .collect::<Vec<_>>()
-                } else {
-                    Vec::new()
-                };
-                let current_retained = points
-                    .iter()
-                    .any(|retained| retained.event_id == event.event_id);
-                let touched = points.len() as u64 + removed.len() as u64;
+                let removed = points.len().saturating_sub(self.retained_points_per_series);
+                if removed > 0 {
+                    points.drain(..removed);
+                }
+                let touched = points.len() as u64 + removed as u64;
+                if let Some(store) = &self.chunk_store {
+                    let old_keys = series
+                        .sealed_chunks
+                        .iter()
+                        .map(|chunk| chunk.key.clone())
+                        .collect::<Vec<_>>();
+                    store.mark_obsolete(stored.cursor, &old_keys)?;
+                }
+                series.sealed_chunks.clear();
                 series.chunks = make_chunks(&points);
                 series.point_count = points.len();
                 series.rollups.clear();
-                (removed, current_retained, touched)
+                series.resident_bytes = metric_series_memory_bytes(series)?;
+                self.seal_full_chunks(series)?;
+                touched
             };
-            (removed, current_retained, touched)
+            let after = series.resident_bytes;
+            (touched, before, after)
         };
+        state.memtable_bytes = state
+            .memtable_bytes
+            .saturating_sub(before)
+            .saturating_add(after);
         self.maintenance_work_points
             .fetch_add(touched, Ordering::Relaxed);
-        for event_id in removed_event_ids {
-            state.cursor_by_event_id.remove(&event_id);
-        }
-        if current_retained {
-            state
-                .cursor_by_event_id
-                .insert(event.event_id.clone(), stored.cursor);
-        }
+        state.projection_cursor = state.projection_cursor.max(stored.cursor);
+        self.enforce_memtable_limit(&mut state)?;
         Ok(())
     }
 
     fn snapshot(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(&MetricSnapshot {
-            state: self
-                .state
-                .read()
-                .expect("metric projection lock poisoned")
-                .clone(),
+        let state = self.state.read().expect("metric projection lock poisoned");
+        serde_json::to_vec(&MetricSnapshotRef {
+            state: &state,
             cardinality_limit: self.cardinality_limit,
             retained_points_per_series: self.retained_points_per_series,
         })
@@ -655,17 +860,214 @@ impl Projection for MetricProjection {
             bail!("metric projection snapshot limits do not match configured limits");
         }
         let mut state = snapshot.state;
+        let mut memtable_bytes = 0_usize;
+        let mut projection_cursor = state.projection_cursor;
         for series in state.series.values_mut() {
-            series.point_count = series.chunks.iter().map(|chunk| chunk.points.len()).sum();
+            if !series.sealed_chunks.is_empty() && self.chunk_store.is_none() {
+                bail!("metric snapshot contains disk chunks but projection has no chunk store");
+            }
+            for sealed in &series.sealed_chunks {
+                self.read_sealed_chunk(sealed)?;
+            }
+            series.point_count = series
+                .sealed_chunks
+                .iter()
+                .map(|chunk| chunk.point_count)
+                .chain(series.chunks.iter().map(|chunk| chunk.points.len()))
+                .sum();
             series.rollups.clear();
+            series.resident_bytes = metric_series_memory_bytes(series)?;
+            memtable_bytes = memtable_bytes.saturating_add(series.resident_bytes);
+            for point in series.chunks.iter().flat_map(|chunk| &chunk.points) {
+                projection_cursor = projection_cursor.max(point.cursor);
+            }
         }
+        state.memtable_bytes = memtable_bytes;
+        state.projection_cursor = projection_cursor;
+        self.enforce_memtable_limit(&mut state)?;
         *self.state.write().expect("metric projection lock poisoned") = state;
         Ok(())
+    }
+
+    fn checkpoint_committed(&self) -> Result<()> {
+        let Some(store) = &self.chunk_store else {
+            return Ok(());
+        };
+        let state = self.state.read().expect("metric projection lock poisoned");
+        let committed_cursor = state.projection_cursor;
+        let referenced = state
+            .series
+            .values()
+            .flat_map(|series| series.sealed_chunks.iter().map(|chunk| chunk.key.clone()))
+            .collect::<BTreeSet<_>>();
+        drop(state);
+        store.cleanup_obsolete(committed_cursor, &referenced)
     }
 
     fn semantic_digest(&self) -> Result<String> {
         Ok(sha256(&self.snapshot()?))
     }
+}
+
+impl MetricChunkStore {
+    fn open(root: PathBuf) -> Result<Self> {
+        fs::create_dir_all(&root)
+            .with_context(|| format!("create metric chunk root {}", root.display()))?;
+        storage_durable::set_private_directory_mode(&root)?;
+        let obsolete = storage_durable::FramedLogWriter::open(
+            root.join("obsolete.framed"),
+            storage_durable::FsyncPolicy::Always,
+        )?;
+        Ok(Self {
+            root,
+            obsolete: Mutex::new(obsolete),
+        })
+    }
+
+    fn write(&self, series_id: &str, chunk: &MetricChunkV1) -> Result<SealedMetricChunk> {
+        let first = chunk
+            .points
+            .first()
+            .context("cannot seal an empty metric chunk")?;
+        let last = chunk.points.last().context("metric chunk lost its tail")?;
+        validate_series_id(series_id)?;
+        let bytes = serde_json::to_vec(chunk).context("encode sealed metric chunk")?;
+        let digest = sha256(&bytes);
+        let key = format!(
+            "{series_id}/{:020}-{:020}-{digest}.json",
+            first.cursor, last.cursor
+        );
+        let path = self.path_for(&key)?;
+        let parent = path
+            .parent()
+            .context("metric chunk path has no parent directory")?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create metric series directory {}", parent.display()))?;
+        storage_durable::set_private_directory_mode(parent)?;
+        storage_durable::atomic_write(&path, &bytes, storage_durable::FsyncPolicy::Always)
+            .with_context(|| format!("persist sealed metric chunk {}", path.display()))?;
+        storage_durable::set_private_file_mode(&path)?;
+        Ok(SealedMetricChunk {
+            key,
+            start_time_unix_nano: chunk.start_time_unix_nano,
+            end_time_unix_nano: chunk.end_time_unix_nano,
+            point_count: chunk.points.len(),
+            sha256: digest,
+        })
+    }
+
+    fn read(&self, sealed: &SealedMetricChunk) -> Result<MetricChunkV1> {
+        let path = self.path_for(&sealed.key)?;
+        let bytes = fs::read(&path)
+            .with_context(|| format!("read sealed metric chunk {}", path.display()))?;
+        if sha256(&bytes) != sealed.sha256 {
+            bail!("sealed metric chunk {} checksum mismatch", sealed.key);
+        }
+        let chunk: MetricChunkV1 =
+            serde_json::from_slice(&bytes).context("decode sealed metric chunk")?;
+        if chunk.points.len() != sealed.point_count
+            || chunk.start_time_unix_nano != sealed.start_time_unix_nano
+            || chunk.end_time_unix_nano != sealed.end_time_unix_nano
+            || chunk.points.is_empty()
+        {
+            bail!("sealed metric chunk {} metadata mismatch", sealed.key);
+        }
+        Ok(chunk)
+    }
+
+    fn mark_obsolete(&self, cursor: u64, keys: &[String]) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let mut ledger = self
+            .obsolete
+            .lock()
+            .expect("metric obsolete ledger lock poisoned");
+        for key in keys {
+            self.path_for(key)?;
+            ledger.append(cursor, key.as_bytes())?;
+        }
+        ledger.sync_strict()
+    }
+
+    fn cleanup_obsolete(&self, committed_cursor: u64, referenced: &BTreeSet<String>) -> Result<()> {
+        let mut ledger = self
+            .obsolete
+            .lock()
+            .expect("metric obsolete ledger lock poisoned");
+        ledger.flush()?;
+        let ledger_path = self.root.join("obsolete.framed");
+        let mut cursor = storage_durable::FramedLogCursor::open(&ledger_path)?;
+        let mut safe_through = None;
+        while let Some(frame) = cursor.next_frame()? {
+            if frame.seq > committed_cursor {
+                break;
+            }
+            let key =
+                String::from_utf8(frame.payload).context("decode obsolete metric chunk key")?;
+            if !referenced.contains(&key) {
+                self.remove_key(&key)?;
+            }
+            safe_through = Some(frame.seq);
+        }
+        drop(cursor);
+        if let Some(through) = safe_through {
+            ledger.truncate_through(through)?;
+        }
+        Ok(())
+    }
+
+    fn remove_key(&self, key: &str) -> Result<()> {
+        let path = self.path_for(key)?;
+        match fs::remove_file(&path) {
+            Ok(()) => storage_durable::sync_parent_dir(&path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                Err(error).with_context(|| format!("remove metric chunk {}", path.display()))
+            }
+        }
+    }
+
+    fn path_for(&self, key: &str) -> Result<PathBuf> {
+        let relative = Path::new(key);
+        let components = relative.components().collect::<Vec<_>>();
+        if components.len() != 2
+            || components
+                .iter()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            bail!("metric chunk key is not a safe relative path");
+        }
+        let series_id = components[0].as_os_str().to_string_lossy();
+        validate_series_id(&series_id)?;
+        Ok(self.root.join(relative))
+    }
+}
+
+fn validate_series_id(series_id: &str) -> Result<()> {
+    if series_id.len() != 64 || !series_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("metric series id is not a SHA-256 hex digest");
+    }
+    Ok(())
+}
+
+fn metric_series_memory_bytes(series: &StoredMetricSeries) -> Result<usize> {
+    series.chunks.iter().try_fold(0_usize, |total, chunk| {
+        Ok(total.saturating_add(metric_chunk_memory_bytes(chunk)?))
+    })
+}
+
+fn metric_chunk_memory_bytes(chunk: &MetricChunkV1) -> Result<usize> {
+    chunk.points.iter().try_fold(0_usize, |total, point| {
+        Ok(total.saturating_add(metric_point_memory_bytes(point)?))
+    })
+}
+
+fn metric_point_memory_bytes(point: &MetricPointV1) -> Result<usize> {
+    Ok(serde_json::to_vec(point)
+        .context("measure metric memtable point")?
+        .len()
+        .saturating_add(std::mem::size_of::<MetricPointV1>()))
 }
 
 fn identity_material(
@@ -689,18 +1091,6 @@ fn identity_material(
     .map_err(Into::into)
 }
 
-fn flatten_points(series: &StoredMetricSeries) -> Vec<MetricPointV1> {
-    series
-        .chunks
-        .iter()
-        .flat_map(|chunk| chunk.points.iter().cloned())
-        .collect()
-}
-
-fn last_point(series: &StoredMetricSeries) -> Option<&MetricPointV1> {
-    series.chunks.last()?.points.last()
-}
-
 fn point_order(left: &MetricPointV1, right: &MetricPointV1) -> std::cmp::Ordering {
     left.time_unix_nano
         .cmp(&right.time_unix_nano)
@@ -708,7 +1098,8 @@ fn point_order(left: &MetricPointV1, right: &MetricPointV1) -> std::cmp::Orderin
         .then_with(|| left.event_id.cmp(&right.event_id))
 }
 
-fn push_metric_point(series: &mut StoredMetricSeries, point: MetricPointV1) {
+fn push_metric_point(series: &mut StoredMetricSeries, point: MetricPointV1) -> Result<()> {
+    let resident_bytes = metric_point_memory_bytes(&point)?;
     let needs_chunk = series
         .chunks
         .last()
@@ -727,17 +1118,24 @@ fn push_metric_point(series: &mut StoredMetricSeries, point: MetricPointV1) {
     chunk.end_time_unix_nano = point.time_unix_nano;
     chunk.points.push(point);
     series.point_count = series.point_count.saturating_add(1);
+    series.resident_bytes = series.resident_bytes.saturating_add(resident_bytes);
+    Ok(())
 }
 
-fn pop_oldest_metric_point(series: &mut StoredMetricSeries) -> Option<String> {
-    let point = series.chunks.first_mut()?.points.remove(0);
+fn pop_oldest_metric_point(series: &mut StoredMetricSeries) -> Result<Option<String>> {
+    let Some(chunk) = series.chunks.first_mut() else {
+        return Ok(None);
+    };
+    let point = chunk.points.remove(0);
+    let resident_bytes = metric_point_memory_bytes(&point)?;
     series.point_count = series.point_count.saturating_sub(1);
     if series.chunks[0].points.is_empty() {
         series.chunks.remove(0);
     } else {
         series.chunks[0].start_time_unix_nano = series.chunks[0].points[0].time_unix_nano;
     }
-    Some(point.event_id)
+    series.resident_bytes = series.resident_bytes.saturating_sub(resident_bytes);
+    Ok(Some(point.event_id))
 }
 
 fn make_chunks(points: &[MetricPointV1]) -> Vec<MetricChunkV1> {

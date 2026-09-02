@@ -19,7 +19,7 @@ use crate::{AttributeValue, SignalKind, StoredEvent};
 use super::{model::ProjectionDescriptor, runtime::Projection};
 
 pub const PROJECTION_LOGGING_STORE: &str = "logging-store";
-pub const LOGGING_SCHEMA_VERSION: u32 = 1;
+pub const LOGGING_SCHEMA_VERSION: u32 = 3;
 pub const DEFAULT_RETAINED_LOG_RECORDS: usize = 100_000;
 pub const MAX_LOG_QUERY_LIMIT: usize = 1_000;
 
@@ -138,7 +138,7 @@ pub struct LogPage {
 #[derive(Default)]
 struct LoggingState {
     records: BTreeMap<u64, LogRecordV1>,
-    cursor_by_event_id: BTreeMap<String, u64>,
+    projection_cursor: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -146,14 +146,14 @@ struct LoggingSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text_index: Option<TextIndexSnapshot>,
     records: BTreeMap<u64, LogRecordV1>,
-    cursor_by_event_id: BTreeMap<String, u64>,
+    projection_cursor: u64,
     max_records: usize,
 }
 
 #[derive(Serialize)]
 struct SemanticState<'a> {
     records: &'a BTreeMap<u64, LogRecordV1>,
-    cursor_by_event_id: &'a BTreeMap<String, u64>,
+    projection_cursor: u64,
     max_records: usize,
 }
 
@@ -248,44 +248,28 @@ impl Projection for LoggingProjection {
             return Ok(());
         }
         let record = normalize(stored);
+        if self
+            .state
+            .read()
+            .expect("logging projection state lock poisoned")
+            .projection_cursor
+            >= record.cursor
         {
-            let state = self
-                .state
-                .read()
-                .expect("logging projection state lock poisoned");
-            if state
-                .cursor_by_event_id
-                .get(&record.event_id)
-                .is_some_and(|cursor| *cursor >= record.cursor)
-            {
-                return Ok(());
-            }
+            return Ok(());
         }
         self.index(&record)?;
         let mut state = self
             .state
             .write()
             .expect("logging projection state lock poisoned");
-        if let Some(previous) = state
-            .cursor_by_event_id
-            .insert(record.event_id.clone(), record.cursor)
-        {
-            state.records.remove(&previous);
-        }
+        state.projection_cursor = state.projection_cursor.max(record.cursor);
         state.records.insert(record.cursor, record);
         while state.records.len() > self.max_records {
             let Some(oldest) = state.records.keys().next().copied() else {
                 break;
             };
-            let event_id = state
-                .records
-                .get(&oldest)
-                .map(|record| record.event_id.clone())
-                .context("oldest retained log disappeared")?;
-            self.text_index.delete(&event_id, None)?;
-            if let Some(removed) = state.records.remove(&oldest) {
-                state.cursor_by_event_id.remove(&removed.event_id);
-            }
+            self.text_index.delete(&projection_row_key(oldest), None)?;
+            state.records.remove(&oldest);
         }
         Ok(())
     }
@@ -298,7 +282,7 @@ impl Projection for LoggingProjection {
         canonical_json(&LoggingSnapshot {
             text_index: Some(self.text_index.snapshot()?),
             records: state.records.clone(),
-            cursor_by_event_id: state.cursor_by_event_id.clone(),
+            projection_cursor: state.projection_cursor,
             max_records: self.max_records,
         })
     }
@@ -325,7 +309,7 @@ impl Projection for LoggingProjection {
             .write()
             .expect("logging projection state lock poisoned") = LoggingState {
             records: snapshot.records,
-            cursor_by_event_id: snapshot.cursor_by_event_id,
+            projection_cursor: snapshot.projection_cursor,
         };
         Ok(())
     }
@@ -338,7 +322,7 @@ impl Projection for LoggingProjection {
         Ok(hex::encode(Sha256::digest(serde_json::to_vec(
             &SemanticState {
                 records: &state.records,
-                cursor_by_event_id: &state.cursor_by_event_id,
+                projection_cursor: state.projection_cursor,
                 max_records: self.max_records,
             },
         )?)))
@@ -420,7 +404,7 @@ fn record_matches(
             .attribute_equals
             .iter()
             .all(|(key, value)| record.attributes.get(key) == Some(value))
-        || candidates.is_some_and(|ids| !ids.contains(&record.event_id))
+        || candidates.is_some_and(|ids| !ids.contains(&projection_row_key(record.cursor)))
     {
         return false;
     }
@@ -474,7 +458,7 @@ fn fixed_schema() -> Result<TextSchema> {
 }
 
 fn index_document(record: &LogRecordV1) -> TextDocument {
-    let mut document = TextDocument::new(&record.event_id, record.cursor)
+    let mut document = TextDocument::new(projection_row_key(record.cursor), record.cursor)
         .with_field("body", &record.body_text)
         .with_field("project", &record.project)
         .with_field("environment", &record.environment)
@@ -500,6 +484,10 @@ fn index_document(record: &LogRecordV1) -> TextDocument {
         }
     }
     document
+}
+
+fn projection_row_key(cursor: u64) -> String {
+    format!("cursor-{cursor:020}")
 }
 
 fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {

@@ -24,6 +24,7 @@ pub struct HttpExpect {
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
     /// Dot-path assertions over the response JSON, e.g. `"$.total" = ">= 1"`.
+    /// Use `absent` to reject an optional error field that must not be returned.
     #[serde(default)]
     pub jsonpath: BTreeMap<String, String>,
 }

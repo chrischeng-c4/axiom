@@ -88,10 +88,15 @@ async fn cold_query_reports_archive_outage_instead_of_silent_complete_data() {
     .await
     .unwrap()
     .expect("commit remote archive before the query");
-    state
-        .projections()
-        .catch_up(PROJECTION_LOGGING_STORE)
-        .expect("build the local projection before removing the raw hot copy");
+    let projection_state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        projection_state
+            .projections()
+            .catch_up(PROJECTION_LOGGING_STORE)
+    })
+    .await
+    .unwrap()
+    .expect("build the local projection before removing the raw hot copy");
     for manifest in state.journal().storage().seal_all().unwrap() {
         std::fs::remove_file(&manifest.local_path).unwrap();
     }

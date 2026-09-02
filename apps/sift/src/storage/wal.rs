@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet, VecDeque},
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -17,6 +17,23 @@ pub struct SignalWal {
     logs: WalFile,
     metrics: WalFile,
     traces: WalFile,
+}
+
+/// Stateful, globally ordered reader over the three signal WAL files.
+///
+/// Each file keeps one decoded Raft batch at most. Repeated pages continue
+/// from the current byte offsets instead of rescanning the WAL prefix.
+pub struct SignalWalReader {
+    streams: Vec<WalEventStream>,
+    peeked: Vec<Option<StoredEvent>>,
+}
+
+struct WalEventStream {
+    signal: SignalKind,
+    path: PathBuf,
+    frames: storage_durable::FramedLogCursor,
+    events: VecDeque<StoredEvent>,
+    after: u64,
 }
 
 struct WalFile {
@@ -81,29 +98,16 @@ impl SignalWal {
         Ok(by_cursor.into_values().collect())
     }
 
-    pub(crate) fn query_events(&self, after: u64, limit: usize) -> Result<Vec<StoredEvent>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        let mut events = Vec::new();
-        for file in [&self.logs, &self.metrics, &self.traces] {
-            events.extend(file.query_events(after, limit)?);
-        }
-        events.sort_by_key(|event| event.cursor);
-        let mut canonical = Vec::<StoredEvent>::with_capacity(events.len());
-        for event in events {
-            if let Some(previous) = canonical.last() {
-                if previous.cursor == event.cursor {
-                    if previous != &event {
-                        bail!("signal WAL files disagree at cursor {}", event.cursor);
-                    }
-                    continue;
-                }
-            }
-            canonical.push(event);
-        }
-        canonical.truncate(limit);
-        Ok(canonical)
+    #[doc(hidden)]
+    pub fn reader(&self, after: u64) -> Result<SignalWalReader> {
+        let streams = [&self.logs, &self.metrics, &self.traces]
+            .into_iter()
+            .map(|file| WalEventStream::open(file.signal, file.path.clone(), after))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(SignalWalReader {
+            peeked: vec![None; streams.len()],
+            streams,
+        })
     }
 
     pub(crate) fn compact_through(&self, watermarks: ArchiveWatermarks) -> Result<()> {
@@ -118,6 +122,100 @@ impl SignalWal {
             SignalKind::Log => Ok(&self.logs),
             SignalKind::Metric => Ok(&self.metrics),
             SignalKind::Span => Ok(&self.traces),
+        }
+    }
+}
+
+impl SignalWalReader {
+    /// Read at most `item_limit` events and approximately `byte_limit` encoded
+    /// bytes. One event is always allowed so a large valid record can make
+    /// progress.
+    pub fn read_page(&mut self, item_limit: usize, byte_limit: usize) -> Result<Vec<StoredEvent>> {
+        if item_limit == 0 || byte_limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut page = Vec::with_capacity(item_limit.min(1_000));
+        let mut bytes = 0_usize;
+        while page.len() < item_limit {
+            for index in 0..self.streams.len() {
+                if self.peeked[index].is_none() {
+                    self.peeked[index] = self.streams[index].next_event()?;
+                }
+            }
+            let Some((selected, cursor)) = self
+                .peeked
+                .iter()
+                .enumerate()
+                .filter_map(|(index, event)| event.as_ref().map(|event| (index, event.cursor)))
+                .min_by_key(|(_, cursor)| *cursor)
+            else {
+                break;
+            };
+            let encoded = serde_json::to_vec(
+                self.peeked[selected]
+                    .as_ref()
+                    .expect("selected WAL event exists"),
+            )?
+            .len();
+            if !page.is_empty() && bytes.saturating_add(encoded) > byte_limit {
+                break;
+            }
+            let event = self.peeked[selected]
+                .take()
+                .expect("selected WAL event exists");
+            for (index, duplicate) in self.peeked.iter_mut().enumerate() {
+                if index == selected || duplicate.as_ref().map(|row| row.cursor) != Some(cursor) {
+                    continue;
+                }
+                let duplicate = duplicate.take().expect("matched WAL event exists");
+                if duplicate != event {
+                    bail!("signal WAL files disagree at cursor {cursor}");
+                }
+            }
+            bytes = bytes.saturating_add(encoded);
+            page.push(event);
+        }
+        Ok(page)
+    }
+
+    #[doc(hidden)]
+    pub fn buffered_event_count_for_diagnostics(&self) -> usize {
+        self.peeked.iter().filter(|event| event.is_some()).count()
+            + self
+                .streams
+                .iter()
+                .map(|stream| stream.events.len())
+                .sum::<usize>()
+    }
+}
+
+impl WalEventStream {
+    fn open(signal: SignalKind, path: PathBuf, after: u64) -> Result<Self> {
+        Ok(Self {
+            signal,
+            frames: storage_durable::FramedLogCursor::open(&path)?,
+            path,
+            events: VecDeque::new(),
+            after,
+        })
+    }
+
+    fn next_event(&mut self) -> Result<Option<StoredEvent>> {
+        loop {
+            if let Some(event) = self.events.pop_front() {
+                if event.cursor > self.after {
+                    self.after = event.cursor;
+                    return Ok(Some(event));
+                }
+                continue;
+            }
+            let Some(frame) = self.frames.next_frame()? else {
+                return Ok(None);
+            };
+            let batch: WalBatch = serde_json::from_slice(&frame.payload)
+                .with_context(|| format!("decode signal WAL batch frame {}", frame.seq))?;
+            validate_batch(self.signal, &self.path, frame.seq, &batch)?;
+            self.events = batch.events.into();
         }
     }
 }
@@ -215,28 +313,6 @@ impl WalFile {
                 );
             }
             events.extend(batch.events);
-        }
-        Ok(events)
-    }
-
-    fn query_events(&self, after: u64, limit: usize) -> Result<Vec<StoredEvent>> {
-        let mut events = Vec::with_capacity(limit.min(1_000));
-        for frame in
-            storage_durable::FramedLogReader::read_frames_bounded(&self.path, after, limit)?
-        {
-            let batch: WalBatch = serde_json::from_slice(&frame.payload)
-                .with_context(|| format!("decode signal WAL batch frame {}", frame.seq))?;
-            validate_batch(self.signal, &self.path, frame.seq, &batch)?;
-            for event in batch
-                .events
-                .into_iter()
-                .filter(|event| event.cursor > after)
-            {
-                events.push(event);
-                if events.len() == limit {
-                    return Ok(events);
-                }
-            }
         }
         Ok(events)
     }

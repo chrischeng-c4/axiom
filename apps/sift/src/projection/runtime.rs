@@ -5,7 +5,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
-use crate::{DurableJournal, EventQuery, StoredEvent};
+use crate::{DurableJournal, StoredEvent};
 
 use super::{
     logging::{LogPage, LogQuery, LoggingProjection, PROJECTION_LOGGING_STORE},
@@ -24,6 +24,10 @@ pub trait Projection: Send + Sync + 'static {
     fn apply_idempotent(&self, event: &StoredEvent) -> Result<()>;
     fn snapshot(&self) -> Result<Vec<u8>>;
     fn restore(&self, state: &[u8]) -> Result<()>;
+
+    fn checkpoint_committed(&self) -> Result<()> {
+        Ok(())
+    }
 
     fn semantic_digest(&self) -> Result<String> {
         Ok(hex::encode(Sha256::digest(self.snapshot()?)))
@@ -47,6 +51,10 @@ macro_rules! impl_shared_projection {
 
             fn restore(&self, state: &[u8]) -> Result<()> {
                 Projection::restore(self, state)
+            }
+
+            fn checkpoint_committed(&self) -> Result<()> {
+                Projection::checkpoint_committed(self)
             }
 
             fn semantic_digest(&self) -> Result<String> {
@@ -74,17 +82,32 @@ struct JournalProjectionSource {
     journal: Arc<DurableJournal>,
 }
 
+struct JournalProjectionSession {
+    inner: crate::JournalProjectionReadSession,
+}
+
+impl service_projection::ProjectionReadSession<StoredEvent> for JournalProjectionSession {
+    fn read_next(&mut self, limit: usize) -> Result<Vec<StoredEvent>> {
+        self.inner.read_next(limit)
+    }
+}
+
 impl service_projection::ProjectionSource<StoredEvent> for JournalProjectionSource {
     fn current_cursor(&self) -> u64 {
         self.journal.last_cursor()
     }
 
     fn read_after(&self, after: u64, limit: usize) -> Result<Vec<StoredEvent>> {
-        self.journal.query(EventQuery {
-            signal: None,
-            after,
-            limit,
-        })
+        self.journal.query_projection_events(after, limit)
+    }
+
+    fn open_read_session(
+        &self,
+        after: u64,
+    ) -> Result<Option<Box<dyn service_projection::ProjectionReadSession<StoredEvent>>>> {
+        Ok(Some(Box::new(JournalProjectionSession {
+            inner: self.journal.projection_read_session(after)?,
+        })))
     }
 
     fn generation(&self) -> u64 {
@@ -101,6 +124,7 @@ pub struct ProjectionRuntime {
 
 impl ProjectionRuntime {
     pub fn open(data_dir: impl AsRef<Path>, journal: Arc<DurableJournal>) -> Result<Self> {
+        let data_dir = data_dir.as_ref().to_path_buf();
         let source: Arc<dyn service_projection::ProjectionSource<StoredEvent>> =
             Arc::new(JournalProjectionSource { journal });
         let config = service_projection::ProjectionRuntimeConfig::new(
@@ -108,9 +132,11 @@ impl ProjectionRuntime {
             PROJECTION_SNAPSHOT_INTERVAL_EVENTS,
             PROJECTION_RETRY_AFTER_SECONDS,
         );
-        let mut registry = service_projection::ProjectionRegistry::new(data_dir, source, config)?;
+        let mut registry = service_projection::ProjectionRegistry::new(&data_dir, source, config)?;
         let logging = registry.register(|| Ok(Arc::new(LoggingProjection::new()?)))?;
-        let metrics = registry.register(|| Ok(Arc::new(MetricProjection::new())))?;
+        let metric_data_dir = data_dir.clone();
+        let metrics =
+            registry.register(move || Ok(Arc::new(MetricProjection::open(&metric_data_dir)?)))?;
         let traces = registry.register(|| Ok(Arc::new(TraceProjection::new())))?;
         Ok(Self {
             registry,

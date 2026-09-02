@@ -196,11 +196,14 @@ pub fn json_path(root: &Value, path: &str) -> Option<Value> {
     Some(current.clone())
 }
 
-/// Predicate over an optional JSON value: `>= 1`, `== "ok"`, `exists`.
+/// Predicate over an optional JSON value: `>= 1`, `== "ok"`, `exists`, `absent`.
 fn check_predicate(actual: Option<&Value>, predicate: &str) -> Result<bool, String> {
     let p = predicate.trim();
     if p == "exists" {
         return Ok(actual.is_some());
+    }
+    if p == "absent" {
+        return Ok(actual.is_none());
     }
     let Some(actual) = actual else {
         return Ok(false);
@@ -208,7 +211,9 @@ fn check_predicate(actual: Option<&Value>, predicate: &str) -> Result<bool, Stri
     let (op, rhs) = ["<=", ">=", "==", "!=", "<", ">"]
         .iter()
         .find_map(|op| p.strip_prefix(op).map(|rest| (*op, rest.trim())))
-        .ok_or_else(|| format!("unsupported predicate `{p}` (ops: == != < <= > >= exists)"))?;
+        .ok_or_else(|| {
+            format!("unsupported predicate `{p}` (ops: == != < <= > >= exists absent)")
+        })?;
 
     // String comparison when the rhs is quoted.
     if let Some(want) = rhs.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
@@ -266,6 +271,8 @@ mod tests {
         assert!(!check_predicate(Some(&json!(0)), ">= 1").unwrap());
         assert!(check_predicate(Some(&json!("ok")), "== \"ok\"").unwrap());
         assert!(check_predicate(Some(&json!(1)), "exists").unwrap());
+        assert!(check_predicate(None, "absent").unwrap());
+        assert!(!check_predicate(Some(&json!(null)), "absent").unwrap());
         assert!(!check_predicate(None, ">= 1").unwrap());
         assert!(check_predicate(Some(&json!(1)), "~ 2").is_err());
     }

@@ -1,6 +1,6 @@
 // HANDWRITE-BEGIN gap="sift-sealed-segment-store" tracker="1659" reason="Append CRC frames per epoch/shard, recover torn tails, seal manifests, and move immutable segments without rewriting bytes."
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -82,6 +82,12 @@ pub struct SegmentStore {
     max_segment_events: usize,
     max_segment_bytes: usize,
     inner: Mutex<SegmentStateData>,
+}
+
+pub(crate) struct SegmentEventReader {
+    paths: VecDeque<PathBuf>,
+    current: Option<storage_durable::FramedLogCursor>,
+    after: u64,
 }
 
 impl SegmentStore {
@@ -404,35 +410,21 @@ impl SegmentStore {
         Ok(manifests)
     }
 
-    /// Materialize the retained subset of a sealed segment before the remote
-    /// retention manifest commits. The old segment remains in place until the
-    /// caller commits that manifest. A crash can therefore leave duplicate,
-    /// byte-identical cursors, but it cannot lose an acknowledged event.
-    pub(crate) fn write_retained_segment(
-        &self,
-        source_segment_id: &str,
-        retained: &[StoredEvent],
-    ) -> Result<Option<SegmentManifest>> {
-        self.write_derived_segment(source_segment_id, retained, true)
-    }
-
     /// Materialize a prefix taken from a hash-verified archive checkpoint.
     /// The archive is authoritative, so its row can replace a conflicting row
     /// at the same local cursor. Normal retention continues to use the stricter
-    /// `write_retained_segment` path above.
     pub(crate) fn write_reconciled_segment(
         &self,
         source_segment_id: &str,
         retained: &[StoredEvent],
     ) -> Result<Option<SegmentManifest>> {
-        self.write_derived_segment(source_segment_id, retained, false)
+        self.write_derived_segment(source_segment_id, retained)
     }
 
     fn write_derived_segment(
         &self,
         source_segment_id: &str,
         retained: &[StoredEvent],
-        require_source_match: bool,
     ) -> Result<Option<SegmentManifest>> {
         if retained.is_empty() {
             bail!("retained local segment cannot be empty");
@@ -449,29 +441,6 @@ impl SegmentStore {
             return Ok(None);
         };
         verify_segment(&source)?;
-        if require_source_match {
-            let source_events = read_events(&source.local_path)?;
-            let mut source_index = source_events
-                .iter()
-                .map(|event| (event.cursor, event))
-                .collect::<HashMap<_, _>>();
-            for event in retained {
-                let Some(source_event) = source_index.remove(&event.cursor) else {
-                    bail!(
-                        "retained cursor {} is absent from local segment {}",
-                        event.cursor,
-                        source.segment_id
-                    );
-                };
-                if source_event != event {
-                    bail!(
-                        "retained cursor {} disagrees with local segment {}",
-                        event.cursor,
-                        source.segment_id
-                    );
-                }
-            }
-        }
 
         let mut identity = Sha256::new();
         identity.update(source.epoch.to_le_bytes());
@@ -563,6 +532,23 @@ impl SegmentStore {
             object_uri: None,
         };
         self.write_manifest(&manifest)?;
+        for event in retained {
+            state.cursors.insert(
+                event.cursor,
+                (
+                    event.event.event_id.clone(),
+                    AppendLocation {
+                        route: Route {
+                            epoch: source.epoch,
+                            shard: source.shard,
+                            bucket: bucket_for(&event.event.event_id),
+                        },
+                        segment_id: segment_id.clone(),
+                        path: manifest.local_path.clone(),
+                    },
+                ),
+            );
+        }
         state.sealed.insert(segment_id, manifest.clone());
         Ok(Some(manifest))
     }
@@ -611,6 +597,9 @@ impl SegmentStore {
             Err(error) => return Err(error.into()),
         }
         state.sealed.remove(segment_id);
+        state
+            .cursors
+            .retain(|_, (_, location)| location.segment_id != segment_id);
         Ok(Some(manifest))
     }
 
@@ -649,6 +638,35 @@ impl SegmentStore {
             }
         }
         Ok(events)
+    }
+
+    pub(crate) fn reader(&self, after: u64) -> Result<SegmentEventReader> {
+        let state = self.inner.lock().expect("segment state lock poisoned");
+        let mut paths = state
+            .sealed
+            .values()
+            .map(|manifest| {
+                (
+                    manifest.first_cursor,
+                    manifest.last_cursor,
+                    manifest.local_path.clone(),
+                )
+            })
+            .chain(
+                state
+                    .active
+                    .values()
+                    .map(|active| (active.first_cursor, active.last_cursor, active.path.clone())),
+            )
+            .filter(|(_, last, _)| *last > after)
+            .collect::<Vec<_>>();
+        drop(state);
+        paths.sort_by_key(|(first, _, _)| *first);
+        Ok(SegmentEventReader {
+            paths: paths.into_iter().map(|(_, _, path)| path).collect(),
+            current: None,
+            after,
+        })
     }
 
     pub(crate) fn read_manifest_events(
@@ -759,6 +777,41 @@ impl SegmentStore {
             .sealed
             .insert(segment_id.to_string(), manifest.clone());
         Ok(manifest)
+    }
+}
+
+impl SegmentEventReader {
+    pub(crate) fn next_event(&mut self) -> Result<Option<StoredEvent>> {
+        loop {
+            if self.current.is_none() {
+                let Some(path) = self.paths.pop_front() else {
+                    return Ok(None);
+                };
+                self.current = Some(storage_durable::FramedLogCursor::open(path)?);
+            }
+            let Some(frame) = self
+                .current
+                .as_mut()
+                .expect("segment cursor exists")
+                .next_frame()?
+            else {
+                self.current = None;
+                continue;
+            };
+            let event: StoredEvent = serde_json::from_slice(&frame.payload)?;
+            if event.cursor != frame.seq {
+                bail!(
+                    "segment frame {} contains cursor {}",
+                    frame.seq,
+                    event.cursor
+                );
+            }
+            if event.cursor <= self.after {
+                continue;
+            }
+            self.after = event.cursor;
+            return Ok(Some(event));
+        }
     }
 }
 

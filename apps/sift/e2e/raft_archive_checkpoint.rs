@@ -11,6 +11,7 @@ use sift::{
     storage::archive,
     DurableJournal, EventEnvelope, EventQuery, ServiceState, SignalKind,
 };
+use storage_object::ObjectStore;
 use tower::ServiceExt;
 
 fn log(index: u64) -> EventEnvelope {
@@ -175,6 +176,65 @@ fn resident_checkpoint_is_small_and_refuses_a_behind_voter() {
         behind.take_append_outcomes(index);
     }
     assert!(behind.restore(&mut checkpoint.as_slice()).is_err());
+}
+
+#[tokio::test]
+async fn resident_checkpoint_carries_the_retention_fence_to_a_voter() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let source_journal = Arc::new(DurableJournal::open(source_dir.path()).unwrap());
+    let source = sift::durability::SiftStateMachine::new(source_journal);
+    let append = serde_json::to_vec(&serde_json::json!({
+        "kind":"append_events",
+        "events":[log(1)]
+    }))
+    .unwrap();
+    source.apply(1, &append).unwrap();
+    source.take_append_outcomes(1);
+    let fence = serde_json::to_vec(&serde_json::json!({
+        "kind": "retention_fence",
+        "fence": {
+            "source_manifest_uri": "gs://sift-retention/resident-manifest.json",
+            "source_manifest_sha256": "b".repeat(64),
+            "target_generation": 1,
+            "evaluate_at": "2026-09-01T00:00:00Z"
+        }
+    }))
+    .unwrap();
+    source.apply(2, &fence).unwrap();
+    source.prepare_resident_checkpoint(2, 1).unwrap();
+    let mut checkpoint = Vec::new();
+    source.snapshot_at(2, &mut checkpoint).unwrap();
+
+    let follower_dir = tempfile::tempdir().unwrap();
+    let follower_journal = Arc::new(DurableJournal::open(follower_dir.path()).unwrap());
+    let follower = sift::durability::SiftStateMachine::new(follower_journal.clone());
+    follower.apply(1, &append).unwrap();
+    follower.take_append_outcomes(1);
+    follower.restore(&mut checkpoint.as_slice()).unwrap();
+    drop(follower);
+    drop(follower_journal);
+
+    let state = Arc::new(ServiceState::open(follower_dir.path()).unwrap());
+    let response = sift::router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/query")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "version": 1,
+                        "project": "raft-checkpoint",
+                        "signal": {"kind": "logs"},
+                        "mode": "sync"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[test]
@@ -376,6 +436,85 @@ async fn committed_gcs_manifest_makes_a_small_restorable_raft_checkpoint() {
         assert_eq!(partial.applied_index(), 200);
         assert_eq!(partial_journal.total_event_count(), 200);
 
+        let delta_source_dir = tempfile::tempdir().unwrap();
+        let delta_source_journal = Arc::new(DurableJournal::open(delta_source_dir.path()).unwrap());
+        let delta_source = sift::durability::SiftStateMachine::new(delta_source_journal.clone());
+        let delta_now = chrono::Utc::now();
+        for (index, event) in [
+            (1, log_at(1, delta_now - chrono::Duration::days(179))),
+            (2, log_at(2, delta_now)),
+        ] {
+            let command = serde_json::to_vec(&serde_json::json!({
+                "kind":"append_events",
+                "events":[event]
+            }))
+            .unwrap();
+            delta_source.apply(index, &command).unwrap();
+            delta_source.take_append_outcomes(index);
+        }
+        archive::archive_journal_gcs(
+            &delta_source_journal,
+            "gs://sift-checkpoint/delta-no-restore",
+        )
+        .unwrap();
+        let mut source_checkpoint = Vec::new();
+        delta_source.snapshot_at(2, &mut source_checkpoint).unwrap();
+        let delta_follower_dir = tempfile::tempdir().unwrap();
+        let delta_follower_journal =
+            Arc::new(DurableJournal::open(delta_follower_dir.path()).unwrap());
+        let delta_follower =
+            sift::durability::SiftStateMachine::new(delta_follower_journal.clone());
+        delta_follower
+            .restore(&mut source_checkpoint.as_slice())
+            .unwrap();
+        assert_eq!(delta_follower_journal.total_event_count(), 2);
+
+        let delta_expiration = archive::expire_committed_events_at(
+            &delta_source_journal,
+            delta_now + chrono::Duration::days(2),
+        )
+        .unwrap();
+        assert_eq!(delta_expiration.expired_events, 1);
+        let delta_status = archive::committed_status(delta_source_dir.path())
+            .unwrap()
+            .unwrap();
+        let delta_barrier = sift::durability::encode_archive_checkpoint_barrier_for_diagnostics(
+            delta_status.retention_generation,
+            delta_status.manifest_uri,
+            delta_status.manifest_sha256,
+        )
+        .unwrap();
+        delta_source.apply_local(3, &delta_barrier).unwrap();
+        delta_follower.apply_local(3, &delta_barrier).unwrap();
+        let target_root: archive::ArchiveManifest = serde_json::from_slice(
+            &service_backup::fetch_backup_object(&delta_expiration.manifest_uri).unwrap(),
+        )
+        .unwrap();
+        let target_manifest = archive::inspect_archive_catalog(&target_root).unwrap().0;
+        let object_store = storage_object::GcsObjectStore::new("sift-checkpoint", "").unwrap();
+        for segment in target_manifest {
+            let key = segment
+                .object_uri
+                .strip_prefix("gs://sift-checkpoint/")
+                .unwrap();
+            object_store.delete(key).unwrap();
+        }
+        let mut delta_checkpoint = Vec::new();
+        delta_source.snapshot_at(3, &mut delta_checkpoint).unwrap();
+        delta_follower
+            .restore(&mut delta_checkpoint.as_slice())
+            .expect("a caught-up voter must apply the small retention delta without Parquet restore");
+        assert_eq!(delta_follower_journal.total_event_count(), 1);
+        assert_eq!(
+            delta_follower_journal
+                .query(EventQuery::default())
+                .unwrap()
+                .into_iter()
+                .map(|event| event.event.event_id)
+                .collect::<Vec<_>>(),
+            vec!["checkpoint-2"]
+        );
+
         let now = chrono::Utc::now();
         let retained_source_dir = tempfile::tempdir().unwrap();
         let retained_source_journal =
@@ -453,8 +592,8 @@ async fn committed_gcs_manifest_makes_a_small_restorable_raft_checkpoint() {
             .unwrap();
         let barrier = sift::durability::encode_archive_checkpoint_barrier_for_diagnostics(
             retention_status.retention_generation,
-            retention_status.manifest_uri,
-            retention_status.manifest_sha256,
+            retention_status.manifest_uri.clone(),
+            retention_status.manifest_sha256.clone(),
         )
         .unwrap();
         retained_source.apply(3, &barrier).unwrap();
@@ -516,6 +655,45 @@ async fn committed_gcs_manifest_makes_a_small_restorable_raft_checkpoint() {
         retained_source
             .snapshot_at(3, &mut retention_checkpoint)
             .unwrap();
+
+        let ahead_dir = tempfile::tempdir().unwrap();
+        let ahead_journal = Arc::new(DurableJournal::open(ahead_dir.path()).unwrap());
+        let ahead = sift::durability::SiftStateMachine::new(ahead_journal.clone());
+        for (index, event) in [
+            (1, log_at(1, now - chrono::Duration::days(179))),
+            (2, log_at(2, now)),
+        ] {
+            let command = serde_json::to_vec(&serde_json::json!({
+                "kind":"append_events",
+                "events":[event]
+            }))
+            .unwrap();
+            ahead.apply(index, &command).unwrap();
+            ahead.take_append_outcomes(index);
+        }
+        let ahead_fence = serde_json::to_vec(&serde_json::json!({
+            "kind": "retention_fence",
+            "fence": {
+                "source_manifest_uri": retention_status.manifest_uri,
+                "source_manifest_sha256": retention_status.manifest_sha256,
+                "target_generation": retention_status.retention_generation,
+                "evaluate_at": (now + chrono::Duration::days(2)).to_rfc3339()
+            }
+        }))
+        .unwrap();
+        ahead.apply(3, &ahead_fence).unwrap();
+        ahead.apply(4, &suffix).unwrap();
+        ahead.take_append_outcomes(4);
+        assert!(ahead.retention_fence_pending_for_diagnostics());
+        ahead
+            .restore(&mut retention_checkpoint.as_slice())
+            .unwrap();
+        assert!(
+            !ahead.retention_fence_pending_for_diagnostics(),
+            "an authoritative completed retention generation must clear an older fence even when the follower has a newer append index"
+        );
+        assert_eq!(ahead_journal.query(EventQuery::default()).unwrap().len(), 2);
+
         let follower_wal = retained_follower_dir.path().join("wal/logs/events.framed");
         let wal_frames_before =
             storage_durable::FramedLogReader::read_frames(&follower_wal, 0).unwrap();
@@ -597,8 +775,9 @@ async fn committed_gcs_manifest_makes_a_small_restorable_raft_checkpoint() {
             "gs://sift-checkpoint/retention",
         )
         .unwrap();
+        let carried_gc = archive::inspect_archive_gc_plan(&carried.manifest).unwrap();
         assert!(
-            !carried.manifest.gc_object_uris.is_empty(),
+            !carried_gc.is_empty(),
             "an ordinary archive must carry unfinished cleanup work"
         );
         let rebound_pending: serde_json::Value = serde_json::from_slice(
@@ -634,10 +813,32 @@ async fn committed_gcs_manifest_makes_a_small_restorable_raft_checkpoint() {
             "gs://sift-checkpoint/retention",
         )
         .unwrap();
-        assert_eq!(
-            next_archive.manifest.gc_object_uris,
-            vec![carried.manifest_uri.clone()],
-            "a later archive must clean only its immediate predecessor after the old plan completed"
+        let next_gc = archive::inspect_archive_gc_plan(&next_archive.manifest).unwrap();
+        assert!(next_gc.contains(&carried.manifest_uri));
+        assert!(next_gc.iter().all(|uri| {
+            uri == &carried.manifest_uri
+                || uri.contains("/gc-plan/pages/")
+                || uri.contains("/catalog/pages/")
+        }), "a later archive must clean only its predecessor root and retired catalog pages after the old plan completed: {next_gc:?}");
+        retained_source
+            .prepare_archive_checkpoint_without_gc(4, 3)
+            .unwrap();
+        let mut no_gc_checkpoint = Vec::new();
+        retained_source
+            .snapshot_at(4, &mut no_gc_checkpoint)
+            .unwrap();
+        let no_gc_dir = tempfile::tempdir().unwrap();
+        let no_gc_journal = Arc::new(DurableJournal::open(no_gc_dir.path()).unwrap());
+        let no_gc_follower = sift::durability::SiftStateMachine::new(no_gc_journal);
+        no_gc_follower
+            .restore(&mut no_gc_checkpoint.as_slice())
+            .unwrap();
+        assert!(
+            !no_gc_dir
+                .path()
+                .join("control/archive-gc-pending.json")
+                .exists(),
+            "a quorum-only archive checkpoint must not carry deletion authority"
         );
         retained_source.prepare_archive_checkpoint(4, 3).unwrap();
         let mut next_checkpoint = Vec::new();
@@ -645,24 +846,29 @@ async fn committed_gcs_manifest_makes_a_small_restorable_raft_checkpoint() {
             .snapshot_at(4, &mut next_checkpoint)
             .unwrap();
         restarted.restore(&mut next_checkpoint.as_slice()).unwrap();
-        let follower_pending: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(
-                retained_follower_dir
-                    .path()
-                    .join("control/archive-gc-pending.json"),
-            )
-            .unwrap(),
+        let follower_pending_bytes = std::fs::read(
+            retained_follower_dir
+                .path()
+                .join("control/archive-gc-pending.json"),
         )
         .unwrap();
+        assert!(follower_pending_bytes.len() < 64 * 1024);
+        let follower_pending: serde_json::Value =
+            serde_json::from_slice(&follower_pending_bytes).unwrap();
         assert_eq!(
             follower_pending["replacement_manifest_uri"],
             next_archive.manifest_uri
         );
         assert_eq!(
-            follower_pending["object_uris"],
-            serde_json::json!([carried.manifest_uri]),
-            "a follower must inherit cleanup for exactly the immediate predecessor"
+            follower_pending["gc_plan_uri"],
+            serde_json::json!(next_archive.manifest.gc_plan_uri),
+            "a follower must inherit the immutable paged cleanup plan"
         );
+        assert_eq!(
+            follower_pending["gc_plan_root"]["entry_count"],
+            serde_json::json!(next_gc.len()),
+        );
+        assert!(follower_pending["cursor"].is_null());
     })
     .await
     .unwrap();

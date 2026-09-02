@@ -144,4 +144,75 @@ fn trace_projection_rebuilds_equal_from_raw_spans() {
     assert_eq!(comparison.source_cursor, 2);
 }
 
+#[test]
+fn identical_span_event_ids_are_isolated_by_project() {
+    let projection = TraceProjection::new();
+    let project_a = span(1, "shared-trace", "shared-span", None, 10, 20);
+    let mut project_b = span(2, "shared-trace", "shared-span", None, 30, 50);
+    project_b.event.project = "project-b".into();
+
+    Projection::apply_idempotent(&projection, &project_a).unwrap();
+    Projection::apply_idempotent(&projection, &project_b).unwrap();
+
+    assert_eq!(
+        projection
+            .get_trace("project-a", "shared-trace")
+            .unwrap()
+            .unwrap()
+            .spans
+            .len(),
+        1
+    );
+    assert_eq!(
+        projection
+            .get_trace("project-b", "shared-trace")
+            .unwrap()
+            .unwrap()
+            .spans
+            .len(),
+        1
+    );
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&Projection::snapshot(&projection).unwrap()).unwrap();
+    assert_eq!(snapshot["location_by_cursor"].as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn event_id_reuse_after_the_receipt_window_keeps_both_accepted_spans() {
+    let projection = TraceProjection::new();
+    let first = span(1, "reuse-trace", "first-span", None, 10, 20);
+    let mut second = span(2, "reuse-trace", "second-span", None, 30, 50);
+    second.event.event_id = first.event.event_id.clone();
+
+    Projection::apply_idempotent(&projection, &first).unwrap();
+    Projection::apply_idempotent(&projection, &second).unwrap();
+    Projection::apply_idempotent(&projection, &second).unwrap();
+
+    let trace = projection
+        .get_trace("project-a", "reuse-trace")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        trace
+            .spans
+            .iter()
+            .map(|span| span.span_id.as_str())
+            .collect::<Vec<_>>(),
+        ["first-span", "second-span"]
+    );
+
+    let snapshot = Projection::snapshot(&projection).unwrap();
+    let restored = TraceProjection::new();
+    Projection::restore(&restored, &snapshot).unwrap();
+    assert_eq!(
+        restored
+            .get_trace("project-a", "reuse-trace")
+            .unwrap()
+            .unwrap()
+            .spans
+            .len(),
+        2
+    );
+}
+
 // HANDWRITE-END

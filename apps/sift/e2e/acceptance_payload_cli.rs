@@ -1,5 +1,20 @@
 use std::process::Command;
 
+#[test]
+fn emits_candidate_build_provenance_as_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sift"))
+        .arg("acceptance-build-info")
+        .output()
+        .expect("run Sift build-info command");
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+    assert!(value["git_sha"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert_eq!(value["next"], "done");
+}
+
 use prost::Message as _;
 use prost14::Message as _;
 use sift::{ingest::otlp::wire::ExportLogsServiceRequest, prometheus::remote::WriteRequest};

@@ -60,9 +60,12 @@ fn repetitive_thousand_item_batches_use_a_bounded_compressed_wire_codec() {
     );
     assert_eq!(decode_raft_batch_for_diagnostics(&encoded).unwrap(), events);
     assert_eq!(decode_raft_batch_for_diagnostics(&legacy).unwrap(), events);
+    let production = encode_default_raft_batch_for_diagnostics(events.clone()).unwrap();
     assert_eq!(
-        encode_default_raft_batch_for_diagnostics(events).unwrap(),
-        legacy,
-        "production proposals must stay readable during a rolling upgrade"
+        decode_raft_batch_for_diagnostics(&production).unwrap(),
+        events
     );
+    assert_ne!(production, legacy);
+    let production: serde_json::Value = serde_json::from_slice(&production).unwrap();
+    assert!(production["acknowledged_at"].as_str().is_some());
 }

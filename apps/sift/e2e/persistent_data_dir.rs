@@ -149,3 +149,19 @@ fn an_unversioned_legacy_root_is_refused_without_changing_its_bytes() {
     assert_eq!(fs::read(&legacy).unwrap(), original);
     assert!(!temp.path().join("layout.json").exists());
 }
+
+#[test]
+fn restart_removes_only_known_orphan_archive_spill_directories() {
+    let temp = tempfile::tempdir().expect("temporary data root");
+    drop(sift::DurableJournal::open(temp.path()).unwrap());
+    let orphan = temp.path().join("tmp/archive-updates-orphan");
+    let unrelated = temp.path().join("tmp/user-kept");
+    fs::create_dir(&orphan).unwrap();
+    fs::write(orphan.join("page"), b"orphan").unwrap();
+    fs::create_dir(&unrelated).unwrap();
+    fs::write(unrelated.join("note"), b"keep").unwrap();
+
+    drop(sift::DurableJournal::open(temp.path()).unwrap());
+    assert!(!orphan.exists());
+    assert!(unrelated.join("note").is_file());
+}

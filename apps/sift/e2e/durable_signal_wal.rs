@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt};
 
-use sift::{DurableJournal, EventEnvelope, EventQuery, MetricPoint, MetricTemporality, SignalKind};
+use sift::{
+    storage::SignalWal, DurableJournal, EventEnvelope, EventQuery, MetricPoint, MetricTemporality,
+    SignalKind, StoredEvent,
+};
 
 fn event(id: &str, signal: SignalKind) -> EventEnvelope {
     let mut event = EventEnvelope::for_project(
@@ -82,4 +85,33 @@ fn the_public_signal_model_contains_only_phase_one_signals() {
     );
     assert!(serde_json::from_str::<SignalKind>(r#""profile""#).is_err());
     assert!(serde_json::from_str::<SignalKind>(r#""audit_event""#).is_err());
+}
+
+#[test]
+fn wal_reader_pages_events_without_collecting_all_large_frames() {
+    let temp = tempfile::tempdir().unwrap();
+    let wal = SignalWal::open(temp.path()).unwrap();
+    for cursor in 1..=32_u64 {
+        let mut envelope = event(&format!("large-{cursor}"), SignalKind::Log);
+        envelope.payload = serde_json::json!({"message": "x".repeat(900_000)});
+        wal.append(&StoredEvent {
+            cursor,
+            acknowledged_at: "2026-01-01T00:00:00Z".into(),
+            event: envelope,
+        })
+        .unwrap();
+    }
+
+    let mut reader = wal.reader(0).unwrap();
+    let mut seen = Vec::new();
+    loop {
+        let page = reader.read_page(3, 4 * 1024 * 1024).unwrap();
+        if page.is_empty() {
+            break;
+        }
+        assert!(page.len() <= 3);
+        assert!(reader.buffered_event_count_for_diagnostics() <= 1);
+        seen.extend(page.into_iter().map(|stored| stored.cursor));
+    }
+    assert_eq!(seen, (1..=32_u64).collect::<Vec<_>>());
 }

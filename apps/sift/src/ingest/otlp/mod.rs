@@ -149,17 +149,7 @@ fn json_log_event(
     );
     event.instrumentation_scope = scope;
     event.attributes = json_attributes(record.get("attributes"));
-    if let Some(AttributeValue::String(event_id)) = event.attributes.get("sift.event_id") {
-        if !event_id.trim().is_empty() {
-            event.event_id.clone_from(event_id);
-        }
-    }
-    if let Some(AttributeValue::String(request_id)) = event.attributes.get("sift.request_id") {
-        event.request_id = Some(request_id.clone());
-    }
-    if let Some(AttributeValue::String(session_id)) = event.attributes.get("sift.session_id") {
-        event.session_id = Some(session_id.clone());
-    }
+    apply_common_attributes(&mut event);
     event.trace_id = trace_id;
     event.span_id = span_id;
     event.severity = string(record, "severityText", "severity_text").map(str::to_string);
@@ -207,6 +197,7 @@ fn decode_logs_proto(
                 );
                 event.instrumentation_scope = scope.clone();
                 event.attributes = proto_attributes(&record.attributes);
+                apply_common_attributes(&mut event);
                 event.trace_id = valid_proto_id(&record.trace_id, 16);
                 event.span_id = valid_proto_id(&record.span_id, 8);
                 event.severity = (!record.severity_text.is_empty()).then_some(record.severity_text);
@@ -296,6 +287,7 @@ fn decode_traces_json(
                 );
                 event.instrumentation_scope = scope.clone();
                 event.attributes = json_attributes(span.get("attributes"));
+                apply_common_attributes(&mut event);
                 event.trace_id = trace_id;
                 event.span_id = span_id;
                 output.push(Ok(event));
@@ -378,6 +370,7 @@ fn decode_traces_proto(
                 );
                 event.instrumentation_scope = scope.clone();
                 event.attributes = proto_attributes(&span.attributes);
+                apply_common_attributes(&mut event);
                 event.trace_id = trace_id;
                 event.span_id = span_id;
                 output.push(Ok(event));
@@ -441,6 +434,7 @@ fn decode_metrics_json(
                     );
                     event.instrumentation_scope = scope.clone();
                     event.attributes = json_attributes(point.get("attributes"));
+                    apply_common_attributes(&mut event);
                     event.metric = Some(MetricPoint {
                         name: name.to_string(),
                         value,
@@ -568,6 +562,7 @@ fn proto_metric_event(
     );
     event.instrumentation_scope = scope;
     event.attributes = attributes;
+    apply_common_attributes(&mut event);
     event.metric = Some(MetricPoint {
         name: name.to_string(),
         value,
@@ -577,6 +572,20 @@ fn proto_metric_event(
         exemplars,
     });
     event
+}
+
+fn apply_common_attributes(event: &mut OperationalEventV2) {
+    if let Some(AttributeValue::String(event_id)) = event.attributes.get("sift.event_id") {
+        if !event_id.trim().is_empty() {
+            event.event_id.clone_from(event_id);
+        }
+    }
+    if let Some(AttributeValue::String(request_id)) = event.attributes.get("sift.request_id") {
+        event.request_id = Some(request_id.clone());
+    }
+    if let Some(AttributeValue::String(session_id)) = event.attributes.get("sift.session_id") {
+        event.session_id = Some(session_id.clone());
+    }
 }
 
 fn base_event(

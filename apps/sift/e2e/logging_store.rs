@@ -160,4 +160,69 @@ fn logging_projection_rebuilds_equal_from_the_raw_journal() {
     assert_eq!(comparison.rebuilt_cursor, 2);
 }
 
+#[test]
+fn identical_event_ids_are_isolated_by_project_in_records_and_text_index() {
+    let projection = LoggingProjection::new().unwrap();
+    let project_a = gcp_log(1, "shared-id", "alpha-only marker");
+    let mut project_b = gcp_log(2, "shared-id", "bravo-only marker");
+    project_b.event.project = "project-b".into();
+
+    Projection::apply_idempotent(&projection, &project_a).unwrap();
+    Projection::apply_idempotent(&projection, &project_b).unwrap();
+
+    let mut query_a = LogQuery::for_project("project-a");
+    query_a.text = Some("alpha-only".into());
+    let mut query_b = LogQuery::for_project("project-b");
+    query_b.text = Some("bravo-only".into());
+    assert_eq!(projection.query(&query_a).unwrap().records.len(), 1);
+    assert_eq!(projection.query(&query_b).unwrap().records.len(), 1);
+
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&Projection::snapshot(&projection).unwrap()).unwrap();
+    assert_eq!(snapshot["records"].as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn event_id_reuse_after_the_receipt_window_keeps_both_accepted_rows() {
+    let projection = LoggingProjection::new().unwrap();
+    Projection::apply_idempotent(
+        &projection,
+        &gcp_log(1, "reused-id", "first accepted marker"),
+    )
+    .unwrap();
+    Projection::apply_idempotent(
+        &projection,
+        &gcp_log(2, "reused-id", "second accepted marker"),
+    )
+    .unwrap();
+
+    let page = projection
+        .query(&LogQuery::for_project("project-a"))
+        .unwrap();
+    assert_eq!(
+        page.records
+            .iter()
+            .map(|record| record.cursor)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    for marker in ["first accepted", "second accepted"] {
+        let mut query = LogQuery::for_project("project-a");
+        query.text = Some(marker.into());
+        assert_eq!(projection.query(&query).unwrap().records.len(), 1);
+    }
+
+    let snapshot = Projection::snapshot(&projection).unwrap();
+    let restored = LoggingProjection::new().unwrap();
+    Projection::restore(&restored, &snapshot).unwrap();
+    assert_eq!(
+        restored
+            .query(&LogQuery::for_project("project-a"))
+            .unwrap()
+            .records
+            .len(),
+        2
+    );
+}
+
 // HANDWRITE-END

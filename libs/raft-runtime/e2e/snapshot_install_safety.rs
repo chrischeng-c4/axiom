@@ -323,6 +323,79 @@ async fn quorum_compaction_bounds_the_log_while_one_voter_is_offline() {
 }
 
 #[tokio::test]
+async fn quorum_checkpoint_does_not_wait_for_a_blackholed_voter() {
+    let nodes = cluster(3).await;
+    let leader = await_leader(&nodes).await.expect("a leader is elected");
+    for value in 1_u8..=8 {
+        nodes[leader].host.propose(vec![value]).await.unwrap();
+    }
+    for node in &nodes {
+        while node.sm.applied.load(Ordering::Acquire) < 8 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    let blackholed = (0..nodes.len()).find(|index| *index != leader).unwrap();
+    let (listener, blackhole_url) = bind().await;
+    let blackhole = tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let _stream = stream;
+                std::future::pending::<()>().await;
+            });
+        }
+    });
+    nodes[leader]
+        .host
+        .upsert_peer(blackholed as u64, blackhole_url)
+        .await;
+
+    let compacted = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        nodes[leader]
+            .host
+            .snapshot_and_compact_through_quorum_outcome(8),
+    )
+    .await
+    .expect("a live quorum must not wait for the snapshot RPC timeout")
+    .unwrap();
+    assert!(compacted.installed);
+    assert_eq!(compacted.snapshot_index, 8);
+    blackhole.abort();
+}
+
+#[tokio::test]
+async fn all_voter_applied_barrier_refuses_a_lagging_replica() {
+    let nodes = cluster(3).await;
+    let leader = await_leader(&nodes).await.expect("a leader is elected");
+    let index = nodes[leader].host.propose(vec![1]).await.unwrap();
+    for node in &nodes {
+        while node.sm.applied.load(Ordering::Acquire) < index {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+    nodes[leader]
+        .host
+        .require_applied_index_on_all_voters(index)
+        .await
+        .unwrap();
+
+    let lagging = (0..nodes.len())
+        .find(|candidate| *candidate != leader)
+        .unwrap();
+    nodes[lagging].sm.applied.store(0, Ordering::Release);
+    let error = nodes[leader]
+        .host
+        .require_applied_index_on_all_voters(index)
+        .await
+        .expect_err("a lagging voter must block a destructive product transition");
+    assert!(error.to_string().contains("applied index 0"));
+}
+
+#[tokio::test]
 async fn coordinated_compaction_waits_for_every_voter_snapshot_capability() {
     let nodes = cluster(3).await;
     let leader = await_leader(&nodes).await.expect("a leader is elected");
@@ -408,7 +481,7 @@ async fn capability_disappearance_between_probe_and_install_fails_before_restore
     );
 
     let client = transport_h2c::h2c_client_with(None, None).unwrap();
-    for node in &nodes {
+    for (index, node) in nodes.iter().enumerate() {
         let status: RaftStatus = client
             .get(format!("{}/raftz", node.url))
             .send()
@@ -417,7 +490,17 @@ async fn capability_disappearance_between_probe_and_install_fails_before_restore
             .json()
             .await
             .unwrap();
-        assert_eq!(status.snapshot_index, 0);
+        if index == leader || index == changing_voter {
+            assert_eq!(
+                status.snapshot_index, 0,
+                "the leader must not compact and the changed voter must not restore"
+            );
+        } else {
+            assert!(
+                status.snapshot_index <= 4,
+                "a concurrently installed peer snapshot must not exceed the requested prefix"
+            );
+        }
         assert_eq!(status.last_index, 6);
     }
 }

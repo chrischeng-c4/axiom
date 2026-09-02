@@ -152,9 +152,26 @@ is not changed. This version has no automatic legacy migration.
 Each signal has its own WAL and immutable segment tree. A Raft batch is bounded
 by 10 milliseconds or 1 MiB. Three-voter roles require two durable voters for
 an acknowledgement. A committed GCS archive writes Snappy-compressed Apache
-Parquet objects first and writes the manifest last. Only that committed
-manifest permits WAL compaction. A failed archive keeps the WAL. Local capacity
-limits return retryable backpressure before the volume is exhausted.
+Parquet objects first. It then writes content-addressed 64 KiB catalog pages
+and a fixed-size V10 root manifest last. Cleanup uses a paged plan and a durable
+cursor. A restart resumes at the next object. Only the committed root permits
+WAL compaction. A failed archive keeps the WAL. Local capacity limits return
+retryable backpressure before the volume is exhausted.
+
+Retention scans at most 64 archive segments per generation. The manifest keeps
+the next catalog key and one fixed cutoff. A caught-up voter applies the small
+source/target delta. Only an empty, behind, or inconsistent voter downloads the
+full archive.
+
+Sift guarantees exact event-ID idempotency for six hours after its stored
+`acknowledged_at` time. The leader selects this Raft decision time before the
+proposal. Every voter stores the same value. `AppendResult` returns this value.
+A network response can arrive later and does not change the stored decision
+time. A retry in the six-hour period returns the original cursor and timestamp
+across a process restart or voter failover. Sift makes no duplicate-suppression
+promise after six hours. This limit does not change telemetry retention.
+Telemetry stays queryable for up to 180 days under the fixed hot and archive
+policy.
 
 ## Deployment model
 
@@ -231,7 +248,7 @@ This implementation is a phase-one foundation. These limits are important:
 - Traces support trace reads, search filters, gaps, and critical paths. Tail sampling and a complete service dependency engine are not complete.
 - Local and emulated GCS archive, outage, lifecycle, and fresh-volume restore tests pass. A live GCS recovery drill has not run for this candidate.
 - Three local voters pass a mutual-TLS leader-loss test. The required 30-minute GKE MVP run has not run for this candidate.
-- The fixed 30-day hot and 180-day total retention worker is implemented. It keeps WAL during a GCS outage, rewrites mixed-age segments, removes expired blobs and dedupe entries, and resumes safe cleanup after restart.
+- The fixed 30-day hot and 180-day total retention worker is implemented. It keeps WAL during a GCS outage, rewrites mixed-age segments, removes expired blobs, and resumes safe cleanup after restart. Exact event-ID idempotency is a separate six-hour window.
 - The 10,000-item-per-second MVP target has not been proven on GKE. The later 100,000-item-per-second and 24-hour production gates also remain unproven.
 - Alerts, saved queries, SLOs, incidents, on-call, runbooks, synthetics, RUM, profiles, and cost analysis are later phases.
 
@@ -259,7 +276,7 @@ below is an explicit Cargo test target under `apps/sift/e2e`.
 | Capability | ID | User promise | Sources |
 |---|---|---|---|
 | Signal ingest | `signal-ingest` | Send logs, metrics, and traces through standard telemetry protocols. | `apps/sift`<br>`external:opentelemetry`<br>`external:prometheus` |
-| Unified investigation | `unified-investigation` | Query and correlate every phase-one signal through one product API. | `apps/sift`<br>`apps/lumen` |
+| Unified investigation | `unified-investigation` | Query and correlate every phase-one signal through one product API. | `apps/sift`<br>`libs/index-text` |
 | Durable local data | `durable-local-data` | Keep accepted data in one private and versioned persistent root. | `apps/sift`<br>`libs/storage-durable` |
 | Replicated availability | `replicated-availability` | Keep acknowledged data after one voter fails. | `apps/sift`<br>`libs/raft-core`<br>`libs/raft-runtime`<br>`libs/peer-tls` |
 | Archive and restore | `archive-and-restore` | Commit immutable Parquet archives and restore their exact events. | `apps/sift`<br>`libs/service-backup`<br>`external:apache-parquet` |
@@ -286,8 +303,8 @@ below is an explicit Cargo test target under `apps/sift/e2e`.
 - Promise: Give logs, metrics, and traces one versioned query, correlation, service, and async-job surface.
 - Sources:
   - `apps/sift` owns the public query AST, correlation rules, projections, and response contract.
-  - `apps/lumen` supplies the embedded and rebuildable log index primitives.
-- Gate: `bash apps/sift/test.sh --test unified_query_api`
+  - `libs/index-text` supplies the embedded and rebuildable log index primitives.
+- Gate: `bash apps/sift/test.sh --test text_index_migration`
 - Gate: `bash apps/sift/test.sh --test phase_one_api`
 - Gate: `bash apps/sift/test.sh --test trace_store`
 
@@ -301,6 +318,7 @@ below is an explicit Cargo test target under `apps/sift/e2e`.
 - Gate: `bash apps/sift/test.sh --test persistent_data_dir`
 - Gate: `bash apps/sift/test.sh --test durable_signal_wal`
 - Gate: `bash apps/sift/test.sh --test local_backpressure`
+- Gate: `bash apps/sift/test.sh --test bounded_dedupe_window`
 
 ### Replicated availability
 
@@ -322,12 +340,14 @@ below is an explicit Cargo test target under `apps/sift/e2e`.
 - Promise: Write immutable signal segments before the manifest, preserve WAL on archive failure, and make every voter adopt the same retained prefix before Raft compaction.
 - Sources:
   - `apps/sift` owns archive manifests, segment hashes, commit order, WAL compaction, and restore checks.
+  - `libs/storage-segment` supplies immutable paged catalogs and bounded catalog readers.
   - `libs/service-projection` rebuilds typed projections when the retained source generation changes.
   - `libs/service-backup` supplies destination, upload, fetch, and retention behavior.
   - `external:apache-parquet` defines the immutable columnar segment file format.
 - Gate: `bash apps/sift/test.sh --test gcs_archive`
 - Gate: `bash apps/sift/test.sh --test cold_query_archive`
 - Gate: `bash apps/sift/test.sh --test retention_lifecycle`
+- Gate: `bash apps/sift/test.sh --test paged_archive_gc`
 - Gate: `bash apps/sift/test.sh --test raft_archive_checkpoint`
 - Gate: `bash apps/sift/test.sh --test live_backup`
 

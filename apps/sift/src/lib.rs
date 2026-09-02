@@ -45,7 +45,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use metrics_prometheus::{Counter, Sample};
 use serde::{Deserialize, Deserializer, Serialize};
 use service_auth::{Role, RoleMapPrincipal};
@@ -57,6 +57,7 @@ use utoipa::{OpenApi, ToSchema};
 #[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 pub struct StoredEvent {
     pub cursor: u64,
+    /// Sift acceptance time. Exact event-id idempotency starts from this time.
     pub acknowledged_at: String,
     pub event: EventEnvelope,
 }
@@ -85,10 +86,14 @@ impl<'de> Deserialize<'de> for StoredEvent {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct AppendResult {
     pub event_id: String,
+    /// Leader-selected Raft decision time. The exact six-hour window starts
+    /// at this returned timestamp, not at client-side response receipt time.
+    pub acknowledged_at: String,
     /// Compatibility alias for `raw_cursor`.
     pub cursor: u64,
     pub raw_cursor: u64,
     pub commit_index: u64,
+    /// True when Sift found the event ID inside its six-hour exact window.
     pub duplicate: bool,
 }
 
@@ -108,16 +113,76 @@ pub struct EventQuery {
 
 const DEFAULT_RESIDENT_JOURNAL_EVENTS: usize = 100_000;
 const RECOVERY_PAGE_EVENTS: usize = 10_000;
+const RECOVERY_PAGE_BYTES: usize = 16 * 1024 * 1024;
+const PROJECTION_LOCAL_BUFFER_EVENTS: usize = 100_000;
+const ALL_VOTER_CHECKPOINT_ATTEMPT: std::time::Duration = std::time::Duration::from_secs(30);
+const ARCHIVE_GC_BATCH_OBJECTS: usize = 128;
 
 #[derive(Default)]
 struct JournalState {
     recent_events: VecDeque<StoredEvent>,
-    recent_cursors_by_event_id: HashMap<String, u64>,
+    recent_cursors_by_event_id: HashMap<(String, String), RecentCursor>,
     last_cursor: u64,
     total_events: u64,
     projection_generation: u64,
     retention_generation: u64,
     event_content_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug)]
+struct RecentCursor {
+    cursor: u64,
+    acknowledged_at: DateTime<Utc>,
+}
+
+impl RecentCursor {
+    fn from_stored(event: &StoredEvent) -> Result<Self> {
+        Ok(Self {
+            cursor: event.cursor,
+            acknowledged_at: DateTime::parse_from_rfc3339(&event.acknowledged_at)
+                .context("stored event acknowledged_at must be RFC3339")?
+                .with_timezone(&Utc),
+        })
+    }
+
+    fn active_at(&self, now: DateTime<Utc>) -> bool {
+        self.acknowledged_at >= now - Duration::seconds(storage::IDEMPOTENCY_WINDOW_SECONDS)
+    }
+}
+
+fn recent_cursor_at(
+    cursors: &HashMap<(String, String), RecentCursor>,
+    project: &str,
+    event_id: &str,
+    now: DateTime<Utc>,
+) -> Option<u64> {
+    recent_receipt_at(cursors, project, event_id, now).map(|(cursor, _)| cursor)
+}
+
+fn recent_receipt_at(
+    cursors: &HashMap<(String, String), RecentCursor>,
+    project: &str,
+    event_id: &str,
+    now: DateTime<Utc>,
+) -> Option<(u64, DateTime<Utc>)> {
+    cursors
+        .get(&(project.to_owned(), event_id.to_owned()))
+        .filter(|recent| recent.active_at(now))
+        .map(|recent| (recent.cursor, recent.acknowledged_at))
+}
+
+fn recent_cursor_map(
+    events: &VecDeque<StoredEvent>,
+) -> Result<HashMap<(String, String), RecentCursor>> {
+    events
+        .iter()
+        .map(|event| {
+            Ok((
+                (event.event.project.clone(), event.event.event_id.clone()),
+                RecentCursor::from_stored(event)?,
+            ))
+        })
+        .collect()
 }
 
 fn xor_event_content_digest(accumulator: &mut [u8; 32], event: &EventEnvelope) -> Result<()> {
@@ -137,94 +202,133 @@ fn xor_digest(left: [u8; 32], right: [u8; 32]) -> [u8; 32] {
     combined
 }
 
-fn canonical_recovery_page(
-    storage: &storage::RawStorage,
-    wal: &storage::SignalWal,
+fn decode_digest(value: &str) -> Result<[u8; 32]> {
+    hex::decode(value)
+        .context("decode Sift SHA-256 digest")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Sift SHA-256 digest must be 32 bytes"))
+}
+
+struct CanonicalRecoveryReader<'a> {
+    storage: &'a storage::RawStorage,
+    segments: storage::RawStorageReader,
+    wal: storage::SignalWalReader,
     archived: storage::archive::ArchiveWatermarks,
-    after: u64,
     repair_segments: bool,
-) -> Result<Vec<StoredEvent>> {
-    let mut scan_after = after;
-    loop {
-        let mut candidates = BTreeMap::<u64, (Option<StoredEvent>, Option<StoredEvent>)>::new();
-        for event in storage.query_events(None, scan_after, RECOVERY_PAGE_EVENTS)? {
-            let cursor = event.cursor;
-            if candidates
-                .entry(cursor)
-                .or_default()
-                .0
-                .replace(event)
-                .is_some()
-            {
-                bail!("segments contain duplicate cursor {cursor}");
+    segment_next: Option<StoredEvent>,
+    wal_next: Option<StoredEvent>,
+    pending: Option<StoredEvent>,
+}
+
+impl<'a> CanonicalRecoveryReader<'a> {
+    fn open(
+        storage: &'a storage::RawStorage,
+        wal: &'a storage::SignalWal,
+        archived: storage::archive::ArchiveWatermarks,
+        after: u64,
+        repair_segments: bool,
+    ) -> Result<Self> {
+        Ok(Self {
+            storage,
+            segments: storage.reader(after)?,
+            wal: wal.reader(after)?,
+            archived,
+            repair_segments,
+            segment_next: None,
+            wal_next: None,
+            pending: None,
+        })
+    }
+
+    fn read_page(&mut self) -> Result<Vec<StoredEvent>> {
+        self.read_page_with_limits(RECOVERY_PAGE_EVENTS, RECOVERY_PAGE_BYTES)
+            .map(|(page, _)| page)
+    }
+
+    fn read_page_with_limits(
+        &mut self,
+        max_events: usize,
+        max_bytes: usize,
+    ) -> Result<(Vec<StoredEvent>, bool)> {
+        if max_events == 0 || max_bytes == 0 {
+            bail!("canonical recovery page limits must be greater than zero");
+        }
+        let mut page = Vec::with_capacity(max_events.min(1_000));
+        let mut bytes = 0_usize;
+        while page.len() < max_events {
+            let Some(event) = self.pending.take().or(self.next_event()?) else {
+                return Ok((page, true));
+            };
+            let encoded = serde_json::to_vec(&event)?.len();
+            if !page.is_empty() && bytes.saturating_add(encoded) > max_bytes {
+                self.pending = Some(event);
+                return Ok((page, false));
+            }
+            bytes = bytes.saturating_add(encoded);
+            page.push(event);
+        }
+        Ok((page, false))
+    }
+
+    fn next_event(&mut self) -> Result<Option<StoredEvent>> {
+        loop {
+            if self.segment_next.is_none() {
+                self.segment_next = self.segments.next_event()?;
+            }
+            if self.wal_next.is_none() {
+                self.wal_next = self.wal.read_page(1, usize::MAX)?.pop();
+            }
+            let segment_cursor = self.segment_next.as_ref().map(|event| event.cursor);
+            let wal_cursor = self.wal_next.as_ref().map(|event| event.cursor);
+            match (segment_cursor, wal_cursor) {
+                (None, None) => return Ok(None),
+                (Some(segment_cursor), Some(wal_cursor)) if segment_cursor == wal_cursor => {
+                    let segment = self.segment_next.take().expect("segment event exists");
+                    let wal_event = self.wal_next.take().expect("WAL event exists");
+                    if segment != wal_event {
+                        bail!("WAL and segment disagree at cursor {segment_cursor}");
+                    }
+                    return Ok(Some(wal_event));
+                }
+                (Some(segment_cursor), Some(wal_cursor)) if segment_cursor < wal_cursor => {
+                    let segment = self.segment_next.take().expect("segment event exists");
+                    if !self.archived.covers(segment.event.signal, segment_cursor) {
+                        bail!(
+                            "segment cursor {segment_cursor} has no committed WAL or archive receipt"
+                        );
+                    }
+                    return Ok(Some(segment));
+                }
+                (Some(_), Some(_)) | (None, Some(_)) => {
+                    let wal_event = self.wal_next.take().expect("WAL event exists");
+                    if self
+                        .archived
+                        .covers(wal_event.event.signal, wal_event.cursor)
+                    {
+                        continue;
+                    }
+                    if !self.repair_segments {
+                        bail!(
+                            "WAL cursor {} was not recovered into a segment",
+                            wal_event.cursor
+                        );
+                    }
+                    self.storage
+                        .append(&wal_event)
+                        .context("recover committed WAL event into a segment")?;
+                    return Ok(Some(wal_event));
+                }
+                (Some(segment_cursor), None) => {
+                    let segment = self.segment_next.take().expect("segment event exists");
+                    if !self.archived.covers(segment.event.signal, segment_cursor) {
+                        bail!(
+                            "segment cursor {segment_cursor} has no committed WAL or archive receipt"
+                        );
+                    }
+                    return Ok(Some(segment));
+                }
             }
         }
-        for event in wal.query_events(scan_after, RECOVERY_PAGE_EVENTS)? {
-            let cursor = event.cursor;
-            if candidates
-                .entry(cursor)
-                .or_default()
-                .1
-                .replace(event)
-                .is_some()
-            {
-                bail!("WAL contains duplicate cursor {cursor}");
-            }
-        }
-        let scanned_through = candidates
-            .keys()
-            .nth(RECOVERY_PAGE_EVENTS - 1)
-            .copied()
-            .or_else(|| candidates.keys().next_back().copied());
-        let page = candidates
-            .into_iter()
-            .take(RECOVERY_PAGE_EVENTS)
-            .filter_map(
-                |(cursor, (segment, wal_event))| match (segment, wal_event) {
-                    (Some(segment), Some(wal_event)) => {
-                        if segment != wal_event {
-                            return Some(Err(anyhow::anyhow!(
-                                "WAL and segment disagree at cursor {cursor}"
-                            )));
-                        }
-                        Some(Ok(wal_event))
-                    }
-                    // A committed remote receipt makes this prefix recoverable.
-                    // If its retained segment set no longer has this row, the WAL
-                    // copy is either cold-only or expired and must not resurrect
-                    // into the local hot journal during a restart.
-                    (None, Some(wal_event)) if archived.covers(wal_event.event.signal, cursor) => {
-                        None
-                    }
-                    (None, Some(wal_event)) if repair_segments => Some(
-                        storage
-                            .append(&wal_event)
-                            .context("recover committed WAL event into a segment")
-                            .map(|_| wal_event),
-                    ),
-                    (None, Some(_)) => Some(Err(anyhow::anyhow!(
-                        "WAL cursor {cursor} was not recovered into a segment"
-                    ))),
-                    (Some(segment), None) => {
-                        if !archived.covers(segment.event.signal, cursor) {
-                            return Some(Err(anyhow::anyhow!(
-                                "segment cursor {cursor} has no committed WAL or archive receipt"
-                            )));
-                        }
-                        Some(Ok(segment))
-                    }
-                    (None, None) => unreachable!("cursor came from neither canonical source"),
-                },
-            )
-            .collect::<Result<Vec<_>>>()?;
-        if !page.is_empty() || scanned_through.is_none() {
-            return Ok(page);
-        }
-        let next = scanned_through.expect("checked above");
-        if next <= scan_after {
-            bail!("canonical recovery scan made no progress");
-        }
-        scan_after = next;
     }
 }
 
@@ -234,56 +338,67 @@ fn rebuild_dedupe_index(
     wal: &storage::SignalWal,
     dedupe: &storage::DedupeIndex,
     archived: storage::archive::ArchiveWatermarks,
-    expected_count: u64,
     expected_last_cursor: u64,
 ) -> Result<()> {
     dedupe.reset()?;
     let mut page = Vec::with_capacity(RECOVERY_PAGE_EVENTS);
-    let mut rebuilt_count = 0_u64;
-    let mut rebuilt_last_cursor = 0_u64;
+    let now = Utc::now();
 
-    let remote = storage::archive::replay_all_committed_events(root, |event| {
-        rebuilt_last_cursor = rebuilt_last_cursor.max(event.cursor);
+    let cutoff = now - Duration::seconds(storage::IDEMPOTENCY_WINDOW_SECONDS);
+    let remote = storage::archive::replay_recent_committed_events(root, cutoff, |event| {
         page.push(event);
         if page.len() == RECOVERY_PAGE_EVENTS {
-            append_unique_dedupe_page(dedupe, &mut page)?;
+            append_unique_dedupe_page_at(dedupe, &mut page, now)?;
+            dedupe.maintain_at(now, false)?;
         }
-        rebuilt_count = rebuilt_count.saturating_add(1);
         Ok(())
     })?;
     if !page.is_empty() {
-        append_unique_dedupe_page(dedupe, &mut page)?;
+        append_unique_dedupe_page_at(dedupe, &mut page, now)?;
+        dedupe.maintain_at(now, false)?;
+    }
+
+    let mut receipt_page = Vec::<storage::DedupeReceipt>::with_capacity(RECOVERY_PAGE_EVENTS);
+    storage::archive::replay_recent_committed_receipts(root, cutoff, |receipt| {
+        receipt_page.push(receipt);
+        if receipt_page.len() == RECOVERY_PAGE_EVENTS {
+            dedupe.append_receipts_at(&receipt_page, expected_last_cursor, now)?;
+            receipt_page.clear();
+            dedupe.maintain_at(now, false)?;
+        }
+        Ok(())
+    })?;
+    if !receipt_page.is_empty() {
+        dedupe.append_receipts_at(&receipt_page, expected_last_cursor, now)?;
+        dedupe.maintain_at(now, false)?;
     }
 
     let remote_watermarks = remote
         .map(|_| archived)
         .unwrap_or_else(storage::archive::ArchiveWatermarks::default);
-    let mut after = 0_u64;
+    let mut local_reader = CanonicalRecoveryReader::open(storage, wal, archived, 0, false)?;
     loop {
-        let local = canonical_recovery_page(storage, wal, archived, after, false)?;
-        let Some(last) = local.last() else {
+        let local = local_reader.read_page()?;
+        if local.is_empty() {
             break;
-        };
-        after = last.cursor;
+        }
         let mut new_events = local
             .into_iter()
             .filter(|event| !remote_watermarks.covers(event.event.signal, event.cursor))
             .collect::<Vec<_>>();
-        rebuilt_count = rebuilt_count.saturating_add(new_events.len() as u64);
-        rebuilt_last_cursor = rebuilt_last_cursor.max(
-            new_events
-                .last()
-                .map(|event| event.cursor)
-                .unwrap_or_default(),
-        );
-        append_unique_dedupe_page(dedupe, &mut new_events)?;
+        append_unique_dedupe_page_at(dedupe, &mut new_events, now)?;
+        dedupe.maintain_at(now, false)?;
     }
 
-    if rebuilt_count != expected_count || rebuilt_last_cursor > expected_last_cursor {
+    let stats = dedupe.stats_at(now)?;
+    if stats.newest_cursor > expected_last_cursor {
         bail!(
-            "rebuilt dedupe index has {rebuilt_count} events through cursor {rebuilt_last_cursor}; journal head expects {expected_count} retained events through cursor {expected_last_cursor}"
+            "rebuilt dedupe index cursor {} is ahead of journal cursor {expected_last_cursor}",
+            stats.newest_cursor
         );
     }
+    dedupe.mark_rebuilt_through(expected_last_cursor)?;
+    dedupe.maintain_at(now, true)?;
     Ok(())
 }
 
@@ -291,14 +406,28 @@ fn append_unique_dedupe_page(
     dedupe: &storage::DedupeIndex,
     page: &mut Vec<StoredEvent>,
 ) -> Result<()> {
+    append_unique_dedupe_page_at(dedupe, page, Utc::now())
+}
+
+fn append_unique_dedupe_page_at(
+    dedupe: &storage::DedupeIndex,
+    page: &mut Vec<StoredEvent>,
+    now: DateTime<Utc>,
+) -> Result<()> {
     if page.is_empty() {
         return Ok(());
     }
     let mut page_ids = HashMap::with_capacity(page.len());
     for stored in page.iter() {
+        if !dedupe.covers(stored, now)? {
+            continue;
+        }
         if let Some(previous) = page_ids
-            .insert(stored.event.event_id.clone(), stored.cursor)
-            .or(dedupe.lookup(&stored.event.event_id)?)
+            .insert(
+                (stored.event.project.clone(), stored.event.event_id.clone()),
+                stored.cursor,
+            )
+            .or(dedupe.lookup_at(&stored.event.project, &stored.event.event_id, now)?)
         {
             bail!(
                 "journal contains duplicate event_id {} at cursors {previous} and {}",
@@ -307,7 +436,7 @@ fn append_unique_dedupe_page(
             );
         }
     }
-    dedupe.append_batch(page)?;
+    dedupe.append_batch_at(page, now)?;
     page.clear();
     Ok(())
 }
@@ -330,6 +459,105 @@ pub struct DurableJournal {
     retention_fenced: AtomicBool,
 }
 
+#[doc(hidden)]
+pub struct JournalProjectionReadSession {
+    journal: Arc<DurableJournal>,
+    archive: Option<storage::archive::CommittedEventReader>,
+    archive_through: u64,
+    cursor: u64,
+    local: VecDeque<StoredEvent>,
+}
+
+impl JournalProjectionReadSession {
+    #[doc(hidden)]
+    pub fn read_next(&mut self, limit: usize) -> Result<Vec<StoredEvent>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut page = Vec::with_capacity(limit);
+        if let Some(archive) = self.archive.as_mut() {
+            let archived = archive.read_next(limit)?;
+            if let Some(last) = archived.last() {
+                self.cursor = last.cursor;
+            }
+            let exhausted = archived.len() < limit;
+            page.extend(archived);
+            if !exhausted {
+                return Ok(page);
+            }
+            self.archive = None;
+            self.cursor = self.cursor.max(self.archive_through);
+        }
+        while page.len() < limit {
+            if self.local.is_empty() {
+                // A background archive can commit and evict the next local
+                // suffix after this session opened. Refresh the manifest at
+                // the current cursor before consulting local files.
+                if self.refresh_archive()? {
+                    let archived = self
+                        .archive
+                        .as_mut()
+                        .expect("refreshed archive reader exists")
+                        .read_next(limit - page.len())?;
+                    if let Some(last) = archived.last() {
+                        self.cursor = last.cursor;
+                    }
+                    let exhausted = archived.len() < limit - page.len();
+                    page.extend(archived);
+                    if !exhausted {
+                        return Ok(page);
+                    }
+                    self.archive = None;
+                    self.cursor = self.cursor.max(self.archive_through);
+                    continue;
+                }
+                self.local = self
+                    .journal
+                    .query_local_unchecked(
+                        EventQuery {
+                            signal: None,
+                            after: self.cursor,
+                            limit: PROJECTION_LOCAL_BUFFER_EVENTS,
+                        },
+                        PROJECTION_LOCAL_BUFFER_EVENTS,
+                    )?
+                    .into();
+                if self.local.is_empty() {
+                    // Close the commit/eviction race. The first refresh can
+                    // observe the old receipt immediately before local files
+                    // are evicted under a new committed receipt.
+                    if self.refresh_archive()? {
+                        continue;
+                    }
+                    break;
+                }
+            }
+            while page.len() < limit {
+                let Some(event) = self.local.pop_front() else {
+                    break;
+                };
+                if event.cursor <= self.cursor {
+                    bail!("projection source cursors are not strictly increasing");
+                }
+                self.cursor = event.cursor;
+                page.push(event);
+            }
+        }
+        Ok(page)
+    }
+
+    fn refresh_archive(&mut self) -> Result<bool> {
+        let Some(reader) =
+            storage::archive::CommittedEventReader::open(self.journal.data_dir(), self.cursor)?
+        else {
+            return Ok(false);
+        };
+        self.archive_through = reader.snapshot_index();
+        self.archive = Some(reader);
+        Ok(true)
+    }
+}
+
 impl DurableJournal {
     fn ensure_recovered(&self) -> Result<()> {
         if self.recovery_required.load(Ordering::Acquire) {
@@ -344,6 +572,26 @@ impl DurableJournal {
             bail!("Sift queries wait for the committed retention checkpoint");
         }
         Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn projection_read_session(
+        self: &Arc<Self>,
+        after: u64,
+    ) -> Result<JournalProjectionReadSession> {
+        self.ensure_recovered()?;
+        let archive = storage::archive::CommittedEventReader::open(self.data_dir(), after)?;
+        let archive_through = archive
+            .as_ref()
+            .map(storage::archive::CommittedEventReader::snapshot_index)
+            .unwrap_or(after);
+        Ok(JournalProjectionReadSession {
+            journal: self.clone(),
+            archive,
+            archive_through,
+            cursor: after,
+            local: VecDeque::new(),
+        })
     }
 
     pub(crate) fn set_retention_fenced(&self, fenced: bool) {
@@ -412,6 +660,8 @@ impl DurableJournal {
         }
         let layout = storage::DataLayout::open(data_dir, role)?;
         let data_dir = layout.root().to_path_buf();
+        storage::archive::cleanup_orphan_spills(&data_dir)?;
+        storage::archive::reconcile_staged_archive_gc(&data_dir)?;
         let wal = storage::SignalWal::open(&data_dir)?;
         let storage = storage::RawStorage::open(&data_dir)?;
         let stored_head = storage::JournalHead::load(&data_dir)?;
@@ -431,16 +681,16 @@ impl DurableJournal {
         let remote_retained = storage::archive::remote_retained_state(&data_dir)?;
         let mut state = JournalState::default();
         let (dedupe, dedupe_stats) = storage::DedupeIndex::open(&data_dir)?;
-        let mut after = 0;
+        let recovery_time = Utc::now();
+        let mut recovery = CanonicalRecoveryReader::open(&storage, &wal, archived, 0, true)?;
         let mut dedupe_matches = true;
         let mut local_after_remote = 0_u64;
         let mut local_after_remote_digest = [0_u8; 32];
         loop {
-            let page = canonical_recovery_page(&storage, &wal, archived, after, true)?;
-            let Some(last) = page.last() else {
+            let page = recovery.read_page()?;
+            if page.is_empty() {
                 break;
-            };
-            after = last.cursor;
+            }
             for stored in page {
                 if remote_retained.is_none_or(|remote| {
                     !remote.watermarks.covers(stored.event.signal, stored.cursor)
@@ -448,8 +698,13 @@ impl DurableJournal {
                     local_after_remote = local_after_remote.saturating_add(1);
                     xor_event_content_digest(&mut local_after_remote_digest, &stored.event)?;
                 }
-                if dedupe_stats.count != 0
-                    && dedupe.lookup(&stored.event.event_id)? != Some(stored.cursor)
+                if !dedupe_stats.rebuild_required
+                    && dedupe.covers(&stored, recovery_time)?
+                    && dedupe.lookup_at(
+                        &stored.event.project,
+                        &stored.event.event_id,
+                        recovery_time,
+                    )? != Some(stored.cursor)
                 {
                     dedupe_matches = false;
                 }
@@ -459,11 +714,8 @@ impl DurableJournal {
 
         let mut head = stored_head.unwrap_or_else(|| {
             storage::JournalHead::new(
-                state
-                    .last_cursor
-                    .max(dedupe_stats.last_cursor)
-                    .max(archived.max_cursor()),
-                state.total_events.max(dedupe_stats.count),
+                state.last_cursor.max(archived.max_cursor()),
+                state.total_events,
             )
         });
         head.last_cursor = head
@@ -484,7 +736,9 @@ impl DurableJournal {
         };
         if let Some(remote) = remote_retained {
             if remote.retention_generation > head.retention_generation {
-                head.projection_generation = head.projection_generation.saturating_add(1);
+                if !remote.retention_scan_pending {
+                    head.projection_generation = head.projection_generation.saturating_add(1);
+                }
                 head.retention_generation = remote.retention_generation;
             }
         }
@@ -492,8 +746,9 @@ impl DurableJournal {
             bail!("journal head retained event count exceeds the recovered cursor range");
         }
 
-        if dedupe_stats.count != head.retained_events
-            || dedupe_stats.last_cursor > head.last_cursor
+        if dedupe_stats.rebuild_required
+            || dedupe_stats.indexed_through_cursor != head.last_cursor
+            || dedupe_stats.newest_cursor > head.last_cursor
             || !dedupe_matches
         {
             rebuild_dedupe_index(
@@ -502,7 +757,6 @@ impl DurableJournal {
                 &wal,
                 &dedupe,
                 archived,
-                head.retained_events,
                 head.last_cursor,
             )?;
         }
@@ -535,6 +789,9 @@ impl DurableJournal {
             retention_fenced: AtomicBool::new(false),
         };
         journal.accepted.add(accepted);
+        if let Err(error) = storage::archive::resume_local_blob_gc_batch(&journal, 128, 1_280_000) {
+            tracing::warn!(%error, "resume local blob GC after restart failed; durable progress is retained");
+        }
         Ok(journal)
     }
 
@@ -553,7 +810,18 @@ impl DurableJournal {
         &self,
         events: Vec<EventEnvelope>,
     ) -> Result<Vec<AppendResult>> {
+        self.append_durable_batch_at(events, Utc::now())
+    }
+
+    pub(crate) fn append_durable_batch_at(
+        &self,
+        events: Vec<EventEnvelope>,
+        acknowledged_at: DateTime<Utc>,
+    ) -> Result<Vec<AppendResult>> {
         self.ensure_recovered()?;
+        self.dedupe.advance_window_at(acknowledged_at)?;
+        self.dedupe
+            .preflight_append_at(acknowledged_at, events.len())?;
         // Blob externalization happens before the event reaches the WAL. Hold
         // this gate through the durable append so retention cannot delete a
         // newly created blob before its event reference becomes visible.
@@ -569,9 +837,6 @@ impl DurableJournal {
         for event in events {
             let event = self.govern_event(event)?;
             event.validate()?;
-            if let Some(message) = retention_rejection(&event) {
-                bail!(message);
-            }
             governed.push(event);
         }
 
@@ -581,26 +846,51 @@ impl DurableJournal {
             .checked_add(1)
             .context("Sift journal cursor exhausted u64")?;
         let mut staged = Vec::with_capacity(governed.len());
-        let mut staged_cursors = HashMap::<String, u64>::new();
+        let mut staged_cursors = HashMap::<(String, String), u64>::new();
         let mut results = Vec::with_capacity(governed.len());
 
         for mut event in governed {
-            if let Some(cursor) = state
-                .recent_cursors_by_event_id
-                .get(&event.event_id)
-                .copied()
-                .or_else(|| staged_cursors.get(&event.event_id).copied())
-                .or(self.dedupe.lookup(&event.event_id)?)
-            {
+            let duplicate_receipt = recent_receipt_at(
+                &state.recent_cursors_by_event_id,
+                &event.project,
+                &event.event_id,
+                acknowledged_at,
+            )
+            .map(|(cursor, accepted)| (cursor, accepted.to_rfc3339()))
+            .or_else(|| {
+                staged_cursors
+                    .get(&(event.project.clone(), event.event_id.clone()))
+                    .copied()
+                    .map(|cursor| (cursor, acknowledged_at.to_rfc3339()))
+            })
+            .or(self
+                .dedupe
+                .lookup_record_at(&event.project, &event.event_id, acknowledged_at)?
+                .map(|(cursor, accepted)| {
+                    (
+                        cursor,
+                        DateTime::<Utc>::from_timestamp_nanos(accepted).to_rfc3339(),
+                    )
+                }));
+            if let Some((cursor, original_acknowledged_at)) = duplicate_receipt {
                 self.duplicates.incr();
                 results.push(AppendResult {
                     event_id: event.event_id,
+                    acknowledged_at: original_acknowledged_at,
                     cursor,
                     raw_cursor: cursor,
                     commit_index: cursor,
                     duplicate: true,
                 });
                 continue;
+            }
+
+            // A successful acknowledgement owns its exact six-hour retry
+            // window even when the telemetry event crosses the 180-day
+            // retention boundary meanwhile. Only a new event is subject to
+            // retention admission.
+            if let Some(message) = retention_rejection_at(&event, acknowledged_at) {
+                bail!(message);
             }
 
             self.storage
@@ -612,14 +902,15 @@ impl DurableJournal {
                 .checked_add(1)
                 .context("Sift journal cursor exhausted u64")?;
             let event_id = event.event_id.clone();
-            staged_cursors.insert(event_id.clone(), cursor);
+            staged_cursors.insert((event.project.clone(), event_id.clone()), cursor);
             staged.push(StoredEvent {
                 cursor,
-                acknowledged_at: now_rfc3339(),
+                acknowledged_at: acknowledged_at.to_rfc3339(),
                 event,
             });
             results.push(AppendResult {
                 event_id,
+                acknowledged_at: acknowledged_at.to_rfc3339(),
                 cursor,
                 raw_cursor: cursor,
                 commit_index: cursor,
@@ -640,14 +931,28 @@ impl DurableJournal {
                     "deferred segment append failed; canonical WAL remains recoverable"
                 );
             }
-            if let Err(error) = self.dedupe.append_batch(&staged) {
-                tracing::warn!(
-                    %error,
-                    "rebuildable dedupe index append failed; canonical WAL remains recoverable"
-                );
+            if let Err(append_error) = self.dedupe.append_batch_at(&staged, acknowledged_at) {
+                let archived = storage::archive::committed_watermarks(self.data_dir())?;
+                let expected_last_cursor = staged
+                    .last()
+                    .map(|stored| stored.cursor)
+                    .unwrap_or(state.last_cursor);
+                if let Err(rebuild_error) = rebuild_dedupe_index(
+                    self.data_dir(),
+                    &self.storage,
+                    &self.wal,
+                    &self.dedupe,
+                    archived,
+                    expected_last_cursor,
+                ) {
+                    self.recovery_required.store(true, Ordering::Release);
+                    bail!(
+                        "dedupe index append failed ({append_error:#}); rebuild failed ({rebuild_error:#})"
+                    );
+                }
             }
             for stored in staged {
-                Self::push_resident(&mut state, stored, self.resident_limit);
+                Self::push_resident(&mut state, stored, self.resident_limit)?;
             }
             storage::JournalHead::new(state.last_cursor, state.total_events)
                 .with_projection_generation(state.projection_generation)
@@ -667,40 +972,90 @@ impl DurableJournal {
         &self.storage
     }
 
-    pub(crate) fn prune_unreferenced_blobs(
-        &self,
-        archived_hashes: &BTreeSet<String>,
-    ) -> Result<usize> {
-        let _blob_gate = self.blob_gate.lock().expect("Sift blob gate poisoned");
-        let mut live_hashes = archived_hashes.clone();
-        let archived = storage::archive::committed_watermarks(self.data_dir())?;
-        // The manifest already lists every blob in the committed prefix. Only
-        // inspect the unarchived suffix while append is paused.
-        let mut after = archived.max_cursor();
-        loop {
-            let page = canonical_recovery_page(&self.storage, &self.wal, archived, after, false)?;
-            let Some(last) = page.last().map(|event| event.cursor) else {
-                break;
-            };
-            after = last;
-            for event in page {
-                live_hashes.extend(
-                    event
-                        .event
-                        .blob_refs
-                        .iter()
-                        .map(|reference| reference.hash.clone()),
-                );
+    fn maintain_dedupe_at(&self, _now: DateTime<Utc>, force: bool) -> Result<usize> {
+        match self.dedupe.maintain_applied(force) {
+            Ok(flushed) => Ok(flushed),
+            Err(maintenance_error) => {
+                let archived = storage::archive::committed_watermarks(self.data_dir())?;
+                let expected_last_cursor = self.last_cursor();
+                rebuild_dedupe_index(
+                    self.data_dir(),
+                    &self.storage,
+                    &self.wal,
+                    &self.dedupe,
+                    archived,
+                    expected_last_cursor,
+                )
+                .with_context(|| {
+                    format!(
+                        "dedupe projection maintenance failed ({maintenance_error:#}); canonical rebuild failed"
+                    )
+                })?;
+                self.dedupe.maintain_applied(force)
             }
         }
-        self.storage.prune_blobs_except(&live_hashes)
     }
 
-    pub(crate) fn remove_expired_event_ids<'a>(
+    pub(crate) fn scan_blob_references_page(
         &self,
-        event_ids: impl IntoIterator<Item = &'a str>,
-    ) -> Result<u64> {
-        self.dedupe.remove_event_ids(event_ids)
+        after: u64,
+        limit: usize,
+    ) -> Result<(Vec<String>, u64, bool)> {
+        if limit == 0 {
+            bail!("blob reference scan limit must be greater than zero");
+        }
+        let archived = storage::archive::committed_watermarks(self.data_dir())?;
+        let mut reader =
+            CanonicalRecoveryReader::open(&self.storage, &self.wal, archived, after, true)?;
+        let (page, exhausted) = reader.read_page_with_limits(limit, RECOVERY_PAGE_BYTES)?;
+        let scanned_through = page.last().map(|event| event.cursor).unwrap_or_else(|| {
+            if exhausted {
+                self.last_cursor()
+            } else {
+                after
+            }
+        });
+        let mut references = BTreeSet::new();
+        for event in page {
+            references.extend(
+                event
+                    .event
+                    .blob_refs
+                    .into_iter()
+                    .map(|reference| reference.hash),
+            );
+        }
+        Ok((references.into_iter().collect(), scanned_through, exhausted))
+    }
+
+    pub(crate) fn finalize_blob_candidates_with_index<Mark, IsLive>(
+        &self,
+        hashes: &[String],
+        after: u64,
+        limit: usize,
+        mut mark_live: Mark,
+        mut is_live: IsLive,
+    ) -> Result<(u64, usize, bool)>
+    where
+        Mark: FnMut(&str) -> Result<()>,
+        IsLive: FnMut(&str) -> Result<bool>,
+    {
+        let _blob_gate = self.blob_gate.lock().expect("Sift blob gate poisoned");
+        let (references, scanned_through, exhausted) =
+            self.scan_blob_references_page(after, limit)?;
+        for hash in references {
+            mark_live(&hash)?;
+        }
+        if !exhausted {
+            return Ok((scanned_through, 0, false));
+        }
+        let mut removed = 0_usize;
+        for hash in hashes {
+            if !is_live(hash)? && self.storage.remove_blob(hash)? {
+                removed = removed.saturating_add(1);
+            }
+        }
+        Ok((self.last_cursor(), removed, true))
     }
 
     /// Seal one globally consistent archive prefix.
@@ -749,8 +1104,9 @@ impl DurableJournal {
         let mut state = self.state.write().expect("journal state lock poisoned");
         self.dedupe.preflight_rebuild()?;
         let staged_dedupe = self.dedupe.replace_from(&restored.dedupe)?;
-        if staged_dedupe.count != receipt.manifest.event_count
-            || staged_dedupe.last_cursor > expected_raw_cursor
+        if staged_dedupe.indexed_through_cursor != expected_raw_cursor
+            || staged_dedupe.newest_cursor > expected_raw_cursor
+            || staged_dedupe.rebuild_required
         {
             bail!("validated archive checkpoint dedupe index disagrees with its manifest");
         }
@@ -766,9 +1122,9 @@ impl DurableJournal {
             storage::archive::adopt_verified_archive_receipt(self.data_dir(), receipt)?;
         self.wal.compact_through(watermarks)?;
 
-        let projection_generation = if receipt.manifest.retention_generation
-            > state.retention_generation
-            || archive_identity_changed
+        let projection_generation = if receipt.manifest.retention_scan.is_none()
+            && (receipt.manifest.retention_generation > state.retention_generation
+                || archive_identity_changed)
         {
             state.projection_generation.saturating_add(1)
         } else {
@@ -779,16 +1135,16 @@ impl DurableJournal {
             retention_generation: receipt.manifest.retention_generation,
             ..JournalState::default()
         };
-        let mut after = 0_u64;
+        let mut recovery =
+            CanonicalRecoveryReader::open(&self.storage, &self.wal, watermarks, 0, false)?;
         let mut local_after_archive = 0_u64;
         let mut local_after_archive_digest = [0_u8; 32];
         let mut suffix_dedupe_page = Vec::with_capacity(RECOVERY_PAGE_EVENTS);
         loop {
-            let page = canonical_recovery_page(&self.storage, &self.wal, watermarks, after, false)?;
-            let Some(last) = page.last().map(|event| event.cursor) else {
+            let page = recovery.read_page()?;
+            if page.is_empty() {
                 break;
-            };
-            after = last;
+            }
             for event in page {
                 if !watermarks.covers(event.event.signal, event.cursor) {
                     local_after_archive = local_after_archive.saturating_add(1);
@@ -819,6 +1175,63 @@ impl DurableJournal {
             .with_retention_generation(rebuilt.retention_generation)
             .persist(self.data_dir())?;
         *state = rebuilt;
+        drop(state);
+        storage::archive::resume_local_blob_gc_batch(self, 128, 1_280_000)?;
+        self.recovery_required.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    /// Apply one manifest-backed retention generation to a caught-up voter.
+    /// The voter uses its local hot cache plus the small source/target delta.
+    /// It does not download every cumulative Parquet segment.
+    pub(crate) fn adopt_archive_retention_delta(
+        &self,
+        receipt: &storage::archive::ArchiveReceipt,
+        expected_raw_cursor: u64,
+    ) -> Result<()> {
+        let delta = receipt
+            .manifest
+            .retention_delta
+            .as_ref()
+            .context("archive retention checkpoint is missing its source delta")?;
+        if receipt.manifest.raft_snapshot_index != expected_raw_cursor
+            || receipt.manifest.retention_generation != delta.source_generation.saturating_add(1)
+        {
+            bail!("archive retention delta does not match its Raft cursor or generation");
+        }
+        let local_status = storage::archive::committed_status(self.data_dir())?
+            .context("archive retention delta requires its source receipt")?;
+        if local_status.manifest_uri != delta.source_manifest_uri
+            || local_status.manifest_sha256 != delta.source_manifest_sha256
+            || local_status.retention_generation != delta.source_generation
+        {
+            bail!("archive retention delta source receipt changed");
+        }
+        let (prefix_events, prefix_digest, generation) =
+            self.checkpoint_identity(expected_raw_cursor)?;
+        if generation != delta.source_generation
+            || prefix_events != delta.source_event_count
+            || hex::encode(prefix_digest) != delta.source_event_content_sha256
+        {
+            bail!("archive retention delta source content disagrees with the voter");
+        }
+
+        self.recovery_required.store(true, Ordering::Release);
+        let cutoff = DateTime::<Utc>::from_timestamp_nanos(delta.cutoff_unix_nano);
+        self.storage
+            .evict_expired_before(cutoff, expected_raw_cursor)?;
+        let watermarks =
+            storage::archive::adopt_verified_archive_receipt(self.data_dir(), receipt)?;
+        self.apply_expiration_head(
+            cutoff,
+            delta.source_event_count,
+            receipt.manifest.event_count,
+            decode_digest(&delta.source_event_content_sha256)?,
+            decode_digest(&receipt.manifest.event_content_sha256)?,
+            false,
+        )?;
+        storage::archive::resume_local_blob_gc_batch(self, 128, 1_280_000)?;
+        self.wal.compact_through(watermarks)?;
         self.recovery_required.store(false, Ordering::Release);
         Ok(())
     }
@@ -883,11 +1296,7 @@ impl DurableJournal {
             }
         }
         state.recent_events = retained;
-        state.recent_cursors_by_event_id = state
-            .recent_events
-            .iter()
-            .map(|event| (event.event.event_id.clone(), event.cursor))
-            .collect();
+        state.recent_cursors_by_event_id = recent_cursor_map(&state.recent_events)?;
         Ok(before.saturating_sub(state.recent_events.len()))
     }
 
@@ -900,9 +1309,9 @@ impl DurableJournal {
         retained_prefix_digest: [u8; 32],
         repair_dedupe: bool,
     ) -> Result<()> {
-        let retention_generation = storage::archive::committed_status(self.data_dir())?
-            .context("expiration requires a committed archive")?
-            .retention_generation;
+        let retention_status = storage::archive::committed_status(self.data_dir())?
+            .context("expiration requires a committed archive")?;
+        let retention_generation = retention_status.retention_generation;
         let archived = storage::archive::committed_watermarks(self.data_dir())?;
         let mut state = self.state.write().expect("journal state lock poisoned");
         if !repair_dedupe && state.total_events < archived_prefix_events {
@@ -932,27 +1341,27 @@ impl DurableJournal {
             }
         }
         state.recent_events = retained_resident;
-        state.recent_cursors_by_event_id = state
-            .recent_events
-            .iter()
-            .map(|event| (event.event.event_id.clone(), event.cursor))
-            .collect();
-        if state.total_events != retained_events
-            || state.retention_generation != retention_generation
+        state.recent_cursors_by_event_id = recent_cursor_map(&state.recent_events)?;
+        if !retention_status.retention_scan_pending
+            && state.retention_generation != retention_generation
         {
             state.projection_generation = state.projection_generation.saturating_add(1);
         }
         state.total_events = retained_events;
         let suffix_digest = if repair_dedupe {
             let mut digest = [0_u8; 32];
-            let mut after = archived.max_cursor();
+            let mut recovery = CanonicalRecoveryReader::open(
+                &self.storage,
+                &self.wal,
+                archived,
+                archived.max_cursor(),
+                true,
+            )?;
             loop {
-                let page =
-                    canonical_recovery_page(&self.storage, &self.wal, archived, after, false)?;
-                let Some(last) = page.last().map(|event| event.cursor) else {
+                let page = recovery.read_page()?;
+                if page.is_empty() {
                     break;
-                };
-                after = last;
+                }
                 for event in page {
                     xor_event_content_digest(&mut digest, &event.event)?;
                 }
@@ -975,7 +1384,6 @@ impl DurableJournal {
                 &self.wal,
                 &self.dedupe,
                 archived,
-                retained_events,
                 last_cursor,
             )?;
         }
@@ -984,25 +1392,15 @@ impl DurableJournal {
         Ok(())
     }
 
-    pub(crate) fn set_restored_head(&self, last_cursor: u64, retained_events: u64) -> Result<()> {
-        let mut state = self.state.write().expect("journal state lock poisoned");
-        if last_cursor < state.last_cursor || retained_events != state.total_events {
-            bail!("restored archive head disagrees with restored event state");
-        }
-        state.last_cursor = last_cursor;
-        state.projection_generation = state.projection_generation.saturating_add(1);
-        storage::JournalHead::new(last_cursor, retained_events)
-            .with_projection_generation(state.projection_generation)
-            .with_retention_generation(state.retention_generation)
-            .persist(self.data_dir())
-    }
-
     fn insert_recovered(
         state: &mut JournalState,
         stored: StoredEvent,
         resident_limit: usize,
     ) -> Result<()> {
         stored.event.validate()?;
+        let acknowledged_at = DateTime::parse_from_rfc3339(&stored.acknowledged_at)
+            .context("recovered event acknowledged_at must be RFC3339")?
+            .with_timezone(&Utc);
         if stored.cursor <= state.last_cursor {
             bail!(
                 "journal cursor {} is not strictly after recovered cursor {}",
@@ -1010,35 +1408,56 @@ impl DurableJournal {
                 state.last_cursor
             );
         }
-        if state
-            .recent_cursors_by_event_id
-            .contains_key(&stored.event.event_id)
+        if recent_cursor_at(
+            &state.recent_cursors_by_event_id,
+            &stored.event.project,
+            &stored.event.event_id,
+            acknowledged_at,
+        )
+        .is_some()
         {
             bail!(
                 "journal contains duplicate event_id {}",
                 stored.event.event_id
             );
         }
-        Self::push_resident(state, stored, resident_limit);
+        Self::push_resident(state, stored, resident_limit)?;
         Ok(())
     }
 
-    fn push_resident(state: &mut JournalState, stored: StoredEvent, resident_limit: usize) {
+    fn push_resident(
+        state: &mut JournalState,
+        stored: StoredEvent,
+        resident_limit: usize,
+    ) -> Result<()> {
         xor_event_content_digest(&mut state.event_content_digest, &stored.event)
             .expect("validated Sift event must have a stable content digest");
+        let recent = RecentCursor::from_stored(&stored)?;
         state.last_cursor = stored.cursor;
         state.total_events = state.total_events.saturating_add(1);
-        state
-            .recent_cursors_by_event_id
-            .insert(stored.event.event_id.clone(), stored.cursor);
+        state.recent_cursors_by_event_id.insert(
+            (stored.event.project.clone(), stored.event.event_id.clone()),
+            recent,
+        );
         state.recent_events.push_back(stored);
         while state.recent_events.len() > resident_limit {
             if let Some(evicted) = state.recent_events.pop_front() {
-                state
+                let remove = state
                     .recent_cursors_by_event_id
-                    .remove(&evicted.event.event_id);
+                    .get(&(
+                        evicted.event.project.clone(),
+                        evicted.event.event_id.clone(),
+                    ))
+                    .is_some_and(|recent| recent.cursor == evicted.cursor);
+                if remove {
+                    state.recent_cursors_by_event_id.remove(&(
+                        evicted.event.project.clone(),
+                        evicted.event.event_id.clone(),
+                    ));
+                }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn last_cursor(&self) -> u64 {
@@ -1081,7 +1500,7 @@ impl DurableJournal {
         let mut suffix_digest = [0_u8; 32];
         let mut after = raw_cursor;
         loop {
-            let page = self.query(EventQuery {
+            let page = self.query_unchecked(EventQuery {
                 signal: None,
                 after,
                 limit: RECOVERY_PAGE_EVENTS,
@@ -1147,6 +1566,8 @@ impl DurableJournal {
         if events.is_empty() {
             return Ok(());
         }
+        let restored_events = events.len() as u64;
+        let restore_time = Utc::now();
         let mut state = self.state.write().expect("journal state lock poisoned");
         let mut previous_cursor = state.last_cursor;
         let mut page_ids = HashMap::with_capacity(events.len());
@@ -1159,15 +1580,27 @@ impl DurableJournal {
                 );
             }
             previous_cursor = event.cursor;
+            if !self.dedupe.covers(event, restore_time)? {
+                continue;
+            }
             if let Some(previous) = page_ids
-                .insert(event.event.event_id.clone(), event.cursor)
+                .insert(
+                    (event.event.project.clone(), event.event.event_id.clone()),
+                    event.cursor,
+                )
                 .or_else(|| {
-                    state
-                        .recent_cursors_by_event_id
-                        .get(&event.event.event_id)
-                        .copied()
+                    recent_cursor_at(
+                        &state.recent_cursors_by_event_id,
+                        &event.event.project,
+                        &event.event.event_id,
+                        restore_time,
+                    )
                 })
-                .or(self.dedupe.lookup(&event.event.event_id)?)
+                .or(self.dedupe.lookup_at(
+                    &event.event.project,
+                    &event.event.event_id,
+                    restore_time,
+                )?)
             {
                 bail!(
                     "restored journal contains duplicate event_id {} at cursors {previous} and {}",
@@ -1199,34 +1632,108 @@ impl DurableJournal {
             .append_batch(&events)
             .context("restore ordered page into signal segments")?;
         self.dedupe
-            .append_batch(&events)
+            .append_batch_at(&events, restore_time)
             .context("restore ordered page into dedupe index")?;
+        self.dedupe.maintain_at(restore_time, false)?;
         for event in events {
-            Self::push_resident(&mut state, event, self.resident_limit);
+            Self::push_resident(&mut state, event, self.resident_limit)?;
         }
         storage::JournalHead::new(state.last_cursor, state.total_events)
             .with_projection_generation(state.projection_generation)
             .with_retention_generation(state.retention_generation)
             .persist(self.data_dir())
             .context("persist restored journal head")?;
-        self.accepted.add(page_ids.len() as u64);
+        self.accepted.add(restored_events);
         Ok(())
     }
 
-    fn result_for(&self, event_id: &str) -> Result<Option<AppendResult>> {
-        let recent = self
-            .state
-            .read()
-            .expect("journal state lock poisoned")
-            .recent_cursors_by_event_id
-            .get(event_id)
-            .copied();
-        let cursor = match recent {
-            Some(cursor) => Some(cursor),
-            None => self.dedupe.lookup(event_id)?,
+    pub(crate) fn restore_archive_dedupe_page(&self, events: &[StoredEvent]) -> Result<()> {
+        self.dedupe
+            .append_batch(events)
+            .context("restore cold archive IDs into the dedupe index")?;
+        self.dedupe.maintain_at(Utc::now(), false)?;
+        Ok(())
+    }
+
+    pub(crate) fn restore_archive_receipts(
+        &self,
+        receipts: &[storage::DedupeReceipt],
+        indexed_through_cursor: u64,
+    ) -> Result<()> {
+        self.dedupe
+            .append_receipts_at(receipts, indexed_through_cursor, Utc::now())
+            .context("restore independent archive dedupe receipts")?;
+        self.dedupe.maintain_at(Utc::now(), false)?;
+        Ok(())
+    }
+
+    pub(crate) fn set_restored_archive_head(
+        &self,
+        manifest: &storage::archive::ArchiveManifest,
+    ) -> Result<()> {
+        self.dedupe
+            .mark_rebuilt_through(manifest.raft_snapshot_index)?;
+        let dedupe = self.dedupe.stats()?;
+        if dedupe.newest_cursor > manifest.raft_snapshot_index
+            || dedupe.window_seconds != storage::IDEMPOTENCY_WINDOW_SECONDS as u64
+        {
+            bail!("restored archive dedupe index disagrees with its manifest");
+        }
+        let mut state = self.state.write().expect("journal state lock poisoned");
+        if state.last_cursor > manifest.raft_snapshot_index
+            || state.total_events > manifest.event_count
+        {
+            bail!("restored hot set exceeds its archive manifest");
+        }
+        let event_content_digest: [u8; 32] = hex::decode(&manifest.event_content_sha256)
+            .context("decode restored archive event content digest")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("archive event content digest must be 32 bytes"))?;
+        let newly_counted = manifest.event_count.saturating_sub(state.total_events);
+        state.last_cursor = manifest.raft_snapshot_index;
+        state.total_events = manifest.event_count;
+        state.retention_generation = manifest.retention_generation;
+        state.event_content_digest = event_content_digest;
+        state.projection_generation = state.projection_generation.saturating_add(1);
+        storage::JournalHead::new(state.last_cursor, state.total_events)
+            .with_projection_generation(state.projection_generation)
+            .with_retention_generation(state.retention_generation)
+            .persist(self.data_dir())?;
+        self.accepted.add(newly_counted);
+        Ok(())
+    }
+
+    fn result_for_at(
+        &self,
+        project: &str,
+        event_id: &str,
+        decision_time: DateTime<Utc>,
+    ) -> Result<Option<AppendResult>> {
+        let recent = {
+            let state = self.state.read().expect("journal state lock poisoned");
+            recent_receipt_at(
+                &state.recent_cursors_by_event_id,
+                project,
+                event_id,
+                decision_time,
+            )
+            .map(|(cursor, acknowledged_at)| (cursor, acknowledged_at.to_rfc3339()))
         };
-        Ok(cursor.map(|cursor| AppendResult {
+        let receipt = match recent {
+            Some(receipt) => Some(receipt),
+            None => self
+                .dedupe
+                .lookup_record_at(project, event_id, decision_time)?
+                .map(|(cursor, acknowledged_at)| {
+                    (
+                        cursor,
+                        DateTime::<Utc>::from_timestamp_nanos(acknowledged_at).to_rfc3339(),
+                    )
+                }),
+        };
+        Ok(receipt.map(|(cursor, acknowledged_at)| AppendResult {
             event_id: event_id.to_string(),
+            acknowledged_at,
             cursor,
             raw_cursor: cursor,
             commit_index: cursor,
@@ -1235,11 +1742,23 @@ impl DurableJournal {
     }
 
     pub fn query(&self, query: EventQuery) -> Result<Vec<StoredEvent>> {
-        self.ensure_recovered()?;
+        self.ensure_queryable()?;
+        self.query_unchecked(query)
+    }
+
+    fn query_unchecked(&self, query: EventQuery) -> Result<Vec<StoredEvent>> {
+        self.query_local_unchecked(query, 10_000)
+    }
+
+    fn query_local_unchecked(
+        &self,
+        query: EventQuery,
+        maximum_limit: usize,
+    ) -> Result<Vec<StoredEvent>> {
         let limit = if query.limit == 0 {
             100
         } else {
-            query.limit.clamp(1, 10_000)
+            query.limit.clamp(1, maximum_limit.max(1))
         };
         let state = self.state.read().expect("journal state lock poisoned");
         let mut by_cursor = BTreeMap::<u64, StoredEvent>::new();
@@ -1266,6 +1785,39 @@ impl DurableJournal {
                         event.cursor
                     );
                 }
+            }
+        }
+        Ok(by_cursor.into_values().take(limit).collect())
+    }
+
+    pub(crate) fn query_projection_events(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<StoredEvent>> {
+        self.ensure_recovered()?;
+        let limit = limit.clamp(1, 10_000);
+        let mut by_cursor = BTreeMap::<u64, StoredEvent>::new();
+        let archive_status = storage::archive::committed_status(self.data_dir())?;
+        if archive_status
+            .as_ref()
+            .is_some_and(|status| after < status.snapshot_index)
+        {
+            if let Some(events) =
+                storage::archive::read_committed_events_after(self.data_dir(), after, limit)?
+            {
+                for event in events {
+                    by_cursor.insert(event.cursor, event);
+                }
+            }
+        }
+        if by_cursor.len() < limit {
+            for event in self.query_unchecked(EventQuery {
+                signal: None,
+                after,
+                limit,
+            })? {
+                by_cursor.insert(event.cursor, event);
             }
         }
         Ok(by_cursor.into_values().take(limit).collect())
@@ -1333,10 +1885,8 @@ struct IngestBatchRequest {
 
 impl IngestBatchRequest {
     fn new(events: Vec<EventEnvelope>) -> Result<Self> {
-        let encoded_bytes = durability::SiftCommandV1::AppendEvents {
-            events: events.clone(),
-        }
-        .uncompressed_len()?;
+        let encoded_bytes = durability::SiftCommandV1::append_events_size_bound(events.clone())
+            .uncompressed_len()?;
         Ok(Self {
             events,
             encoded_bytes,
@@ -1539,6 +2089,7 @@ impl ServiceState {
         let projections = self.projections.clone();
         let flush_projections = self.projections.clone();
         let journal = self.journal.clone();
+        let flush_journal = self.journal.clone();
         let (shutdown, mut shutdown_rx) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(async move {
             loop {
@@ -1552,6 +2103,7 @@ impl ServiceState {
                         let runtime = projections.clone();
                         let journal = journal.clone();
                         match tokio::task::spawn_blocking(move || {
+                            journal.maintain_dedupe_at(Utc::now(), false)?;
                             journal.storage().seal_ready()?;
                             for name in runtime.projection_names() {
                                 runtime.catch_up(&name)?;
@@ -1570,6 +2122,7 @@ impl ServiceState {
             shutdown: Some(shutdown),
             task,
             projections: flush_projections,
+            journal: flush_journal,
         }
     }
 
@@ -1675,12 +2228,56 @@ impl ServiceState {
                             if let Some(raft) = &raft {
                                 let mut checkpoint_allowed =
                                     still_leader && outcome.captured_applied_index > 0;
+                                if outcome.retention_scan_pending {
+                                    checkpoint_allowed = false;
+                                    tracing::debug!(
+                                        "Sift keeps the retention fence and Raft log until the bounded scan completes"
+                                    );
+                                }
+                                let mut quorum_only_checkpoint = false;
                                 if checkpoint_allowed
                                     && remote_archive
                                     && outcome.pending_archive_gc
                                 {
                                     if !retention_capable {
                                         checkpoint_allowed = false;
+                                        if let (
+                                            Some(retention_generation),
+                                            Some(manifest_uri),
+                                            Some(manifest_sha256),
+                                        ) = (
+                                            outcome.retention_generation,
+                                            outcome.manifest_uri.clone(),
+                                            outcome.manifest_sha256.clone(),
+                                        ) {
+                                            match (durability::SiftCommandV1::
+                                                ArchiveCheckpointBarrier {
+                                                    retention_generation,
+                                                    manifest_uri,
+                                                    manifest_sha256,
+                                                })
+                                                .encoded()
+                                            {
+                                                Ok(command) => match raft.propose(command).await {
+                                                    Ok(index) => {
+                                                        outcome.captured_applied_index = index;
+                                                        quorum_only_checkpoint = true;
+                                                    }
+                                                    Err(error) => tracing::warn!(
+                                                        %error,
+                                                        "Sift no-GC quorum checkpoint barrier proposal failed"
+                                                    ),
+                                                },
+                                                Err(error) => tracing::warn!(
+                                                    %error,
+                                                    "Sift no-GC quorum checkpoint barrier encoding failed"
+                                                ),
+                                            }
+                                        } else {
+                                            tracing::warn!(
+                                                "Sift archive GC is pending without a checkpoint identity"
+                                            );
+                                        }
                                     } else if let (
                                         Some(retention_generation),
                                         Some(manifest_uri),
@@ -1734,29 +2331,42 @@ impl ServiceState {
                                             &checkpoint_journal,
                                             &checkpoint_state_machine,
                                             checkpoint_destination.as_deref(),
+                                            true,
                                         )
                                     })
                                     .await;
                                     match prepared {
                                         Ok(Ok(up_to)) => {
-                                            match raft
-                                                .snapshot_and_compact_through_outcome(up_to)
-                                                .await
-                                            {
+                                            let all_voter_checkpoint = tokio::time::timeout(
+                                                ALL_VOTER_CHECKPOINT_ATTEMPT,
+                                                raft.snapshot_and_compact_through_outcome(up_to),
+                                            )
+                                            .await
+                                            .map_err(|_| {
+                                                anyhow::anyhow!(
+                                                    "Sift all-voter checkpoint attempt exceeded {} seconds",
+                                                    ALL_VOTER_CHECKPOINT_ATTEMPT.as_secs()
+                                                )
+                                            })
+                                            .and_then(|result| result);
+                                            match all_voter_checkpoint {
                                                 Ok(compaction) if compaction.installed => {
                                                     changed = true;
                                                     replicated_checkpoint_installed = true;
                                                     if let Some(retention_generation) =
                                                         outcome.retention_generation
                                                     {
-                                                        if let Err(error) = state_machine
-                                                            .clear_retention_fence_after_checkpoint(
+                                                        if let Err(error) =
+                                                            clear_completed_retention_fence(
+                                                                raft,
+                                                                &state_machine,
                                                                 retention_generation,
                                                             )
+                                                            .await
                                                         {
                                                             tracing::warn!(
                                                                 %error,
-                                                                "Sift retention checkpoint installed but its local fence could not be cleared"
+                                                                "Sift retention checkpoint installed but its quorum fence-clear command failed"
                                                             );
                                                         }
                                                     }
@@ -1766,10 +2376,7 @@ impl ServiceState {
                                                         "Sift archived Raft prefix compacted"
                                                     );
                                                 }
-                                                Ok(_) => tracing::debug!(
-                                                    up_to,
-                                                    "Sift Raft prefix was already compacted"
-                                                ),
+                                                Ok(_) => {}
                                                 Err(error) => {
                                                     tracing::warn!(
                                                         %error,
@@ -1777,16 +2384,35 @@ impl ServiceState {
                                                         "Sift all-voter checkpoint failed; retain the Raft prefix for voter catch-up"
                                                     );
                                                     if remote_archive {
-                                                        match raft
-                                                            .snapshot_and_compact_through_quorum_outcome(
-                                                                up_to,
-                                                            )
-                                                            .await
+                                                        match compact_remote_quorum_without_gc(
+                                                            &journal,
+                                                            &state_machine,
+                                                            &destination,
+                                                            raft,
+                                                        )
+                                                        .await
                                                         {
                                                             Ok(compaction)
                                                                 if compaction.installed =>
                                                             {
                                                                 changed = true;
+                                                                if let Some(retention_generation) =
+                                                                    outcome.retention_generation
+                                                                {
+                                                                    if let Err(error) =
+                                                                        clear_completed_retention_fence(
+                                                                            raft,
+                                                                            &state_machine,
+                                                                            retention_generation,
+                                                                        )
+                                                                        .await
+                                                                    {
+                                                                        tracing::warn!(
+                                                                            %error,
+                                                                            "Sift quorum checkpoint installed but its fence-clear command failed"
+                                                                        );
+                                                                    }
+                                                                }
                                                                 tracing::info!(
                                                                     compacted_raft_index =
                                                                         compaction.snapshot_index,
@@ -1827,24 +2453,72 @@ impl ServiceState {
                                         ),
                                     }
                                 }
+                                if quorum_only_checkpoint {
+                                    match compact_remote_quorum_without_gc(
+                                        &journal,
+                                        &state_machine,
+                                        &destination,
+                                        raft,
+                                    )
+                                    .await
+                                    {
+                                        Ok(compaction) if compaction.installed => {
+                                            changed = true;
+                                            if let Some(retention_generation) =
+                                                outcome.retention_generation
+                                            {
+                                                if let Err(error) = clear_completed_retention_fence(
+                                                    raft,
+                                                    &state_machine,
+                                                    retention_generation,
+                                                )
+                                                .await
+                                                {
+                                                    tracing::warn!(
+                                                        %error,
+                                                        "Sift no-GC quorum checkpoint installed but its fence-clear command failed"
+                                                    );
+                                                }
+                                            }
+                                            tracing::info!(
+                                                    compacted_raft_index =
+                                                        compaction.snapshot_index,
+                                                    "Sift installed a no-GC archive checkpoint on quorum; every prior archive object is retained"
+                                                );
+                                        }
+                                        Ok(_) => {}
+                                        Err(error) => tracing::warn!(
+                                            %error,
+                                            "Sift no-GC quorum archive checkpoint failed"
+                                        ),
+                                    }
+                                }
                             }
                             let archive_gc_is_safe = still_leader
                                 && remote_archive
+                                && !outcome.retention_scan_pending
                                 && (!replicated || replicated_checkpoint_installed);
                             if archive_gc_is_safe {
                                 let gc_journal = journal.clone();
                                 match tokio::task::spawn_blocking(move || {
-                                    storage::archive::finalize_archive_gc_after_checkpoint(
+                                    storage::archive::finish_local_blob_gc(&gc_journal)?;
+                                    storage::archive::finalize_archive_gc_batch_after_checkpoint(
                                         gc_journal.storage().root(),
+                                        ARCHIVE_GC_BATCH_OBJECTS,
                                     )
                                 })
                                 .await
                                 {
-                                    Ok(Ok(deleted)) if deleted > 0 => tracing::info!(
+                                    Ok(Ok((deleted, complete))) if deleted > 0 => tracing::info!(
                                         deleted_archive_objects = deleted,
+                                        archive_gc_complete = complete,
                                         "Sift obsolete archive objects deleted after checkpoint"
                                     ),
-                                    Ok(Ok(_)) => {}
+                                    Ok(Ok((_, false))) => tracing::debug!(
+                                        archive_gc_batch_objects = ARCHIVE_GC_BATCH_OBJECTS,
+                                        "Sift archive GC saved its cursor for the next lifecycle pass"
+                                    ),
+                                    Ok(Ok((_, true))) => {}
                                     Ok(Err(error)) => tracing::warn!(
                                         %error,
                                         "Sift archive checkpoint committed but obsolete object cleanup failed"
@@ -2036,11 +2710,15 @@ impl CommitContext {
             .local_capacity
             .reserve(storage_reservation(encoded_bytes, governed.len()))
             .context("reserve local WAL and segment capacity before Raft admission")?;
+        let acknowledged_at = Utc::now();
         let current_commit = self.state_machine.applied_commit_index();
         let mut duplicate_results = Vec::with_capacity(governed.len());
         let mut all_duplicates = true;
         for event in &governed {
-            match self.journal.result_for(&event.event_id)? {
+            match self
+                .journal
+                .result_for_at(&event.project, &event.event_id, acknowledged_at)?
+            {
                 Some(result) => duplicate_results.push(result.with_commit_index(current_commit)),
                 None => {
                     all_duplicates = false;
@@ -2053,19 +2731,22 @@ impl CommitContext {
         }
         let event_ids = governed
             .iter()
-            .map(|event| event.event_id.clone())
+            .map(|event| (event.project.clone(), event.event_id.clone()))
             .collect::<Vec<_>>();
         let commit_index = self
-            .commit_command(durability::SiftCommandV1::AppendEvents { events: governed })
+            .commit_command(durability::SiftCommandV1::append_events_at(
+                governed,
+                acknowledged_at,
+            ))
             .await?;
         let results = if let Some(results) = self.state_machine.take_append_outcomes(commit_index) {
             results
         } else {
             let mut recovered = Vec::with_capacity(event_ids.len());
-            for event_id in event_ids {
+            for (project, event_id) in event_ids {
                 recovered.push(
                     self.journal
-                        .result_for(&event_id)?
+                        .result_for_at(&project, &event_id, acknowledged_at)?
                         .map(|result| result.with_commit_index(commit_index))
                         .context(
                             "state-machine commit completed without applying the Sift batch",
@@ -2092,7 +2773,7 @@ impl CommitContext {
 
 fn split_governed_batches(events: Vec<EventEnvelope>) -> Result<Vec<Vec<EventEnvelope>>> {
     let empty_size =
-        durability::SiftCommandV1::AppendEvents { events: Vec::new() }.uncompressed_len()?;
+        durability::SiftCommandV1::append_events_size_bound(Vec::new()).uncompressed_len()?;
     let mut chunks = Vec::new();
     let mut batch = Vec::new();
     let mut encoded_size = empty_size;
@@ -2132,6 +2813,7 @@ pub struct ProjectionWorker {
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
     task: tokio::task::JoinHandle<()>,
     projections: Arc<projection::ProjectionRuntime>,
+    journal: Arc<DurableJournal>,
 }
 
 pub struct ArchiveWorker {
@@ -2153,6 +2835,7 @@ struct LifecycleOutcome {
     retention_generation: Option<u64>,
     manifest_uri: Option<String>,
     manifest_sha256: Option<String>,
+    retention_scan_pending: bool,
 }
 
 async fn prepare_retention_fence(
@@ -2162,7 +2845,44 @@ async fn prepare_retention_fence(
     remote_archive: bool,
     retention_capable: bool,
 ) -> Result<Option<durability::RetentionFenceV1>> {
-    if let Some(fence) = state_machine.pending_retention_fence() {
+    if let Some((fence, applied_index)) = state_machine.pending_retention_fence() {
+        if let Some(raft) = raft {
+            raft.require_applied_index_on_all_voters(applied_index)
+                .await
+                .context("wait for every Sift voter to apply the retention fence")?;
+        }
+        if let Some(status) = storage::archive::committed_status(journal.storage().root())? {
+            if status.retention_scan_pending
+                && status.retention_generation >= fence.target_generation
+            {
+                let next = durability::RetentionFenceV1 {
+                    source_manifest_uri: status.manifest_uri,
+                    source_manifest_sha256: status.manifest_sha256,
+                    target_generation: status.retention_generation.saturating_add(1),
+                    evaluate_at: fence.evaluate_at,
+                };
+                if let Some(raft) = raft {
+                    let command = durability::SiftCommandV1::RetentionFence {
+                        fence: next.clone(),
+                    }
+                    .encoded()?;
+                    let fence_index = raft
+                        .propose(command)
+                        .await
+                        .context("advance the bounded Sift retention fence")?;
+                    raft.require_applied_index_on_all_voters(fence_index)
+                        .await
+                        .context(
+                            "wait for every Sift voter to apply the advanced retention fence",
+                        )?;
+                    return state_machine
+                        .pending_retention_fence()
+                        .context("advanced Sift retention fence was not applied locally")
+                        .map(|(fence, _)| Some(fence));
+                }
+                return Ok(Some(next));
+            }
+        }
         return Ok(Some(fence));
     }
     if !remote_archive || !retention_capable {
@@ -2185,13 +2905,17 @@ async fn prepare_retention_fence(
             fence: fence.clone(),
         }
         .encoded()?;
-        raft.propose(command)
+        let fence_index = raft
+            .propose(command)
             .await
             .context("commit Sift retention fence")?;
+        raft.require_applied_index_on_all_voters(fence_index)
+            .await
+            .context("wait for every Sift voter to apply the retention fence")?;
         return state_machine
             .pending_retention_fence()
             .context("committed Sift retention fence was not applied locally")
-            .map(Some);
+            .map(|(fence, _)| Some(fence));
     }
     Ok(Some(fence))
 }
@@ -2202,7 +2926,9 @@ fn run_lifecycle_attempt(
     destination: Option<&str>,
     retention_fence: Option<durability::RetentionFenceV1>,
 ) -> Result<LifecycleOutcome> {
+    storage::archive::reconcile_live_committed_retention(journal)?;
     storage::archive::reconcile_committed_wal(journal)?;
+    storage::archive::resume_local_blob_gc_batch(journal, 128, 1_280_000)?;
     let (applied_index, raw_cursor, segments) = state_machine.capture_archive_prefix()?;
     match destination {
         Some(destination) => {
@@ -2219,7 +2945,7 @@ fn run_lifecycle_attempt(
                 Some(LifecycleCommit {
                     manifest_uri: Some(receipt.manifest_uri),
                     event_count: receipt.manifest.event_count,
-                    segment_count: receipt.manifest.segments.len(),
+                    segment_count: receipt.manifest.segment_count as usize,
                 })
             } else {
                 None
@@ -2261,7 +2987,10 @@ fn run_lifecycle_attempt(
                 pending_archive_gc: storage::archive::archive_gc_pending(journal.storage().root()),
                 retention_generation: status.as_ref().map(|status| status.retention_generation),
                 manifest_uri: status.as_ref().map(|status| status.manifest_uri.clone()),
-                manifest_sha256: status.map(|status| status.manifest_sha256),
+                manifest_sha256: status.as_ref().map(|status| status.manifest_sha256.clone()),
+                retention_scan_pending: status
+                    .as_ref()
+                    .is_some_and(|status| status.retention_scan_pending),
             })
         }
         None => {
@@ -2293,6 +3022,7 @@ fn prepare_lifecycle_checkpoint(
     journal: &DurableJournal,
     state_machine: &durability::SiftStateMachine,
     destination: Option<&str>,
+    archive_gc_authorized: bool,
 ) -> Result<u64> {
     let (applied_index, raw_cursor, segments) = state_machine.capture_archive_prefix()?;
     if applied_index == 0 {
@@ -2311,7 +3041,11 @@ fn prepare_lifecycle_checkpoint(
                     segments,
                 )?;
             }
-            state_machine.prepare_archive_checkpoint(applied_index, raw_cursor)?;
+            if archive_gc_authorized {
+                state_machine.prepare_archive_checkpoint(applied_index, raw_cursor)?;
+            } else {
+                state_machine.prepare_archive_checkpoint_without_gc(applied_index, raw_cursor)?;
+            }
         }
         None => {
             let committed_cursor =
@@ -2324,6 +3058,46 @@ fn prepare_lifecycle_checkpoint(
         }
     }
     Ok(applied_index)
+}
+
+async fn compact_remote_quorum_without_gc(
+    journal: &Arc<DurableJournal>,
+    state_machine: &Arc<durability::SiftStateMachine>,
+    destination: &Option<String>,
+    raft: &Arc<raft_runtime::RaftHost>,
+) -> Result<raft_runtime::SnapshotCompactionOutcome> {
+    let checkpoint_journal = journal.clone();
+    let checkpoint_state_machine = state_machine.clone();
+    let checkpoint_destination = destination.clone();
+    let up_to = tokio::task::spawn_blocking(move || {
+        prepare_lifecycle_checkpoint(
+            &checkpoint_journal,
+            &checkpoint_state_machine,
+            checkpoint_destination.as_deref(),
+            false,
+        )
+    })
+    .await
+    .context("Sift no-GC quorum checkpoint preparation task panicked")??;
+    raft.snapshot_and_compact_through_quorum_outcome(up_to)
+        .await
+}
+
+async fn clear_completed_retention_fence(
+    raft: &Arc<raft_runtime::RaftHost>,
+    state_machine: &Arc<durability::SiftStateMachine>,
+    retention_generation: u64,
+) -> Result<()> {
+    let Some((fence, _)) = state_machine.pending_retention_fence() else {
+        return Ok(());
+    };
+    if fence.target_generation > retention_generation {
+        return Ok(());
+    }
+    raft.propose(durability::SiftCommandV1::clear_retention_fence(retention_generation).encoded()?)
+        .await
+        .context("commit Sift retention fence clear to quorum")?;
+    Ok(())
 }
 
 async fn compact_resident_all_voters(
@@ -2358,6 +3132,14 @@ impl ProjectionWorker {
             let _ = shutdown.send(true);
         }
         let _ = self.task.await;
+        let journal = self.journal;
+        match tokio::task::spawn_blocking(move || journal.maintain_dedupe_at(Utc::now(), true))
+            .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "dedupe shutdown flush failed"),
+            Err(error) => tracing::warn!(%error, "dedupe shutdown flush task panicked"),
+        }
         let projections = self.projections;
         match tokio::task::spawn_blocking(move || projections.persist_all()).await {
             Ok(Ok(())) => {}
@@ -4063,6 +4845,8 @@ pub struct IntegrityArchiveV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub committed_at: Option<String>,
     pub watermarks: IntegrityWatermarksV1,
+    pub retention_generation: u64,
+    pub retention_scan_pending: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, ToSchema)]
@@ -4140,24 +4924,21 @@ async fn admin_integrity(
             .unwrap_or(0)
     };
 
-    let mut after = 0_u64;
+    let mut reader = state
+        .journal
+        .projection_read_session(0)
+        .map_err(|error| ApiError::internal(format!("open integrity scan: {error}")))?;
     let mut event_count = 0_u64;
     let mut watermark = 0_u64;
     let mut event_id_digest = [0_u8; 32];
     let mut signals = IntegritySignalsV1::default();
     loop {
-        let page = state
-            .journal()
-            .query(EventQuery {
-                signal: None,
-                after,
-                limit: 10_000,
-            })
+        let page = reader
+            .read_next(10_000)
             .map_err(|error| ApiError::internal(format!("scan integrity events: {error}")))?;
-        let Some(last) = page.last() else {
+        if page.is_empty() {
             break;
-        };
-        after = last.cursor;
+        }
         for event in page.iter().filter(|event| event.event.project == project) {
             event_count = event_count.saturating_add(1);
             watermark = watermark.max(event.cursor);
@@ -4196,6 +4977,13 @@ async fn admin_integrity(
                     metrics: watermarks.metrics,
                     traces: watermarks.traces,
                 },
+                retention_generation: archive
+                    .as_ref()
+                    .map(|status| status.retention_generation)
+                    .unwrap_or_default(),
+                retention_scan_pending: archive
+                    .as_ref()
+                    .is_some_and(|status| status.retention_scan_pending),
             },
         },
     }))
@@ -4562,13 +5350,13 @@ pub fn openapi_json() -> Result<String> {
     serde_json::to_string_pretty(&openapi()).context("serialize OpenAPI contract")
 }
 
-fn now_rfc3339() -> String {
-    Utc::now().to_rfc3339()
+pub(crate) fn retention_rejection(event: &EventEnvelope) -> Option<String> {
+    retention_rejection_at(event, Utc::now())
 }
 
-pub(crate) fn retention_rejection(event: &EventEnvelope) -> Option<String> {
+fn retention_rejection_at(event: &EventEnvelope, decision_time: DateTime<Utc>) -> Option<String> {
     let occurred = DateTime::parse_from_rfc3339(&event.occurred_at).ok()?;
-    let cutoff = Utc::now() - chrono::Duration::days(180);
+    let cutoff = decision_time - chrono::Duration::days(180);
     (occurred.with_timezone(&Utc) < cutoff).then(|| {
         format!(
             "event `{}` occurred before Sift's 180-day retention boundary",

@@ -156,4 +156,37 @@ fn fresh_raw_rebuild_matches_and_installs_the_live_projection() {
     assert_eq!(runtime.current_cursor(PROJECTION_LOGGING_STORE).unwrap(), 2);
 }
 
+#[test]
+fn corrupt_projection_snapshot_is_quarantined_and_rebuilt_from_journal() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = Arc::new(DurableJournal::open(temp.path()).unwrap());
+    journal.append(event("evt-1", "database timeout")).unwrap();
+    let runtime = ProjectionRuntime::open(temp.path(), journal.clone()).unwrap();
+    runtime.catch_up(PROJECTION_LOGGING_STORE).unwrap();
+    runtime.persist_all().unwrap();
+    let expected_digest = runtime.semantic_digest(PROJECTION_LOGGING_STORE).unwrap();
+    drop(runtime);
+
+    let state_dir = temp.path().join("indexes").join(PROJECTION_LOGGING_STORE);
+    std::fs::write(state_dir.join("state.json"), b"{\"truncated\":").unwrap();
+
+    let rebuilt = ProjectionRuntime::open(temp.path(), journal).unwrap();
+    assert_eq!(rebuilt.current_cursor(PROJECTION_LOGGING_STORE).unwrap(), 1);
+    assert_eq!(
+        rebuilt.semantic_digest(PROJECTION_LOGGING_STORE).unwrap(),
+        expected_digest
+    );
+    assert_eq!(
+        std::fs::read_dir(&state_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("state.corrupt-"))
+            .count(),
+        1
+    );
+}
+
 // HANDWRITE-END

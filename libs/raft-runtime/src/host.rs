@@ -28,7 +28,7 @@ use raft_core::{
 use serde::{Deserialize, Serialize};
 use server_lifecycle::ShutdownDeadline;
 use tokio::sync::{watch, Mutex, Notify};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 
 use crate::config::{HostConfig, SnapshotPolicy};
 use crate::group::{GroupId, LEGACY_GROUP_ID};
@@ -1797,6 +1797,55 @@ impl RaftHost {
         Ok(())
     }
 
+    /// Verify that every voter has applied at least `index` while this node
+    /// remains leader in the same term.
+    ///
+    /// Products use this barrier before a destructive transition whose query
+    /// fence must be visible on every serving replica, not only on a quorum.
+    pub async fn require_applied_index_on_all_voters(&self, index: Index) -> Result<()> {
+        let (term, voters) = {
+            let node = self.shared.node.lock().await;
+            if !node.is_leader() && node.conf_state().membership.voters.len() > 1 {
+                return Err(anyhow!(
+                    "only the Raft leader can verify voter applied indexes"
+                ));
+            }
+            let local_applied = self.shared.sm.applied_index();
+            if local_applied < index {
+                return Err(anyhow!(
+                    "raft: local voter {} has applied index {local_applied}, below required index {index}",
+                    self.shared.id
+                ));
+            }
+            (
+                node.current_term(),
+                node.conf_state().membership.voters.clone(),
+            )
+        };
+        for voter in voters
+            .iter()
+            .copied()
+            .filter(|voter| *voter != self.shared.id)
+        {
+            let status = self.shared.request_status(voter).await?;
+            if status.applied_index < index {
+                return Err(anyhow!(
+                    "raft: voter {voter} has applied index {}, below required index {index}",
+                    status.applied_index
+                ));
+            }
+        }
+        let node = self.shared.node.lock().await;
+        if node.current_term() != term
+            || (!node.is_leader() && node.conf_state().membership.voters.len() > 1)
+        {
+            return Err(anyhow!(
+                "raft leadership changed while verifying voter applied indexes"
+            ));
+        }
+        Ok(())
+    }
+
     /// Capture a product-defined checkpoint and compact only the requested
     /// applied prefix.
     ///
@@ -1838,7 +1887,7 @@ impl RaftHost {
         up_to: Index,
         require_every_voter: bool,
     ) -> Result<SnapshotCompactionOutcome> {
-        let (term, snapshot_term, voters, bytes) = {
+        let (term, snapshot_term, voters, bytes, checkpoint_index, already_compacted) = {
             let n = self.shared.node.lock().await;
             let applied = self.shared.sm.applied_index();
             if up_to == 0 {
@@ -1852,7 +1901,9 @@ impl RaftHost {
                     "cannot compact unapplied Raft prefix {up_to}; state machine applied index is {applied}"
                 ));
             }
-            if up_to <= n.snapshot_index() {
+            if up_to <= n.snapshot_index()
+                && (!require_every_voter || n.conf_state().membership.voters.len() <= 1)
+            {
                 return Ok(SnapshotCompactionOutcome {
                     snapshot_index: n.snapshot_index(),
                     installed: false,
@@ -1863,18 +1914,33 @@ impl RaftHost {
                     "only the Raft leader can coordinate voter compaction"
                 ));
             }
-            let snapshot_term = n.term_at_index(up_to).ok_or_else(|| {
-                anyhow!("Raft prefix {up_to} has no term and cannot be compacted")
-            })?;
-            let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
-            self.shared.sm.snapshot_at(up_to, &mut sink)?;
-            (
-                n.current_term(),
-                snapshot_term,
-                n.conf_state().membership.voters.clone(),
-                sink.into_bytes(),
-            )
+            if up_to <= n.snapshot_index() {
+                let persisted = n.persisted_ref();
+                (
+                    n.current_term(),
+                    persisted.snapshot_term,
+                    n.conf_state().membership.voters.clone(),
+                    persisted.snapshot.to_vec(),
+                    persisted.snapshot_index,
+                    true,
+                )
+            } else {
+                let snapshot_term = n.term_at_index(up_to).ok_or_else(|| {
+                    anyhow!("Raft prefix {up_to} has no term and cannot be compacted")
+                })?;
+                let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
+                self.shared.sm.snapshot_at(up_to, &mut sink)?;
+                (
+                    n.current_term(),
+                    snapshot_term,
+                    n.conf_state().membership.voters.clone(),
+                    sink.into_bytes(),
+                    up_to,
+                    false,
+                )
+            }
         };
+        let up_to = checkpoint_index;
 
         let mut replies = Vec::new();
         let required_capability = self.shared.sm.snapshot_capability();
@@ -1895,23 +1961,52 @@ impl RaftHost {
             }
         }
         let quorum = voters.len() / 2 + 1;
+        let remote_voters = voters
+            .into_iter()
+            .filter(|voter| *voter != self.shared.id)
+            .collect::<Vec<_>>();
+        let required_remote_replies = if require_every_voter {
+            remote_voters.len()
+        } else {
+            quorum.saturating_sub(1)
+        };
         let mut refusals = Vec::new();
-        for voter in voters.into_iter().filter(|voter| *voter != self.shared.id) {
-            let response = match self
-                .shared
-                .request_snapshot(
-                    voter,
-                    InstallSnapshotReq {
-                        term,
-                        leader: self.shared.id,
-                        snapshot_index: up_to,
-                        snapshot_term,
-                        data: bytes.clone(),
-                    },
-                    required_capability,
-                )
-                .await
-            {
+        let mut requests = JoinSet::new();
+        for voter in remote_voters {
+            let shared = Arc::clone(&self.shared);
+            let data = bytes.clone();
+            requests.spawn(async move {
+                let response = shared
+                    .request_snapshot(
+                        voter,
+                        InstallSnapshotReq {
+                            term,
+                            leader: shared.id,
+                            snapshot_index: up_to,
+                            snapshot_term,
+                            data,
+                        },
+                        required_capability,
+                    )
+                    .await;
+                (voter, response)
+            });
+        }
+        while replies.len() < required_remote_replies {
+            let Some(joined) = requests.join_next().await else {
+                break;
+            };
+            let (voter, response) = match joined {
+                Ok(response) => response,
+                Err(error) if require_every_voter => {
+                    return Err(anyhow!("raft: snapshot worker failed: {error}"));
+                }
+                Err(error) => {
+                    refusals.push(format!("snapshot worker: {error}"));
+                    continue;
+                }
+            };
+            let response = match response {
                 Ok(response) => response,
                 Err(error) if require_every_voter => return Err(error),
                 Err(error) => {
@@ -1942,6 +2037,7 @@ impl RaftHost {
             }
             replies.push((voter, response));
         }
+        requests.abort_all();
 
         if replies.len() + 1 < quorum {
             return Err(anyhow!(
@@ -1967,7 +2063,7 @@ impl RaftHost {
         self.shared.persist(&n)?;
         Ok(SnapshotCompactionOutcome {
             snapshot_index: up_to,
-            installed: true,
+            installed: !already_compacted,
         })
     }
 

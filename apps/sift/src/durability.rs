@@ -17,6 +17,8 @@ use raft_runtime::{Index, OutcomeWindow, RaftStateMachine};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
+use chrono::{DateTime, SecondsFormat, Utc};
+
 use crate::{
     storage::SegmentManifest, AppendResult, DurableJournal, EventEnvelope, EventQuery, SignalKind,
     StoredEvent,
@@ -36,19 +38,19 @@ const SNAPSHOT_FRAME_HEADER_BYTES: usize = 16;
 const SNAPSHOT_PAGE_EVENTS: usize = 10_000;
 const MAX_SNAPSHOT_EVENT_BYTES: usize = 16 * 1024 * 1024;
 const COMMAND_MAGIC: &[u8; 8] = b"SIFTCMD1";
-const COMMAND_FORMAT_VERSION: u16 = 1;
+const COMMAND_FORMAT_VERSION: u16 = 2;
 const COMMAND_FLAG_GZIP: u16 = 1;
 const COMMAND_HEADER_BYTES: usize = 20;
 const MAX_ENCODED_COMMAND_BYTES: usize = RAFT_BATCH_MAX_BYTES + 64 * 1024;
 const APPEND_OUTCOME_WINDOW: u64 = 64;
 const ARCHIVE_CHECKPOINT_MAGIC: &[u8; 8] = b"SIFTRCP1";
-const ARCHIVE_CHECKPOINT_FORMAT_VERSION: u16 = 1;
+const ARCHIVE_CHECKPOINT_FORMAT_VERSION: u16 = 2;
 const ARCHIVE_CHECKPOINT_HEADER_BYTES: usize = 16;
 const MAX_ARCHIVE_CHECKPOINT_BYTES: usize = 64 * 1024;
 const LOCAL_CHECKPOINT_MAGIC: &[u8; 8] = b"SIFTLCP1";
-const LOCAL_CHECKPOINT_FORMAT_VERSION: u16 = 1;
+const LOCAL_CHECKPOINT_FORMAT_VERSION: u16 = 2;
 const RESIDENT_CHECKPOINT_MAGIC: &[u8; 8] = b"SIFTRSD1";
-const RESIDENT_CHECKPOINT_FORMAT_VERSION: u16 = 1;
+const RESIDENT_CHECKPOINT_FORMAT_VERSION: u16 = 2;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct CheckpointPosition {
@@ -67,12 +69,23 @@ struct ArchiveCheckpointV1 {
     manifest_uri: String,
     manifest_sha256: String,
     retention_generation: u64,
+    pending_retention: Option<RetentionFenceV1>,
+    /// Only an all-voter checkpoint may copy the manifest's object-deletion
+    /// plan to a replica. A quorum-only checkpoint always keeps old objects.
+    archive_gc_authorized: bool,
 }
 
 struct ValidatedArchiveStage {
     checkpoint: ArchiveCheckpointV1,
     manifest: crate::storage::archive::ArchiveManifest,
     root: tempfile::TempDir,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArchiveCheckpointInstallMode {
+    Current,
+    RetentionDelta,
+    FullRestore,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -83,6 +96,7 @@ struct LocalCheckpointV1 {
     raw_cursor: u64,
     local_snapshot_index: u64,
     watermarks: crate::storage::archive::ArchiveWatermarks,
+    pending_retention: Option<RetentionFenceV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -94,6 +108,7 @@ struct ResidentCheckpointV1 {
     event_count: u64,
     retention_generation: u64,
     event_content_sha256: String,
+    pending_retention: Option<RetentionFenceV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -109,6 +124,11 @@ pub(crate) struct RetentionFenceV1 {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum SiftCommandV1 {
     AppendEvents {
+        /// One leader-selected decision time makes duplicate classification
+        /// identical on every voter. Legacy commands omit this field and use
+        /// a deterministic event-time fallback.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        acknowledged_at: Option<String>,
         events: Vec<EventEnvelope>,
     },
     ArchiveCheckpointBarrier {
@@ -119,13 +139,43 @@ pub(crate) enum SiftCommandV1 {
     RetentionFence {
         fence: RetentionFenceV1,
     },
+    ClearRetentionFence {
+        retention_generation: u64,
+    },
 }
 
 impl SiftCommandV1 {
+    pub(crate) fn append_events_at(
+        events: Vec<EventEnvelope>,
+        acknowledged_at: DateTime<Utc>,
+    ) -> Self {
+        Self::AppendEvents {
+            acknowledged_at: Some(acknowledged_at.to_rfc3339_opts(SecondsFormat::Nanos, true)),
+            events,
+        }
+    }
+
+    pub(crate) fn append_events_now(events: Vec<EventEnvelope>) -> Self {
+        Self::append_events_at(events, Utc::now())
+    }
+
+    pub(crate) fn append_events_size_bound(events: Vec<EventEnvelope>) -> Self {
+        Self::AppendEvents {
+            acknowledged_at: Some("9999-12-31T23:59:59.999999999Z".to_string()),
+            events,
+        }
+    }
+
+    pub(crate) fn clear_retention_fence(retention_generation: u64) -> Self {
+        Self::ClearRetentionFence {
+            retention_generation,
+        }
+    }
+
     pub(crate) fn encoded(&self) -> Result<Vec<u8>> {
-        // Append batches remain readable by the previous Sift binary. The
-        // lifecycle emits the additive barrier variant only after every voter
-        // advertises sift-checkpoint-v2.
+        // MVP deployments run one immutable candidate digest on every voter.
+        // The v6 append record intentionally adds the shared decision time;
+        // Sift 0.1.1 command compatibility is not retained.
         self.uncompressed()
     }
 
@@ -172,22 +222,36 @@ impl SiftCommandV1 {
 
 #[doc(hidden)]
 pub fn encode_raft_batch_for_diagnostics(events: Vec<EventEnvelope>) -> Result<Vec<u8>> {
-    SiftCommandV1::AppendEvents { events }.encoded_compressed()
+    SiftCommandV1::append_events_now(events).encoded_compressed()
 }
 
 #[doc(hidden)]
 pub fn encode_default_raft_batch_for_diagnostics(events: Vec<EventEnvelope>) -> Result<Vec<u8>> {
-    SiftCommandV1::AppendEvents { events }.encoded()
+    SiftCommandV1::append_events_now(events).encoded()
+}
+
+#[doc(hidden)]
+pub fn encode_raft_batch_at_for_diagnostics(
+    events: Vec<EventEnvelope>,
+    acknowledged_at: &str,
+) -> Result<Vec<u8>> {
+    let acknowledged_at = DateTime::parse_from_rfc3339(acknowledged_at)
+        .context("diagnostic Raft acknowledgement time must be RFC3339")?
+        .with_timezone(&Utc);
+    SiftCommandV1::append_events_at(events, acknowledged_at).encoded()
 }
 
 #[doc(hidden)]
 pub fn decode_raft_batch_for_diagnostics(bytes: &[u8]) -> Result<Vec<EventEnvelope>> {
     match decode_command(bytes)? {
-        SiftCommandV1::AppendEvents { events } => Ok(events),
+        SiftCommandV1::AppendEvents { events, .. } => Ok(events),
         SiftCommandV1::ArchiveCheckpointBarrier { .. } => {
             bail!("Sift Raft command is an archive checkpoint barrier")
         }
         SiftCommandV1::RetentionFence { .. } => bail!("Sift Raft command is a retention fence"),
+        SiftCommandV1::ClearRetentionFence { .. } => {
+            bail!("Sift Raft command clears a retention fence")
+        }
     }
 }
 
@@ -205,11 +269,19 @@ pub fn encode_archive_checkpoint_barrier_for_diagnostics(
     .encoded()
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[doc(hidden)]
+pub fn encode_clear_retention_fence_for_diagnostics(retention_generation: u64) -> Result<Vec<u8>> {
+    SiftCommandV1::clear_retention_fence(retention_generation).encoded()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SnapshotMetadata {
     pub applied_index: u64,
     pub last_cursor: u64,
     pub event_count: u64,
+    /// `None` means the legacy full snapshot had no control-state field.
+    /// `Some(None)` is an authoritative cleared fence.
+    pub pending_retention: Option<Option<RetentionFenceV1>>,
 }
 
 /// Write one stable journal prefix as framed binary data.
@@ -226,15 +298,16 @@ pub(crate) fn write_snapshot(
         applied_index,
         last_cursor,
         event_count,
+        pending_retention: None,
     };
-    write_snapshot_header(writer, metadata)?;
+    write_snapshot_header(writer, &metadata)?;
 
     let mut after = 0_u64;
     let mut written = 0_u64;
     let mut expected_cursor = 1_u64;
     while written < event_count {
         let page = journal
-            .query(EventQuery {
+            .query_unchecked(EventQuery {
                 signal: None,
                 after,
                 limit: SNAPSHOT_PAGE_EVENTS,
@@ -421,6 +494,7 @@ fn validate_archive_checkpoint_install(
     let manifest: crate::storage::archive::ArchiveManifest =
         serde_json::from_slice(&manifest_bytes)
             .context("decode Sift archive checkpoint manifest during validation")?;
+    crate::storage::archive::validate_archive_manifest(&manifest)?;
     if manifest.raft_snapshot_index != checkpoint.archive_snapshot_index
         || manifest.watermarks != checkpoint.watermarks
         || manifest.raft_snapshot_index != checkpoint.raw_cursor
@@ -428,33 +502,9 @@ fn validate_archive_checkpoint_install(
     {
         bail!("Sift archive checkpoint is not covered by its manifest");
     }
-    let empty = journal.last_cursor() == 0 && journal.total_event_count() == 0;
-    let local_is_caught_up = journal.last_cursor() >= checkpoint.raw_cursor;
-    let local_status = crate::storage::archive::committed_status(journal.data_dir())?;
-    let local_generation = local_status
-        .as_ref()
-        .map(|status| status.retention_generation)
-        .unwrap_or_default();
-    if local_generation > checkpoint.retention_generation {
-        bail!("Sift archive checkpoint retention generation moved backwards");
-    }
-    let suffix_events = journal.last_cursor().saturating_sub(checkpoint.raw_cursor);
-    let expected_local_events = manifest
-        .event_count
-        .checked_add(suffix_events)
-        .context("archive checkpoint event count exhausted u64")?;
-    let local_prefix_matches = if local_is_caught_up {
-        let (events, digest, _) = journal.checkpoint_identity(checkpoint.raw_cursor)?;
-        events == manifest.event_count && hex::encode(digest) == manifest.event_content_sha256
-    } else {
-        false
-    };
-    let needs_full_restore = empty
-        || !local_is_caught_up
-        || checkpoint.retention_generation > local_generation
-        || !local_prefix_matches
-        || journal.total_event_count() != expected_local_events;
-    if needs_full_restore {
+    if archive_checkpoint_install_mode(journal, checkpoint, &manifest)?
+        == ArchiveCheckpointInstallMode::FullRestore
+    {
         let restored_root = tempfile::tempdir_in(journal.data_dir().join("tmp"))?;
         let restored =
             crate::storage::archive::restore_gcs(&checkpoint.manifest_uri, restored_root.path())
@@ -478,6 +528,61 @@ fn validate_archive_checkpoint_install(
         }));
     }
     Ok(None)
+}
+
+fn archive_checkpoint_install_mode(
+    journal: &DurableJournal,
+    checkpoint: &ArchiveCheckpointV1,
+    manifest: &crate::storage::archive::ArchiveManifest,
+) -> Result<ArchiveCheckpointInstallMode> {
+    let empty = journal.last_cursor() == 0 && journal.total_event_count() == 0;
+    if empty || journal.last_cursor() < checkpoint.raw_cursor {
+        return Ok(ArchiveCheckpointInstallMode::FullRestore);
+    }
+    let local_status = crate::storage::archive::committed_status(journal.data_dir())?;
+    let local_generation = local_status
+        .as_ref()
+        .map(|status| status.retention_generation)
+        .unwrap_or_default();
+    if local_generation > checkpoint.retention_generation {
+        bail!("Sift archive checkpoint retention generation moved backwards");
+    }
+    let suffix_events = journal.last_cursor().saturating_sub(checkpoint.raw_cursor);
+    let (prefix_events, prefix_digest, prefix_generation) =
+        journal.checkpoint_identity(checkpoint.raw_cursor)?;
+    if prefix_generation == checkpoint.retention_generation
+        && prefix_events == manifest.event_count
+        && hex::encode(prefix_digest) == manifest.event_content_sha256
+        && journal.total_event_count()
+            == manifest
+                .event_count
+                .checked_add(suffix_events)
+                .context("archive checkpoint event count exhausted u64")?
+    {
+        return Ok(ArchiveCheckpointInstallMode::Current);
+    }
+    let Some(delta) = &manifest.retention_delta else {
+        return Ok(ArchiveCheckpointInstallMode::FullRestore);
+    };
+    let source_status_matches = local_status.as_ref().is_some_and(|status| {
+        status.manifest_uri == delta.source_manifest_uri
+            && status.manifest_sha256 == delta.source_manifest_sha256
+            && status.retention_generation == delta.source_generation
+    });
+    let source_total = delta
+        .source_event_count
+        .checked_add(suffix_events)
+        .context("retention delta source event count exhausted u64")?;
+    if source_status_matches
+        && prefix_generation == delta.source_generation
+        && prefix_events == delta.source_event_count
+        && hex::encode(prefix_digest) == delta.source_event_content_sha256
+        && journal.total_event_count() == source_total
+        && checkpoint.retention_generation == delta.source_generation.saturating_add(1)
+    {
+        return Ok(ArchiveCheckpointInstallMode::RetentionDelta);
+    }
+    Ok(ArchiveCheckpointInstallMode::FullRestore)
 }
 
 fn write_archive_checkpoint(
@@ -593,6 +698,9 @@ fn validate_local_checkpoint(checkpoint: &LocalCheckpointV1) -> Result<()> {
     {
         bail!("Sift local checkpoint metadata is invalid");
     }
+    if let Some(fence) = &checkpoint.pending_retention {
+        validate_retention_fence(fence)?;
+    }
     Ok(())
 }
 
@@ -664,6 +772,9 @@ fn validate_resident_checkpoint(checkpoint: &ResidentCheckpointV1) -> Result<()>
     {
         bail!("Sift resident checkpoint metadata is invalid");
     }
+    if let Some(fence) = &checkpoint.pending_retention {
+        validate_retention_fence(fence)?;
+    }
     Ok(())
 }
 
@@ -698,6 +809,7 @@ fn restore_resident_checkpoint(
         applied_index: checkpoint.applied_index,
         last_cursor: checkpoint.raw_cursor,
         event_count: checkpoint.event_count,
+        pending_retention: Some(checkpoint.pending_retention.clone()),
     })
 }
 
@@ -724,6 +836,7 @@ fn restore_local_checkpoint(
         applied_index: checkpoint.applied_index,
         last_cursor: journal.last_cursor(),
         event_count: journal.total_event_count(),
+        pending_retention: Some(checkpoint.pending_retention.clone()),
     })
 }
 
@@ -746,6 +859,9 @@ fn validate_archive_checkpoint(checkpoint: &ArchiveCheckpointV1) -> Result<()> {
     {
         bail!("Sift archive checkpoint metadata is invalid");
     }
+    if let Some(fence) = &checkpoint.pending_retention {
+        validate_retention_fence(fence)?;
+    }
     Ok(())
 }
 
@@ -763,6 +879,7 @@ fn restore_archive_checkpoint(
     let expected_manifest: crate::storage::archive::ArchiveManifest =
         serde_json::from_slice(&manifest_bytes)
             .context("decode Sift archive checkpoint manifest")?;
+    crate::storage::archive::validate_archive_manifest(&expected_manifest)?;
     if expected_manifest.raft_snapshot_index != checkpoint.archive_snapshot_index
         || expected_manifest.watermarks != checkpoint.watermarks
         || expected_manifest.raft_snapshot_index != checkpoint.raw_cursor
@@ -771,38 +888,13 @@ fn restore_archive_checkpoint(
         bail!("Sift archive checkpoint is not covered by its manifest");
     }
 
-    let empty = journal.last_cursor() == 0 && journal.total_event_count() == 0;
-    let local_is_caught_up = journal.last_cursor() >= checkpoint.raw_cursor;
-    let local_status = crate::storage::archive::committed_status(journal.data_dir())?;
-    let local_generation = local_status
-        .as_ref()
-        .map(|status| status.retention_generation);
-    if local_generation.is_some_and(|generation| generation > checkpoint.retention_generation) {
-        bail!("Sift archive checkpoint retention generation moved backwards");
-    }
-    let suffix_events = journal.last_cursor().saturating_sub(checkpoint.raw_cursor);
-    let expected_local_events = expected_manifest
-        .event_count
-        .checked_add(suffix_events)
-        .context("archive checkpoint event count exhausted u64")?;
-    let local_prefix_matches = if local_is_caught_up {
-        let (events, digest, _) = journal.checkpoint_identity(checkpoint.raw_cursor)?;
-        events == expected_manifest.event_count
-            && hex::encode(digest) == expected_manifest.event_content_sha256
-    } else {
-        false
-    };
-    let needs_full_restore = empty
-        || !local_is_caught_up
-        || checkpoint.retention_generation > local_generation.unwrap_or_default()
-        || !local_prefix_matches
-        || journal.total_event_count() != expected_local_events;
+    let install_mode = archive_checkpoint_install_mode(journal, checkpoint, &expected_manifest)?;
     let receipt = crate::storage::archive::ArchiveReceipt {
         manifest_uri: checkpoint.manifest_uri.clone(),
         manifest_sha256: checkpoint.manifest_sha256.clone(),
         manifest: expected_manifest.clone(),
     };
-    if needs_full_restore {
+    if install_mode == ArchiveCheckpointInstallMode::FullRestore {
         let restored_root = match staged_archive {
             Some(stage)
                 if stage.checkpoint == *checkpoint && stage.manifest == expected_manifest =>
@@ -834,19 +926,30 @@ fn restore_archive_checkpoint(
         let restored = DurableJournal::open(restored_root.path())
             .context("open isolated Sift archive checkpoint journal")?;
         journal.adopt_archive_checkpoint(&restored, &receipt, checkpoint.raw_cursor)?;
+    } else if install_mode == ArchiveCheckpointInstallMode::RetentionDelta {
+        journal.adopt_archive_retention_delta(&receipt, checkpoint.raw_cursor)?;
     } else {
         journal.adopt_archive_coverage(&receipt, checkpoint.raw_cursor)?;
     }
-    crate::storage::archive::install_archive_gc_plan(journal.data_dir(), &receipt)?;
+    if checkpoint.archive_gc_authorized {
+        crate::storage::archive::install_archive_gc_plan(journal.data_dir(), &receipt)?;
+        // Every voter must finish its local content-addressed blob plan before
+        // it acknowledges this all-voter checkpoint. The leader can then
+        // delete the remote plan pages without stranding a follower.
+        crate::storage::archive::finish_local_blob_gc(journal)?;
+    } else {
+        crate::storage::archive::withhold_archive_gc_plan(journal.data_dir())?;
+    }
     crate::storage::archive::evict_committed_cold_segments_at(journal, chrono::Utc::now())?;
     Ok(SnapshotMetadata {
         applied_index: checkpoint.applied_index,
         last_cursor: expected_manifest.raft_snapshot_index,
         event_count: expected_manifest.event_count,
+        pending_retention: Some(checkpoint.pending_retention.clone()),
     })
 }
 
-fn write_snapshot_header(writer: &mut dyn Write, metadata: SnapshotMetadata) -> Result<()> {
+fn write_snapshot_header(writer: &mut dyn Write, metadata: &SnapshotMetadata) -> Result<()> {
     let mut header = Vec::with_capacity(SNAPSHOT_HEADER_BYTES);
     header.extend_from_slice(SNAPSHOT_MAGIC);
     header.extend_from_slice(&SNAPSHOT_FORMAT_VERSION.to_le_bytes());
@@ -978,6 +1081,7 @@ fn read_snapshot_header(reader: &mut dyn Read) -> Result<SnapshotMetadata> {
         applied_index: u64::from_le_bytes(header[12..20].try_into().unwrap()),
         last_cursor: u64::from_le_bytes(header[20..28].try_into().unwrap()),
         event_count: u64::from_le_bytes(header[28..36].try_into().unwrap()),
+        pending_retention: None,
     })
 }
 
@@ -1080,18 +1184,26 @@ impl SiftStateMachine {
         self.applied_index.load(Ordering::Acquire)
     }
 
-    pub(crate) fn pending_retention_fence(&self) -> Option<RetentionFenceV1> {
-        self.control
+    pub(crate) fn pending_retention_fence(&self) -> Option<(RetentionFenceV1, u64)> {
+        let control = self
+            .control
             .lock()
-            .expect("Sift control state lock poisoned")
+            .expect("Sift control state lock poisoned");
+        control
             .pending_retention
             .clone()
+            .map(|fence| (fence, control.applied_index))
     }
 
     pub(crate) fn clear_retention_fence_after_checkpoint(
         &self,
         retention_generation: u64,
     ) -> Result<()> {
+        if crate::storage::archive::committed_status(self.journal.data_dir())?
+            .is_some_and(|status| status.retention_scan_pending)
+        {
+            return Ok(());
+        }
         let _gate = self
             .commit_gate
             .lock()
@@ -1110,6 +1222,19 @@ impl SiftStateMachine {
             self.journal.set_retention_fenced(false);
         }
         Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn clear_retention_fence_after_checkpoint_for_diagnostics(
+        &self,
+        retention_generation: u64,
+    ) -> Result<()> {
+        self.clear_retention_fence_after_checkpoint(retention_generation)
+    }
+
+    #[doc(hidden)]
+    pub fn retention_fence_pending_for_diagnostics(&self) -> bool {
+        self.pending_retention_fence().is_some()
     }
 
     pub fn apply_local(&self, index: u64, command: &[u8]) -> Result<()> {
@@ -1188,6 +1313,26 @@ impl SiftStateMachine {
 
     #[doc(hidden)]
     pub fn prepare_archive_checkpoint(&self, applied_index: u64, raw_cursor: u64) -> Result<()> {
+        self.prepare_archive_checkpoint_with_gc(applied_index, raw_cursor, true)
+    }
+
+    /// Prepare a GCS-backed checkpoint that can bound the Raft log on quorum
+    /// but cannot authorize deletion of any archive object.
+    #[doc(hidden)]
+    pub fn prepare_archive_checkpoint_without_gc(
+        &self,
+        applied_index: u64,
+        raw_cursor: u64,
+    ) -> Result<()> {
+        self.prepare_archive_checkpoint_with_gc(applied_index, raw_cursor, false)
+    }
+
+    fn prepare_archive_checkpoint_with_gc(
+        &self,
+        applied_index: u64,
+        raw_cursor: u64,
+        archive_gc_authorized: bool,
+    ) -> Result<()> {
         if applied_index == 0 {
             bail!("cannot checkpoint an empty Sift Raft prefix");
         }
@@ -1208,6 +1353,16 @@ impl SiftStateMachine {
             manifest_uri: status.manifest_uri,
             manifest_sha256: status.manifest_sha256,
             retention_generation: status.retention_generation,
+            pending_retention: if archive_gc_authorized && !status.retention_scan_pending {
+                None
+            } else {
+                self.control
+                    .lock()
+                    .expect("Sift control state lock poisoned")
+                    .pending_retention
+                    .clone()
+            },
+            archive_gc_authorized,
         };
         validate_archive_checkpoint(&checkpoint)?;
         *self
@@ -1236,6 +1391,12 @@ impl SiftStateMachine {
             raw_cursor,
             local_snapshot_index: status.snapshot_index,
             watermarks: status.watermarks,
+            pending_retention: self
+                .control
+                .lock()
+                .expect("Sift control state lock poisoned")
+                .pending_retention
+                .clone(),
         };
         validate_local_checkpoint(&checkpoint)?;
         *self
@@ -1273,6 +1434,12 @@ impl SiftStateMachine {
             event_count,
             retention_generation,
             event_content_sha256: hex::encode(event_content_digest),
+            pending_retention: self
+                .control
+                .lock()
+                .expect("Sift control state lock poisoned")
+                .pending_retention
+                .clone(),
         };
         validate_resident_checkpoint(&checkpoint)?;
         *self
@@ -1348,7 +1515,10 @@ impl SiftStateMachine {
 
 impl RaftStateMachine for SiftStateMachine {
     fn snapshot_capability(&self) -> Option<&'static str> {
-        Some("sift-checkpoint-v3")
+        // v6 requires leader-selected acknowledgement time on every new
+        // append command. One immutable candidate digest is deployed across
+        // all voters before coordinated checkpoints are allowed.
+        Some("sift-checkpoint-v7")
     }
 
     fn apply(&self, index: Index, command: &[u8]) -> Result<()> {
@@ -1373,10 +1543,14 @@ impl RaftStateMachine for SiftStateMachine {
         }
         let mut pending_retention_update = None;
         let results = match command {
-            SiftCommandV1::AppendEvents { events } => {
+            SiftCommandV1::AppendEvents {
+                acknowledged_at,
+                events,
+            } => {
                 validate_events(&events)?;
+                let acknowledged_at = append_decision_time(acknowledged_at.as_deref(), &events)?;
                 self.journal
-                    .append_durable_batch(events)?
+                    .append_durable_batch_at(events, acknowledged_at)?
                     .into_iter()
                     .map(|result| result.with_commit_index(index))
                     .collect()
@@ -1406,6 +1580,30 @@ impl RaftStateMachine for SiftStateMachine {
                     (self.journal.retention_generation() < fence.target_generation)
                         .then_some(fence),
                 );
+                Vec::new()
+            }
+            SiftCommandV1::ClearRetentionFence {
+                retention_generation,
+            } => {
+                if retention_generation == 0
+                    || self.journal.retention_generation() < retention_generation
+                    || crate::storage::archive::committed_status(self.journal.data_dir())?
+                        .is_some_and(|status| status.retention_scan_pending)
+                {
+                    bail!("Sift retention fence clear is not covered by committed retention");
+                }
+                let current = self
+                    .control
+                    .lock()
+                    .expect("Sift control state lock poisoned")
+                    .pending_retention
+                    .clone();
+                if current
+                    .as_ref()
+                    .is_some_and(|fence| fence.target_generation <= retention_generation)
+                {
+                    pending_retention_update = Some(None);
+                }
                 Vec::new()
             }
         };
@@ -1489,13 +1687,25 @@ impl RaftStateMachine for SiftStateMachine {
             reader,
             staged_archive,
         )?;
-        let pending_retention = self
+        let current_pending_retention = self
             .control
             .lock()
             .expect("Sift control state lock poisoned")
             .pending_retention
-            .clone()
-            .filter(|fence| fence.target_generation > self.journal.retention_generation());
+            .clone();
+        let pending_retention = match snapshot.pending_retention.clone() {
+            Some(None)
+                if current_pending_retention.as_ref().is_none_or(|fence| {
+                    fence.target_generation <= self.journal.retention_generation()
+                }) =>
+            {
+                None
+            }
+            Some(Some(snapshot_fence)) => {
+                merge_pending_retention(current_pending_retention, Some(snapshot_fence))?
+            }
+            _ => current_pending_retention,
+        };
         if snapshot.applied_index <= current_applied_index {
             let mut control = self
                 .control
@@ -1552,6 +1762,30 @@ fn validate_events(events: &[EventEnvelope]) -> Result<()> {
     Ok(())
 }
 
+fn append_decision_time(
+    acknowledged_at: Option<&str>,
+    events: &[EventEnvelope],
+) -> Result<DateTime<Utc>> {
+    if let Some(acknowledged_at) = acknowledged_at {
+        return Ok(DateTime::parse_from_rfc3339(acknowledged_at)
+            .context("Sift Raft acknowledgement time must be RFC3339")?
+            .with_timezone(&Utc));
+    }
+
+    // Deterministic read compatibility for pre-v6 commands. New candidates
+    // always send the explicit field. Never consult a voter's local clock in
+    // state-machine apply.
+    events
+        .iter()
+        .try_fold(None::<DateTime<Utc>>, |latest, event| {
+            let observed = DateTime::parse_from_rfc3339(&event.observed_at)
+                .context("legacy Sift command observed_at must be RFC3339")?
+                .with_timezone(&Utc);
+            anyhow::Ok(Some(latest.map_or(observed, |latest| latest.max(observed))))
+        })?
+        .context("legacy Sift append command must contain an event")
+}
+
 fn validate_retention_fence(fence: &RetentionFenceV1) -> Result<()> {
     if fence.target_generation == 0
         || !fence.source_manifest_uri.starts_with("gs://")
@@ -1565,6 +1799,34 @@ fn validate_retention_fence(fence: &RetentionFenceV1) -> Result<()> {
         bail!("Sift retention fence metadata is invalid");
     }
     Ok(())
+}
+
+fn merge_pending_retention(
+    current: Option<RetentionFenceV1>,
+    incoming: Option<RetentionFenceV1>,
+) -> Result<Option<RetentionFenceV1>> {
+    match (current, incoming) {
+        (None, incoming) => Ok(incoming),
+        (current, None) => Ok(current),
+        (Some(current), Some(incoming))
+            if current.target_generation == incoming.target_generation =>
+        {
+            if current != incoming {
+                bail!(
+                    "Sift retention fences disagree for generation {}",
+                    current.target_generation
+                );
+            }
+            Ok(Some(current))
+        }
+        (Some(current), Some(incoming)) => Ok(Some(
+            if current.target_generation > incoming.target_generation {
+                current
+            } else {
+                incoming
+            },
+        )),
+    }
 }
 
 fn decode_command(bytes: &[u8]) -> Result<SiftCommandV1> {
@@ -1606,7 +1868,7 @@ fn decode_command(bytes: &[u8]) -> Result<SiftCommandV1> {
     if crc32fast::hash(&raw) != expected_crc {
         bail!("compressed Sift Raft batch checksum mismatch");
     }
-    serde_json::from_slice(&raw).context("decode compressed Sift command v1")
+    serde_json::from_slice(&raw).context("decode compressed Sift command")
 }
 
 fn persist_control(path: &Path, control: &ControlState) -> Result<()> {

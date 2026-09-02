@@ -83,6 +83,9 @@ url = "http://{address}/v1/logs"
 body = '{{"item_id":"load-{{{{rig.sequence}}}}","padded":"{{{{rig.sequence_06}}}}","hex":"{{{{rig.sequence_016x}}}}"}}'
 bearer_token_file = "{}"
 headers = {{ x-sift-project = "mvp-project" }}
+
+[request.expect.jsonpath]
+"$.partialSuccess" = "absent"
 "#,
         token_path.display()
     ))
@@ -128,4 +131,42 @@ headers = {{ x-sift-project = "mvp-project" }}
             ("000003".into(), "0000000000000003".into()),
         ]
     );
+}
+
+#[test]
+fn load_marks_an_otlp_partial_success_as_failed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = read_request(&mut stream);
+        let body = r#"{"partialSuccess":{"rejectedLogRecords":1}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let profile: LoadProfile = toml::from_str(&format!(
+        r#"
+target_qps = 1
+workers = 1
+duration_secs = 1
+
+[request]
+method = "POST"
+url = "http://{address}/v1/logs"
+body = '{{}}'
+
+[request.expect.jsonpath]
+"$.partialSuccess" = "absent"
+"#
+    ))
+    .unwrap();
+
+    let stats = loadgen::run(&profile, &VarStore::new());
+    server.join().unwrap();
+    assert_eq!(stats.total, 1);
+    assert_eq!(stats.failed, 1);
 }
