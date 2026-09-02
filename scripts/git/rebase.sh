@@ -31,13 +31,15 @@ if [ $# -eq 0 ]; then
   "${GIT[@]}" fetch origin main
   target=origin/main
 else
-  target=$1
-  if ! "${GIT[@]}" rev-parse --verify --quiet "$target^{commit}" >/dev/null; then
-    "${GIT[@]}" fetch origin "$target"
+  # a named target means the freshly fetched origin/<branch>; the bare local
+  # branch is only a fallback for a target origin does not have
+  if "${GIT[@]}" fetch origin "$1" 2>/dev/null; then
     target=origin/$1
-    "${GIT[@]}" rev-parse --verify --quiet "$target^{commit}" >/dev/null \
-      || { echo "refused: cannot resolve $1 locally or as origin/$1" >&2; exit 2; }
+  else
+    target=$1
   fi
+  "${GIT[@]}" rev-parse --verify --quiet "$target^{commit}" >/dev/null \
+    || { echo "refused: cannot resolve $1 as origin/$1 or locally" >&2; exit 2; }
 fi
 [ "$target" != "$current" ] \
   || { echo "refused: target $target is the current branch" >&2; exit 2; }

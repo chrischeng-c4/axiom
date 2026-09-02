@@ -12,9 +12,10 @@ conflicts correctly.
 
 ## Rules
 
-- The argument is the target branch; no argument means a freshly fetched
-  `origin/main`. The script resolves a named branch locally first, then as
-  `origin/<branch>`.
+- The target is always the remote ref: no argument means a freshly fetched
+  `origin/main`, and a named branch means the freshly fetched
+  `origin/<branch>` — the script falls back to the bare local branch only
+  when origin does not have it.
 - Do not push afterwards. Report the divergence the script prints and leave
   publishing to the user (or `/git:push`, `/git:land`).
 - A `refused:` exit is the user's to fix — a dirty tree means they commit or

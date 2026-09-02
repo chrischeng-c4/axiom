@@ -1,6 +1,6 @@
 ---
 name: git:land
-description: "Land the current branch end-to-end: commit changes, rebase on origin/main, push, open or reuse a PR to main, merge it, then rebase and push the working branch back onto origin/main. Use when the user asks to git land, land this branch, publish, PR to main and merge, or gives the sequence commit/rebase/push/PR/merge/rebase."
+description: "Land the current branch end-to-end: commit changes, rebase on origin/main, push, open or reuse a PR to origin/main, merge it, then rebase and push the working branch back onto origin/main. Use when the user asks to git land, land this branch, publish, PR to main and merge, or gives the sequence commit/rebase/push/PR/merge/rebase."
 user-invocable: true
 ---
 
@@ -12,7 +12,7 @@ merged `origin/main` state.
 ## Rules
 
 - Execute the phases in this order: commit, rebase `origin/main`, push, PR to
-  `main`, merge, rebase `origin/main`.
+  `origin/main`, merge, rebase `origin/main`.
 - The commit phase delegates to `/git:commit`, both rebase phases to
   `/git:rebase` (no argument = `origin/main`), both push phases to
   `/git:push`, the PR phase to `/gh:create-pr`, and the merge phase to
@@ -72,7 +72,8 @@ Run the `/git:push` skill. It sets the upstream on a first push and uses
 ### Step 4: PR to origin/main
 
 Run the `/gh:create-pr` skill with no argument. It opens — or reuses — the
-one open PR from the current branch to base `main` and reports its
+one open PR from the current branch to `origin/main` (GitHub base name
+`main`) and reports its
 mergeability and check status. Its preflight passes here because Step 3 left
 the branch in sync with its upstream.
 
