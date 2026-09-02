@@ -184,3 +184,92 @@ fn selector_extras_follow_the_pod_label_and_core_divergence_fails() {
         Err(StatefulInstanceError::SelectorCoreIdentityOverride)
     );
 }
+
+#[test]
+fn same_pvc_direct_child_mount_is_exact_and_ordered() {
+    let cx = RenderCtx {
+        app: "lumen",
+        manager: "test",
+        api_version: "v1",
+        kind: "Lumen",
+        name: "lumen",
+        ns: "lumen",
+        owner: None,
+    };
+    let mut p = plan(
+        &cx,
+        StatefulStorageAttachment::VolumeClaimTemplate(template_claim("raft", "/var/lib/lumen")),
+    );
+    p.pod
+        .volume_mounts
+        .push(json!({"name":"config","mountPath":"/etc/lumen","readOnly":true}));
+    p.pod.volume_mounts.push(json!({
+        "name":"raft",
+        "mountPath":"/var/lib/lumen/data",
+        "subPath":"data",
+        "readOnly":false,
+    }));
+
+    let rendered = stateful_instance(p).expect("exact direct child mount is safe");
+    assert_eq!(
+        rendered.workload["spec"]["template"]["spec"]["containers"][0]["volumeMounts"],
+        json!([
+            {"name":"config","mountPath":"/etc/lumen","readOnly":true},
+            {"name":"raft","mountPath":"/var/lib/lumen","readOnly":false},
+            {"name":"raft","mountPath":"/var/lib/lumen/data","subPath":"data","readOnly":false},
+        ])
+    );
+}
+
+#[test]
+fn same_pvc_child_mount_rejects_every_other_overlap_fail_closed() {
+    let cx = RenderCtx {
+        app: "lumen",
+        manager: "test",
+        api_version: "v1",
+        kind: "Lumen",
+        name: "lumen",
+        ns: "lumen",
+        owner: None,
+    };
+    let unsafe_children = vec![
+        json!({"name":"raft","mountPath":"/var/lib/lumen/.","subPath":".","readOnly":false}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/..","subPath":"..","readOnly":false}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/data/child","subPath":"data/child","readOnly":false}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/data","subPath":"data","readOnly":false,"mountPropagation":"None"}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/data","subPathExpr":"data","readOnly":false}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/data","subPath":"data","readOnly":true}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/./data","subPath":"data","readOnly":false}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/data/cache","subPath":"cache","readOnly":false}),
+    ];
+
+    for mount in unsafe_children {
+        let mut p = plan(
+            &cx,
+            StatefulStorageAttachment::VolumeClaimTemplate(template_claim(
+                "raft",
+                "/var/lib/lumen",
+            )),
+        );
+        p.pod.volume_mounts.push(mount);
+        assert_eq!(
+            stateful_instance(p),
+            Err(StatefulInstanceError::VolumeMountCollision),
+            "unsafe same-PVC mount must fail closed"
+        );
+    }
+
+    let mut p = plan(
+        &cx,
+        StatefulStorageAttachment::VolumeClaimTemplate(template_claim("raft", "/var/lib/lumen")),
+    );
+    p.pod.volume_mounts.extend([
+        json!({"name":"raft","mountPath":"/var/lib/lumen/data","subPath":"data","readOnly":false}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/aof","subPath":"aof","readOnly":false}),
+    ]);
+    assert_eq!(
+        stateful_instance(p),
+        Err(StatefulInstanceError::VolumeMountCollision),
+        "only one direct child is allowed"
+    );
+}
