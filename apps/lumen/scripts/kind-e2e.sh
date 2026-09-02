@@ -428,7 +428,8 @@ assert_operator_topology() {
     || die "operator StatefulSet must render exactly one raft PVC and one server container"
   if (( REPLICAS_PER_SHARD <= 1 )); then
     jq -e '
-      ([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")]) == [
+      ([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")] |
+        map(if has("readOnly") then . else . + {"readOnly": false} end)) == [
         {"mountPath":"/var/lib/lumen","name":"raft","readOnly":false},
         {"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":false,"subPath":"data"}
       ] and
@@ -438,7 +439,8 @@ assert_operator_topology() {
       || die "single-replica operator StatefulSet lost the exact raft parent/data child mount contract"
   else
     jq -e '
-      ([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")]) == [
+      ([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")] |
+        map(if has("readOnly") then . else . + {"readOnly": false} end)) == [
         {"mountPath":"/var/lib/lumen","name":"raft","readOnly":false}
       ] and
       ([.spec.template.spec.containers[] | select(.name == "server") | .env[] | select(.name == "LUMEN_DATA_DIR" or .name == "LUMEN_PERSISTENCE")] | length) == 0
@@ -464,7 +466,8 @@ assert_operator_storage_live() {
   pod_json="$(kubectl -n "$NAMESPACE" get pod/"${LUMEN_CR_NAME}-0" -o json)"
   pvc_json="$(kubectl -n "$NAMESPACE" get pvc/"raft-${LUMEN_CR_NAME}-0" -o json)"
   jq -e '
-    ([.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")]) == [
+    ([.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")] |
+      map(if has("readOnly") then . else . + {"readOnly": false} end)) == [
       {"mountPath":"/var/lib/lumen","name":"raft","readOnly":false},
       {"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":false,"subPath":"data"}
     ] and

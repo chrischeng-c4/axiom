@@ -31,7 +31,7 @@ const ACTIONS: &[&str] = &[
 const WORKFLOW_BYTES_SHA256: &str =
     "5a2c619bf5a28083bc8e337cd7f7d97e1baf3c76ec6e6c646be19e055064e664";
 const KIND_E2E_BYTES_SHA256: &str =
-    "811b549732e49c9c2087e395f9a64923042009498f4bc965581716a6ec7f6913";
+    "1e6bb83156af06463fed2ba8408cc0b6ab433ce08a68d92a5b17c934972fdedc";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
     "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7";
@@ -506,6 +506,52 @@ fn shell_function_body(content: &str, name: &str) -> Option<Vec<String>> {
 }
 
 fn validate_kind_e2e_semantics(source: &str) -> Result<(), Finding> {
+    const NORMALIZE_API_DEFAULT: &str =
+        r#"map(if has("readOnly") then . else . + {"readOnly": false} end)) == ["#;
+    const PARENT: &str = r#"{"mountPath":"/var/lib/lumen","name":"raft","readOnly":false}"#;
+    const PARENT_COMMA: &str = r#"{"mountPath":"/var/lib/lumen","name":"raft","readOnly":false},"#;
+    const CHILD: &str =
+        r#"{"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":false,"subPath":"data"}"#;
+    let topology = shell_function_body(source, "assert_operator_topology")
+        .ok_or(Finding("KIND_STORAGE"))?
+        .join("\n");
+    let single_replica = [
+        r#"([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")] |"#,
+        NORMALIZE_API_DEFAULT,
+        PARENT_COMMA,
+        CHILD,
+        "] and",
+    ]
+    .join("\n");
+    let replicated = [
+        r#"([.spec.template.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")] |"#,
+        NORMALIZE_API_DEFAULT,
+        PARENT,
+        "] and",
+    ]
+    .join("\n");
+    require(
+        topology.matches(&single_replica).count() == 1,
+        "KIND_STORAGE",
+    )?;
+    require(topology.matches(&replicated).count() == 1, "KIND_STORAGE")?;
+
+    let live_storage = shell_function_body(source, "assert_operator_storage_live")
+        .ok_or(Finding("KIND_STORAGE"))?
+        .join("\n");
+    let live_mounts = [
+        r#"([.spec.containers[] | select(.name == "server") | .volumeMounts[] | select(.name == "raft")] |"#,
+        NORMALIZE_API_DEFAULT,
+        PARENT_COMMA,
+        CHILD,
+        "] and",
+    ]
+    .join("\n");
+    require(
+        live_storage.matches(&live_mounts).count() == 1,
+        "KIND_STORAGE",
+    )?;
+
     let expected = [
         "local pre_id=\"pre-restart-${CLUSTER_NAME}-$$\"",
         "local pre_value=\"${pre_id}@example.invalid\"",
@@ -1867,6 +1913,50 @@ fn live_candidate_contract_is_fail_closed() {
     let (script, mode) = verifier();
     validate_verifier(&script, mode).expect("candidate verifier contract");
     assert_eq!(validate_verifier(&script, 0o644), Err(Finding("MODE")));
+}
+
+#[test]
+fn kind_storage_mutations_fail_without_hash_oracle() {
+    let source = kind_e2e_source();
+    validate_kind_e2e_semantics(&source).expect("kind storage semantics");
+    let normalize = r#"map(if has("readOnly") then . else . + {"readOnly": false} end)"#;
+    for (label, occurrence, replacement) in [
+        ("normalization removed", 0, "map(.)"),
+        (
+            "explicit true overwritten",
+            2,
+            r#"map(. + {"readOnly": false})"#,
+        ),
+    ] {
+        let changed = replace_occurrence(&source, normalize, replacement, occurrence);
+        assert_eq!(
+            validate_kind_e2e_semantics(&changed).unwrap_err(),
+            Finding("KIND_STORAGE"),
+            "{label} mutation passed",
+        );
+    }
+
+    let child =
+        r#"{"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":false,"subPath":"data"}"#;
+    for (label, occurrence, replacement) in [
+        (
+            "read-only child accepted",
+            0,
+            r#"{"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":true,"subPath":"data"}"#,
+        ),
+        (
+            "child subPath removed",
+            1,
+            r#"{"mountPath":"/var/lib/lumen/data","name":"raft","readOnly":false}"#,
+        ),
+    ] {
+        let changed = replace_occurrence(&source, child, replacement, occurrence);
+        assert_eq!(
+            validate_kind_e2e_semantics(&changed).unwrap_err(),
+            Finding("KIND_STORAGE"),
+            "{label} mutation passed",
+        );
+    }
 }
 
 #[test]
