@@ -670,7 +670,7 @@ destination without copying tracker state.
 - Boundary: The outcome does not assume that every upgrade is forward-only.
 - Completion evidence: Regional drills prove upgrade, rollback, restart,
   recovery, and acknowledged-write safety.
-- Tracking: Not assigned.
+- Tracking: [Milestone #36](https://github.com/chrischeng-c4/axiom/milestone/36).
 
 ### Fleet foundation extraction
 

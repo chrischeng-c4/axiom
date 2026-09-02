@@ -40,12 +40,12 @@
 - Open: Define backup consistency and migration cutover.
 - Neighbours: Regional production profile.
 
-## Regional upgrade rollback and recovery
+## Regional upgrade rollback and recovery (Milestone #36)
 
 - Problem: A regional upgrade needs a tested rollback path.
 - Who: Regional production operators.
 - Promise: Lumen can upgrade, roll back, and recover a regional runtime safely.
-- Outcome: `regional-upgrade-rollback-and-recovery`. Tracking: Not assigned.
+- Outcome: `regional-upgrade-rollback-and-recovery`. Tracking: [Milestone #36](https://github.com/chrischeng-c4/axiom/milestone/36).
 - Non-goals: Unverified forward-only upgrades.
 - Open: Define rollback and recovery oracles.
 - Neighbours: Regional topology migration and backup.
