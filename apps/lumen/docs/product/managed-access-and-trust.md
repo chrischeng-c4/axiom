@@ -50,6 +50,16 @@
 - Open: Define issuance and rotation integration.
 - Neighbours: Managed client trust.
 
+## Managed client trust
+
+- Problem: Clients need a managed, rotated trust path.
+- Who: Managed client workloads.
+- Promise: Client trust material follows the managed runtime certificate contract.
+- Outcome: `managed-client-trust`. Tracking: Not assigned.
+- Non-goals: Trust-on-first-use.
+- Open: Define CA projection and reload behavior.
+- Neighbours: Runtime certificates and workload templates.
+
 ## Non-goals in this area
 
 Lumen never places bearer-token values in declarative runtime state.
