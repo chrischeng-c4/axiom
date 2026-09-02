@@ -29,7 +29,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "a923643ba8b3202e93a5f7cdf49da22afc0a49d4054c394f22a58b2a5342d86f";
+    "9a96662f6bb0a09dcaf83f6ed75455d4cc90fb65e46817bea554a293d79b554d";
 const KIND_E2E_BYTES_SHA256: &str =
     "811b549732e49c9c2087e395f9a64923042009498f4bc965581716a6ec7f6913";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
@@ -277,8 +277,8 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
     let library_job = job(workflow, "verify-libraries").ok_or(Finding("LIBRARIES"))?;
     let library_map = library_job.as_mapping().ok_or(Finding("LIBRARIES"))?;
     require(
-        library_map.len() == 5
-            && ["name", "needs", "runs-on", "permissions", "steps"]
+        library_map.len() == 6
+            && ["name", "needs", "runs-on", "permissions", "env", "steps"]
                 .iter()
                 .all(|name| library_map.contains_key(&key(name))),
         "LIBRARIES",
@@ -290,6 +290,14 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
     )?;
     require(
         field(library_job, "runs-on").and_then(Yaml::as_str) == Some("ubuntu-latest"),
+        "LIBRARIES",
+    )?;
+    let env = field(library_job, "env")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding("LIBRARIES"))?;
+    require(
+        env.len() == 1
+            && env.get(&key("GH_TOKEN")).and_then(Yaml::as_str) == Some("${{ github.token }}"),
         "LIBRARIES",
     )?;
     let steps = field(library_job, "steps")
@@ -381,11 +389,10 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
                 "bash scripts/raft-implementor-build.sh",
                 "python3 scripts/meta/test_readme_contract.py",
                 "python3 scripts/meta/test_project_docs_contract.py",
-                "python3 .claude/aw/verification/check_wis.py",
-                "uv run --python 3.13 --no-project .claude/aw/scripts/metadoc.py check apps/lumen --format json",
-                "uv run --python 3.13 --no-project .claude/aw/scripts/meta.py check --path apps/lumen --format json",
+                "uv run --python 3.13 --project apps/aw --locked pytest -q apps/aw/e2e/test_wis.py",
+                "uv run --python 3.13 --project apps/aw --locked aw meta check --path apps/lumen --format json",
                 "uv run --python 3.13 --no-project scripts/meta/project_docs_contract.py check apps/lumen --format json",
-                "uv run --python 3.13 --no-project .claude/aw/scripts/wis.py gap apps/lumen",
+                "uv run --python 3.13 --project apps/aw --locked aw wis gap apps/lumen",
                 "git -c core.fsmonitor=false diff --check",
             ],
         ),
@@ -1134,11 +1141,10 @@ fn validate_product_gate_partition(workflow: &Yaml, _source: &str) -> Result<(),
         "bash scripts/raft-implementor-build.sh",
         "python3 scripts/meta/test_readme_contract.py",
         "python3 scripts/meta/test_project_docs_contract.py",
-        "python3 .claude/aw/verification/check_wis.py",
-        "uv run --python 3.13 --no-project .claude/aw/scripts/metadoc.py check apps/lumen --format json",
-        "uv run --python 3.13 --no-project .claude/aw/scripts/meta.py check --path apps/lumen --format json",
+        "uv run --python 3.13 --project apps/aw --locked pytest -q apps/aw/e2e/test_wis.py",
+        "uv run --python 3.13 --project apps/aw --locked aw meta check --path apps/lumen --format json",
         "uv run --python 3.13 --no-project scripts/meta/project_docs_contract.py check apps/lumen --format json",
-        "uv run --python 3.13 --no-project .claude/aw/scripts/wis.py gap apps/lumen",
+        "uv run --python 3.13 --project apps/aw --locked aw wis gap apps/lumen",
         "git -c core.fsmonitor=false diff --check",
     ] {
         require(!run.contains(gate), "LIBRARIES")?;
@@ -1419,7 +1425,7 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
             "verify-candidate",
             "attestations: read\ncontents: read\npackages: read",
         ),
-        ("verify-libraries", "contents: read"),
+        ("verify-libraries", "contents: read\nissues: read"),
         ("kind-amd64", "contents: read\npackages: read"),
         ("kind-arm64", "contents: read\npackages: read"),
         ("result", "contents: read"),
@@ -2439,8 +2445,8 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     }
     expect_workflow(
         &source,
-        "  verify-libraries:\n    name: verify service and Raft library gates\n    needs: [identity]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: ${{ needs.identity.outputs.commit }}",
-        "  verify-libraries:\n    name: verify service and Raft library gates\n    needs: [identity]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: ${{ github.sha }}",
+        "  verify-libraries:\n    name: verify service and Raft library gates\n    needs: [identity]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      issues: read\n    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: ${{ needs.identity.outputs.commit }}",
+        "  verify-libraries:\n    name: verify service and Raft library gates\n    needs: [identity]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      issues: read\n    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: ${{ github.sha }}",
         "LIBRARIES",
     );
     for occurrence in 0..2 {

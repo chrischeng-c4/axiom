@@ -528,6 +528,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -552,11 +555,10 @@ jobs:
           bash scripts/raft-implementor-build.sh
           python3 scripts/meta/test_readme_contract.py
           python3 scripts/meta/test_project_docs_contract.py
-          python3 .claude/aw/verification/check_wis.py
-          uv run --python 3.13 --no-project .claude/aw/scripts/metadoc.py check apps/lumen --format json
-          uv run --python 3.13 --no-project .claude/aw/scripts/meta.py check --path apps/lumen --format json
+          uv run --python 3.13 --project apps/aw --locked pytest -q apps/aw/e2e/test_wis.py
+          uv run --python 3.13 --project apps/aw --locked aw meta check --path apps/lumen --format json
           uv run --python 3.13 --no-project scripts/meta/project_docs_contract.py check apps/lumen --format json
-          uv run --python 3.13 --no-project .claude/aw/scripts/wis.py gap apps/lumen
+          uv run --python 3.13 --project apps/aw --locked aw wis gap apps/lumen
           git -c core.fsmonitor=false diff --check
 
   kind-amd64:
