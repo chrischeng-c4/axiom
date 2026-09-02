@@ -462,6 +462,11 @@ name = "lumen_bench_cli"
 path = "e2e/lumen_bench_cli.rs"
 
 [[test]]
+name = "legacy-3073-app"
+path = "e2e/legacy-3073-app.rs"
+required-features = ["raft-wal"]
+
+[[test]]
 name = "nats_cluster_e2e"
 path = "e2e/nats_cluster_e2e.rs"
 
