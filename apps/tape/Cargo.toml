@@ -4,7 +4,7 @@ name = "tape"
 # tape owns its version and releases independently (tape@<version> tags →
 # .github/workflows/tape-release.yml); it no longer inherits the shared
 # workspace version.
-version = "0.4.11"
+version = "0.5.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
