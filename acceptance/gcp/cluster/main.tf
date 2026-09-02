@@ -1,6 +1,14 @@
 terraform {
   required_version = ">= 1.9.0"
 
+  # Partial backend config: the bucket comes from
+  # `-backend-config="bucket=..."` (see acceptance/gke-harness/README.md).
+  # State lived in /tmp before this; destroy-cluster.sh documents how a lost
+  # local state turns teardown into manual imports. Versioned GCS ends that.
+  backend "gcs" {
+    prefix = "acceptance/gcp/cluster"
+  }
+
   required_providers {
     google = {
       source  = "hashicorp/google"
@@ -100,8 +108,15 @@ resource "google_container_node_pool" "acceptance" {
   #
   # The third node exists only while the quorum leg needs it (~10 min of a
   # ~45-min run, ~$0.01 of e2-standard-2) and the autoscaler removes it again.
+  # min 0, not 1: between runs the harness parks the pool at zero nodes
+  # (acceptance/gke-harness/scripts/park.sh) so the idle cluster costs only
+  # the free-tier zonal management fee. The autoscaler never removes the last
+  # node on its own — kube-dns and the other kube-system singletons pin it —
+  # so parking is an explicit `gcloud container clusters resize --num-nodes 0`
+  # and waking is a resize back to 1; the autoscaler owns 0..3 only while
+  # nodes exist.
   autoscaling {
-    min_node_count = 1
+    min_node_count = 0
     max_node_count = 3
   }
   management {
@@ -116,6 +131,12 @@ resource "google_container_node_pool" "acceptance" {
     workload_metadata_config {
       mode = "GKE_METADATA"
     }
+  }
+
+  # park.sh/ensure-cluster.sh resize this pool out-of-band; a later apply must
+  # not read that as drift and force the pool back to one node mid-park.
+  lifecycle {
+    ignore_changes = [node_count, initial_node_count]
   }
 }
 

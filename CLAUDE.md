@@ -86,8 +86,10 @@ every open release Milestone) and hand each queue head to the matching phase
 scripts, which can refuse them — `impl-for` absorbs the retired
 `maint-for-wi`, routing maintenance heads through the maint verbs;
 `test-for` and `review` are read-only closers that verify lifecycle evidence
-and audit a project without writing; `build` wraps `cargo build`; `ask-user`
-writes nothing.
+and audit a project without writing; `build` wraps `cargo build` for debug
+and, for release, dispatches the `gke-acceptance` workflow (keep, defer,
+relay, loom) or hands lumen to `/lumen-build-release`; `ask-user` writes
+nothing.
 
 There is no technical-design step. Two old grills — one per issue epic, one per change —
 wrote per-subsystem technical-design sections and ADRs beside them, under a
@@ -112,7 +114,7 @@ pair, or a skill that calls the legacy issue-epic writer.
 | `/aw-impl-for` | a scope's queue head has landed e2e evidence, or is a maintenance type | drives impl for behavior heads and maint for `type:refactor`/`test`/`docs`/`chore` heads, closing each issue to advance the queue |
 | `/aw-test-for` | a scope's work looks finished and needs closing regression verification | read-only: checks each issue's lifecycle trailers against its commits, then runs the project gates unfiltered; writes nothing |
 | `/aw-review` | one project needs a full audit outside the lifecycle | read-only: uncommitted diff, `aw meta check`, `aw wis gap`, README-declared gates; produces a findings report and writes nothing |
-| `/aw-build` | one project needs a debug or release compile | runs `cargo build -p <crate>` (release adds `--release`) and reports verbatim warnings and errors; a lumen release goes through `/lumen-build-release` instead |
+| `/aw-build` | one project needs a debug compile or a release run | debug runs `cargo build -p <crate>` and reports verbatim warnings and errors; release is the CI/CD pipeline — `scripts/gh/gke-acceptance.sh <app>` dispatches `gke-acceptance` (image → terraform + kustomize deploy on GKE → e2e verify → park the pool whatever the result) for keep, defer, relay, and loom; lumen goes through `/lumen-build-release`; any other project is refused rather than given a bare `--release` |
 | `/aw-prepare-goal` | a project, typed issue, release Milestone, or bare intent must become decidable conditions | reads the project or tracker, selects the next route by type, and sets no goal unless the human explicitly asks |
 | `/aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
 
