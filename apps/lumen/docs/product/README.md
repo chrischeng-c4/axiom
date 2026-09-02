@@ -8,3 +8,4 @@ outcome and remains unbound until its release work is ready.
 
 | Section | File |
 |---|---|
+| Indexing and rebuild | indexing-and-rebuild.md |
