@@ -30,6 +30,16 @@
 - Open: Define retention and conflict reporting.
 - Neighbours: Durable writes and generated-client resilience.
 
+## Item-atomic batch writes
+
+- Problem: One failed field must not leave part of an item visible.
+- Who: Batch-write callers.
+- Promise: Each accepted item becomes visible in full or not at all.
+- Outcome: `item-atomic-batch-writes`. Tracking: Not assigned.
+- Non-goals: A transaction across unrelated batch items.
+- Open: Define stable per-item results and retries.
+- Neighbours: Idempotent replay and versioned tombstones.
+
 ## Non-goals in this area
 
 Lumen does not own caller source documents.
