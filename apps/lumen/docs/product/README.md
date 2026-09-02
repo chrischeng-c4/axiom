@@ -22,3 +22,4 @@ outcome and remains unbound until its release work is ready.
 | Vector hybrid facets | querying-and-facets.md |
 | Protocol and clients | protocol-and-clients.md |
 | Protocol contract completeness | protocol-and-clients.md |
+| Generated-client protocol parity | protocol-and-clients.md |

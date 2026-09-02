@@ -20,6 +20,16 @@
 - Open: Complete shared errors, streaming, and consistency declarations.
 - Neighbours: Protocol compatibility policy.
 
+## Generated-client protocol parity
+
+- Problem: Generated source needs typed streaming and errors.
+- Who: TypeScript, Python, and Rust consumers.
+- Promise: Generated clients represent the supported protocol consistently.
+- Outcome: `generated-client-protocol-parity`. Tracking: Not assigned.
+- Non-goals: Published packages.
+- Open: Define typed streaming and errors for each language.
+- Neighbours: Strict generated-client gates.
+
 ## Non-goals in this area
 
 Lumen does not publish generated SDK packages today.
