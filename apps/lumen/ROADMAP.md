@@ -615,7 +615,7 @@ destination without copying tracker state.
 - Completion evidence: Render and restart tests prove the exact parent and
   child PVC mounts, a persisted checkpoint, pre-restart search after Pod
   replacement, legacy PVC adoption, and fail-closed corruption handling.
-- Tracking: Not assigned.
+- Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
 
 ### Deterministic consensus conformance
 
