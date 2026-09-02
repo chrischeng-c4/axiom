@@ -712,7 +712,7 @@ destination without copying tracker state.
 - Completion evidence: Single-shard and distributed tests cover filtered kNN,
   every RRF leg, candidate limits, recall fixtures, exact-versus-approximate
   labels, timeout, memory, and failure behavior against a declared oracle.
-- Tracking: Not assigned.
+- Tracking: [Milestone #128](https://github.com/chrischeng-c4/axiom/milestone/128).
 
 ### Membership-aware replica autoscaling
 

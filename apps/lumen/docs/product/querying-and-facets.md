@@ -50,12 +50,12 @@
 - Open: Define shard-failure and cleanup behavior.
 - Neighbours: Distributed routing and merge.
 
-## Vector hybrid facets
+## Vector hybrid facets (Milestone #128)
 
 - Problem: Vector and hybrid candidates need a clear facet scope.
 - Who: Vector-search callers.
 - Promise: Governed facets define their exact or labelled approximate candidate scope.
-- Outcome: `vector-hybrid-facets`. Tracking: Not assigned.
+- Outcome: `vector-hybrid-facets`. Tracking: [Milestone #128](https://github.com/chrischeng-c4/axiom/milestone/128).
 - Non-goals: Claiming approximate counts are exact.
 - Open: Choose the candidate and match scope.
 - Neighbours: Exact facets and distributed convergence.
