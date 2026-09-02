@@ -30,12 +30,12 @@
 - Open: Define member-at-a-time sequencing.
 - Neighbours: Bounded shutdown and failover.
 
-## Kubernetes-native placement
+## Kubernetes-native placement (Milestone #31)
 
 - Problem: Platform placement needs a portable Kubernetes contract.
 - Who: Kubernetes operators.
 - Promise: Lumen uses Kubernetes-native placement controls without machine-type fields in the API.
-- Outcome: `kubernetes-native-placement`. Tracking: Not assigned.
+- Outcome: `kubernetes-native-placement`. Tracking: [Milestone #31](https://github.com/chrischeng-c4/axiom/milestone/31).
 - Non-goals: Cloud-specific machine types in the CRD.
 - Open: Define portable capacity and placement mapping.
 - Neighbours: Per-shard failure-domain placement.

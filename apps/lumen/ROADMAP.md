@@ -549,7 +549,7 @@ destination without copying tracker state.
   storage requests reach each Pod and PVC, placement intent maps to standard
   scheduling fields, and a GKE profile selects a custom ComputeClass without
   placing a GCE machine type in the core API.
-- Tracking: [#3801](https://github.com/chrischeng-c4/axiom/issues/3801) (`lumen@0.4.38`).
+- Tracking: [Milestone #31](https://github.com/chrischeng-c4/axiom/milestone/31).
 
 ### Managed runtime certificates
 
