@@ -6,7 +6,7 @@ This guide defines the Lumen indexing contract. It owns source-data
 responsibility, schema meaning, writes, durability, rebuild, and activation.
 
 The first part of each section states current behavior. Text marked as the
-0.5 target is future work. It is not available in the current runtime. Use the
+Search v2 target is future work. It is not available in the current runtime. Use the
 [support matrix](../STATUS.md) for the current support state and the
 [roadmap](../ROADMAP.md) for completion evidence.
 
@@ -19,8 +19,8 @@ The first part of each section states current behavior. Text marked as the
 | Current and target field schema meaning | [Schema contract](#schema-contract) | Run `lumen spec --fields` for current fields. |
 | Current and target write semantics | [Write contract](#write-contract) | Run `lumen spec --shapes` for current request bodies. |
 | Acknowledgement and persistence meaning | [Durability](#durability) | Check the selected backend and fsync policy. |
-| Rebuild, generation, activation, and rollback | [Rebuild and activation](#rebuild-and-activation) | Separate the current stream endpoint from the 0.5 target. |
-| 0.4.x to 0.5.0 caller changes | [0.5 search migration](migration-0.5-search.md) | Use the versioned migration table and future offline tools. |
+| Rebuild, generation, activation, and rollback | [Rebuild and activation](#rebuild-and-activation) | Separate the current stream endpoint from the Search v2 target. |
+| Current contract to Search v2 caller changes | [Search v2 migration](migration-search-v2.md) | Use the versioned migration table and future offline tools. |
 | Current implementation support | [STATUS.md](../STATUS.md) | Read each indexing support row and its evidence. |
 | Future outcomes | [ROADMAP.md](../ROADMAP.md) | Follow the outcome linked from a current limit. |
 
@@ -75,7 +75,7 @@ an embedding model.
 The current `number` and `set` fields do not provide the strict type and
 orthogonal multi-value contract below.
 
-### 0.5 target schema
+### Search v2 target schema
 
 The 0.5 schema separates storage type from multi-value and facet behavior.
 
@@ -157,7 +157,7 @@ The current batch behavior is not the 0.5 item-atomic partial-success
 contract. A caller must not infer a stable per-item commit and error model from
 the current batch response.
 
-### 0.5 target writes
+### Search v2 target writes
 
 HTTP writes use `Idempotency-Key`. Generated clients create a key by default,
 and the caller can override it. Lumen retains a key for at least 24 hours.
@@ -228,7 +228,7 @@ atomically, so a later write can recreate an unindexed row. All voting members
 must run 0.4.31 before its first durable command. Downgrade after that point
 also needs an older snapshot or a collection rebuild.
 
-### 0.5 target acknowledgement
+### Search v2 target acknowledgement
 
 Persistent mode returns 2xx only after the durable commit and index apply both
 complete. The contract names the failure boundary that remains after that
@@ -250,7 +250,7 @@ A current rebuild can therefore affect the active index while the stream is
 still running. The endpoint does not provide the 0.5 dual-write and activation
 contract.
 
-### 0.5 target rebuild
+### Search v2 target rebuild
 
 A rebuild creates a shadow generation while the current generation remains
 active. Active and shadow generations receive the same live writes.
@@ -296,7 +296,7 @@ implementation.
 
 - [Lumen README](../README.md)
 - [Querying](querying.md)
-- [0.5 search migration](migration-0.5-search.md)
+- [Search v2 migration](migration-search-v2.md)
 - [Protocol](protocol.md)
 - [Current support](../STATUS.md)
 - [Future outcomes and non-goals](../ROADMAP.md)

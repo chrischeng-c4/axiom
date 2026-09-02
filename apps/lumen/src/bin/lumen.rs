@@ -910,7 +910,7 @@ enum LlmTopic {
     ModelSchema,
     /// Select a supported search, filter, range, sort, kNN, or duplicate query.
     SelectQuery,
-    /// Separate current query support from the documented 0.5 search target.
+    /// Separate current query support from the documented Search v2 target.
     Querying,
     /// Connect a source database, CDC stream, or outbox to Lumen.
     IntegrateSourceDb,

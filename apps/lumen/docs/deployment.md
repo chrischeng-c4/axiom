@@ -422,7 +422,7 @@ The planned typed access API and 0.5.0 Managed auth requirements are also not
 implemented. Follow the [migration contract](authentication.md#migration-contract)
 before changing current external RBAC.
 
-The planned 0.5 search contract adds a separate Managed activation boundary.
+The planned Search v2 contract adds a separate Managed activation boundary.
 Installing a new binary will not be enough. Every serving member must report
 the required binary capability. The operator must then finalize
 `compatibilityVersion` before `search_facets_v1` becomes active. A
@@ -430,8 +430,8 @@ mixed-version runtime will reject activation. It will not route new requests
 around an older member.
 
 Current `/version` and the current operator do not implement this capability
-model. See [Managed activation](migration-0.5-search.md#managed-activation)
-before planning the 0.5 upgrade.
+model. See [Managed activation](migration-search-v2.md#managed-activation)
+before planning the Search v2 upgrade.
 
 ## Smoke checks
 

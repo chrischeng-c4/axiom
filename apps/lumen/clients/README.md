@@ -152,7 +152,7 @@ real, but CI enforcement is a future outcome.
 - [Protocol guide](../docs/protocol.md)
 - [Indexing](../docs/indexing.md)
 - [Querying](../docs/querying.md)
-- [0.5 search migration](../docs/migration-0.5-search.md)
+- [Search v2 migration](../docs/migration-search-v2.md)
 - [Current support](../STATUS.md)
 - [Future outcomes and non-goals](../ROADMAP.md)
 - [Authentication](../docs/authentication.md)

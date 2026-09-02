@@ -181,7 +181,7 @@ Use the [deployment guide](docs/deployment.md) for installation and the
 [authentication guide](docs/authentication.md) for request identity. Use the
 [client integration guide](docs/client-integration.md) for generated-client,
 workload-template, retry, and source-hydration responsibilities. Use the
-[0.5 search migration guide](docs/migration-0.5-search.md) before adopting any
+[Search v2 migration guide](docs/migration-search-v2.md) before adopting any
 target schema, query, result, facet, or activation contract described in the
 new guides.
 
@@ -192,8 +192,8 @@ The binary and the running service publish the detailed contract.
 | Need | Source of truth |
 |---|---|
 | HTTP routes and request types | `lumen spec` or `GET /openapi.json` |
-| Current schema, writes, durability, and rebuild plus the 0.5 target | [Indexing guide](docs/indexing.md) |
-| Current selection and hydration plus the 0.5 query, result, facet, and limit target | `lumen llm --topic querying`; see the [querying guide](docs/querying.md) |
+| Current schema, writes, durability, and rebuild plus the Search v2 target | [Indexing guide](docs/indexing.md) |
+| Current selection and hydration plus the Search v2 query, result, facet, and limit target | `lumen llm --topic querying`; see the [querying guide](docs/querying.md) |
 | Current QUERY/POST, consistency, retry, and connection behavior | [Protocol guide](docs/protocol.md); focused topics: `local-search`, `select-query`, and `integrate-source-db` |
 | Copy-ready query examples | `lumen spec --shapes` |
 | Field, analyzer, and vector choices | `lumen spec --fields` |
@@ -204,7 +204,7 @@ The binary and the running service publish the detailed contract.
 | Typed clients | `lumen spec gen --lang <language> --out <dir>`; languages: `ts`, `py`, `rust` |
 | Generated-client language differences | [Generated-client guide](clients/README.md) |
 | Client connection profiles, workload projection, retry, and source integration | [Client integration guide](docs/client-integration.md) |
-| 0.4.x to 0.5.0 caller changes | [0.5 search migration](docs/migration-0.5-search.md) |
+| Current contract to Search v2 caller changes | [Search v2 migration](docs/migration-search-v2.md) |
 | Agent task catalog | `lumen llm --topic outline --format json` |
 | Focused integration help | `lumen llm --topic <id>` |
 
@@ -428,7 +428,7 @@ contract. Each source below states its direct contribution.
 | [Querying](docs/querying.md) | Source hydration plus current and target query, result, facet, metric, and limit contracts |
 | [GKE](docs/gke.md) | Local and GKE support tiers, runtime topology, placement, security, and production verification |
 | [Client integration](docs/client-integration.md) | Generated-client, workload-template, retry, and source-hydration responsibilities |
-| [0.5 search migration](docs/migration-0.5-search.md) | Versioned compatibility rules, caller actions, offline tools, and Managed activation |
+| [Search v2 migration](docs/migration-search-v2.md) | Versioned compatibility rules, caller actions, offline tools, and Managed activation |
 | [Scale and benchmark notes](docs/benchmarks-scale.md) | Capacity, performance gates, and benchmark procedure |
 | [Operator control-plane runbook](docs/runbooks/operator-control-plane.md) | Reconciliation and incident operations |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Lumen edit rules and required verification commands |

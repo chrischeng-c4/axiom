@@ -5,7 +5,7 @@
 This guide defines how Lumen selects, scores, orders, and summarizes indexed
 IDs. It also defines the boundary between search and source-record hydration.
 
-Current behavior and the 0.5 target are separate. The 0.5 query, result,
+Current behavior and the Search v2 target are separate. The Search v2 query, result,
 facet, metric, limit, cache, and admission contracts in this guide are future
 work. Use the [support matrix](../STATUS.md) for current support.
 
@@ -54,8 +54,8 @@ hydration helpers. The caller still owns source access and freshness.
 | 0.5 query, scoring, and filter semantics | [Search model](#search-model) | Run `lumen llm --topic querying --format json` for current-versus-target navigation. |
 | 0.5 ordering, pagination, totals, and collapse | [Result controls](#result-controls) | Use the versioned result contract before changing a caller. |
 | 0.5 facets, metrics, precision, and wire names | [Facets and metrics](#facets-and-metrics) | Treat these definitions as target behavior until STATUS changes. |
-| 0.5 complexity, failure, admission, and cache rules | [Limits and failures](#limits-and-failures) | Handle the exact error status and `Retry-After` rules. |
-| 0.4.x to 0.5.0 caller changes | [0.5 search migration](migration-0.5-search.md) | Use the compatibility table and future offline migration tools. |
+| Search v2 complexity, failure, admission, and cache rules | [Limits and failures](#limits-and-failures) | Handle the exact error status and `Retry-After` rules. |
+| Current contract to Search v2 caller changes | [Search v2 migration](migration-search-v2.md) | Use the compatibility table and future offline migration tools. |
 | Current implementation support | [STATUS.md](../STATUS.md) | Read each query support row and its evidence. |
 | Future completion evidence | [ROADMAP.md](../ROADMAP.md) | Follow the outcome linked from a current limit. |
 
@@ -73,7 +73,7 @@ send the new 0.5 fields to a mixed-version runtime.
 
 ### 0.5 selection and scoring
 
-A 0.5 search request has two optional top-level inputs:
+A Search v2 request has two optional top-level inputs:
 
 - `query: ScoringQuery` selects and scores candidates.
 - `filter: FilterExpr` selects candidates without changing score.
@@ -127,8 +127,8 @@ The current API supports `limit`, `cursor`, `offset`, `sort`, boolean
 `track_total`, and current keyword collapse as declared by OpenAPI. The
 [README](../README.md#primary-workflow) shows the current response form.
 
-The result contract below replaces several current shapes in 0.5. Use the
-[migration guide](migration-0.5-search.md) before adopting it.
+The result contract below replaces several current shapes in Search v2. Use the
+[migration guide](migration-search-v2.md) before adopting it.
 
 ### 0.5 ordering and pagination
 
@@ -166,12 +166,12 @@ Collapse is result de-duplication. It does not change source identity.
 - The collapse field must be single-valued and `facetable`.
 - Its type must be `keyword`, `int64`, or `date`.
 
-The 0.5 source-ID-preserving collapse replaces the current collapse response
-contract. See [0.5 search migration](migration-0.5-search.md#response-migration).
+The Search v2 source-ID-preserving collapse replaces the current collapse response
+contract. See [Search v2 migration](migration-search-v2.md#response-migration).
 
 ## Facets and metrics
 
-Exact search facets and metrics are a 0.5 target. The current runtime does not
+Exact search facets and metrics are a Search v2 target. The current runtime does not
 support this contract.
 
 ### Supported target definitions
@@ -326,7 +326,7 @@ Version 0.5 changes schema types, request fields, totals, sort missing behavior,
 collapse, and duplicate discovery. It also adds a Managed capability activation
 boundary.
 
-Read [0.5 search migration](migration-0.5-search.md) before sending a 0.5
+Read [Search v2 migration](migration-search-v2.md) before sending a Search v2
 request or schema to a mixed-version runtime. The migration guide owns the
 compatibility window and caller actions. This guide owns the final 0.5 query
 semantics.
@@ -356,7 +356,7 @@ implementation from the detailed target contract in this guide.
 
 - [Lumen README](../README.md)
 - [Indexing](indexing.md)
-- [0.5 search migration](migration-0.5-search.md)
+- [Search v2 migration](migration-search-v2.md)
 - [Protocol](protocol.md)
 - [Generated clients](../clients/README.md)
 - [Authentication](authentication.md)

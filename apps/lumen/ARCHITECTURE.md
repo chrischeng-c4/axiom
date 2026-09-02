@@ -38,7 +38,7 @@ vectors and perceptual hashes. It does not execute an embedding model.
 The [indexing guide](docs/indexing.md) owns schema, write, durability, and
 rebuild semantics. The [querying guide](docs/querying.md) owns selection,
 scoring, results, facets, limits, and hydration. The
-[0.5 migration guide](docs/migration-0.5-search.md) owns the version boundary.
+[Search v2 migration guide](docs/migration-search-v2.md) owns the version boundary.
 
 ## Runtime planes
 

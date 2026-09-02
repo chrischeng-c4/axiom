@@ -183,7 +183,7 @@ destination without copying tracker state.
 
 - ID: `generated-client-search-v2-parity`
 - Outcome: Generated TypeScript, Python, and Rust clients expose the complete
-  0.5 search request and response contract as typed APIs.
+  Search v2 request and response contract as typed APIs.
 - Boundary: Lumen integration owns the service-specific discriminated query,
   filter, facet, metric, total, cursor, and collapse contract. Generic
   cross-language discriminator and schema mechanisms remain in
@@ -196,22 +196,22 @@ destination without copying tracker state.
   absent.
 - Tracking: [#3812](https://github.com/chrischeng-c4/axiom/issues/3812) (`lumen@0.4.50`).
 
-### Search v0-5 migration
+### Search v2 migration
 
-- ID: `search-v0-5-migration`
+- ID: `search-v2-migration`
 - Outcome: Callers can move a 0.4 schema, request, and response integration to
-  0.5 through an explicit compatibility window and offline tools.
+  Search v2 through an explicit compatibility window and offline tools.
 - Boundary: Strict unknown-field rejection lands in 0.4.x before new request
   fields. The migration covers `number`, `set`, tagged totals, missing sort,
   cursor errors, source-ID-preserving collapse, and removal of `/duplicates`.
   `lumen migrate search-request` and `lumen migrate collection-schema` read
   stdin and write JSON plus a report without contacting a runtime or guessing
   an ambiguous mixed `OR` or `NOT`.
-- Completion evidence: Versioned tests prove every 0.4 warning and every 0.5
+- Completion evidence: Versioned tests prove every 0.4 warning and every Search v2
   refusal and response shape. Tool fixtures cover successful conversions,
   numeric and set schema rebuild requirements, ambiguous request refusal, no
   network or runtime write, stable reports, and round-trip validation against
-  the 0.5 schema.
+  the Search v2 schema.
 - Tracking: [#3813](https://github.com/chrischeng-c4/axiom/issues/3813) (`lumen@0.4.51`).
 
 ### Search capability activation
@@ -603,6 +603,85 @@ destination without copying tracker state.
   remain, failed cleanup retains the finalizer and publishes a condition, and
   retry succeeds without broad deletion.
 - Tracking: [#3093](https://github.com/chrischeng-c4/axiom/issues/3093) (`lumen@0.4.40`).
+
+### Managed embedded data durability
+
+- ID: `managed-embedded-data-durability`
+- Outcome: A one-replica Managed Lumen runtime persists its index and AOF on
+  the retained PVC child path.
+- Boundary: The operator keeps the storage parent mount and adds only the
+  exact `data` child mount for the embedded Raft store. This does not recover
+  data that an earlier node-local runtime already lost.
+- Completion evidence: Render and restart tests prove the exact parent and
+  child PVC mounts, a persisted checkpoint, pre-restart search after Pod
+  replacement, legacy PVC adoption, and fail-closed corruption handling.
+- Tracking: Not assigned.
+
+### Deterministic consensus conformance
+
+- ID: `deterministic-consensus-conformance`
+- Outcome: Raft recovery and membership safety have deterministic adversarial
+  replay evidence.
+- Boundary: The deterministic host shares cold-start, persist, apply-ready,
+  and peer-lane primitives but starts no transport, task, wall-clock, or sleep.
+- Completion evidence: The fixed corpus, replay parser, and harness-only
+  mutants prove safety across bounded elections, partitions, restarts,
+  compactions, and membership transitions.
+- Tracking: Not assigned.
+
+### Bounded Raft shutdown and failover
+
+- ID: `bounded-raft-shutdown-and-failover`
+- Outcome: Raft shutdown and leader failover complete through explicit bounded
+  recovery behavior.
+- Boundary: The runtime keeps quorum and does not hide unfinished work behind
+  an unbounded background task.
+- Completion evidence: Fault tests prove drain, leadership transfer, timeout,
+  restart, and acknowledged-write behavior under the stated bounds.
+- Tracking: Not assigned.
+
+### Distributed search routing and merge
+
+- ID: `distributed-search-routing-and-merge`
+- Outcome: Lumen routes distributed search work and merges results through one
+  declared failure and ordering contract.
+- Boundary: The contract does not claim partial results as complete and keeps
+  caller source-record ownership outside Lumen.
+- Completion evidence: Multi-shard tests prove routing, merge order, failure,
+  cursor, retry, and resource cleanup behavior.
+- Tracking: Not assigned.
+
+### Regional topology migration and backup
+
+- ID: `regional-topology-migration-and-backup`
+- Outcome: A regional runtime can migrate topology and create recoverable
+  backups through one declared consistency contract.
+- Boundary: A PVC snapshot alone does not prove regional recovery or safe
+  cutover.
+- Completion evidence: Regional drills prove backup, restore, topology
+  cutover, failure handling, and data-consistency checks.
+- Tracking: Not assigned.
+
+### Regional upgrade rollback and recovery
+
+- ID: `regional-upgrade-rollback-and-recovery`
+- Outcome: A regional runtime can upgrade, roll back, and recover through a
+  tested operational contract.
+- Boundary: The outcome does not assume that every upgrade is forward-only.
+- Completion evidence: Regional drills prove upgrade, rollback, restart,
+  recovery, and acknowledged-write safety.
+- Tracking: Not assigned.
+
+### Fleet foundation extraction
+
+- ID: `fleet-foundation-extraction`
+- Outcome: Fleet's reusable foundation has a clear library boundary while
+  Lumen keeps its own search and Raft policy.
+- Boundary: The extraction does not move Lumen product behavior into a generic
+  Fleet mechanism.
+- Completion evidence: Compatibility and integration tests prove the extracted
+  API preserves declared Fleet convergence behavior.
+- Tracking: Not assigned.
 
 ## Later outcomes
 
