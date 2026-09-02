@@ -735,7 +735,7 @@ destination without copying tracker state.
   routing ownership changes.
 - Completion evidence: A replicated-cluster test proves split, restart,
   retry, and rollback behavior while reads and writes continue.
-- Tracking: [#3816](https://github.com/chrischeng-c4/axiom/issues/3816) (`lumen@0.5.2`).
+- Tracking: [Milestone #29](https://github.com/chrischeng-c4/axiom/milestone/29).
 
 ### Protocol compatibility policy
 

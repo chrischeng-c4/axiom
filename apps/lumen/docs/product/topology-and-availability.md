@@ -50,12 +50,12 @@
 - Open: Define the safe transition actuator.
 - Neighbours: Quorum-safe runtime rollout.
 
-## High-availability shard expansion
+## High-availability shard expansion (Milestone #29)
 
 - Problem: Shard splitting must work with replicated shards.
 - Who: High-availability runtime operators.
 - Promise: Shard expansion keeps a Raft quorum while it moves ownership.
-- Outcome: `high-availability-shard-expansion`. Tracking: Not assigned.
+- Outcome: `high-availability-shard-expansion`. Tracking: [Milestone #29](https://github.com/chrischeng-c4/axiom/milestone/29).
 - Non-goals: Unsafe split during replica transition.
 - Open: Define restart and rollback evidence.
 - Neighbours: Automatic shard splitting.
