@@ -43,3 +43,4 @@ outcome and remains unbound until its release work is ready.
 | Managed client trust | managed-access-and-trust.md |
 | Fleet and runtime configuration | fleet-and-runtime-configuration.md |
 | Runtime configuration parity | fleet-and-runtime-configuration.md |
+| Fleet production convergence | fleet-and-runtime-configuration.md |
