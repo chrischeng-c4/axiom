@@ -568,7 +568,7 @@ destination without copying tracker state.
   issuer outage and recovery, hot reload without unsafe member fan-out,
   ownership and adoption refusal, redaction, compatibility with pre-created
   Secrets, and no private key outside the owned Secret volume.
-- Tracking: [#3800](https://github.com/chrischeng-c4/axiom/issues/3800) (`lumen@0.4.37`).
+- Tracking: [Milestone #26](https://github.com/chrischeng-c4/axiom/milestone/26).
 
 ### Managed client trust
 

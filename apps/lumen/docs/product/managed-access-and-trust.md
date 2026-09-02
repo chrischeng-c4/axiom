@@ -40,12 +40,12 @@
 - Open: Define migration from current grants.
 - Neighbours: Managed runtime KSA access.
 
-## Managed runtime certificates
+## Managed runtime certificates (Milestone #26)
 
 - Problem: Runtime TLS material needs safe operator lifecycle management.
 - Who: Managed runtime operators.
 - Promise: The operator manages declared runtime certificates and rotation.
-- Outcome: `managed-runtime-certificates`. Tracking: Not assigned.
+- Outcome: `managed-runtime-certificates`. Tracking: [Milestone #26](https://github.com/chrischeng-c4/axiom/milestone/26).
 - Non-goals: Logging or embedding private keys.
 - Open: Define issuance and rotation integration.
 - Neighbours: Managed client trust.
