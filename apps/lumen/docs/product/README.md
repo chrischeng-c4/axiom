@@ -20,3 +20,4 @@ outcome and remains unbound until its release work is ready.
 | Facet resource governance | querying-and-facets.md |
 | Distributed facet convergence | querying-and-facets.md |
 | Vector hybrid facets | querying-and-facets.md |
+| Protocol and clients | protocol-and-clients.md |
