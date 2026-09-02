@@ -480,6 +480,11 @@ path = "e2e/operator_render.rs"
 required-features = ["operator"]
 
 [[test]]
+name = "report-4018-app"
+path = "e2e/report-4018-app.rs"
+required-features = ["operator"]
+
+[[test]]
 name = "operator_retired_credential_projection"
 path = "e2e/operator_retired_credential_projection.rs"
 required-features = ["operator"]
