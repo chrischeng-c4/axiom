@@ -60,7 +60,7 @@ struct Site {
     gate: Gate,
 }
 
-const SITES: [Site; 12] = [
+const SITES: [Site; 14] = [
     Site {
         path: "apps/defer/src/raft.rs",
         implementor: "DeferStateMachine",
@@ -99,6 +99,16 @@ const SITES: [Site; 12] = [
     Site {
         path: "libs/raft-runtime/src/lib.rs",
         implementor: "CounterSm",
+        gate: Gate::RaftRuntimeTests,
+    },
+    Site {
+        path: "libs/raft-runtime/src/conformance.rs",
+        implementor: "CountingSm",
+        gate: Gate::RaftRuntimeTests,
+    },
+    Site {
+        path: "libs/raft-runtime/e2e/adversarial_recovery.rs",
+        implementor: "Sm",
         gate: Gate::RaftRuntimeTests,
     },
     Site {
@@ -146,6 +156,8 @@ fn required_gate(path: &str) -> Result<Gate, String> {
         "apps/tape/src/raft.rs" => Ok(Gate::Tape),
         "projects/sift/src/durability.rs" => Ok(Gate::Sift),
         "libs/raft-runtime/src/lib.rs"
+        | "libs/raft-runtime/src/conformance.rs"
+        | "libs/raft-runtime/e2e/adversarial_recovery.rs"
         | "libs/raft-runtime/e2e/group_registry.rs"
         | "libs/raft-runtime/e2e/support/cluster.rs"
         | "libs/raft-runtime/e2e/group_membership_isolation.rs"

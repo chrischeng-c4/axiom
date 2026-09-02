@@ -14,6 +14,7 @@
 mod applied_index_store;
 pub mod cluster;
 mod config;
+pub mod conformance;
 mod fenced_assignment;
 pub mod group;
 mod host;
