@@ -30,3 +30,4 @@ outcome and remains unbound until its release work is ready.
 | Versioned client workload template | protocol-and-clients.md |
 | Protocol compatibility policy | protocol-and-clients.md |
 | Search v2 migration | protocol-and-clients.md |
+| Runtime and deployment | runtime-and-deployment.md |
