@@ -50,6 +50,16 @@
 - Open: Define shard-failure and cleanup behavior.
 - Neighbours: Distributed routing and merge.
 
+## Vector hybrid facets
+
+- Problem: Vector and hybrid candidates need a clear facet scope.
+- Who: Vector-search callers.
+- Promise: Governed facets define their exact or labelled approximate candidate scope.
+- Outcome: `vector-hybrid-facets`. Tracking: Not assigned.
+- Non-goals: Claiming approximate counts are exact.
+- Open: Choose the candidate and match scope.
+- Neighbours: Exact facets and distributed convergence.
+
 ## Non-goals in this area
 
 Lumen does not execute embedding models or become an OLAP engine.
