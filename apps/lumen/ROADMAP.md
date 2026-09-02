@@ -472,7 +472,7 @@ destination without copying tracker state.
 - Completion evidence: Reconcile tests prove one-at-a-time default rollout,
   explicit concurrency, manual pause, generation gating, Ready gating, stop on
   degradation, leader failover, and automatic continuation after recovery.
-- Tracking: [#3797](https://github.com/chrischeng-c4/axiom/issues/3797) (`lumen@0.4.34`).
+- Tracking: [Milestone #40](https://github.com/chrischeng-c4/axiom/milestone/40).
 
 ### GKE regional production profile
 

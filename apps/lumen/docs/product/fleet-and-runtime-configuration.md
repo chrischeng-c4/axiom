@@ -30,12 +30,12 @@
 - Open: Define recovery and aggregate readiness evidence.
 - Neighbours: Fleet safe rollout and foundation extraction.
 
-## Fleet safe rollout
+## Fleet safe rollout (Milestone #40)
 
 - Problem: Fleet changes need a safe rollout boundary.
 - Who: Fleet operators.
 - Promise: Fleet rolls declared changes forward only when readiness evidence permits.
-- Outcome: `fleet-safe-rollout`. Tracking: Not assigned.
+- Outcome: `fleet-safe-rollout`. Tracking: [Milestone #40](https://github.com/chrischeng-c4/axiom/milestone/40).
 - Non-goals: Using workload ordering as a quorum proof.
 - Open: Define per-instance rollout controls.
 - Neighbours: Quorum-safe runtime rollout.
