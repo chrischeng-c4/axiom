@@ -436,7 +436,7 @@ destination without copying tracker state.
   optional egress policy, no created namespace, KSA, or token Secret, and no
   token value in rendered YAML, environment, arguments, logs, Events, or
   status.
-- Tracking: [#3799](https://github.com/chrischeng-c4/axiom/issues/3799) (`lumen@0.4.36`).
+- Tracking: [Milestone #30](https://github.com/chrischeng-c4/axiom/milestone/30).
 
 ### Fleet production convergence
 

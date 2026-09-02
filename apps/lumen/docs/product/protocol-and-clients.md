@@ -70,12 +70,12 @@
 - Open: Define the callback contract.
 - Neighbours: Current indexing and querying boundaries.
 
-## Versioned client workload template
+## Versioned client workload template (Milestone #30)
 
 - Problem: Managed client workloads need a clear template boundary.
 - Who: Kubernetes application teams.
 - Promise: Lumen provides a versioned client-workload template.
-- Outcome: `versioned-client-workload-template`. Tracking: Not assigned.
+- Outcome: `versioned-client-workload-template`. Tracking: [Milestone #30](https://github.com/chrischeng-c4/axiom/milestone/30).
 - Non-goals: Fleet creating client deployments.
 - Open: Define projection and upgrade inputs.
 - Neighbours: Managed KSA access.
