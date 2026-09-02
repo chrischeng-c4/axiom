@@ -46,3 +46,4 @@ outcome and remains unbound until its release work is ready.
 | Fleet production convergence | fleet-and-runtime-configuration.md |
 | Fleet safe rollout | fleet-and-runtime-configuration.md |
 | Fleet foundation extraction | fleet-and-runtime-configuration.md |
+| Topology and availability | topology-and-availability.md |

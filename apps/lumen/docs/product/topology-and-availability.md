@@ -1,0 +1,15 @@
+# Topology and availability
+
+## Topology and availability
+
+- Problem: Stateful Lumen needs explicit placement and quorum boundaries.
+- Who: Operators of replicated and sharded runtimes.
+- Promise: Lumen exposes current capacity, placement, topology, rollout, split, autoscaling, and HPA boundaries.
+- Status rows: `capacity-catalog-placement`, `kubernetes-native-placement`, `fixed-topology`, `per-shard-failure-domain-placement`, `quorum-safe-runtime-rollout`, `automatic-shard-splitting`, `membership-aware-replica-autoscaling`, `generic-horizontal-pod-autoscaling`.
+- Limits today: Automated replica changes and generic HPA are not supported.
+- Non-goals: Claiming one Pod or two voters is highly available.
+- Neighbours: Recovery owns restart safety; Fleet owns cross-runtime convergence.
+
+## Non-goals in this area
+
+Generic HorizontalPodAutoscaler control is not a Lumen topology contract.
