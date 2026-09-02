@@ -14,3 +14,4 @@ outcome and remains unbound until its release work is ready.
 | Item-atomic batch writes | indexing-and-rebuild.md |
 | Shadow rebuild generations | indexing-and-rebuild.md |
 | Strict search schema types | indexing-and-rebuild.md |
+| Querying and facets | querying-and-facets.md |
