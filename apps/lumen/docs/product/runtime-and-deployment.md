@@ -30,6 +30,16 @@
 - Open: Define Autopilot topology and operational evidence.
 - Neighbours: GKE regional production profile.
 
+## Managed embedded data durability
+
+- Problem: A single-replica Managed runtime must retain its index and AOF on its PVC.
+- Who: Operators of one-replica Managed Lumen.
+- Promise: Managed embedded Raft data uses the exact child path on the retained PVC.
+- Outcome: `managed-embedded-data-durability`. Tracking: Not assigned.
+- Non-goals: Recovering data already lost from node-local storage.
+- Open: Verify restart and legacy-PVC adoption through the release oracle.
+- Neighbours: Managed data retention and deterministic consensus conformance.
+
 ## Non-goals in this area
 
 Standalone deployment is not a high-availability promise.
