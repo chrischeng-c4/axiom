@@ -70,12 +70,12 @@
 - Open: Define timer, drain, and retry limits.
 - Neighbours: Quorum-safe runtime rollout.
 
-## Deterministic consensus conformance
+## Deterministic consensus conformance (Milestone #7)
 
 - Problem: Adversarial scheduling can hide consensus safety failures.
 - Who: Raft-runtime maintainers and Lumen operators.
 - Promise: Deterministic replay proves declared recovery and membership invariants.
-- Outcome: `deterministic-consensus-conformance`. Tracking: Not assigned.
+- Outcome: `deterministic-consensus-conformance`. Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
 - Non-goals: Replacing production network testing.
 - Open: Freeze the corpus, replay, and mutant-kill contract.
 - Neighbours: Managed embedded data durability.

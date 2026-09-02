@@ -627,7 +627,7 @@ destination without copying tracker state.
 - Completion evidence: The fixed corpus, replay parser, and harness-only
   mutants prove safety across bounded elections, partitions, restarts,
   compactions, and membership transitions.
-- Tracking: Not assigned.
+- Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
 
 ### Bounded Raft shutdown and failover
 
