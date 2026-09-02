@@ -50,12 +50,12 @@
 - Open: Define issuance and rotation integration.
 - Neighbours: Managed client trust.
 
-## Managed client trust
+## Managed client trust (Milestone #26)
 
 - Problem: Clients need a managed, rotated trust path.
 - Who: Managed client workloads.
 - Promise: Client trust material follows the managed runtime certificate contract.
-- Outcome: `managed-client-trust`. Tracking: Not assigned.
+- Outcome: `managed-client-trust`. Tracking: [Milestone #26](https://github.com/chrischeng-c4/axiom/milestone/26).
 - Non-goals: Trust-on-first-use.
 - Open: Define CA projection and reload behavior.
 - Neighbours: Runtime certificates and workload templates.

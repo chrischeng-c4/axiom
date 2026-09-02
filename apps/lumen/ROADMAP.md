@@ -587,7 +587,7 @@ destination without copying tracker state.
   adoption refusal, stale-object prune, retained foreign objects, per-object
   failure recovery, `ClientTrustReady` gating, public-only data, and no change
   to client Deployments.
-- Tracking: [#3800](https://github.com/chrischeng-c4/axiom/issues/3800) (`lumen@0.4.37`).
+- Tracking: [Milestone #26](https://github.com/chrischeng-c4/axiom/milestone/26).
 
 ### Managed data retention
 
