@@ -14,8 +14,8 @@ The main session must select the effort before every `Agent` call.
 Example:
 
 ```text
-description: [effort=high] Review the public API change
-subagent_type: server-lifecycle-sr-dev
+description: [effort=max] Author the e2e contract for the lifecycle change
+subagent_type: server-lifecycle-e2e-dev
 ```
 
 `.claude/hooks/require_agent_effort.py` runs before the call. It rejects a

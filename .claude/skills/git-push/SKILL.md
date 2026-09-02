@@ -6,67 +6,35 @@ user-invocable: true
 
 # /git:push
 
-Push the current branch to `origin`, then stop. This skill does not commit,
-rebase, or open a PR.
+Push the current branch to `origin`, then stop. The mechanics live in
+`scripts/git/push.sh`, which picks the safe variant itself: `-u origin HEAD`
+on a first push, a plain push when only ahead, `--force-with-lease` when
+history was rewritten, nothing when already in sync — and never bare
+`--force`.
 
 ## Rules
 
-- Push only the current branch. Never push, delete, or force-move any other
-  ref. Persistent refs — `main`, `app/*`, `lib/*`, `project-mamba`,
-  `project-lumen`, `examples` — are never force-overwritten without explicit
-  user confirmation.
-- Run every git command through `git -c core.fsmonitor=false`. This checkout
-  enables `core.fsmonitor`, and a stalled daemon blocks any command that reads
-  the index — indefinitely, with no error.
-- Use `--force-with-lease` only when the branch has an upstream and local
-  history was rewritten (the branch is both ahead and behind its upstream).
-  Never use bare `--force`.
-- If the push is rejected — including a lease failure — the remote moved:
-  fetch, report the divergence, and stop. Do not override it.
+- Push only the current branch; the script never touches another ref.
+- A force push to a persistent ref (`main`, `examples`, `project-mamba`,
+  `project-lumen`, `app/*`, `lib/*`) is refused by the script. Pass
+  `--force-persistent-ok` only after the user has explicitly confirmed that
+  exact overwrite in this conversation — never on your own judgment.
+- A rejected push means the remote moved. The script already fetched and
+  printed the divergence; report it and stop. Do not override it.
 
 ## Instructions
 
-### Step 0: Preflight
+1. Run the script:
 
 ```bash
-git -c core.fsmonitor=false branch --show-current
-git -c core.fsmonitor=false rev-parse --abbrev-ref --symbolic-full-name @{u}
+scripts/git/push.sh
 ```
 
-If the branch has an upstream, measure the divergence:
-
-```bash
-git -c core.fsmonitor=false rev-list --left-right --count HEAD...@{u}
-```
-
-### Step 1: Push
-
-No upstream — first push, set it:
-
-```bash
-git -c core.fsmonitor=false push -u origin HEAD
-```
-
-Upstream exists and the divergence is `N 0` (only ahead) — plain push:
-
-```bash
-git -c core.fsmonitor=false push
-```
-
-Upstream exists and the divergence is `N M` with `M > 0` (rewritten
-history) — push with lease protection:
-
-```bash
-git -c core.fsmonitor=false push --force-with-lease
-```
-
-`0 0` means nothing to push; report and stop.
-
-### Step 2: Report
-
-```bash
-git -c core.fsmonitor=false rev-list --left-right --count HEAD...@{u}
-```
-
-The clean finish is `0 0`. Report the pushed ref and the final divergence; on
-rejection, report the exact error and what the remote holds.
+2. Read its exit:
+   - `0` — pushed, or nothing to push; it printed the final `HEAD...@{u}`
+     counts. Clean is `0 0`. Report the pushed ref.
+   - `2` — refused: either only behind the upstream (nothing local to
+     publish), or a force push to a persistent ref that needs the user's
+     explicit confirmation first.
+   - `4` — rejected by the remote; the divergence was printed. Report it and
+     stop.
