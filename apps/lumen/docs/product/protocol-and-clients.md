@@ -90,6 +90,16 @@
 - Open: Define release-note and overlap requirements.
 - Neighbours: Search v2 migration.
 
+## Search v2 migration
+
+- Problem: Callers need an explicit path from the current search contract to Search v2.
+- Who: Existing Lumen callers.
+- Promise: Callers can use documented compatibility steps and offline tools before activation.
+- Outcome: `search-v2-migration`. Tracking: Not assigned.
+- Non-goals: Activating Search v2 before all members support it.
+- Open: Define the full migration-tool and compatibility contract.
+- Neighbours: Search capability activation at `lumen@0.37.0`.
+
 ## Non-goals in this area
 
 Lumen does not publish generated SDK packages today.
