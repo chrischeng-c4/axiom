@@ -119,7 +119,7 @@ destination without copying tracker state.
   tie-breaks, page size 1,000, offset 10,000, live and PIT cursors, `400`
   mismatch, `409` stale generation, `410` expiry, tagged totals, and collapse
   totals, missing values, representative order, and field eligibility.
-- Tracking: [#3810](https://github.com/chrischeng-c4/axiom/issues/3810) (`lumen@0.4.48`).
+- Tracking: [Milestone #17](https://github.com/chrischeng-c4/axiom/milestone/17).
 
 ### Exact search facets metrics
 

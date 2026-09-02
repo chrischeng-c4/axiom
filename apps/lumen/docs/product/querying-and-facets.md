@@ -10,12 +10,12 @@
 - Non-goals: Source-record hydration and embedding execution.
 - Neighbours: Protocol documents the wire contract; indexing owns schema changes.
 
-## Unified search contract
+## Unified search contract (Milestone #17)
 
 - Problem: Scoring, filtering, cursors, and totals need one deterministic contract.
 - Who: Search callers and generated clients.
 - Promise: Search separates scoring and filtering with stable result controls.
-- Outcome: `unified-search-contract`. Tracking: Not assigned.
+- Outcome: `unified-search-contract`. Tracking: [Milestone #17](https://github.com/chrischeng-c4/axiom/milestone/17).
 - Non-goals: Cross-collection joins.
 - Open: Finalize compatibility and failure semantics.
 - Neighbours: Search v2 migration and generated-client parity.
