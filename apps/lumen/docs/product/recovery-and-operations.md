@@ -20,12 +20,12 @@
 - Open: Define compaction and retention bounds.
 - Neighbours: Idempotent replay and rebuild generations.
 
-## Managed data retention
+## Managed data retention (Milestone #34)
 
 - Problem: PVC lifecycle needs a deliberate user choice.
 - Who: Managed Lumen operators.
 - Promise: Managed deletion retains or deletes only the declared instance PVCs.
-- Outcome: `managed-data-retention`. Tracking: Not assigned.
+- Outcome: `managed-data-retention`. Tracking: [Milestone #34](https://github.com/chrischeng-c4/axiom/milestone/34).
 - Non-goals: Broad namespace PVC deletion.
 - Open: Define finalizer and retry evidence.
 - Neighbours: Managed embedded data durability.

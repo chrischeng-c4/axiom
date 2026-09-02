@@ -602,7 +602,7 @@ destination without copying tracker state.
   PVCs, explicit data Delete removes only exact instance PVCs, unrelated PVCs
   remain, failed cleanup retains the finalizer and publishes a condition, and
   retry succeeds without broad deletion.
-- Tracking: [#3093](https://github.com/chrischeng-c4/axiom/issues/3093) (`lumen@0.4.40`).
+- Tracking: [Milestone #34](https://github.com/chrischeng-c4/axiom/milestone/34).
 
 ### Managed embedded data durability
 
