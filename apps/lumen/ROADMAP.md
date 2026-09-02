@@ -275,7 +275,7 @@ destination without copying tracker state.
   per-object failure. Condition tests prove `AccessPolicyReady=False` blocks
   `Ready=True`, while a converged deny-all policy reports
   `AccessPolicyReady=True`.
-- Tracking: [#3798](https://github.com/chrischeng-c4/axiom/issues/3798) (`lumen@0.4.35`).
+- Tracking: [Milestone #39](https://github.com/chrischeng-c4/axiom/milestone/39).
 
 ### Projected KSA client auth
 
