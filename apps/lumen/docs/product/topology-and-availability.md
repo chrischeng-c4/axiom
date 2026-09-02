@@ -70,6 +70,16 @@
 - Open: Define timer, drain, and retry limits.
 - Neighbours: Quorum-safe runtime rollout.
 
+## Deterministic consensus conformance
+
+- Problem: Adversarial scheduling can hide consensus safety failures.
+- Who: Raft-runtime maintainers and Lumen operators.
+- Promise: Deterministic replay proves declared recovery and membership invariants.
+- Outcome: `deterministic-consensus-conformance`. Tracking: Not assigned.
+- Non-goals: Replacing production network testing.
+- Open: Freeze the corpus, replay, and mutant-kill contract.
+- Neighbours: Managed embedded data durability.
+
 ## Non-goals in this area
 
 Generic HorizontalPodAutoscaler control is not a Lumen topology contract.
