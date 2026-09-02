@@ -60,6 +60,16 @@
 - Open: Define retry and timeout policy.
 - Neighbours: Idempotent write replay.
 
+## Generated-client source-integration helpers
+
+- Problem: Every caller repeats ID hydration and result ordering.
+- Who: Application integrations.
+- Promise: Generated clients can help bulk-fetch source records and restore hit order.
+- Outcome: `generated-client-source-integration-helpers`. Tracking: Not assigned.
+- Non-goals: Storing source records in Lumen.
+- Open: Define the callback contract.
+- Neighbours: Current indexing and querying boundaries.
+
 ## Non-goals in this area
 
 Lumen does not publish generated SDK packages today.
