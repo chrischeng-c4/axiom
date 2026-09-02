@@ -40,12 +40,12 @@
 - Open: Define portable capacity and placement mapping.
 - Neighbours: Per-shard failure-domain placement.
 
-## Membership-aware replica autoscaling
+## Membership-aware replica autoscaling (Milestone #28)
 
 - Problem: Replica count cannot change safely without Raft membership work.
 - Who: Operators under sustained load.
 - Promise: Lumen can add or remove replicas only through membership-aware transitions.
-- Outcome: `membership-aware-replica-autoscaling`. Tracking: Not assigned.
+- Outcome: `membership-aware-replica-autoscaling`. Tracking: [Milestone #28](https://github.com/chrischeng-c4/axiom/milestone/28).
 - Non-goals: Generic HPA control of serving pods.
 - Open: Define the safe transition actuator.
 - Neighbours: Quorum-safe runtime rollout.

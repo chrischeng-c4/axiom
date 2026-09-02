@@ -724,7 +724,7 @@ destination without copying tracker state.
   stop on a failed transition.
 - Completion evidence: A multi-node failure test proves scale-out, scale-in,
   leader movement, restart recovery, and no acknowledged-write loss.
-- Tracking: [#3815](https://github.com/chrischeng-c4/axiom/issues/3815) (`lumen@0.5.1`).
+- Tracking: [Milestone #28](https://github.com/chrischeng-c4/axiom/milestone/28).
 
 ### High-availability shard expansion
 
