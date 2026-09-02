@@ -52,3 +52,4 @@ outcome and remains unbound until its release work is ready.
 | Kubernetes-native placement | topology-and-availability.md |
 | Membership-aware replica autoscaling | topology-and-availability.md |
 | High-availability shard expansion | topology-and-availability.md |
+| Bounded Raft shutdown and failover | topology-and-availability.md |

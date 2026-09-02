@@ -60,6 +60,16 @@
 - Open: Define restart and rollback evidence.
 - Neighbours: Automatic shard splitting.
 
+## Bounded Raft shutdown and failover
+
+- Problem: Shutdown and leadership change must finish within explicit bounds.
+- Who: Replicated-runtime operators.
+- Promise: Raft shutdown and failover expose bounded, recoverable behavior.
+- Outcome: `bounded-raft-shutdown-and-failover`. Tracking: Not assigned.
+- Non-goals: Unbounded background shutdown.
+- Open: Define timer, drain, and retry limits.
+- Neighbours: Quorum-safe runtime rollout.
+
 ## Non-goals in this area
 
 Generic HorizontalPodAutoscaler control is not a Lumen topology contract.
