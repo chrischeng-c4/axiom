@@ -20,6 +20,16 @@
 - Open: Define one contract across every selected persistent backend.
 - Neighbours: Idempotency and recovery consume this acknowledgement.
 
+## Idempotent write replay
+
+- Problem: A retry can otherwise apply a write twice.
+- Who: HTTP and generated-client writers.
+- Promise: A durable payload-bound key replays the first result safely.
+- Outcome: `idempotent-write-replay`. Tracking: Not assigned.
+- Non-goals: Unbounded key retention.
+- Open: Define retention and conflict reporting.
+- Neighbours: Durable writes and generated-client resilience.
+
 ## Non-goals in this area
 
 Lumen does not own caller source documents.
