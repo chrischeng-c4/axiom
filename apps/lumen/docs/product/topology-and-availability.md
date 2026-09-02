@@ -10,12 +10,12 @@
 - Non-goals: Claiming one Pod or two voters is highly available.
 - Neighbours: Recovery owns restart safety; Fleet owns cross-runtime convergence.
 
-## Per-shard failure-domain placement
+## Per-shard failure-domain placement (Milestone #31)
 
 - Problem: Replicas need independent failure domains.
 - Who: Replicated-runtime operators.
 - Promise: Each shard can place members across declared failure domains.
-- Outcome: `per-shard-failure-domain-placement`. Tracking: Not assigned.
+- Outcome: `per-shard-failure-domain-placement`. Tracking: [Milestone #31](https://github.com/chrischeng-c4/axiom/milestone/31).
 - Non-goals: Capacity selection outside the catalog.
 - Open: Define placement refusal and recovery behavior.
 - Neighbours: Kubernetes-native placement.

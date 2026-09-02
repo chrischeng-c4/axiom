@@ -511,7 +511,7 @@ destination without copying tracker state.
   three-zone voter placement, allowed node sharing across different shards and
   runtimes, correct unschedulable status when domains are insufficient, and
   continued quorum through one Pod, node, or zone loss.
-- Tracking: [#3801](https://github.com/chrischeng-c4/axiom/issues/3801) (`lumen@0.4.38`).
+- Tracking: [Milestone #31](https://github.com/chrischeng-c4/axiom/milestone/31).
 
 ### Quorum-safe runtime rollout
 
