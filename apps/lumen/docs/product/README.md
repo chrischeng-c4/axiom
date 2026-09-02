@@ -38,3 +38,4 @@ outcome and remains unbound until its release work is ready.
 | Managed access and trust | managed-access-and-trust.md |
 | Managed runtime KSA access | managed-access-and-trust.md |
 | Projected KSA client auth | managed-access-and-trust.md |
+| Managed auth unification | managed-access-and-trust.md |

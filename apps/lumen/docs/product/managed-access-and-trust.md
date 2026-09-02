@@ -30,6 +30,16 @@
 - Open: Define the final projected-token and CA contract.
 - Neighbours: Generated-client request resilience.
 
+## Managed auth unification
+
+- Problem: Managed paths need one required identity model.
+- Who: Managed runtime operators.
+- Promise: Managed Lumen uses one required KSA identity and whole-runtime permission model.
+- Outcome: `managed-auth-unification`. Tracking: Not assigned.
+- Non-goals: Disabled Managed authentication.
+- Open: Define migration from current grants.
+- Neighbours: Managed runtime KSA access.
+
 ## Non-goals in this area
 
 Lumen never places bearer-token values in declarative runtime state.
