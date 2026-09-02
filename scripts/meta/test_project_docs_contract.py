@@ -718,6 +718,47 @@ class ProjectDocsContractTest(unittest.TestCase):
         self.assertIn("D1", rules)
         self.assertIn("D3", rules)
 
+    def test_migration_accepts_distinct_source_and_target_version_names(self) -> None:
+        self.adopt_extended_supporting_docs()
+        migration = self.project / "docs/migration-0.5-search.md"
+        migration.write_text(
+            MIGRATION.replace(
+                "| Surface | 0.4.x | 0.5.0 | Required action |",
+                "| Surface | Search v1 | Search v2 | Required action |",
+            ),
+            encoding="utf-8",
+        )
+        report = self.validate()
+        self.assertNotIn("D3", self.all_rules(report), report.as_dict())
+
+    def test_migration_keeps_legacy_version_header_compatible(self) -> None:
+        self.adopt_extended_supporting_docs()
+        report = self.validate()
+        self.assertNotIn("D3", self.all_rules(report), report.as_dict())
+
+    def test_migration_rejects_malformed_version_headers(self) -> None:
+        self.adopt_extended_supporting_docs()
+        migration = self.project / "docs/migration-0.5-search.md"
+        malformed = (
+            "| Surface | Source | Required action |",
+            "| Surface | Source | Target | Notes | Required action |",
+            "| Surface |  | Target | Required action |",
+            "| Surface | Source |  | Required action |",
+            "| Surface | Same | Same | Required action |",
+            "| Area | Source | Target | Required action |",
+            "| Surface | Source | Target | Action |",
+        )
+        for header in malformed:
+            with self.subTest(header=header):
+                migration.write_text(
+                    MIGRATION.replace(
+                        "| Surface | 0.4.x | 0.5.0 | Required action |", header
+                    ),
+                    encoding="utf-8",
+                )
+                report = self.validate()
+                self.assertIn("D3", self.all_rules(report), report.as_dict())
+
     def test_gke_and_client_integration_require_fixed_headings_and_tables(self) -> None:
         self.adopt_environment_and_client_integration_docs()
         gke = self.project / "docs/gke.md"

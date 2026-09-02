@@ -107,8 +107,10 @@ GAPS = {
 # `scripts/meta/project_docs_contract.py` is what keeps it in that shape.
 # Reading it with a regex here is safe *because* that rule exists and
 # `metadoc.py check` runs the validator as `P10`; without it this would be a
-# parser guessing at prose.
+# parser guessing at prose. G4 reads only the near-term outcome area: an ID in
+# a non-goal names an explicit boundary, not future work a promise must claim.
 ROADMAP_ID = re.compile(r"^-[ \t]+ID:[ \t]*`([^`]+)`[ \t]*$", re.M)
+NEAR_TERM_OUTCOMES = "Near-term outcomes"
 
 # The `## Support matrix` table, whose second column is the row id. `S4` in the
 # same validator fixes the column order, so the index is a constant rather than
@@ -202,10 +204,21 @@ def promises(texts: dict[str, str]) -> list[Promise]:
 
 
 def roadmap_ids(repo: Path, project: str) -> list[str]:
+    """IDs in the roadmap's `## Near-term outcomes` area only."""
     path = repo / project / "ROADMAP.md"
     if not path.is_file():
         return []
-    return ROADMAP_ID.findall(path.read_text(encoding="utf-8"))
+    out: list[str] = []
+    inside = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            inside = line[3:].strip() == NEAR_TERM_OUTCOMES
+            continue
+        if inside:
+            found = ROADMAP_ID.fullmatch(line)
+            if found:
+                out.append(found.group(1))
+    return out
 
 
 def status_ids(repo: Path, project: str) -> list[str]:

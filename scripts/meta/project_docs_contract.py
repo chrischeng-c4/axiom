@@ -426,6 +426,21 @@ def strip_inline(text: str) -> str:
     return re.sub(r"`([^`]+)`", r"\1", text)
 
 
+def valid_migration_table_header(cells: list[str]) -> bool:
+    """Return whether a migration table names distinct source and target columns."""
+
+    if len(cells) != 4:
+        return False
+    normalized = tuple(strip_inline(cell).strip() for cell in cells)
+    return (
+        normalized[0] == "Surface"
+        and normalized[3] == "Required action"
+        and bool(normalized[1])
+        and bool(normalized[2])
+        and normalized[1] != normalized[2]
+    )
+
+
 def github_slug(text: str) -> str:
     value = strip_inline(text).lower().strip()
     value = re.sub(r"[^a-z0-9 _-]", "", value)
@@ -811,16 +826,25 @@ def validate_supporting_doc(
 
     if table_heading in positions:
         rows = table_after(prose, positions[table_heading])
-        if (
-            len(rows) < 3
-            or tuple(rows[0][1]) != table_header
-            or not readme_contract.is_separator_row(rows[1][1])
+        actual_header = rows[0][1] if rows else []
+        header_is_valid = (
+            valid_migration_table_header(actual_header)
+            if kind == "migration"
+            else tuple(actual_header) == table_header
+        )
+        if len(rows) < 3 or not header_is_valid or not readme_contract.is_separator_row(
+            rows[1][1]
         ):
+            expected_columns = (
+                "Surface | <source version> | <target version> | Required action"
+                if kind == "migration"
+                else " | ".join(table_header)
+            )
             findings.append(
                 DocFinding(
                     "D3",
                     positions[table_heading] + 1,
-                    f"{table_heading} columns must be: " + " | ".join(table_header),
+                    f"{table_heading} columns must be: {expected_columns}",
                 )
             )
         else:
