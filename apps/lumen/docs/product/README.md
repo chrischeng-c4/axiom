@@ -12,3 +12,4 @@ outcome and remains unbound until its release work is ready.
 | Durable write contract | indexing-and-rebuild.md |
 | Idempotent write replay | indexing-and-rebuild.md |
 | Item-atomic batch writes | indexing-and-rebuild.md |
+| Shadow rebuild generations | indexing-and-rebuild.md |
