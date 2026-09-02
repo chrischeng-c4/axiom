@@ -10,6 +10,16 @@
 - Non-goals: Source-record ownership or hydration.
 - Neighbours: Querying selects the indexed IDs; recovery defines durable acknowledgement.
 
+## Durable write contract
+
+- Problem: Persistent backends need one public acknowledgement meaning.
+- Who: Writers that retry after faults.
+- Promise: Persistent writes acknowledge only after durable commit and index apply.
+- Outcome: `durable-write-contract`. Tracking: Not assigned.
+- Non-goals: Making Lumen the source of truth.
+- Open: Define one contract across every selected persistent backend.
+- Neighbours: Idempotency and recovery consume this acknowledgement.
+
 ## Non-goals in this area
 
 Lumen does not own caller source documents.
