@@ -363,7 +363,7 @@ destination without copying tracker state.
   generated dependency metadata. Tests cover success, malformed stream data,
   early disconnect, error redaction, and POST fallback without buffering the
   whole stream.
-- Tracking: [#3807](https://github.com/chrischeng-c4/axiom/issues/3807) (`lumen@0.4.45`).
+- Tracking: [Milestone #13](https://github.com/chrischeng-c4/axiom/milestone/13).
 
 ### Strict generated-client gates
 

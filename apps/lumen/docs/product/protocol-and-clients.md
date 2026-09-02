@@ -20,12 +20,12 @@
 - Open: Complete shared errors, streaming, and consistency declarations.
 - Neighbours: Protocol compatibility policy.
 
-## Generated-client protocol parity
+## Generated-client protocol parity (Milestone #13)
 
 - Problem: Generated source needs typed streaming and errors.
 - Who: TypeScript, Python, and Rust consumers.
 - Promise: Generated clients represent the supported protocol consistently.
-- Outcome: `generated-client-protocol-parity`. Tracking: Not assigned.
+- Outcome: `generated-client-protocol-parity`. Tracking: [Milestone #13](https://github.com/chrischeng-c4/axiom/milestone/13).
 - Non-goals: Published packages.
 - Open: Define typed streaming and errors for each language.
 - Neighbours: Strict generated-client gates.
