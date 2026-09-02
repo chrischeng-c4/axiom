@@ -81,49 +81,47 @@ Then read `CLAUDE.md`. It holds the work-item lifecycle, the per-phase write
 roots, and the rules that refuse against them, and it is the single copy of
 those rules — they are deliberately not repeated here.
 
-### Use Codex subagents and select effort per task
+### Use Codex subagents; effort is pinned per role
 
-Before starting non-trivial work, split it into bounded workstreams where this
-can reduce elapsed time or improve independent review. Prefer the matching
-`<project>-dev` role under `.codex/agents/` for implementation, investigation,
-test design, review, and verification in one owned app or library. Keep the
-main thread as the controller. It freezes scope and ownership, integrates the
-results, reproduces the evidence, and owns final acceptance.
+The fleet under `.codex/agents/` is the Codex projection of
+`.claude/agents/` — 91 roles, generated from the Claude markdown, which is
+the source of truth. Two agents per project (22 apps and 22 libs) plus
+`aw-dev` and two operators:
 
-Use several subagents when the workstreams are independent. Run read-only work
-in parallel. Run write work in parallel only when path ownership cannot
+- `<p>-e2e-dev` (effort `max`) owns the e2e contract — black-box cases
+  written to fail before the implementation exists; never writes `src/`.
+- `<p>-dev` (effort `medium`) owns source plus colocated unit tests; never
+  writes `e2e/`.
+- `aw-dev` (`medium`) owns bounded changes to the `apps/aw` Python CLI.
+- `agy-operator` (`low`) runs one frozen AGY dispatch round.
+- `gke-operator` (`medium`) babysits the paid GKE acceptance harness.
+
+Keep the main thread as the controller. It freezes scope and ownership,
+integrates the results, reproduces the evidence, and owns final acceptance.
+Use several subagents when the workstreams are independent. Run read-only
+work in parallel. Run write work in parallel only when path ownership cannot
 overlap. Tell every worker that it is not alone in the checkout, that it must
 preserve unrelated changes, and that it must not undo another worker's work.
-Reuse a current subagent for a related follow-up. Keep a tiny task in the main
-thread when delegation would cost more than the work. For a cross-project task,
-assign one matching subagent per owned project and keep integration in the main
-thread.
+Keep a tiny task in the main thread when delegation would cost more than the
+work.
 
-Every project `<project>-dev` role uses `gpt-5.6-terra`. Select its reasoning
-effort when dispatching the task:
-
-- `low` for narrow mechanical work with no public behavior change.
-- `medium` for contained behavior in one owner with focused tests.
-- `high` for material public behavior or several modules and consumers.
-- `xhigh` for cross-project, concurrency, durability, security,
-  compatibility, release, or supply-chain work.
-- `max` for the hardest quality-first work when failure would be costly and
-  deeper verification has measured value.
-
-Pass the selected value as `reasoning_effort` when calling `spawn_agent`. Use
-`fork_turns="none"` or a positive turn count when an explicit effort override
-is required, and include all context that the worker needs. Do not pin one
-universal effort in a role TOML.
-
-Choose the lowest effort that fits the task. Raise it when ambiguity, risk, or
-integration cost increases. A higher effort changes reasoning depth only. It
-never expands scope, write access, authority, or acceptance rights.
+Every role fixes `gpt-5.6-terra` and pins its `model_reasoning_effort` to the
+same value the Claude frontmatter pins. Dispatch does not select an effort;
+it passes `agent_type` naming a registered role and the matching value as
+`reasoning_effort`, plus `fork_turns="none"` or a positive turn count.
+`.codex/hooks/require_spawn_agent_effort.py` refuses a spawn whose
+`agent_type` is unregistered or whose `reasoning_effort` differs from the
+role's pinned value, mirroring `.claude/hooks/require_agent_effort.py`. A
+hard case may be raised at dispatch time by overriding `model` in the spawn
+call — phase ownership does not move with the model, and effort stays the
+pinned value.
 
 ### Use AGY only for authorized external delegation
 
 Codex project subagents are the default bounded workers. Use one fresh
 `agy-operator` subagent only when the user authorizes the exact headless AGY
-payload for an external task. Its model is `GPT-5.6 Luna` at medium reasoning.
+payload for an external task. Its role TOML pins `gpt-5.6-terra` at `low`
+reasoning, matching the Claude definition.
 Make it directly inherit that user turn. Do not reuse an older operator. Do not
 forward authorization through a controller message.
 

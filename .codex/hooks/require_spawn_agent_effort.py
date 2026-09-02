@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
-"""Block Codex spawn_agent calls that omit an explicit reasoning effort."""
+"""Block Codex spawn_agent calls that omit an explicit reasoning effort,
+name an unregistered agent, or claim an effort that does not match the
+named role's pinned `model_reasoning_effort`.
+
+This mirrors `.claude/hooks/require_agent_effort.py`: the registry is the
+role files themselves — `.codex/agents/*.toml` — so the dispatch marker and
+the definition cannot drift apart silently. Parsing is line-regex rather
+than tomllib because the system `python3` is 3.9.
+"""
 
 from __future__ import annotations
 
 import json
 import re
 import sys
-from typing import Any
-
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 VALID_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 BOUNDED_FORK_TURNS = re.compile(r"^[1-9][0-9]*$")
+AGENTS_DIR = Path(__file__).resolve().parents[1] / "agents"
+_NAME_LINE = re.compile(r'^name = "([^"]+)"$', re.MULTILINE)
+_EFFORT_LINE = re.compile(r'^model_reasoning_effort = "([^"]+)"$', re.MULTILINE)
 
 
 class DispatchPolicyError(ValueError):
@@ -24,7 +35,21 @@ def _is_spawn_agent(tool_name: Any) -> bool:
     )
 
 
-def validate_spawn_agent_call(payload: Any) -> None:
+def load_registry(agents_dir: Path = AGENTS_DIR) -> Dict[str, str]:
+    """Map registered agent name -> pinned reasoning effort."""
+    registry: Dict[str, str] = {}
+    for toml_path in sorted(agents_dir.glob("*.toml")):
+        text = toml_path.read_text(encoding="utf-8")
+        name = _NAME_LINE.search(text)
+        effort = _EFFORT_LINE.search(text)
+        if name and effort:
+            registry[name.group(1)] = effort.group(1)
+    return registry
+
+
+def validate_spawn_agent_call(
+    payload: Any, registry: Optional[Dict[str, str]] = None
+) -> None:
     if not isinstance(payload, dict):
         raise DispatchPolicyError("hook input must be one JSON object")
 
@@ -40,6 +65,25 @@ def validate_spawn_agent_call(payload: Any) -> None:
         allowed = "|".join(sorted(VALID_EFFORTS))
         raise DispatchPolicyError(
             f"reasoning_effort must be explicit and one of {allowed}"
+        )
+
+    if registry is None:
+        registry = load_registry()
+    if not registry:
+        raise DispatchPolicyError(
+            f"no agent registry found under {AGENTS_DIR}"
+        )
+    agent_type = tool_input.get("agent_type")
+    if not isinstance(agent_type, str) or agent_type not in registry:
+        raise DispatchPolicyError(
+            "agent_type must name a registered role in .codex/agents/; "
+            f"got {agent_type!r}"
+        )
+    pinned = registry[agent_type]
+    if effort != pinned:
+        raise DispatchPolicyError(
+            f"reasoning_effort {effort!r} does not match {agent_type!r} "
+            f"pinned effort {pinned!r}"
         )
 
     fork_turns = tool_input.get("fork_turns")
