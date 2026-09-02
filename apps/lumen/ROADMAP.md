@@ -25,7 +25,7 @@ destination without copying tracker state.
   before commit, after commit, before apply, and after apply. Acknowledged
   values survive restart, rejected values do not appear, and in-memory startup
   and status identify the mode as ephemeral.
-- Tracking: [#3805](https://github.com/chrischeng-c4/axiom/issues/3805) (`lumen@0.4.43`).
+- Tracking: [Milestone #9](https://github.com/chrischeng-c4/axiom/milestone/9).
 
 ### Idempotent write replay
 
