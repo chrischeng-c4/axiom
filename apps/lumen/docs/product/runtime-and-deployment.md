@@ -10,6 +10,16 @@
 - Non-goals: Standalone high availability.
 - Neighbours: Topology owns quorum and placement; recovery owns data retention.
 
+## GKE regional production profile
+
+- Problem: Zonal evidence does not prove a regional production profile.
+- Who: GKE production operators.
+- Promise: Lumen has an evidence-backed GKE Standard Regional profile.
+- Outcome: `gke-regional-production-profile`. Tracking: Not assigned.
+- Non-goals: Reusing zonal evidence as regional proof.
+- Open: Complete topology, disruption, backup, and recovery drills.
+- Neighbours: Regional migration and upgrade recovery.
+
 ## Non-goals in this area
 
 Standalone deployment is not a high-availability promise.
