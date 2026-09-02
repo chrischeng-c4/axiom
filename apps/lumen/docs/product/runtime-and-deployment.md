@@ -40,12 +40,12 @@
 - Open: Verify restart and legacy-PVC adoption through the release oracle.
 - Neighbours: Managed data retention and deterministic consensus conformance.
 
-## Search capability activation
+## Search capability activation (Milestone #27)
 
 - Problem: Managed mixed versions cannot safely enable a new search contract.
 - Who: Managed Lumen operators.
 - Promise: Managed Lumen activates a capability only after serving-member convergence and final compatibility version.
-- Outcome: `search-capability-activation`. Tracking: Not assigned.
+- Outcome: `search-capability-activation`. Tracking: [Milestone #27](https://github.com/chrischeng-c4/axiom/milestone/27).
 - Non-goals: Version-aware routing around an incompatible member.
 - Open: Activate Search v2 at `lumen@0.37.0` after the required convergence evidence.
 - Neighbours: Search v2 migration and distributed search routing.

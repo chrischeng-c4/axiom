@@ -229,7 +229,7 @@ destination without copying tracker state.
   restart, member replacement, and refusal of mixed-version search fields.
   `/version` reports each dimension without claiming a capability active before
   convergence.
-- Tracking: [#3814](https://github.com/chrischeng-c4/axiom/issues/3814) (`lumen@0.5.0`).
+- Tracking: [Milestone #27](https://github.com/chrischeng-c4/axiom/milestone/27).
 
 ### Runtime configuration parity
 
