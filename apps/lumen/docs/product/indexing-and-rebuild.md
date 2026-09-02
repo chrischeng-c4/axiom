@@ -40,12 +40,12 @@
 - Open: Define stable per-item results and retries.
 - Neighbours: Idempotent replay and versioned tombstones.
 
-## Shadow rebuild generations
+## Shadow rebuild generations (Milestone #16)
 
 - Problem: A schema conversion must not replace the active index early.
 - Who: Teams evolving indexed schemas.
 - Promise: A validated shadow generation can become active atomically.
-- Outcome: `shadow-rebuild-generations`. Tracking: Not assigned.
+- Outcome: `shadow-rebuild-generations`. Tracking: [Milestone #16](https://github.com/chrischeng-c4/axiom/milestone/16).
 - Non-goals: In-place destructive schema changes.
 - Open: Define retained-generation limits and rollback detail.
 - Neighbours: Strict schema types and Search v2 migration.

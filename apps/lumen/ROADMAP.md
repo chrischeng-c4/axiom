@@ -82,7 +82,7 @@ destination without copying tracker state.
   status, explicit seal, stale ETag refusal, activation, rollback, retention
   expiry, and cancellation back to active-only writes without acknowledged
   data loss.
-- Tracking: [#3809](https://github.com/chrischeng-c4/axiom/issues/3809) (`lumen@0.4.47`).
+- Tracking: [Milestone #16](https://github.com/chrischeng-c4/axiom/milestone/16).
 
 ### Strict search schema types
 
