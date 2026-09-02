@@ -194,7 +194,7 @@ destination without copying tracker state.
   Rust does not fall back to JSON values or strings for the new unions and
   enums. No language can silently skip because a toolchain or dependency is
   absent.
-- Tracking: [#3812](https://github.com/chrischeng-c4/axiom/issues/3812) (`lumen@0.4.50`).
+- Tracking: [Milestone #22](https://github.com/chrischeng-c4/axiom/milestone/22).
 
 ### Search v2 migration
 

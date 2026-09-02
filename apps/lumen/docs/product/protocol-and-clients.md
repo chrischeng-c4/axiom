@@ -40,12 +40,12 @@
 - Open: Define the required toolchain matrix.
 - Neighbours: Generated-client protocol parity.
 
-## Generated-client Search v2 parity
+## Generated-client Search v2 parity (Milestone #22)
 
 - Problem: Search v2 callers need typed request and response parity in every generated client.
 - Who: TypeScript, Python, and Rust client users.
 - Promise: Generated clients expose the complete Search v2 contract as typed APIs.
-- Outcome: `generated-client-search-v2-parity`. Tracking: Not assigned.
+- Outcome: `generated-client-search-v2-parity`. Tracking: [Milestone #22](https://github.com/chrischeng-c4/axiom/milestone/22).
 - Non-goals: Untyped JSON fallback for new unions.
 - Open: Define all language-specific Search v2 parity gates.
 - Neighbours: Unified search contract and strict generated-client gates.
