@@ -11,6 +11,13 @@ destination without copying tracker state.
 
 ## Near-term outcomes
 
+Milestone #7 (`0.5.0`) delivers only the
+`managed-embedded-data-durability` and
+`deterministic-consensus-conformance` product outcomes. The durability outcome
+resolves [report #4018](https://github.com/chrischeng-c4/axiom/issues/4018).
+Search v2 is outside this release, and its activation remains
+`lumen@0.37.0`.
+
 ### Durable write contract
 
 - ID: `durable-write-contract`
@@ -312,15 +319,16 @@ destination without copying tracker state.
 - Outcome: Managed Lumen has one required KSA identity path and one
   whole-runtime permission model, while Standalone keeps its local auth-off
   default.
-- Boundary: The 0.4.x migration keeps missing `access`, per-collection grants,
-  and `auth: disabled` working with deprecation notices. Version 0.5.0 requires
+- Boundary: The migration window before 0.23.0 keeps missing `access`,
+  per-collection grants, and `auth: disabled` working with deprecation notices.
+  Version 0.23.0 requires
   explicit Managed `access`, removes per-collection permissions, and rejects
   disabled Managed auth. Only `/healthz`, `/readyz`, `/metrics`, and `/version`
   stay anonymous. `/debug/cluster`, `/openapi.json`, `/docs`, and every runtime
   API require the whole-runtime grant.
-- Completion evidence: Versioned compatibility tests prove each 0.4.x warning,
+- Completion evidence: Versioned compatibility tests prove each migration warning,
   old external RBAC behavior when `access` is absent, explicit empty deny-all,
-  and 0.5.0 refusal of missing access, disabled auth, and per-collection grants.
+  and 0.23.0 refusal of missing access, disabled auth, and per-collection grants.
   Route tests prove the exact anonymous set and protect `/debug/cluster`.
   Migration tests prove old resources receive an actionable message without
   leaking a token or silently widening access.

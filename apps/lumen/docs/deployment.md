@@ -418,7 +418,7 @@ Fleet rollout will order changes between runtimes. A separate
 control members within one runtime. A PDB protects voluntary eviction. It does
 not stop a StatefulSet rolling update.
 
-The planned typed access API and 0.5.0 Managed auth requirements are also not
+The planned typed access API and 0.23.0 Managed auth requirements are also not
 implemented. Follow the [migration contract](authentication.md#migration-contract)
 before changing current external RBAC.
 
