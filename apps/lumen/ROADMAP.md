@@ -415,7 +415,7 @@ destination without copying tracker state.
   ID handling, callback failure and cancellation, preservation of score and
   cursor metadata, no source credential in generated state, and no hidden
   per-record fetch.
-- Tracking: [#3808](https://github.com/chrischeng-c4/axiom/issues/3808) (`lumen@0.4.46`).
+- Tracking: [Milestone #14](https://github.com/chrischeng-c4/axiom/milestone/14).
 
 ### Versioned client workload template
 

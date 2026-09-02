@@ -60,12 +60,12 @@
 - Open: Define retry and timeout policy.
 - Neighbours: Idempotent write replay.
 
-## Generated-client source-integration helpers
+## Generated-client source-integration helpers (Milestone #14)
 
 - Problem: Every caller repeats ID hydration and result ordering.
 - Who: Application integrations.
 - Promise: Generated clients can help bulk-fetch source records and restore hit order.
-- Outcome: `generated-client-source-integration-helpers`. Tracking: Not assigned.
+- Outcome: `generated-client-source-integration-helpers`. Tracking: [Milestone #14](https://github.com/chrischeng-c4/axiom/milestone/14).
 - Non-goals: Storing source records in Lumen.
 - Open: Define the callback contract.
 - Neighbours: Current indexing and querying boundaries.
