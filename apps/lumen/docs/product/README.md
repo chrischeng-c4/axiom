@@ -50,3 +50,4 @@ outcome and remains unbound until its release work is ready.
 | Per-shard failure-domain placement | topology-and-availability.md |
 | Quorum-safe runtime rollout | topology-and-availability.md |
 | Kubernetes-native placement | topology-and-availability.md |
+| Membership-aware replica autoscaling | topology-and-availability.md |
