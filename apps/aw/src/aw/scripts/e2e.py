@@ -169,14 +169,33 @@ class E2eInventory:
             declared = str(stanza.get("path", "")).strip()
             if not name or not declared.startswith(prefix):
                 continue
+            raw_features = stanza.get("required-features", [])
+            if not isinstance(raw_features, list) or any(
+                not isinstance(feature, str)
+                or not feature
+                or re.search(r"[\s,\x00-\x1f\x7f]", feature)
+                for feature in raw_features
+            ):
+                self.problem = (
+                    f"{path.name} target `{name}` has an invalid "
+                    "`required-features` list"
+                )
+                self.cases.clear()
+                return
+            feature_flag = (
+                f" --features {','.join(raw_features)}"
+                if raw_features else ""
+            )
             self.cases[name] = {
                 "id": name,
                 "path": declared,
-                # Derived, not declared. The command for a `[[test]]` target is
-                # fixed by cargo, so reading one out of the manifest would be
-                # inventing a key cargo does not have and letting it drift from
-                # the target it names.
-                "command": f"cargo test -p {self.crate} --test {name}",
+                # Derived from Cargo's target keys, not separately declared.
+                # Required features are part of whether Cargo can run this
+                # target, so dropping them turns a product red into a build
+                # refusal that the phase can mistake for useful evidence.
+                "command": (
+                    f"cargo test -p {self.crate}{feature_flag} --test {name}"
+                ),
             }
         if not self.cases:
             self.problem = (
