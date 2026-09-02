@@ -138,7 +138,7 @@ destination without copying tracker state.
   deterministic compensated float sums marked approximate, decimal-string
   counts, `facets` and `metrics` maps, alias grammar, snake-case fields, and
   explicit `kind` discriminators.
-- Tracking: [#3811](https://github.com/chrischeng-c4/axiom/issues/3811) (`lumen@0.4.49`).
+- Tracking: [Milestone #19](https://github.com/chrischeng-c4/axiom/milestone/19).
 
 ### Facet resource governance
 
