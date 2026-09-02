@@ -33,6 +33,8 @@ pub struct ProjectionCheckpoint {
     pub projection: String,
     pub schema_version: u32,
     pub cursor: u64,
+    #[serde(default)]
+    pub source_generation: u64,
     pub event_id: Option<String>,
     pub state_sha256: String,
     pub updated_at: String,
@@ -44,6 +46,7 @@ impl ProjectionCheckpoint {
             projection: descriptor.name.clone(),
             schema_version: descriptor.schema_version,
             cursor: 0,
+            source_generation: 0,
             event_id: None,
             state_sha256: String::new(),
             updated_at: now(),
@@ -130,12 +133,42 @@ pub trait ProjectionRecord: Clone + Send + Sync + 'static {
     fn projection_event_id(&self) -> &str;
 }
 
+/// One forward-only retained-source scan.
+///
+/// A source can keep catalog cursors, decoded segment buffers, or remote
+/// stream state here. The projection runtime opens one session for the whole
+/// catch-up or rebuild instead of asking the source to restart every page.
+pub trait ProjectionReadSession<Record>: Send
+where
+    Record: ProjectionRecord,
+{
+    fn read_next(&mut self, limit: usize) -> Result<Vec<Record>>;
+}
+
 pub trait ProjectionSource<Record>: Send + Sync + 'static
 where
     Record: ProjectionRecord,
 {
     fn current_cursor(&self) -> u64;
     fn read_after(&self, after: u64, limit: usize) -> Result<Vec<Record>>;
+
+    /// Open a stateful forward scan when the source can avoid stateless page
+    /// restarts. Existing sources keep the default and use `read_after`.
+    fn open_read_session(
+        &self,
+        _after: u64,
+    ) -> Result<Option<Box<dyn ProjectionReadSession<Record>>>> {
+        Ok(None)
+    }
+
+    /// Monotonic identity for the retained source set.
+    ///
+    /// Append-only sources can keep the default value. A source increments the
+    /// generation when retention or repair removes or replaces records without
+    /// moving its cursor high-water mark.
+    fn generation(&self) -> u64 {
+        0
+    }
 }
 
 pub trait Projection<Record>: Send + Sync + 'static
@@ -146,6 +179,15 @@ where
     fn apply_idempotent(&self, record: &Record) -> Result<()>;
     fn snapshot(&self) -> Result<Vec<u8>>;
     fn restore(&self, state: &[u8]) -> Result<()>;
+
+    /// Finish work that is safe only after the projection snapshot is durable.
+    ///
+    /// Implementations use this for idempotent cleanup of files that the new
+    /// snapshot no longer references. The default keeps existing consumers
+    /// source compatible.
+    fn checkpoint_committed(&self) -> Result<()> {
+        Ok(())
+    }
 
     fn semantic_digest(&self) -> Result<String> {
         Ok(sha256(&self.snapshot()?))
@@ -184,32 +226,25 @@ where
         factory: ProjectionFactory<P>,
         config: ProjectionRuntimeConfig,
     ) -> Result<Self> {
-        let implementation = factory()?;
+        let mut implementation = factory()?;
         let descriptor = implementation.descriptor();
         validate_descriptor(&descriptor)?;
         let state_path = root.join(&descriptor.name).join("state.json");
-        let checkpoint = if state_path.exists() {
-            let envelope: ProjectionStateEnvelope = serde_json::from_slice(
-                &fs::read(&state_path)
-                    .with_context(|| format!("read projection state {}", state_path.display()))?,
-            )
-            .with_context(|| format!("decode projection state {}", state_path.display()))?;
-            validate_envelope(&descriptor, &envelope)?;
-            let state = BASE64
-                .decode(&envelope.state_base64)
-                .context("decode projection state_base64")?;
-            if sha256(&state) != envelope.checkpoint.state_sha256 {
-                bail!(
-                    "projection {} state checksum does not match its checkpoint",
-                    descriptor.name
-                );
+        let (checkpoint, rebuild_invalid_snapshot) = if state_path.exists() {
+            let bytes = fs::read(&state_path)
+                .with_context(|| format!("read projection state {}", state_path.display()))?;
+            match restore_snapshot(&descriptor, implementation.as_ref(), &bytes) {
+                Ok(checkpoint) => (checkpoint, false),
+                Err(_) => {
+                    quarantine_invalid_snapshot(&state_path, &bytes)?;
+                    implementation = factory()?;
+                    (ProjectionCheckpoint::empty(&descriptor), true)
+                }
             }
-            implementation.restore(&state)?;
-            envelope.checkpoint
         } else {
-            ProjectionCheckpoint::empty(&descriptor)
+            (ProjectionCheckpoint::empty(&descriptor), false)
         };
-        Ok(Self {
+        let handle = Self {
             source,
             factory,
             state_path,
@@ -220,7 +255,16 @@ where
             }),
             published: Notify::new(),
             config,
-        })
+        };
+        if handle.state_path.exists() {
+            handle.projection().checkpoint_committed()?;
+        }
+        if rebuild_invalid_snapshot
+            || handle.current_source_generation() != handle.source.generation()
+        {
+            handle.rebuild()?;
+        }
+        Ok(handle)
     }
 
     pub fn projection(&self) -> Arc<P> {
@@ -249,8 +293,14 @@ where
 
     pub fn catch_up(&self) -> Result<u64> {
         let target = self.source.current_cursor();
+        let generation = self.source.generation();
         let mut live = self.live.lock().expect("projection state lock poisoned");
-        self.catch_up_locked(&mut live, target)
+        if live.checkpoint.source_generation != generation {
+            return Ok(self
+                .rebuild_locked(&mut live, target, generation)?
+                .rebuilt_cursor);
+        }
+        self.catch_up_locked(&mut live, target, generation)
     }
 
     pub async fn wait_for_min_cursor(
@@ -276,45 +326,31 @@ where
 
     pub fn rebuild_and_compare(&self) -> Result<RebuildComparison> {
         let source_cursor = self.source.current_cursor();
+        let source_generation = self.source.generation();
         {
             let mut live = self.live.lock().expect("projection state lock poisoned");
-            self.catch_up_locked(&mut live, source_cursor)?;
+            if live.checkpoint.source_generation != source_generation {
+                self.rebuild_locked(&mut live, source_cursor, source_generation)?;
+            } else {
+                self.catch_up_locked(&mut live, source_cursor, source_generation)?;
+            }
         }
         let live_digest = self.semantic_digest()?;
-        let rebuilt = (self.factory)()?;
-        let mut after = 0;
-        while after < source_cursor {
-            let records = self.source.read_after(after, self.config.batch_size)?;
-            if records.is_empty() {
-                break;
-            }
-            for record in records
-                .iter()
-                .filter(|record| record.projection_cursor() <= source_cursor)
-            {
-                rebuilt.apply_idempotent(record)?;
-                after = record.projection_cursor();
-            }
-            if records
-                .last()
-                .is_some_and(|record| record.projection_cursor() > source_cursor)
-            {
-                break;
-            }
-        }
-        if after != source_cursor {
-            bail!(
-                "projection {} rebuild stopped at cursor {after}, expected {source_cursor}",
-                rebuilt.descriptor().name
-            );
-        }
+        let (rebuilt, last_event_id) = self.build_projection(source_cursor)?;
         let rebuilt_digest = rebuilt.semantic_digest()?;
         let equal = live_digest == rebuilt_digest;
         if equal {
             let descriptor = rebuilt.descriptor();
             let state = rebuilt.snapshot()?;
-            let checkpoint = checkpoint(&descriptor, source_cursor, None, &state);
+            let checkpoint = checkpoint(
+                &descriptor,
+                source_cursor,
+                source_generation,
+                last_event_id,
+                &state,
+            );
             persist(&self.state_path, &checkpoint, &state)?;
+            rebuilt.checkpoint_committed()?;
             let mut live = self.live.lock().expect("projection state lock poisoned");
             live.implementation = rebuilt;
             live.checkpoint = checkpoint;
@@ -323,29 +359,57 @@ where
         }
         Ok(RebuildComparison {
             source_cursor,
-            rebuilt_cursor: after,
+            rebuilt_cursor: source_cursor,
             live_digest,
             rebuilt_digest,
             equal,
         })
     }
 
+    /// Rebuild from the current retained source and publish it even when the
+    /// prior live projection differs. This is the required path after a source
+    /// generation change such as retention or index repair.
+    pub fn rebuild(&self) -> Result<RebuildComparison> {
+        let source_cursor = self.source.current_cursor();
+        let source_generation = self.source.generation();
+        let mut live = self.live.lock().expect("projection state lock poisoned");
+        self.rebuild_locked(&mut live, source_cursor, source_generation)
+    }
+
     pub fn flush(&self) -> Result<()> {
         let target = self.source.current_cursor();
+        let generation = self.source.generation();
         let mut live = self.live.lock().expect("projection state lock poisoned");
-        self.catch_up_locked(&mut live, target)?;
+        if live.checkpoint.source_generation != generation {
+            self.rebuild_locked(&mut live, target, generation)?;
+        } else {
+            self.catch_up_locked(&mut live, target, generation)?;
+        }
         if live.checkpoint.cursor != live.persisted_cursor {
-            self.persist_live(&mut live)?;
+            self.persist_live(&mut live, generation)?;
         }
         Ok(())
     }
 
-    fn catch_up_locked(&self, live: &mut LiveProjection<P>, target: u64) -> Result<u64> {
+    fn catch_up_locked(
+        &self,
+        live: &mut LiveProjection<P>,
+        target: u64,
+        generation: u64,
+    ) -> Result<u64> {
+        let mut session = self.source.open_read_session(live.checkpoint.cursor)?;
         while live.checkpoint.cursor < target {
-            let records = self
-                .source
-                .read_after(live.checkpoint.cursor, self.config.batch_size)?;
+            let records = match session.as_mut() {
+                Some(session) => session.read_next(self.config.batch_size)?,
+                None => self
+                    .source
+                    .read_after(live.checkpoint.cursor, self.config.batch_size)?,
+            };
             if records.is_empty() {
+                live.checkpoint.cursor = target;
+                live.checkpoint.event_id = None;
+                live.checkpoint.source_generation = generation;
+                self.published.notify_waiters();
                 break;
             }
             let mut last_event_id = None;
@@ -361,29 +425,107 @@ where
                 break;
             }
             live.checkpoint.event_id = last_event_id;
+            live.checkpoint.source_generation = generation;
             self.published.notify_waiters();
         }
         let advanced = live.checkpoint.cursor.saturating_sub(live.persisted_cursor);
         if live.checkpoint.cursor > live.persisted_cursor
             && (live.persisted_cursor == 0 || advanced >= self.config.snapshot_interval_events)
         {
-            self.persist_live(live)?;
+            self.persist_live(live, generation)?;
         }
         Ok(live.checkpoint.cursor)
     }
 
-    fn persist_live(&self, live: &mut LiveProjection<P>) -> Result<()> {
+    fn persist_live(&self, live: &mut LiveProjection<P>, generation: u64) -> Result<()> {
         let state = live.implementation.snapshot()?;
         let checkpoint = checkpoint(
             &live.implementation.descriptor(),
             live.checkpoint.cursor,
+            generation,
             live.checkpoint.event_id.clone(),
             &state,
         );
         persist(&self.state_path, &checkpoint, &state)?;
+        live.implementation.checkpoint_committed()?;
         live.persisted_cursor = checkpoint.cursor;
         live.checkpoint = checkpoint;
         Ok(())
+    }
+
+    fn rebuild_locked(
+        &self,
+        live: &mut LiveProjection<P>,
+        source_cursor: u64,
+        source_generation: u64,
+    ) -> Result<RebuildComparison> {
+        let live_digest = live.implementation.semantic_digest()?;
+        let (rebuilt, last_event_id) = self.build_projection(source_cursor)?;
+        let rebuilt_digest = rebuilt.semantic_digest()?;
+        let descriptor = rebuilt.descriptor();
+        let state = rebuilt.snapshot()?;
+        let checkpoint = checkpoint(
+            &descriptor,
+            source_cursor,
+            source_generation,
+            last_event_id,
+            &state,
+        );
+        persist(&self.state_path, &checkpoint, &state)?;
+        rebuilt.checkpoint_committed()?;
+        live.implementation = rebuilt;
+        live.checkpoint = checkpoint;
+        live.persisted_cursor = source_cursor;
+        self.published.notify_waiters();
+        Ok(RebuildComparison {
+            source_cursor,
+            rebuilt_cursor: source_cursor,
+            equal: live_digest == rebuilt_digest,
+            live_digest,
+            rebuilt_digest,
+        })
+    }
+
+    fn build_projection(&self, source_cursor: u64) -> Result<(Arc<P>, Option<String>)> {
+        let rebuilt = (self.factory)()?;
+        let mut after = 0_u64;
+        let mut last_event_id = None;
+        let mut session = self.source.open_read_session(after)?;
+        while after < source_cursor {
+            let records = match session.as_mut() {
+                Some(session) => session.read_next(self.config.batch_size)?,
+                None => self.source.read_after(after, self.config.batch_size)?,
+            };
+            if records.is_empty() {
+                break;
+            }
+            let mut advanced = false;
+            for record in records
+                .iter()
+                .filter(|record| record.projection_cursor() <= source_cursor)
+            {
+                rebuilt.apply_idempotent(record)?;
+                after = record.projection_cursor();
+                last_event_id = Some(record.projection_event_id().to_string());
+                advanced = true;
+            }
+            if !advanced
+                || records
+                    .last()
+                    .is_some_and(|record| record.projection_cursor() > source_cursor)
+            {
+                break;
+            }
+        }
+        Ok((rebuilt, last_event_id))
+    }
+
+    fn current_source_generation(&self) -> u64 {
+        self.live
+            .lock()
+            .expect("projection state lock poisoned")
+            .checkpoint
+            .source_generation
     }
 
     fn lag(&self, required_cursor: u64, current_cursor: u64) -> ProjectionLag {
@@ -552,9 +694,63 @@ fn validate_envelope(
     Ok(())
 }
 
+fn restore_snapshot<Record, P>(
+    descriptor: &ProjectionDescriptor,
+    implementation: &P,
+    bytes: &[u8],
+) -> Result<ProjectionCheckpoint>
+where
+    Record: ProjectionRecord,
+    P: Projection<Record>,
+{
+    let envelope: ProjectionStateEnvelope =
+        serde_json::from_slice(bytes).context("decode projection state envelope")?;
+    validate_envelope(descriptor, &envelope)?;
+    let state = BASE64
+        .decode(&envelope.state_base64)
+        .context("decode projection state_base64")?;
+    if sha256(&state) != envelope.checkpoint.state_sha256 {
+        bail!(
+            "projection {} state checksum does not match its checkpoint",
+            descriptor.name
+        );
+    }
+    implementation.restore(&state)?;
+    Ok(envelope.checkpoint)
+}
+
+fn quarantine_invalid_snapshot(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("projection state path {} has no parent", path.display()))?;
+    let digest = sha256(bytes);
+    let prefix = &digest[..16];
+    let mut target = parent.join(format!("state.corrupt-{prefix}.json"));
+    for suffix in 1..=1_000_u16 {
+        if !target.exists() {
+            fs::rename(path, &target).with_context(|| {
+                format!(
+                    "quarantine invalid projection state {} as {}",
+                    path.display(),
+                    target.display()
+                )
+            })?;
+            set_file_mode(&target)?;
+            storage_durable::sync_parent_dir(&target)?;
+            return Ok(target);
+        }
+        target = parent.join(format!("state.corrupt-{prefix}-{suffix}.json"));
+    }
+    bail!(
+        "cannot allocate quarantine name for invalid projection state {}",
+        path.display()
+    )
+}
+
 fn checkpoint(
     descriptor: &ProjectionDescriptor,
     cursor: u64,
+    source_generation: u64,
     event_id: Option<String>,
     state: &[u8],
 ) -> ProjectionCheckpoint {
@@ -562,6 +758,7 @@ fn checkpoint(
         projection: descriptor.name.clone(),
         schema_version: descriptor.schema_version,
         cursor,
+        source_generation,
         event_id,
         state_sha256: sha256(state),
         updated_at: now(),

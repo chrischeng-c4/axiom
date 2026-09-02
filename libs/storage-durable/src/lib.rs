@@ -24,7 +24,9 @@ pub use capacity::{
 pub use data_root::{
     reject_symlink, set_private_directory_mode, set_private_file_mode, DataRoot, DataRootPolicy,
 };
-pub use framed_log::{FramedLogReader, FramedLogWriter, LogFrame};
+pub use framed_log::{
+    FramedLogCursor, FramedLogReader, FramedLogWriter, LogFrame, MAX_FRAME_PAYLOAD_BYTES,
+};
 pub use fsync::FsyncPolicy;
 pub use generation::{
     CommitError, CommitFailureClass, CommitStep, CurrentReadError, CurrentReadErrorKind,

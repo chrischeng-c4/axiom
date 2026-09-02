@@ -27,3 +27,7 @@ path = "e2e/capacity_guard.rs"
 [[test]]
 name = "data_root"
 path = "e2e/data_root.rs"
+
+[[test]]
+name = "framed_log_streaming"
+path = "e2e/framed_log_streaming.rs"
