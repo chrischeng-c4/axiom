@@ -60,12 +60,12 @@
 - Open: Define restart and rollback evidence.
 - Neighbours: Automatic shard splitting.
 
-## Bounded Raft shutdown and failover
+## Bounded Raft shutdown and failover (Milestone #8)
 
 - Problem: Shutdown and leadership change must finish within explicit bounds.
 - Who: Replicated-runtime operators.
 - Promise: Raft shutdown and failover expose bounded, recoverable behavior.
-- Outcome: `bounded-raft-shutdown-and-failover`. Tracking: Not assigned.
+- Outcome: `bounded-raft-shutdown-and-failover`. Tracking: [Milestone #8](https://github.com/chrischeng-c4/axiom/milestone/8).
 - Non-goals: Unbounded background shutdown.
 - Open: Define timer, drain, and retry limits.
 - Neighbours: Quorum-safe runtime rollout.

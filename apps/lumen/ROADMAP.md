@@ -638,7 +638,7 @@ destination without copying tracker state.
   an unbounded background task.
 - Completion evidence: Fault tests prove drain, leadership transfer, timeout,
   restart, and acknowledged-write behavior under the stated bounds.
-- Tracking: Not assigned.
+- Tracking: [Milestone #8](https://github.com/chrischeng-c4/axiom/milestone/8).
 
 ### Distributed search routing and merge
 
