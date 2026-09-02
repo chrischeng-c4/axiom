@@ -30,12 +30,12 @@
 - Open: Define exact limits and failures.
 - Neighbours: Facet governance and distributed convergence.
 
-## Facet resource governance
+## Facet resource governance (Milestone #20)
 
 - Problem: A facet request can consume unbounded resources.
 - Who: Operators and search callers.
 - Promise: Facet work has explicit admission and resource limits.
-- Outcome: `facet-resource-governance`. Tracking: Not assigned.
+- Outcome: `facet-resource-governance`. Tracking: [Milestone #20](https://github.com/chrischeng-c4/axiom/milestone/20).
 - Non-goals: Silent approximate results.
 - Open: Define budgets and refusal classes.
 - Neighbours: Exact facets and runtime configuration.

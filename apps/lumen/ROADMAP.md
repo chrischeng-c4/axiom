@@ -162,7 +162,7 @@ destination without copying tracker state.
   p95 and peak memory and rejects latency regression above 20% or memory above
   10%. It also reports write throughput and segment bytes for review above 30%
   and 50% change.
-- Tracking: [#3811](https://github.com/chrischeng-c4/axiom/issues/3811) (`lumen@0.4.49`).
+- Tracking: [Milestone #20](https://github.com/chrischeng-c4/axiom/milestone/20).
 
 ### Distributed facet convergence
 
