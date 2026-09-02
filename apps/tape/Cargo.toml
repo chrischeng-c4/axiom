@@ -245,5 +245,9 @@ name = "spec_route_parity"
 path = "e2e/spec_route_parity.rs"
 
 [[test]]
+name = "subscription_config"
+path = "e2e/subscription_config.rs"
+
+[[test]]
 name = "tape_perf_gate"
 path = "e2e/tape_perf_gate.rs"
