@@ -15,3 +15,4 @@ outcome and remains unbound until its release work is ready.
 | Shadow rebuild generations | indexing-and-rebuild.md |
 | Strict search schema types | indexing-and-rebuild.md |
 | Querying and facets | querying-and-facets.md |
+| Unified search contract | querying-and-facets.md |
