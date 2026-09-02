@@ -698,7 +698,7 @@ destination without copying tracker state.
   supported topology, scheduling, storage, private networking, KSA access,
   certificate and CA rotation, backup and restore, upgrades, disruption drills,
   quotas, and documented limitations without a Standard-only node contract.
-- Tracking: Not assigned.
+- Tracking: [Milestone #127](https://github.com/chrischeng-c4/axiom/milestone/127).
 
 ### Vector hybrid facets
 
