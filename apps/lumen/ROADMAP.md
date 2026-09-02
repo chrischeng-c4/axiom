@@ -751,7 +751,7 @@ destination without copying tracker state.
   breaking changes. Versioned integration tests prove the supported overlap
   window, and release fixtures prove every accepted breaking change carries the
   required version and migration note.
-- Tracking: [#3814](https://github.com/chrischeng-c4/axiom/issues/3814) (`lumen@0.5.0`).
+- Tracking: [Milestone #23](https://github.com/chrischeng-c4/axiom/milestone/23).
 
 ## Non-goals
 

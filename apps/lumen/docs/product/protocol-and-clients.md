@@ -80,12 +80,12 @@
 - Open: Define projection and upgrade inputs.
 - Neighbours: Managed KSA access.
 
-## Protocol compatibility policy
+## Protocol compatibility policy (Milestone #23)
 
 - Problem: HTTP changes need a published compatibility rule.
 - Who: API and client maintainers.
 - Promise: Lumen defines additive, deprecated, and breaking protocol changes.
-- Outcome: `protocol-compatibility-policy`. Tracking: Not assigned.
+- Outcome: `protocol-compatibility-policy`. Tracking: [Milestone #23](https://github.com/chrischeng-c4/axiom/milestone/23).
 - Non-goals: Published packages.
 - Open: Define release-note and overlap requirements.
 - Neighbours: Search v2 migration.
