@@ -49,6 +49,7 @@ LAUNCH = pinned_interpreter()
 
 IMPL = SCRIPTS / "impl.py"
 E2E = SCRIPTS / "e2e.py"
+METADOC = SCRIPTS / "metadoc.py"
 
 # (label, [(target, anchor, mutant), ...], the (emitter, refuser) pairs it must
 # produce, and a substring the output must carry -- `None` where the pairs are
@@ -100,9 +101,24 @@ MUTATIONS = [
     # The branch neither real defect reached: a command naming a script that is
     # not there at all. Without this the `is_file` arm is never measured, and a
     # gate that silently classified an unresolvable name as prose would pass.
+    # Since the 2026-09-02 move the printed line is `{AW_CLI} change lifecycle
+    # ...`, so the typo lands on the group token and the gate resolves it to a
+    # `chagne.py` that is not on disk -- the same red, reached through the
+    # CLI-prefix arm instead of the bare-token one.
     ("printed-command-names-no-script",
-     [(E2E, "change.py lifecycle {args.wi}", "chagne.py lifecycle {args.wi}")],
+     [(E2E, "change lifecycle {args.wi}", "chagne lifecycle {args.wi}")],
      {("e2e.py", "chagne.py")},
+     None),
+    # The shape the pre-move gate could not see at all: the two clean-run
+    # commands are passed as a parameter into `report()`, and the renderer
+    # only reaches them through the call-site hop added on 2026-09-02. This
+    # plants the exact dead end that hop caught when it first ran -- `meta
+    # check <project>` where `meta.py` has no positional and the scoped form
+    # is `--path` -- so a regression that quietly drops the hop turns this row
+    # from red back to prose and the control refuses it.
+    ("parameter-hop-reaches-the-call-site",
+     [(METADOC, "meta check --path {project}", "meta check {project}")],
+     {("metadoc.py", "meta.py")},
      None),
     # The first row's first edit on its own. `leg.py` now asserts at import that
     # its two phase-keyed tables name the phases the engine declares, so this

@@ -33,8 +33,7 @@ credential must be recognizable so the test can prove that no error or event
 contains it.
 
 When README, STATUS, or ROADMAP changes, treat them as one document set. Run
-the deterministic check first. Then use `$project-readme-check` for the
-clean-context reader.
+the deterministic check.
 
 ## Verification
 

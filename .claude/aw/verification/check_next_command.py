@@ -29,42 +29,46 @@ It resolves each printed line using the emitting module's *own* constants --
 `PHASE` is read from the module, not restated here -- so a phase renamed in one
 place and not the other goes red rather than passing against a copy.
 
-A known gap, measured rather than guessed at, and left open rather than
-half-closed: `head = line.split()[0]` and `SCRIPT_TOKEN` only match a bare
-`<name>.py` token, so a command printed with the pinned-launcher prefix
-(`uv run --python 3.13 --no-project "<path>"`) never reaches the `is_file`
-check at all -- it falls into the `prose` bucket, uncompared. `metadoc.py`
-and `wis.py` print exactly that form on purpose: both reach `tomllib`
-through `leg.py`, and the interpreter a bare script name resolves to is 3.9
-on at least one machine here, where the failure is a `ModuleNotFoundError`
-that reads like a broken script rather than a wrong interpreter.
+Two printed shapes are compared, and both resolve to an engine parser:
 
-Measured over this checkout: exactly two `next.command:` print sites are
-affected -- `metadoc.py`'s `cmd_check` and `wis.py`'s `cmd_gap`, both on
-their clean-run path (`=> CLEAN` / `=> ALIGNED`). Stripping a recognised
-launcher prefix at the print site would not repair either one, and that is
-why this gate does not attempt it: both scripts build the pinned-launcher
-string in the verb function (`cmd_check`, `cmd_gap`) and pass it as a plain
-`str` parameter into a shared `report(..., next_command)` helper, which is
-where the marker actually lives. This renderer resolves one print site at a
-time from the emitting module's globals plus an `Args()` stand-in for
-`args.*` -- it does not trace a value back through a function call -- so the
-free name `next_command` renders to the generic placeholder, not to text a
-prefix could be stripped from. A prefix-matching pass bolted onto this
-renderer would silently assert nothing for these two lines while still
-reading as "checked" in the command count.
+  * the CLI form every ladder line uses since the 2026-09-02 move into
+    `apps/aw` -- `{wi_types.AW_CLI} <group> <argv...>`. The prefix is matched
+    against `_paths.AW_CLI` (read from the engine's own registry, not
+    restated), the group token maps to `<group>.py` under the scripts
+    directory, and the remaining tokens are the argv. A group that names no
+    script on disk is a red, which is exactly the shape of a retired verb or
+    a typo'd group. A line may chain two commands with ` && `; each side is
+    resolved on its own.
+  * a bare `<name>.py <argv...>` token, kept because a future edit that
+    hand-spells a command instead of building it through `leg.phase_command`
+    reverts to exactly this shape, and the negative control plants one.
 
-Closing this gap for real needs the renderer to follow a single-call
-parameter back to its one call site in the same module, evaluate the
-argument expression there, *then* strip a prefix matched against
-`metadoc.PINNED` before the `SCRIPT_TOKEN` check -- a second kind of lookup
-this file does not yet do. That is out of scope for this pass; the two
-lines are named here so the gap is a fact in the docstring rather than a
-number someone has to re-derive.
+The `--project apps/aw` launcher tokens themselves are pass-through: the argv
+this gate parses is the same token sequence the typer layer hands to the
+engine's `main`, because every typer command rebuilds it in printed order.
+That the typer surface itself accepts each group/verb/option and delegates
+faithfully is `apps/aw/e2e/test_cli.py`'s claim, measured there with the
+delegation stubbed; this gate owns the other half -- that the *printed* line,
+prefix stripped, is an argv the engine parser accepts.
+
+One long-open gap closed with the move. The two clean-run lines
+(`metadoc.py`'s `=> CLEAN`, `wis.py`'s `=> ALIGNED`) pass their command as a
+plain `str` parameter into a shared `report(..., next_command)` helper, where
+the marker actually lives -- so rendering the print site alone yields the
+generic placeholder and the line fell into the prose bucket, uncompared. The
+docstring used to name the fix and defer it; it is now implemented: when a
+print site's payload renders to nothing but the placeholder for one of the
+enclosing function's own parameters, the renderer finds every call of that
+function in the same module and renders the matching argument expression at
+the call site instead. That lookup is one hop deep on purpose -- an argument
+that is itself a local variable still lands in the prose bucket rather than
+being guessed at. The hop is what caught `metadoc.py` printing
+`meta check <project>` while `meta.py`'s parser has no positional at all
+(`--path` is the scoped form), a dead end that had been sitting exactly in
+the old gap.
 """
 from __future__ import annotations
 
-import argparse
 import ast
 import contextlib
 import io
@@ -88,6 +92,7 @@ GENERIC = "PLACEHOLDER"
 
 MARKER = "next.command:"
 SCRIPT_TOKEN = re.compile(r"^[a-z0-9_]+\.py$")
+AW_TOKENS = _paths.AW_CLI.split()
 
 
 class Args:
@@ -106,9 +111,8 @@ def emitting_scripts() -> list[pathlib.Path]:
     return found
 
 
-def print_sites(path: pathlib.Path) -> list[tuple[int, ast.expr]]:
+def print_sites(tree: ast.Module) -> list[tuple[int, ast.expr]]:
     """Every `print(...)` argument whose literal text carries the marker."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
     sites = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -140,6 +144,59 @@ def render(expr: ast.expr, module) -> str:
 
 def payload(text: str) -> str:
     return text.split(MARKER, 1)[1].strip()
+
+
+def enclosing_function(tree: ast.Module, lineno: int) -> ast.FunctionDef | None:
+    """The innermost function definition whose span contains this line."""
+    best = None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.FunctionDef)
+                and node.lineno <= lineno <= (node.end_lineno or node.lineno)
+                and (best is None or node.lineno > best.lineno)):
+            best = node
+    return best
+
+
+def call_site_payloads(tree: ast.Module, module, func: ast.FunctionDef,
+                       param: str) -> list[tuple[int, str]]:
+    """`param`'s rendered value at every call of `func` in the same module.
+
+    One hop only: the argument *expression* at the call site is rendered with
+    the same namespace a print site gets, so a call passing a local variable
+    renders to the generic placeholder and stays in the prose bucket rather
+    than being traced further.
+    """
+    index = [a.arg for a in func.args.args].index(param)
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == func.name):
+            continue
+        expr = None
+        if len(node.args) > index:
+            expr = node.args[index]
+        else:
+            expr = next((kw.value for kw in node.keywords if kw.arg == param),
+                        None)
+        if expr is not None:
+            found.append((node.lineno, render(expr, module)))
+    return found
+
+
+def resolve(segment: str) -> tuple[str, str, list[str]]:
+    """One printed segment as (kind, script name, argv).
+
+    `kind` is "command" for both shapes a parser will judge -- the `AW_CLI`
+    prefix with a group token, and a bare `<name>.py` head -- and "prose" for
+    everything else.
+    """
+    tokens = segment.split()
+    if tokens[:len(AW_TOKENS)] == AW_TOKENS and len(tokens) > len(AW_TOKENS):
+        group = tokens[len(AW_TOKENS)]
+        return "command", f"{group}.py", tokens[len(AW_TOKENS) + 1:]
+    if tokens and SCRIPT_TOKEN.match(tokens[0]):
+        return "command", tokens[0], tokens[1:]
+    return "prose", "", []
 
 
 def accepts(target: pathlib.Path, argv: list[str]) -> str | None:
@@ -175,23 +232,35 @@ def main() -> int:
     failures, commands, prose = [], 0, 0
     for path in emitting_scripts():
         module = _paths.load_script_module(path, f"emit_{path.stem}")
-        for lineno, expr in print_sites(path):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for lineno, expr in print_sites(tree):
             line = payload(render(expr, module))
-            head = line.split()[0] if line.split() else ""
-            where = f"{path.name}:{lineno}"
-            if not SCRIPT_TOKEN.match(head):
-                prose += 1
-                continue
-            target = SCRIPTS / head
-            if not target.is_file():
-                failures.append(f"FAIL {where}: names `{head}`, which is not "
-                                f"a script under {SCRIPTS}")
-                continue
-            commands += 1
-            why = accepts(target, line.split()[1:])
-            if why:
-                failures.append(f"FAIL {where}: prints `{line}`\n"
-                                f"       {head} refuses it -- {why}")
+            emitted = [(lineno, line)]
+            if line == GENERIC:
+                func = enclosing_function(tree, lineno)
+                params = ({a.arg for a in func.args.args} if func else set())
+                named = free_names(expr, dict(vars(module))) & params
+                if func is not None and len(named) == 1:
+                    emitted = call_site_payloads(tree, module, func, named.pop()) \
+                        or emitted
+            for at, text in emitted:
+                where = f"{path.name}:{at}"
+                for segment in text.split(" && "):
+                    kind, head, argv = resolve(segment)
+                    if kind != "command":
+                        prose += 1
+                        continue
+                    target = SCRIPTS / head
+                    if not target.is_file():
+                        failures.append(f"FAIL {where}: names `{head}`, which "
+                                        f"is not a script under {SCRIPTS}")
+                        continue
+                    commands += 1
+                    why = accepts(target, argv)
+                    if why:
+                        resolved = " ".join([head, *argv])
+                        failures.append(f"FAIL {where}: prints `{resolved}`\n"
+                                        f"       {head} refuses it -- {why}")
 
     print(f"read {commands} printed command(s) and {prose} prose line(s)")
     if commands == 0:

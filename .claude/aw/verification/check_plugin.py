@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check seven byte-identical AW skills and their typed-delivery contract."""
+"""Check ten byte-identical AW skills and their typed-delivery contract."""
 
 from __future__ import annotations
 
@@ -10,12 +10,15 @@ from pathlib import Path
 
 SKILLS = (
     "aw-ask-user",
-    "aw-e2e-for-wi",
+    "aw-build",
+    "aw-e2e-for",
     "aw-grill-me-to-meta",
-    "aw-grill-meta-to-wis",
-    "aw-impl-for-wi",
-    "aw-maint-for-wi",
+    "aw-grill-meta-to-milestone",
+    "aw-grill-milestone-to-issue",
+    "aw-impl-for",
     "aw-prepare-goal",
+    "aw-review",
+    "aw-test-for",
 )
 HEADINGS = ("## Goal", "## How", "## Acceptance", "## Never")
 SCRIPTS = (
@@ -48,8 +51,17 @@ MILESTONE_VERBS = (
 FRONTMATTER = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.S)
 SCRIPT_NAME = re.compile(r"(?<![A-Za-z0-9_/-])([a-z][a-z0-9_-]*\.py)\b")
 GH_WRITE = re.compile(r"\bgh\s+(?:issue|pr)\s+(?:create|edit|close|reopen|delete|comment)\b")
-LEGACY_WRITE = re.compile(r"\bepic\.py\s+(?:create|update|close)\b")
-AW_INVOCATION = re.compile(r"`aw\s+[a-z]")
+LEGACY_WRITE = re.compile(r"\b(?:epic\.py|aw epic)\s+(?:create|update|close)\b")
+# The `aw` name is live again: `apps/aw` exposes the engine as typer groups,
+# launched as `uv run --project apps/aw aw <group> ...`. A skill may therefore
+# name `aw <group>` freely — what stays refused is a group outside the typer
+# registry, which is exactly the shape of a retired `aw <verb>` (wi, ec, td...).
+AW_GROUPS = (
+    "change", "milestone", "e2e", "impl", "maint",
+    "wis", "meta", "metadoc", "version",
+)
+AW_INVOCATION = re.compile(r"(?:`|\buv run --project apps/aw )aw\s+([a-z0-9-]+)")
+LAUNCHER_PREFIX = "uv run --project apps/aw aw "
 
 
 class Reporter:
@@ -86,7 +98,7 @@ def collect(repo: Path) -> Reporter:
     report = Reporter()
     codex_root = repo / ".agents" / "skills"
     claude_root = repo / ".claude" / "skills"
-    scripts_root = repo / ".claude" / "aw" / "scripts"
+    scripts_root = repo / "apps" / "aw" / "src" / "aw" / "scripts"
 
     report.check("Codex skill root exists", codex_root.is_dir(), str(codex_root))
     report.check("Claude skill root exists", claude_root.is_dir(), str(claude_root))
@@ -124,12 +136,22 @@ def collect(repo: Path) -> Reporter:
 
         report.check(f"{skill}: has no retired plugin path",
                      "${CLAUDE_PLUGIN_ROOT}" not in text)
+        unknown = sorted({group for group in AW_INVOCATION.findall(text)
+                          if group not in AW_GROUPS})
         report.check(f"{skill}: has no retired `aw <verb>` command",
-                     not AW_INVOCATION.search(text))
+                     not unknown, f"unknown groups={unknown}" if unknown else "")
+        launchers = [line.strip() for line in text.splitlines()
+                     if "uv run" in line]
+        off_form = [line for line in launchers
+                    if LAUNCHER_PREFIX not in line]
+        report.check(f"{skill}: every `uv run` line uses the apps/aw launcher",
+                     not off_form, f"off-form={off_form}" if off_form else "")
         report.check(f"{skill}: has no direct GitHub write", not GH_WRITE.search(text))
+        # A bare `epic.py` mention is already refused below: the SCRIPT_NAME
+        # sweep requires every named script to exist under the scripts root,
+        # and `epic.py` is not there.
         report.check(f"{skill}: has no legacy issue-epic writer",
                      not LEGACY_WRITE.search(text)
-                     and ".claude/aw/scripts/epic.py" not in text
                      and "--label epic:" not in text)
         report.check(f"{skill}: carries no private scripts copy",
                      not (codex.parent / "scripts").exists()
@@ -148,47 +170,74 @@ def collect(repo: Path) -> Reporter:
             "(Milestone #<number>)",
             "Tracking: Not assigned.",
         ),
-        "aw-grill-meta-to-wis": (
+        "aw-grill-meta-to-milestone": (
             "GitHub's native milestone field is the only",
             "<project>@<major>.<minor>.<patch>",
-            "## Development Order",
-            "milestone.py\" reconcile",
-            "milestone.py\" next-version <project> --json",
+            "aw milestone next-version <project> --json",
             "default `minor` bump",
             "--bump patch", "--bump major", "initial version",
+            "## Development Order",
+            "/aw-grill-milestone-to-issue",
+            "(Milestone #<number>)",
+        ),
+        "aw-grill-milestone-to-issue": (
+            "## Development Order",
+            "aw milestone reconcile",
             "issue order, and the type of every issue.",
             "type:feat", "type:fix", "type:refactor", "type:perf",
             "type:test", "type:docs", "type:chore",
             "type:spike", "type:report", "legacy `type:change`",
             "global queue order.", "Only its first open row is executable.",
+            "/aw-grill-meta-to-milestone",
         ),
-        "aw-e2e-for-wi": (
-            "milestone.py\" next",
+        "aw-e2e-for": (
+            "aw milestone next",
             "--json",
+            "aw milestone versions --project <project> --state open --json",
+            "A bare number never means a Milestone.",
             "Never choose a Milestone's issue order yourself.",
             "type:feat", "type:fix", "type:perf", "queue head",
             "flow: behavior", "next_phase: e2e",
-            "change.py lifecycle",
+            "aw change lifecycle",
         ),
-        "aw-impl-for-wi": (
-            "milestone.py\" next",
+        "aw-impl-for": (
+            "aw milestone next",
             "--json",
+            "aw milestone versions --project <project> --state open --json",
+            "A bare number never means a Milestone.",
             "Never choose or infer Milestone order.",
             "type:feat", "type:fix", "type:perf", "queue head",
             "flow: behavior", "next_phase: impl",
-            "change.py lifecycle", "change.py close",
-        ),
-        "aw-maint-for-wi": (
-            "milestone.py\" next",
-            "--json",
             "type:refactor", "type:test", "type:docs", "type:chore",
-            "queue head", "flow: maintenance", "next_phase: maint",
+            "flow: maintenance", "next_phase: maint",
             "Maint-Contract:", "Maint-Change-Digest:", "record <iid>",
-            "--output-file <path>", "change.py lifecycle", "change.py close",
+            "--output-file <path>", "aw change lifecycle", "aw change close",
+        ),
+        "aw-test-for": (
+            "aw milestone versions --project <project> --state open --json",
+            "A bare number never means a Milestone.",
+            "aw milestone reconcile",
+            "E2E-Red:", "Impl-Red:", "Impl-Contract:",
+            "Maint-Contract:", "Maint-Change-Digest:",
+            "no test filter",
+            "Never pass a test filter to a gate command.",
+        ),
+        "aw-review": (
+            "aw meta check --path <project>",
+            "aw wis gap <project>",
+            "UNMEASURED",
+            "Never pass a test filter to a declared gate.",
+            "Never fix a finding in this skill",
+        ),
+        "aw-build": (
+            "cargo build -p <crate>",
+            "--release",
+            "/lumen-build-release",
+            "Never run a lumen release as a bare cargo build.",
         ),
         "aw-prepare-goal": (
             "milestone:<number>",
-            "milestone.py\" next",
+            "aw milestone next",
             "Never use a bare number as a Milestone reference.",
             "behavior to e2e then impl, maintenance to maint",
             "Reject `type:change`",
@@ -207,19 +256,26 @@ def collect(repo: Path) -> Reporter:
                          phrase in text)
 
     phase_commands = {
-        "aw-e2e-for-wi": ("e2e.py", ("start", "verify", "test", "commit")),
-        "aw-impl-for-wi": ("impl.py", ("start", "red", "verify", "test", "commit")),
+        "aw-e2e-for": (("e2e", ("start", "verify", "test", "commit")),),
+        # `maint record` takes extra required options, so only its bare verbs
+        # are asserted here; the record line is covered by required_phrases.
+        "aw-impl-for": (
+            ("impl", ("start", "red", "verify", "test", "commit")),
+            ("maint", ("start", "verify", "commit")),
+        ),
     }
-    for skill, (script, verbs) in phase_commands.items():
+    for skill, groups in phase_commands.items():
         text = bodies.get(skill, "")
-        for verb in verbs:
-            command = f'{script}" --project <project> {verb} <iid>'
-            report.check(
-                f"{skill}: `{verb}` keeps --project before the verb",
-                command in text,
-            )
+        for group, verbs in groups:
+            for verb in verbs:
+                command = f"aw {group} --project <project> {verb} <iid>"
+                report.check(
+                    f"{skill}: `{group} {verb}` keeps --project before the verb",
+                    command in text,
+                )
 
-    for skill in ("aw-grill-me-to-meta", "aw-grill-meta-to-wis"):
+    for skill in ("aw-grill-me-to-meta", "aw-grill-meta-to-milestone",
+                  "aw-grill-milestone-to-issue"):
         text = bodies.get(skill, "")
         how = text.partition("## How")[2].partition("## Acceptance")[0]
         first = re.search(r"^(?P<rank>[1-9][0-9]*)\.\s+(?P<step>.+)$", how, re.M)
@@ -299,7 +355,7 @@ def collect(repo: Path) -> Reporter:
                  and 'command.add_argument("--output-file", required=True)' in maint_source
                  and "Maint-Contract:" in maint_source
                  and "Maint-Change-Digest:" in maint_source
-                 and "after.lifecycle.command: change.py close" in maint_source)
+                 and "after.lifecycle.command: {AW_CLI} change close" in maint_source)
 
     metadoc_path = scripts_root / "metadoc.py"
     metadoc_source = metadoc_path.read_text(encoding="utf-8") if metadoc_path.is_file() else ""
@@ -322,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     if report.failed:
         print(f"\n=> RED: {len(report.failed)} failure(s)")
         return 1
-    print("\n=> GREEN: seven byte-identical typed-delivery AW skill pairs")
+    print("\n=> GREEN: ten byte-identical typed-delivery AW skill pairs")
     return 0
 
 

@@ -467,14 +467,27 @@ meta.DEAD_COMMAND_EXEMPT = shipped_exempt
 # --------------------------------------------------------------------------
 # `check_plugin.py` runs the same pattern over the skill bodies. Nothing else
 # compares the two, so a fix applied to one would silently leave the other
-# reading a narrower defect.
+# reading a narrower defect. Since the 2026-09-02 move the detector extracts
+# a group token and judges it against `AW_GROUPS`, so the registry is under
+# the same no-drift assertion as the pattern -- a group added to one file and
+# not the other is one population accepting what the other refuses.
+META_TEXT = META_SCRIPT.read_text(encoding="utf-8")
+PLUGIN_TEXT = (HERE / "check_plugin.py").read_text(encoding="utf-8")
 PATTERN = re.compile(r"^AW_INVOCATION = re\.compile\((.*)\)$", re.M)
-here = PATTERN.search(META_SCRIPT.read_text(encoding="utf-8"))
-there = PATTERN.search((HERE / "check_plugin.py").read_text(encoding="utf-8"))
+here = PATTERN.search(META_TEXT)
+there = PATTERN.search(PLUGIN_TEXT)
 check("both `AW_INVOCATION` definitions were found", bool(here) and bool(there))
 check("`meta.py` and `check_plugin.py` share one `aw <verb>` detector",
       bool(here) and bool(there) and here.group(1) == there.group(1),
       f"meta={here.group(1) if here else None} plugin={there.group(1) if there else None}")
+GROUPS = re.compile(r"^AW_GROUPS = \((.*?)^\)$", re.M | re.S)
+here_g = GROUPS.search(META_TEXT)
+there_g = GROUPS.search(PLUGIN_TEXT)
+check("both `AW_GROUPS` registries were found", bool(here_g) and bool(there_g))
+check("`meta.py` and `check_plugin.py` share one live-group registry",
+      bool(here_g) and bool(there_g) and here_g.group(1) == there_g.group(1),
+      f"meta={here_g.group(1) if here_g else None} "
+      f"plugin={there_g.group(1) if there_g else None}")
 
 # --------------------------------------------------------------------------
 # against the real checkout

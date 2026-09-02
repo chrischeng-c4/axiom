@@ -30,8 +30,7 @@ credentials, and raw admission keys out of errors, logs, metrics, and timing
 names.
 
 When README, STATUS, or ROADMAP changes, treat them as one document set. Run
-the deterministic check first. Then use `$project-readme-check` for the
-clean-context reader.
+the deterministic check.
 
 ## Verification
 

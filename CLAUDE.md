@@ -31,50 +31,63 @@ verification live in its `CONTRIBUTING.md`. There is no third META-doc —
 `<project>/CAPABILITIES.md` was deleted on 2026-08-17 and its content merged
 into the README.
 
-## `aw` is `.claude/aw` plus both `skills/aw-*` mirrors
+## `aw` is `apps/aw` plus both `skills/aw-*` mirrors
 
-`aw` is the scripts under `.claude/aw/scripts/` and the seven skills under
-`.agents/skills/aw-*/` and `.claude/skills/aw-*/`. There is no binary behind
-them — the protocol is their
-stdout and their exit codes.
+`aw` is the Typer CLI at `apps/aw` — its engine is the argparse scripts under
+`apps/aw/src/aw/scripts/` — and the ten skills under `.agents/skills/aw-*/`
+and `.claude/skills/aw-*/`. The protocol is still stdout and exit codes; the
+CLI adds no validation of its own, it rebuilds each verb's argv and hands it
+to the engine module's `main(argv)`.
 
-It was a Claude Code plugin at `plugins/aw/` until 2026-08-21. That tree is
-deleted: the scripts moved to `.claude/aw/scripts/`, the verification suite to
-`.claude/aw/verification/`, and `plugins/aw/skills/`, `plugins/aw/.claude-plugin/plugin.json`
-and `.claude-plugin/marketplace.json` were removed outright, along with the
-`enabledPlugins` entry in `.claude/settings.json`.
+It was a Claude Code plugin at `plugins/aw/` until 2026-08-21, then bare
+scripts under `.claude/aw/scripts/` until 2026-09-02, when the engine moved
+into the `apps/aw` uv project. The verification suite stayed at
+`.claude/aw/verification/` and resolves the engine through its
+`_paths.SCRIPTS`; the migrations data stayed at `.claude/aw/migrations/`. The
+retired plugin root and `${CLAUDE_PLUGIN_ROOT}` still resolve nowhere.
 
-AW now has seven project skills in two runtime roots. Codex reads
+AW has ten project skills in two runtime roots. Codex reads
 `.agents/skills/aw-*/SKILL.md`. Claude Code reads
 `.claude/skills/aw-*/SKILL.md`. Each matching pair must be byte-identical.
-Both runtimes call the one engine under `.claude/aw/scripts/`. The retired
-plugin root and `${CLAUDE_PLUGIN_ROOT}` still resolve nowhere.
+Both runtimes run the one CLI as `uv run --project apps/aw aw <group> …` from
+the repository root — nine groups: `change`, `milestone`, `e2e`, `impl`,
+`maint`, `wis`, `meta`, `metadoc`, and `version`. That exact prefix is what
+the engine prints in its `next.command:` lines, and `uv` supplies the pinned
+Python 3.13 — a bare `python3` is 3.9 on at least one machine here, where the
+failure is a `ModuleNotFoundError` traceback that reads like a broken script
+rather than a wrong interpreter.
 
-Launch every AW script through `uv run --python 3.13 --no-project`. They read
-TOML, `tomllib` is 3.11+, and a bare `python3` is 3.9 on at least one machine
-here — where the failure is a `ModuleNotFoundError` traceback that reads like a
-broken script rather than a wrong interpreter.
-
-There is no `aw` binary. The Rust application at `apps/agentic-workflow` that
-carried the name is deleted, and `cargo uninstall agentic-workflow` removed the
-copy on `PATH` — so a stray `aw wi …` now fails with "command not found"
-instead of running, mutating the tracker, and printing something plausible.
-That failure is the whole of the enforcement; nothing rewrites an `aw` verb
-into the script that replaced it.
+There is no `aw` on `PATH`. The Rust application at `apps/agentic-workflow`
+that carried the name is deleted, and `cargo uninstall agentic-workflow`
+removed the copy on `PATH` — so
+a stray `aw wi …` now fails with "command not found" instead of running,
+mutating the tracker, and printing something plausible. The retired binary's
+verbs stay retired: the CLI's groups are the nine above, and `meta.py`'s M2
+rule refuses a doc whose `aw` invocation names anything else.
 
 ## Skills
 
-Eight entry points: the seven `aw-*` skills below, plus the non-`aw`
-`/project-readme-check`. Each is invoked by a human. `grill-me-to-meta`
+Ten entry points: the `aw-*` skills below. Each is invoked by a human.
+(`/git-commit`, `/git-rebase`, `/git-push`, `/git-land`,
+`/lumen-build-release` and `/ui-ux-pro-max`
+exist beside them as standalone utilities outside the AW system;
+`/project-readme-check` was deleted on 2026-09-02 — its deterministic
+validators under `scripts/meta/` remain and run directly.) `grill-me-to-meta`
 interviews a human and writes prose under one project's `README.md`,
 `STATUS.md`, `ROADMAP.md` and `docs/**`, and hands the run to `metadoc.py`,
 which refuses a commit that wrote anywhere else and is the only writer of its
-own commit; `grill-meta-to-wis` measures the gap with `wis.py gap` and
-reorganises the tracker through `milestone.py`/`change.py`;
-`e2e-for-wi`, `impl-for-wi`, and `maint-for-wi` hand off to their matching
-phase scripts, which can refuse them; `ask-user` writes nothing; the
-project-document checker uses its own read-only validators and a clean-context
-reader.
+own commit; `grill-meta-to-milestone` and `grill-milestone-to-issue` split the
+retired `grill-meta-to-wis` in two — the first measures the gap with
+`aw wis gap` and settles the promise↔Milestone structure, the second settles
+one Milestone's typed issue set and order, both through
+`aw milestone`/`aw change`; `e2e-for` and `impl-for` take a scope (`#<iid>`,
+`milestone:<n>`, exact `<project>@<version>` title, or a bare `<project>` for
+every open release Milestone) and hand each queue head to the matching phase
+scripts, which can refuse them — `impl-for` absorbs the retired
+`maint-for-wi`, routing maintenance heads through the maint verbs;
+`test-for` and `review` are read-only closers that verify lifecycle evidence
+and audit a project without writing; `build` wraps `cargo build`; `ask-user`
+writes nothing.
 
 There is no technical-design step. Two old grills — one per issue epic, one per change —
 wrote per-subsystem technical-design sections and ADRs beside them, under a
@@ -92,26 +105,29 @@ pair, or a skill that calls the legacy issue-epic writer.
 
 | Skill | Reach for it when | It does |
 |---|---|---|
-| `/aw-grill-me-to-meta` | a project's `README.md`, `STATUS.md`, `ROADMAP.md`, or a `docs/**` section is missing, stale, wrong, or no longer wanted | interviews you, then writes those four paths for one project through the landing sequence `metadoc.py check` → `meta.py check` → `metadoc.py commit`; absorbs the retired standalone meta-checking skill as that sequence's second step |
-| `/aw-grill-meta-to-wis` | a future `docs/**` promise has no release Milestone, or its issue set or order is wrong | runs `wis.py gap`, then uses `milestone.py` and `change.py`; the Milestone title owns the version, its assigned issues own the work set, and its `## Development Order` owns the sequence; the promise heading gains `(Milestone #<number>)` |
-| `/aw-e2e-for-wi` | the queue head is `type:feat`, `type:fix`, or `type:perf` | drives e2e for that one behavior issue only |
-| `/aw-impl-for-wi` | the behavior queue head has landed e2e evidence | drives impl for that one behavior issue only |
-| `/aw-maint-for-wi` | the queue head is `type:refactor`, `type:test`, `type:docs`, or `type:chore` | drives maint for that one maintenance issue only |
+| `/aw-grill-me-to-meta` | a project's `README.md`, `STATUS.md`, `ROADMAP.md`, or a `docs/**` section is missing, stale, wrong, or no longer wanted | interviews you, then writes those four paths for one project through the landing sequence `aw metadoc check` → `aw meta check` → `aw metadoc commit`; absorbs the retired standalone meta-checking skill as that sequence's second step |
+| `/aw-grill-meta-to-milestone` | a future `docs/**` promise has no release Milestone, or a Milestone binds to no promise | runs `aw wis gap` (G1, G3–G5), then `aw milestone next-version`/`skeleton`/`create --draft`; the Milestone title owns the version and the promise heading gains `(Milestone #<number>)` |
+| `/aw-grill-milestone-to-issue` | a release Milestone's issue set, types, or order is missing or wrong | answers G2, G6 and G7; creates typed issues through `aw change`, assigns them to the Milestone, and finalizes `## Development Order` — the assigned issues own the work set and that list owns the sequence |
+| `/aw-e2e-for` | a scope's queue head is `type:feat`, `type:fix`, or `type:perf` | drives e2e for each behavior queue head in the scope; a Milestone yields at most one e2e commit per run, and maintenance heads are reported as `/aw-impl-for` work |
+| `/aw-impl-for` | a scope's queue head has landed e2e evidence, or is a maintenance type | drives impl for behavior heads and maint for `type:refactor`/`test`/`docs`/`chore` heads, closing each issue to advance the queue |
+| `/aw-test-for` | a scope's work looks finished and needs closing regression verification | read-only: checks each issue's lifecycle trailers against its commits, then runs the project gates unfiltered; writes nothing |
+| `/aw-review` | one project needs a full audit outside the lifecycle | read-only: uncommitted diff, `aw meta check`, `aw wis gap`, README-declared gates; produces a findings report and writes nothing |
+| `/aw-build` | one project needs a debug or release compile | runs `cargo build -p <crate>` (release adds `--release`) and reports verbatim warnings and errors; a lumen release goes through `/lumen-build-release` instead |
 | `/aw-prepare-goal` | a project, typed issue, release Milestone, or bare intent must become decidable conditions | reads the project or tracker, selects the next route by type, and sets no goal unless the human explicitly asks |
 | `/aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
-| `/project-readme-check` | after creating or editing an app or library README, STATUS, ROADMAP, protocol, generated-client, indexing, querying, GKE, client-integration, or migration guide | validates the adopted product-document set and cross-file references, then asks a context-free reader to restate the current, future, and interface contract |
 
-The usual behavior sequence is `grill-me-to-meta` → `grill-meta-to-wis` →
-`e2e-for-wi` → `impl-for-wi`. Maintenance uses `maint-for-wi`. These are
+The usual behavior sequence is `grill-me-to-meta` → `grill-meta-to-milestone`
+→ `grill-milestone-to-issue` → `e2e-for` → `impl-for` → `test-for`.
+Maintenance heads route through `impl-for`'s maint leg. These are
 machine-checked handoffs. A release Milestone must bind to a product promise.
-`milestone.py next` selects one queue head. `change.py fetch` records its type
-and flow. Each phase commit is recorded by `change.py lifecycle`, and
-`change.py close` advances the queue only after all required evidence matches
+`aw milestone next` selects one queue head. `aw change fetch` records its type
+and flow. Each phase commit is recorded by `aw change lifecycle`, and
+`aw change close` advances the queue only after all required evidence matches
 the commit. `prepare-goal` and `ask-user` stand outside the lifecycle.
 
 Release Milestone titles use the SemVer core form
 `<project>@<major>.<minor>.<patch>`. Each version field is a non-negative
-integer without leading zeroes. `milestone.py next-version <project>` reads
+integer without leading zeroes. `aw milestone next-version <project>` reads
 all open and closed release Milestones for that project. It defaults to a
 minor bump and resets patch to zero. A major bump, patch bump, or exact version
 is an explicit human choice. If no prior release Milestone exists, the human
@@ -125,7 +141,8 @@ from a skill, it stops and asks the human to enter Plan mode first.
 - A grill never writes product source and never invents an answer you did not
   give. It offers only gates the repository already runs, and it stops asking
   once the body's own sections are answered.
-- On `grill-meta-to-wis`, GitHub's native issue `milestone` field is the only
+- On `grill-milestone-to-issue`, GitHub's native issue `milestone` field is
+  the only
   ownership relation. Milestone creation uses the exact draft order line.
   Assignment requires an open Milestone and the same one `app:*` or `lib:*`
   label. The first final update must match all assigned issues. An
@@ -140,20 +157,20 @@ from a skill, it stops and asks the human to enter Plan mode first.
   `docs/**` for the one project it names, one `## <title>` section per
   promise — never for an issue number, because a promise can predate the
   work item that will carry it. That allowlist is measured rather than asked
-  for: `metadoc.py check` reads the dirty set against HEAD and refuses every
+  for: `aw metadoc check` reads the dirty set against HEAD and refuses every
   path outside it, along with a section missing one of its own kind's
   bullets (a section is exactly one of `Outcome:`-shaped or
   `Status rows:`-shaped), a STATUS or ROADMAP id that resolves nowhere, and a
   heading that gained a `(Milestone #<number>)` — binding a section to a
-  release Milestone is `grill-meta-to-wis`'s job, not this one's, and this check refuses a run
-  that did it anyway. `metadoc.py commit` re-runs all of it, stages the
+  release Milestone is `grill-meta-to-milestone`'s job, not this one's, and this check refuses a run
+  that did it anyway. `aw metadoc commit` re-runs all of it, stages the
   allowlist, and writes the `Meta-Project:` / `Meta-Top:` / `Meta-Index:` /
   `Meta-Section:` / `Meta-Unbound:` trailers that make the commit findable; a
   META-doc commit written by hand carries none of them. A section is bound to
   its release Milestone — the heading gains `(Milestone #<number>)` and
-  `Tracking:` gains the Milestone link — by `grill-meta-to-wis`, and by
+  `Tracking:` gains the Milestone link — by `grill-meta-to-milestone`, and by
   nothing else.
-- `wis.py gap` prints seven rows, each with the size of what it read printed
+- `aw wis gap` prints seven rows, each with the size of what it read printed
   beside the count (`3 / 31`), not a bare count: G1 a future promise no release
   Milestone owns, G2 an open release Milestone or unmilestoned delivery issue no
   promise reaches, G3 a promise bound to a Milestone that cannot carry it,
@@ -163,19 +180,19 @@ from a skill, it stops and asks the human to enter Plan mode first.
   read — a missing `docs/` area file, an absent `STATUS.md`, `gh` exiting
   non-zero outside a git directory — prints `?` UNMEASURED with the reason
   instead of `0`, and is counted separately, so a run that could not reach
-  the tracker never reports `=> ALIGNED`. It writes nothing; every write
-  `grill-meta-to-wis` makes goes through `milestone.py` / `change.py`.
+  the tracker never reports `=> ALIGNED`. It writes nothing; every write the
+  two downstream grills make goes through `aw milestone` / `aw change`.
 - Execution skills treat `#<iid>` as one typed issue. They treat only
   `milestone:<number>` or an exact `<project>@<version>` title as a Milestone.
   A bare number never means a Milestone. A Milestone run first calls
-  `milestone.py next <ref> --json`. This command checks the complete assigned
+  `aw milestone next <ref> --json`. This command checks the complete assigned
   child set before it returns the first open row. Any structural error stops
   the run. The returned issue is the only executable queue head.
 - `prepare-goal` prints text and sets nothing. `/goal` is a Claude Code
   built-in that nothing here implements, and a goal exists only once the human
   pastes one of the printed lines — which starts a turn on the spot, and
   supersedes whatever goal was already running.
-- `meta.py check` reads and never writes; it is the second step of
+- `aw meta check` reads and never writes; it is the second step of
   `grill-me-to-meta`'s landing sequence now, where the standalone skill it
   came from used to be run by a human who had to remember to. Its baseline
   was 103 findings over 182 documents, nearly all
@@ -214,9 +231,10 @@ after the user authorizes the exact headless AGY payload. Make it directly
 inherit that user turn. Do not reuse an older operator. Do not forward
 authorization through a controller message.
 
-For more than one task in the same round, use `/dispatch-to-agy` instead of
-hand-driving each operator: it classifies every task `measure-only` or
-`bounded-write`, then fans out. Any number of `measure-only` tasks may run
+For more than one task in the same round, classify every task `measure-only`
+or `bounded-write` and apply this rule by hand — the `/dispatch-to-agy` skill
+that used to enforce it was deleted on 2026-09-02. Any number of
+`measure-only` tasks may run
 concurrently. `bounded-write` tasks may run concurrently only across distinct
 persistent AGY Projects — AGY has not proven per-conversation worktree
 confinement for two concurrent bounded writes in one Project, so those queue
@@ -234,15 +252,17 @@ worktree. It does not run Git, tracker, publication, or cleanup actions.
 
 The controller owns the profile, task contract, oracle, injection, prompt,
 worktree creation, independent verification, semantic acceptance, Git, tracker
-changes, publication, and cleanup. Follow `.claude/skills/agy-dispatch/` as the
-source of truth for the AGY model, Project, permission, snapshot, command, and
-write rules. Run every adapter verb from the repository root as
-`python3 scripts/agy_dispatch.py ...`. Do not use an installed, skill-local, or
+changes, publication, and cleanup. The `agy-dispatch` skill that carried the
+AGY model, Project, permission, snapshot, command, and write rules was deleted
+on 2026-09-02 with its reference material; what remains is the adapter itself.
+Run every adapter verb from the repository root as
+`python3 scripts/agy_dispatch.py ...`. Do not use an installed or
 legacy dispatcher copy. Send only task-required repository material. Never send
 secrets. Do not run workers with overlapping write ownership in parallel.
 
 The `$copilot-dispatch` this paragraph named until 2026-08-17 has never existed
-in this checkout, so the policy covers `agy-dispatch` and whatever is added
+in this checkout, so the policy covers the `agy_dispatch.py` adapter and
+whatever is added
 beside it, not a second adapter someone might go looking for.
 
 ## Work-item lifecycle
@@ -266,20 +286,20 @@ and `Impl-Contract:` carry: `e2e`'s own commit carries `E2E-Red:`; `impl`'s
 `verify`/`test` refuse a tree that has drifted from the `red` record before
 `impl`'s commit ever writes `Impl-Red:`/`Impl-Contract:` back onto it.
 
-Maintenance does not invent a red. `maint.py start` freezes the type, baseline,
+Maintenance does not invent a red. `aw maint start` freezes the type, baseline,
 GHAN change points, and clean tree. A controller reads each declared command,
-checks its paths, runs it outside `maint.py`, and records its exact exit and
-output digest with `maint.py record`. Refactor records the same gates before
+checks its paths, runs it outside `aw maint`, and records its exact exit and
+output digest with `aw maint record`. Refactor records the same gates before
 and after. Test, docs, and chore record their after gates. The commit carries
 `Maint-Contract:` and `Maint-Change-Digest:`.
 
 ### Work-item terminal states
 
-The closed type registry lives at `.claude/aw/scripts/wi_types.py`:
+The closed type registry lives at `apps/aw/src/aw/scripts/wi_types.py`:
 
 | Type | Terminal state |
 |---|---|
-| release Milestone | `milestone.py reconcile` is clean and all assigned delivery issues are terminal |
+| release Milestone | `aw milestone reconcile` is clean and all assigned delivery issues are terminal |
 | `feat`, `fix`, `perf` | e2e then impl evidence is terminal |
 | `refactor`, `test`, `docs`, `chore` | maint evidence is terminal |
 | `spike` | an ADR-style decision records spawned WI refs or explicit no-action; expiry converges to `gave_up` |
@@ -336,7 +356,7 @@ Maintenance has one `maint` phase. Its type selects its write boundary:
   STATUS row that measures it are one edit now, not two skills' worth. It is
   where `grill-me-to-meta` writes, before any work item exists, one
   `## <title>` section per promise; the heading gains its
-  `(Milestone #<number>)` when `grill-meta-to-wis` binds the release. The
+  `(Milestone #<number>)` when `grill-meta-to-milestone` binds the release. The
   technical-design tree that landed
   beside `docs/product/` on the same day, under `docs`'s own `technical/`,
   is deleted as of 2026-08-27, ADRs included — a design decision lives in the
@@ -345,7 +365,7 @@ Maintenance has one `maint` phase. Its type selects its write boundary:
   it, no source header points at it, and it is prose a human was interviewed
   into. Nor is it a ladder write root — `C0` refuses a dirty `docs/` path
   like any other path outside a phase's write root, so land a META-doc
-  before `e2e.py start`, not during.
+  before `aw e2e start`, not during.
 
 ## Test Layout
 

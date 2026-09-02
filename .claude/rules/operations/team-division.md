@@ -9,21 +9,22 @@ every step that needs a human runs where a human can answer.
 ## Rules
 
 - The main session (controller) exclusively runs `/aw-grill-me-to-meta`,
-  `/aw-grill-meta-to-wis`, `/aw-prepare-goal` Route B and `/aw-ask-user`. All
+  `/aw-grill-meta-to-milestone`, `/aw-grill-milestone-to-issue`,
+  `/aw-prepare-goal` Route B and `/aw-ask-user`. All
   four interview through AskUserQuestion; subagents do not have that tool,
   and a subagent running them anyway is answering for the human.
 - The controller also keeps dispatch scheduling, final acceptance, git land,
   tracker semantic decisions, and AGY payload authorization. Never delegate
   these.
 - `<app>-sr-dev` (sonnet/high) owns the **e2e** phase: it runs
-  `/aw-e2e-for-wi`'s four verbs itself. The black-box contract is the strong
+  `/aw-e2e-for`'s four verbs itself. The black-box contract is the strong
   model's work, and it exists before the dev starts. The 22 `*-planner`
   agents that used to carry this phase were deleted on 2026-08-28; only the
   22 app-level sr-devs carry the ladder carve-out — the 22 lib-level sr-devs
   do not, because `leg.leg_root` resolves under `apps/` only.
 - `<app>-dev` (haiku/medium) owns the **impl** phase — in Rust, colocated
   unit tests are part of the source, so the whole `src/` write root is the
-  dev's. It runs `/aw-impl-for-wi`'s five verbs: the colocated tests land red
+  dev's. It runs `/aw-impl-for`'s five verbs: the colocated tests land red
   first, `red` records that attribution evidence to
   `.aw/impl-red/<iid>.json`, and `C2` refuses a later `verify`/`test` whose
   tree has drifted from that record. Weak self-serving unit tests are caught
@@ -41,8 +42,8 @@ every step that needs a human runs where a human can answer.
 - One writer per worktree at a time. Phase scripts measure named reds against
   HEAD, so two concurrent writers poison each other's baseline. Cross-app
   parallelism means separate persistent-branch worktrees (`app/<name>`,
-  `lib/<name>`; see `.claude/rules/operations/persistent-branches.md`) or
-  `/dispatch-to-agy`.
+  `lib/<name>`; see `.claude/rules/operations/persistent-branches.md`) or a
+  hand-driven AGY dispatch (the `/dispatch-to-agy` skill is deleted).
 - Phase `commit` is run by that phase's runner — the script re-runs every gate
   before writing — and the controller's acceptance reads the commits, not the
   runner's summary.
@@ -65,9 +66,9 @@ every step that needs a human runs where a human can answer.
   ```
   set=$(ls .claude/agents/*-dev.md | grep -vE -- '-(sr|jr)-dev\.md$')
   echo "$set" | wc -l                                          # 22 plain devs
-  echo "$set" | xargs grep -l 'aw-impl-for-wi' | wc -l          # 22 carry impl
+  echo "$set" | xargs grep -l 'aw-impl-for' | wc -l          # 22 carry impl
   echo "$set" | sed 's/-dev\.md$/-sr-dev.md/' \
-    | xargs grep -l 'aw-e2e-for-wi' | wc -l                     # 22 carry e2e
+    | xargs grep -l 'aw-e2e-for' | wc -l                     # 22 carry e2e
   ```
 
   `grep -l 'meta.py check' .claude/agents/*-research.md | wc -l` returns 22.

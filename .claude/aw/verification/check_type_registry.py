@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _paths import SCRIPTS  # noqa: E402
+
 sys.path.insert(0, str(SCRIPTS))
 
 import change  # noqa: E402

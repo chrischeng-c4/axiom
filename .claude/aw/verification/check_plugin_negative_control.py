@@ -15,13 +15,19 @@ REPO = HERE.parents[2]
 CHECKER = HERE / "check_plugin.py"
 SKILLS = (
     "aw-ask-user",
-    "aw-e2e-for-wi",
+    "aw-build",
+    "aw-e2e-for",
     "aw-grill-me-to-meta",
-    "aw-grill-meta-to-wis",
-    "aw-impl-for-wi",
-    "aw-maint-for-wi",
+    "aw-grill-meta-to-milestone",
+    "aw-grill-milestone-to-issue",
+    "aw-impl-for",
     "aw-prepare-goal",
+    "aw-review",
+    "aw-test-for",
 )
+
+
+SCRIPTS_REL = Path("apps/aw/src/aw/scripts")
 
 
 def fixture(root: Path) -> None:
@@ -30,9 +36,9 @@ def fixture(root: Path) -> None:
             target = root / runtime / "skills" / skill
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(REPO / runtime / "skills" / skill, target)
-    scripts = root / ".claude" / "aw" / "scripts"
+    scripts = root / SCRIPTS_REL
     scripts.mkdir(parents=True)
-    for source in (REPO / ".claude" / "aw" / "scripts").glob("*.py"):
+    for source in (REPO / SCRIPTS_REL).glob("*.py"):
         shutil.copy2(source, scripts / source.name)
 
 
@@ -66,27 +72,27 @@ def remove_skill(root: Path) -> None:
 
 
 def drift_pair(root: Path) -> None:
-    path = root / ".agents/skills/aw-e2e-for-wi/SKILL.md"
+    path = root / ".agents/skills/aw-e2e-for/SKILL.md"
     path.write_text(path.read_text(encoding="utf-8") + "\nDrift.\n", encoding="utf-8")
 
 
 def restore_issue_epic(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-e2e-for-wi/SKILL.md"
+        path = root / runtime / "skills/aw-e2e-for/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace('milestone.py" next', 'epic.py create')
+        text = text.replace("aw milestone next", "aw epic create")
         path.write_text(text, encoding="utf-8")
 
 
 def remove_next_verb(root: Path) -> None:
-    path = root / ".claude/aw/scripts/milestone.py"
+    path = root / "apps/aw/src/aw/scripts/milestone.py"
     text = path.read_text(encoding="utf-8")
     text = text.replace('sub.add_parser("next")', 'sub.add_parser("queue")', 1)
     path.write_text(text, encoding="utf-8")
 
 
 def change_default_milestone_bump(root: Path) -> None:
-    path = root / ".claude/aw/scripts/milestone.py"
+    path = root / "apps/aw/src/aw/scripts/milestone.py"
     text = path.read_text(encoding="utf-8")
     text = text.replace('DEFAULT_BUMP = "minor"', 'DEFAULT_BUMP = "patch"', 1)
     path.write_text(text, encoding="utf-8")
@@ -102,7 +108,7 @@ def remove_plan_first(root: Path) -> None:
 
 def make_plan_open(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-meta-to-wis/SKILL.md"
+        path = root / runtime / "skills/aw-grill-meta-to-milestone/SKILL.md"
         text = path.read_text(encoding="utf-8")
         text = text.replace("Stop if\n   the runtime cannot confirm Plan mode.",
                             "Continue when the runtime cannot confirm Plan mode.", 1)
@@ -110,7 +116,7 @@ def make_plan_open(root: Path) -> None:
 
 
 def erase_behavior_flow(root: Path) -> None:
-    path = root / ".claude/aw/scripts/wi_types.py"
+    path = root / "apps/aw/src/aw/scripts/wi_types.py"
     text = path.read_text(encoding="utf-8")
     text = text.replace('BEHAVIOR_TYPES = ("feat", "fix", "perf")',
                         "BEHAVIOR_TYPES = ()", 1)
@@ -118,7 +124,7 @@ def erase_behavior_flow(root: Path) -> None:
 
 
 def remove_migration_apply(root: Path) -> None:
-    path = root / ".claude/aw/scripts/type_migration.py"
+    path = root / "apps/aw/src/aw/scripts/type_migration.py"
     text = path.read_text(encoding="utf-8")
     text = text.replace('mode.add_argument("--apply"',
                         'mode.add_argument("--migrate"', 1)
@@ -126,7 +132,7 @@ def remove_migration_apply(root: Path) -> None:
 
 
 def weaken_maint_record(root: Path) -> None:
-    path = root / ".claude/aw/scripts/maint.py"
+    path = root / "apps/aw/src/aw/scripts/maint.py"
     text = path.read_text(encoding="utf-8")
     text = text.replace('command.add_argument("--output-file", required=True)',
                         'command.add_argument("--result-file", required=True)', 1)
@@ -134,7 +140,7 @@ def weaken_maint_record(root: Path) -> None:
 
 
 def bypass_lifecycle_close(root: Path) -> None:
-    path = root / ".claude/aw/scripts/change.py"
+    path = root / "apps/aw/src/aw/scripts/change.py"
     text = path.read_text(encoding="utf-8")
     start = text.index("def cmd_close(args)")
     prefix, close = text[:start], text[start:]
@@ -148,9 +154,9 @@ def main() -> int:
         case("missing Codex mirror", remove_skill,
              "FAIL aw-ask-user: Codex SKILL.md exists"),
         case("pair drift", drift_pair,
-             "FAIL aw-e2e-for-wi: mirror bytes match"),
+             "FAIL aw-e2e-for: mirror bytes match"),
         case("legacy issue-epic writer", restore_issue_epic,
-             "FAIL aw-e2e-for-wi: has no legacy issue-epic writer"),
+             "FAIL aw-e2e-for: has no legacy issue-epic writer"),
         case("missing Milestone queue-head verb", remove_next_verb,
              "FAIL milestone.py exposes `next`"),
         case("Milestone default bump changes", change_default_milestone_bump,
@@ -158,7 +164,7 @@ def main() -> int:
         case("grill skips Plan mode", remove_plan_first,
              "FAIL aw-grill-me-to-meta: first step enters Plan mode"),
         case("grill Plan mode is open", make_plan_open,
-             "FAIL aw-grill-meta-to-wis: Plan mode is fail-closed"),
+             "FAIL aw-grill-meta-to-milestone: Plan mode is fail-closed"),
         case("frozen behavior flow is erased", erase_behavior_flow,
              "FAIL wi_types.py owns the frozen delivery and intake vocabulary"),
         case("legacy migration loses apply", remove_migration_apply,

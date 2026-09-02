@@ -33,8 +33,7 @@ Do not replace it under an existing connection or downgrade to cleartext when
 no valid material exists.
 
 When README, STATUS, or ROADMAP changes, treat them as one document set. Run
-the deterministic check first. Then use `$project-readme-check` for the
-clean-context reader.
+the deterministic check.
 
 ## Verification
 

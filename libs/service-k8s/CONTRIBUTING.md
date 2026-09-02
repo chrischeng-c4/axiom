@@ -42,8 +42,7 @@ StatefulSet rollout, never treat a PDB as an update gate. A PDB controls
 voluntary eviction.
 
 When README, STATUS, or ROADMAP changes, treat them as one document set. Run
-the deterministic check first. Then use `$project-readme-check` for the
-clean-context reader.
+the deterministic check.
 
 ## Verification
 

@@ -13,6 +13,9 @@ merged `origin/main` state.
 
 - Execute the phases in this order: commit, rebase `origin/main`, push, PR to
   `main`, merge, rebase `origin/main`.
+- The commit phase delegates to `/git:commit`, both rebase phases to
+  `/git:rebase` (no argument = `origin/main`), and both push phases to
+  `/git:push`; do not inline a different sequence for any of them.
 - Treat `origin/main` as the remote branch backing GitHub PR base `main`; `gh pr
   create` uses `--base main`.
 - Request escalation for sandboxed commands that write Git refs/indexes or use
@@ -46,68 +49,24 @@ top of an unresolved operation.
 
 ### Step 1: Commit
 
-Inspect the complete diff before staging:
-
-```bash
-git diff --stat
-git diff
-git diff --cached --stat
-git diff --cached
-git status --short
-```
-
 If there are no local changes, skip the commit and continue only if the branch
 already has commits to land.
 
-Otherwise stage all intended repo changes and commit with a meaningful
-conventional commit message:
-
-```bash
-git add -A
-git commit -m "<type>(<scope>): <summary>"
-```
-
-Use a body when the change is non-trivial. Do not add generated-with or
-co-authored trailers unless the user explicitly asks.
+Otherwise run the `/git:commit` skill. It inspects the complete diff, stages
+the intended changes, and writes one conventional commit; it does not push,
+so continue with Step 2.
 
 ### Step 2: Rebase on origin/main
 
-Fetch and rebase onto the current remote main:
-
-```bash
-git fetch origin main
-git rebase origin/main
-```
-
-On conflict:
-
-```bash
-git diff --name-only --diff-filter=U
-```
-
-Read each conflicted file, resolve the conflict, then run:
-
-```bash
-git add <resolved-file>
-git rebase --continue
-```
-
-Repeat until the rebase completes.
+Run the `/git:rebase` skill with no argument. It fetches `origin/main`,
+rebases the current branch onto it, and carries the conflict-resolution loop.
+Its preflight passes here because Step 1 left the tree clean; it does not
+push, so continue with Step 3.
 
 ### Step 3: Push
 
-Push the current branch. If there is no upstream, set it:
-
-```bash
-git push -u origin HEAD
-```
-
-If the branch already has an upstream and the rebase rewrote commits, push with
-lease protection:
-
-```bash
-git push --force-with-lease
-```
+Run the `/git:push` skill. It sets the upstream on a first push and uses
+`--force-with-lease` when the Step 2 rebase rewrote already-pushed commits.
 
 ### Step 4: PR to origin/main
 
@@ -150,18 +109,12 @@ gh pr view <pr> --json state,mergedAt,mergeCommit,url
 
 ### Step 6: Rebase on origin/main again
 
-Sync the still-current working branch back to the merged main:
+Run the `/git:rebase` skill with no argument again, syncing the still-current
+working branch back to the merged main.
 
-```bash
-git fetch origin main
-git rebase origin/main
-```
-
-Then push the synchronized branch:
-
-```bash
-git push --force-with-lease
-```
+Then run the `/git:push` skill to push the synchronized branch — after the
+merge and rebase it detects the rewritten history and pushes with lease
+protection.
 
 Verify the final state:
 
