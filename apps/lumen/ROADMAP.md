@@ -529,7 +529,7 @@ destination without copying tracker state.
   member loss, recovery and continuation, leader movement, voluntary drain
   within PDB limits, direct StatefulSet update safety, interrupted operator
   recovery, and no second unavailable voter.
-- Tracking: [#3802](https://github.com/chrischeng-c4/axiom/issues/3802) (`lumen@0.4.39`).
+- Tracking: [Milestone #32](https://github.com/chrischeng-c4/axiom/milestone/32).
 
 ### Kubernetes-native placement
 

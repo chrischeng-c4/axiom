@@ -20,12 +20,12 @@
 - Open: Define placement refusal and recovery behavior.
 - Neighbours: Kubernetes-native placement.
 
-## Quorum-safe runtime rollout
+## Quorum-safe runtime rollout (Milestone #32)
 
 - Problem: A StatefulSet rollout can remove quorum.
 - Who: Replicated-runtime operators.
 - Promise: Runtime rollout changes members only when quorum and replication gates allow it.
-- Outcome: `quorum-safe-runtime-rollout`. Tracking: Not assigned.
+- Outcome: `quorum-safe-runtime-rollout`. Tracking: [Milestone #32](https://github.com/chrischeng-c4/axiom/milestone/32).
 - Non-goals: Treating a PDB as a quorum gate.
 - Open: Define member-at-a-time sequencing.
 - Neighbours: Bounded shutdown and failover.
