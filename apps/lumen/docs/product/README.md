@@ -16,3 +16,4 @@ outcome and remains unbound until its release work is ready.
 | Strict search schema types | indexing-and-rebuild.md |
 | Querying and facets | querying-and-facets.md |
 | Unified search contract | querying-and-facets.md |
+| Exact search facets metrics | querying-and-facets.md |

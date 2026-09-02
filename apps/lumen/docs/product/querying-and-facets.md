@@ -20,6 +20,16 @@
 - Open: Finalize compatibility and failure semantics.
 - Neighbours: Search v2 migration and generated-client parity.
 
+## Exact search facets metrics
+
+- Problem: Callers need exact reported facet and metric values.
+- Who: Search dashboards and APIs.
+- Promise: Search can return declared exact facets and metrics.
+- Outcome: `exact-search-facets-metrics`. Tracking: Not assigned.
+- Non-goals: General OLAP.
+- Open: Define exact limits and failures.
+- Neighbours: Facet governance and distributed convergence.
+
 ## Non-goals in this area
 
 Lumen does not execute embedding models or become an OLAP engine.
