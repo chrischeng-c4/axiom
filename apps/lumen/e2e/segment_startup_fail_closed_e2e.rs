@@ -7,9 +7,9 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,8 @@ const POST_ADOPTION_EXTERNAL_ID: &str = "post-adoption-external-id";
 const POST_ADOPTION_VALUE: &str = "post-adoption@example.test";
 const AOF_TAIL_EXTERNAL_ID: &str = "aof-tail-external-id";
 const AOF_TAIL_VALUE: &str = "aof-tail@example.test";
+const MAX_PORT_BIND_ATTEMPTS: usize = 3;
+static PORT_BIND_HANDOFF: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Eq, PartialEq)]
 enum RootEntrySnapshot {
@@ -47,12 +49,31 @@ enum RootEntrySnapshot {
 struct LumenProcess {
     child: Option<Child>,
     port: u16,
+    port_bind_handoff: Option<MutexGuard<'static, ()>>,
+    root: PathBuf,
+    bind_attempt: usize,
+    stdout: tempfile::NamedTempFile,
+    stderr: tempfile::NamedTempFile,
 }
 
 impl LumenProcess {
     fn spawn(root: &Path) -> Self {
-        let port = reserve_port();
-        let child = Command::new(env!("CARGO_BIN_EXE_lumen"))
+        Self::spawn_attempt(root.to_path_buf(), 1)
+    }
+
+    fn spawn_attempt(root: PathBuf, bind_attempt: usize) -> Self {
+        // The CLI accepts a port number, not an inherited listener. Keep
+        // concurrent tests out of the reserve-to-bind handoff until this child
+        // either answers /readyz or exits before binding.
+        let port_bind_handoff = PORT_BIND_HANDOFF
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve loopback port");
+        let port = listener.local_addr().expect("reserved port address").port();
+        let stdout = tempfile::NamedTempFile::new().expect("create lumen stdout capture");
+        let stderr = tempfile::NamedTempFile::new().expect("create lumen stderr capture");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
+        command
             .args([
                 "serve",
                 "--host",
@@ -61,7 +82,7 @@ impl LumenProcess {
                 &port.to_string(),
                 "--data-dir",
             ])
-            .arg(root)
+            .arg(&root)
             .args([
                 "--persistence",
                 "segment",
@@ -75,25 +96,53 @@ impl LumenProcess {
             .env("LUMEN_AUTH", "off")
             .env_remove("RUST_LOG")
             .env_remove("LUMEN_LOG_FORMAT")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn lumen serve");
+            .stdout(Stdio::from(
+                stdout.reopen().expect("open lumen stdout capture"),
+            ))
+            .stderr(Stdio::from(
+                stderr.reopen().expect("open lumen stderr capture"),
+            ));
+        drop(listener);
+        let child = command.spawn().expect("spawn lumen serve");
         Self {
             child: Some(child),
             port,
+            port_bind_handoff: Some(port_bind_handoff),
+            root,
+            bind_attempt,
+            stdout,
+            stderr,
         }
     }
 
     fn wait_until_ready(&mut self) {
         let deadline = Instant::now() + STARTUP_DEADLINE;
         loop {
-            if answers_ready(self.port) {
-                return;
+            if let Some(status) = self.child().try_wait().expect("poll lumen child") {
+                let logs = self.finish_exited_child();
+                if logs.contains("Address already in use")
+                    && self.bind_attempt < MAX_PORT_BIND_ATTEMPTS
+                {
+                    let root = self.root.clone();
+                    let bind_attempt = self.bind_attempt + 1;
+                    debug_assert!(self.port_bind_handoff.is_none());
+                    let replacement = Self::spawn_attempt(root, bind_attempt);
+                    *self = replacement;
+                    continue;
+                }
+                panic!("lumen exited before /readyz ({status}): {logs}");
             }
-            if self.child().try_wait().expect("poll lumen child").is_some() {
-                let output = self.wait_with_output();
-                panic!("lumen exited before /readyz: {}", output_text(&output));
+            let logs = self.logs();
+            if logs.contains("\"message\":\"lumen serve listening")
+                && answers_ready(self.port)
+                && self
+                    .child()
+                    .try_wait()
+                    .expect("repoll lumen child")
+                    .is_none()
+            {
+                self.port_bind_handoff.take();
+                return;
             }
             if Instant::now() >= deadline {
                 let logs = self.stop_and_logs();
@@ -115,9 +164,9 @@ impl LumenProcess {
                 Duration::from_millis(25),
             )
             .is_ok();
-            if self.child().try_wait().expect("poll lumen child").is_some() {
-                let output = self.wait_with_output();
-                return (output.status, output_text(&output), ever_bound);
+            if let Some(status) = self.child().try_wait().expect("poll lumen child") {
+                let logs = self.finish_exited_child();
+                return (status, logs, ever_bound);
             }
             if Instant::now() >= deadline {
                 let logs = self.stop_and_logs();
@@ -134,15 +183,27 @@ impl LumenProcess {
     fn stop_and_logs(&mut self) -> String {
         let mut child = self.child.take().expect("lumen child is available");
         let _ = child.kill();
-        output_text(&child.wait_with_output().expect("wait for lumen child"))
+        child.wait().expect("wait for lumen child");
+        self.port_bind_handoff.take();
+        self.logs()
     }
 
-    fn wait_with_output(&mut self) -> Output {
-        self.child
-            .take()
-            .expect("lumen child is available")
-            .wait_with_output()
-            .expect("wait for lumen child")
+    fn finish_exited_child(&mut self) -> String {
+        self.child.take().expect("lumen child is available");
+        self.port_bind_handoff.take();
+        self.logs()
+    }
+
+    fn logs(&self) -> String {
+        format!(
+            "{}\n{}",
+            String::from_utf8_lossy(
+                &std::fs::read(self.stdout.path()).expect("read lumen stdout capture")
+            ),
+            String::from_utf8_lossy(
+                &std::fs::read(self.stderr.path()).expect("read lumen stderr capture")
+            )
+        )
     }
 }
 
@@ -153,11 +214,6 @@ impl Drop for LumenProcess {
             let _ = child.wait();
         }
     }
-}
-
-fn reserve_port() -> u16 {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve loopback port");
-    listener.local_addr().expect("reserved port address").port()
 }
 
 fn answers_ready(port: u16) -> bool {
@@ -180,14 +236,6 @@ fn answers_ready(port: u16) -> bool {
     std::str::from_utf8(&response[..read])
         .map(|response| response.starts_with("HTTP/1.1 200"))
         .unwrap_or(false)
-}
-
-fn output_text(output: &Output) -> String {
-    format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
 }
 
 /// Capture each existing path before a refused start. This never follows a

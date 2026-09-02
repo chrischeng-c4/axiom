@@ -36,11 +36,11 @@
 //!   delivered ownership map to the owning shard.
 #![cfg(feature = "operator")]
 
-use std::net::TcpListener;
 use std::sync::Arc;
 
-use axum_test::{TestServer, TestServerConfig, Transport};
+use axum_test::TestServer;
 use serde_json::{json, Value};
+use tokio::net::TcpListener;
 
 use lumen::api::{router, AppState};
 use lumen::routing::VirtualBucketShardMap;
@@ -50,18 +50,17 @@ use lumen::types::{CreateCollectionRequest, FieldSpec, FieldType};
 
 const VIRTUAL_BUCKET_COUNT: u32 = 8;
 
-/// Reserves a real, currently-free localhost port by binding then
-/// immediately dropping a `TcpListener` — [`RoutedRouter::new`] needs both
-/// peers' base URLs at construction time, before either `TestServer` binds,
-/// so the port has to be known up front rather than assigned by
-/// `Transport::HttpRandomPort` after the fact. Same small TOCTOU window
-/// every "pick a free port, bind it again later" test helper accepts.
-fn reserve_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral port")
-        .local_addr()
-        .expect("local addr")
-        .port()
+/// Binds a real localhost listener and keeps it bound while peer URLs are
+/// constructed. Passing this exact listener into `axum::serve` removes the
+/// free-port reservation race between concurrent tests.
+fn bind_listener() -> (TcpListener, u16) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    listener
+        .set_nonblocking(true)
+        .expect("make listener nonblocking");
+    let port = listener.local_addr().expect("local addr").port();
+    let listener = TcpListener::from_std(listener).expect("adopt bound listener");
+    (listener, port)
 }
 
 struct RoutedShard {
@@ -76,8 +75,8 @@ fn shard_map() -> VirtualBucketShardMap {
 /// each behind a real bound `TestServer`, each wired with a `RoutedRouter`
 /// (local_shard 0 and 1 respectively) that knows both real addresses.
 fn spin_up_routed_pair() -> (RoutedShard, RoutedShard) {
-    let port0 = reserve_port();
-    let port1 = reserve_port();
+    let (listener0, port0) = bind_listener();
+    let (listener1, port1) = bind_listener();
     let shard_urls = vec![
         format!("http://127.0.0.1:{port0}"),
         format!("http://127.0.0.1:{port1}"),
@@ -93,17 +92,11 @@ fn spin_up_routed_pair() -> (RoutedShard, RoutedShard) {
         shard_urls.clone(),
     )
     .expect("construct shard 0 router");
-    let server0 = TestServer::new_with_config(
+    let server0 = TestServer::new(axum::serve(
+        listener0,
         router(state0.with_routed(Arc::new(router0))),
-        TestServerConfig {
-            transport: Some(Transport::HttpIpPort {
-                ip: None,
-                port: Some(port0),
-            }),
-            ..TestServerConfig::default()
-        },
-    )
-    .expect("bind shard 0");
+    ))
+    .expect("serve shard 0");
 
     let engine1 = Arc::new(Engine::new());
     let state1 = AppState::open(engine1.clone());
@@ -115,17 +108,11 @@ fn spin_up_routed_pair() -> (RoutedShard, RoutedShard) {
         shard_urls,
     )
     .expect("construct shard 1 router");
-    let server1 = TestServer::new_with_config(
+    let server1 = TestServer::new(axum::serve(
+        listener1,
         router(state1.with_routed(Arc::new(router1))),
-        TestServerConfig {
-            transport: Some(Transport::HttpIpPort {
-                ip: None,
-                port: Some(port1),
-            }),
-            ..TestServerConfig::default()
-        },
-    )
-    .expect("bind shard 1");
+    ))
+    .expect("serve shard 1");
 
     (
         RoutedShard { server: server0 },
@@ -401,19 +388,13 @@ async fn routed_truncate_fans_out_and_rejects_a_stale_forwarded_map() {
 // empty.  This uses a real h2c peer that returns 502, not a mocked router.
 #[tokio::test]
 async fn routed_truncate_reports_remote_failure_without_rolling_back_local_shard() {
-    let local_port = reserve_port();
-    let remote_port = reserve_port();
-    let remote = TestServer::new_with_config(
+    let (local_listener, local_port) = bind_listener();
+    let (remote_listener, remote_port) = bind_listener();
+    let remote = TestServer::new(axum::serve(
+        remote_listener,
         axum::Router::new().fallback(|| async { axum::http::StatusCode::BAD_GATEWAY }),
-        TestServerConfig {
-            transport: Some(Transport::HttpIpPort {
-                ip: None,
-                port: Some(remote_port),
-            }),
-            ..TestServerConfig::default()
-        },
-    )
-    .expect("bind failing remote");
+    ))
+    .expect("serve failing remote");
 
     let engine = Arc::new(Engine::new());
     engine
@@ -461,17 +442,11 @@ async fn routed_truncate_reports_remote_failure_without_rolling_back_local_shard
         ],
     )
     .unwrap();
-    let local = TestServer::new_with_config(
+    let local = TestServer::new(axum::serve(
+        local_listener,
         router(state.with_routed(Arc::new(routed))),
-        TestServerConfig {
-            transport: Some(Transport::HttpIpPort {
-                ip: None,
-                port: Some(local_port),
-            }),
-            ..TestServerConfig::default()
-        },
-    )
-    .expect("bind local routed shard");
+    ))
+    .expect("serve local routed shard");
 
     let response = local.post("/collections/users/docs:truncate").await;
     response.assert_status(axum::http::StatusCode::BAD_GATEWAY);
@@ -579,19 +554,13 @@ async fn routed_batch_unindex_partitions_and_refuses_stale_or_misrouted_hops() {
 // already-applied removal visible and returns its 5xx without rollback.
 #[tokio::test]
 async fn routed_batch_unindex_reports_remote_failure_without_rolling_back_local_shard() {
-    let local_port = reserve_port();
-    let remote_port = reserve_port();
-    let remote = TestServer::new_with_config(
+    let (local_listener, local_port) = bind_listener();
+    let (remote_listener, remote_port) = bind_listener();
+    let remote = TestServer::new(axum::serve(
+        remote_listener,
         axum::Router::new().fallback(|| async { axum::http::StatusCode::BAD_GATEWAY }),
-        TestServerConfig {
-            transport: Some(Transport::HttpIpPort {
-                ip: None,
-                port: Some(remote_port),
-            }),
-            ..TestServerConfig::default()
-        },
-    )
-    .expect("bind failing remote");
+    ))
+    .expect("serve failing remote");
 
     let local_id = external_id_for_shard("users", 0);
     let remote_id = external_id_for_shard("users", 1);
@@ -641,17 +610,11 @@ async fn routed_batch_unindex_reports_remote_failure_without_rolling_back_local_
         ],
     )
     .unwrap();
-    let local = TestServer::new_with_config(
+    let local = TestServer::new(axum::serve(
+        local_listener,
         router(state.with_routed(Arc::new(routed))),
-        TestServerConfig {
-            transport: Some(Transport::HttpIpPort {
-                ip: None,
-                port: Some(local_port),
-            }),
-            ..TestServerConfig::default()
-        },
-    )
-    .expect("bind local routed shard");
+    ))
+    .expect("serve local routed shard");
 
     let response = local
         .post("/collections/users/docs:unindex")
@@ -1210,14 +1173,12 @@ async fn routing_key_less_search_404s_when_no_shard_has_the_collection() {
 // clear, retryable error — never a silent local answer.
 #[tokio::test]
 async fn forward_to_unreachable_shard_surfaces_retryable_error() {
-    // Only shard0 is really bound; shard1's URL points at a
-    // reserved-but-never-listened-on port, simulating the owning pod being
-    // down or mid-roll.
-    let port0 = reserve_port();
-    let dead_port = reserve_port();
+    // Only shard0 is bound. Destination port zero cannot identify a listener,
+    // so shard1 stays unreachable without reserving and releasing a real port.
+    let (listener0, port0) = bind_listener();
     let shard_urls = vec![
         format!("http://127.0.0.1:{port0}"),
-        format!("http://127.0.0.1:{dead_port}"),
+        "http://127.0.0.1:0".to_string(),
     ];
     let engine0 = Arc::new(Engine::new());
     // #2496: `create_collection` now fans out through the router to every
@@ -1254,17 +1215,11 @@ async fn forward_to_unreachable_shard_surfaces_retryable_error() {
         shard_urls,
     )
     .expect("construct shard 0 router");
-    let server0 = TestServer::new_with_config(
+    let server0 = TestServer::new(axum::serve(
+        listener0,
         router(state0.with_routed(Arc::new(router0))),
-        TestServerConfig {
-            transport: Some(Transport::HttpIpPort {
-                ip: None,
-                port: Some(port0),
-            }),
-            ..TestServerConfig::default()
-        },
-    )
-    .expect("bind shard 0");
+    ))
+    .expect("serve shard 0");
 
     let remote_id = external_id_for_shard("users", 1);
     let resp = server0
