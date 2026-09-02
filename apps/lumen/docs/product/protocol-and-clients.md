@@ -10,12 +10,12 @@
 - Non-goals: Published SDK packages.
 - Neighbours: Querying owns Search v2 semantics; access owns credential behavior.
 
-## Protocol contract completeness
+## Protocol contract completeness (Milestone #12)
 
 - Problem: Declared shapes omit some cross-request behavior.
 - Who: HTTP callers.
 - Promise: OpenAPI and maintained guides describe the complete supported protocol.
-- Outcome: `protocol-contract-completeness`. Tracking: Not assigned.
+- Outcome: `protocol-contract-completeness`. Tracking: [Milestone #12](https://github.com/chrischeng-c4/axiom/milestone/12).
 - Non-goals: Undocumented compatibility guesses.
 - Open: Complete shared errors, streaming, and consistency declarations.
 - Neighbours: Protocol compatibility policy.

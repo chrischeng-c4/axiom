@@ -342,7 +342,7 @@ destination without copying tracker state.
   media type is absent from OpenAPI. Snapshot tests prove the committed
   document is byte-identical to live generation, and stream-reindex tests prove
   its declared framing matches the runtime.
-- Tracking: [#3807](https://github.com/chrischeng-c4/axiom/issues/3807) (`lumen@0.4.45`).
+- Tracking: [Milestone #12](https://github.com/chrischeng-c4/axiom/milestone/12).
 
 ### Generated-client protocol parity
 
