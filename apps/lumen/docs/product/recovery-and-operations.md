@@ -30,6 +30,16 @@
 - Open: Define finalizer and retry evidence.
 - Neighbours: Managed embedded data durability.
 
+## Regional topology migration and backup
+
+- Problem: A regional topology needs safe data migration and backup.
+- Who: Regional production operators.
+- Promise: Lumen can migrate topology and create recoverable regional backups.
+- Outcome: `regional-topology-migration-and-backup`. Tracking: Not assigned.
+- Non-goals: Assuming a PVC snapshot alone proves regional recovery.
+- Open: Define backup consistency and migration cutover.
+- Neighbours: Regional production profile.
+
 ## Non-goals in this area
 
 Lumen cannot recover data that a prior node-local runtime already lost.
