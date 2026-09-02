@@ -14,8 +14,9 @@ merged `origin/main` state.
 - Execute the phases in this order: commit, rebase `origin/main`, push, PR to
   `main`, merge, rebase `origin/main`.
 - The commit phase delegates to `/git:commit`, both rebase phases to
-  `/git:rebase` (no argument = `origin/main`), and both push phases to
-  `/git:push`; do not inline a different sequence for any of them.
+  `/git:rebase` (no argument = `origin/main`), both push phases to
+  `/git:push`, the PR phase to `/gh:create-pr`, and the merge phase to
+  `/gh:merge-pr`; do not inline a different sequence for any of them.
 - Treat `origin/main` as the remote branch backing GitHub PR base `main`; `gh pr
   create` uses `--base main`.
 - Request escalation for sandboxed commands that write Git refs/indexes or use
@@ -70,42 +71,17 @@ Run the `/git:push` skill. It sets the upstream on a first push and uses
 
 ### Step 4: PR to origin/main
 
-Open or reuse a PR from the current branch to GitHub base `main`:
-
-```bash
-gh pr list --head "$(git branch --show-current)" --base main --state open --json number,url
-gh pr create --base main --head "$(git branch --show-current)" --fill
-```
-
-If a PR already exists, reuse it. After creating or finding the PR, inspect its
-state:
-
-```bash
-gh pr view <pr> --json number,url,state,mergeable,mergeStateStatus,statusCheckRollup
-```
-
-If checks are pending, wait or poll when appropriate. If checks fail, stop and
-report the failing checks.
+Run the `/gh:create-pr` skill with no argument. It opens — or reuses — the
+one open PR from the current branch to base `main` and reports its
+mergeability and check status. Its preflight passes here because Step 3 left
+the branch in sync with its upstream.
 
 ### Step 5: Merge
 
-Use the user-requested merge strategy when provided. If none is provided, follow
-the repository's local policy when one is discoverable; otherwise use a
-non-interactive GitHub merge command with an explicit allowed strategy, usually:
-
-```bash
-gh pr merge <pr> --squash
-```
-
-If squash merge is unavailable or inappropriate for the repository, use the
-allowed explicit alternative, such as `--merge`. Do not pass `--delete-branch`
-unless the user asked to delete the branch.
-
-After merging, verify the PR is merged:
-
-```bash
-gh pr view <pr> --json state,mergedAt,mergeCommit,url
-```
+Run the `/gh:merge-pr` skill with the PR from Step 4. It waits out pending
+checks, refuses failing ones, merges with the explicit strategy (squash
+unless the user or repository policy says otherwise, never `--delete-branch`
+unasked), and verifies the PR reached `MERGED`.
 
 ### Step 6: Rebase on origin/main again
 
