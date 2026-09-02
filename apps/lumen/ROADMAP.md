@@ -304,7 +304,7 @@ destination without copying tracker state.
   rejection of expired, wrong-audience, and malformed tokens, no anonymous
   fallback after `401`, and no credential in arguments, environment, status,
   Events, logs, or error text.
-- Tracking: [#3799](https://github.com/chrischeng-c4/axiom/issues/3799) (`lumen@0.4.36`).
+- Tracking: [Milestone #30](https://github.com/chrischeng-c4/axiom/milestone/30).
 
 ### Managed auth unification
 
