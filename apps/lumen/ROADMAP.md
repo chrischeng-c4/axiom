@@ -324,7 +324,7 @@ destination without copying tracker state.
   Route tests prove the exact anonymous set and protect `/debug/cluster`.
   Migration tests prove old resources receive an actionable message without
   leaking a token or silently widening access.
-- Tracking: [#3798](https://github.com/chrischeng-c4/axiom/issues/3798) (`lumen@0.4.35`).
+- Tracking: [Milestone #25](https://github.com/chrischeng-c4/axiom/milestone/25).
 
 ### Protocol contract completeness
 

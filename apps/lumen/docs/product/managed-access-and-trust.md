@@ -30,12 +30,12 @@
 - Open: Define the final projected-token and CA contract.
 - Neighbours: Generated-client request resilience.
 
-## Managed auth unification
+## Managed auth unification (Milestone #25)
 
 - Problem: Managed paths need one required identity model.
 - Who: Managed runtime operators.
 - Promise: Managed Lumen uses one required KSA identity and whole-runtime permission model.
-- Outcome: `managed-auth-unification`. Tracking: Not assigned.
+- Outcome: `managed-auth-unification`. Tracking: [Milestone #25](https://github.com/chrischeng-c4/axiom/milestone/25).
 - Non-goals: Disabled Managed authentication.
 - Open: Define migration from current grants.
 - Neighbours: Managed runtime KSA access.
