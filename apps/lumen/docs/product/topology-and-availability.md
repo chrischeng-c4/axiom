@@ -30,6 +30,16 @@
 - Open: Define member-at-a-time sequencing.
 - Neighbours: Bounded shutdown and failover.
 
+## Kubernetes-native placement
+
+- Problem: Platform placement needs a portable Kubernetes contract.
+- Who: Kubernetes operators.
+- Promise: Lumen uses Kubernetes-native placement controls without machine-type fields in the API.
+- Outcome: `kubernetes-native-placement`. Tracking: Not assigned.
+- Non-goals: Cloud-specific machine types in the CRD.
+- Open: Define portable capacity and placement mapping.
+- Neighbours: Per-shard failure-domain placement.
+
 ## Non-goals in this area
 
 Generic HorizontalPodAutoscaler control is not a Lumen topology contract.
