@@ -35,3 +35,4 @@ outcome and remains unbound until its release work is ready.
 | GKE Autopilot certification | runtime-and-deployment.md |
 | Managed embedded data durability | runtime-and-deployment.md |
 | Search capability activation | runtime-and-deployment.md |
+| Managed access and trust | managed-access-and-trust.md |
