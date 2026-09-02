@@ -80,6 +80,16 @@
 - Open: Freeze the corpus, replay, and mutant-kill contract.
 - Neighbours: Managed embedded data durability.
 
+## Distributed search routing and merge
+
+- Problem: A multi-shard search needs safe routing and merge rules.
+- Who: Distributed-search callers.
+- Promise: Lumen routes search work and merges results through one declared contract.
+- Outcome: `distributed-search-routing-and-merge`. Tracking: Not assigned.
+- Non-goals: Partial or unordered result claims.
+- Open: Define failure, cursor, and merge semantics.
+- Neighbours: Distributed facet convergence.
+
 ## Non-goals in this area
 
 Generic HorizontalPodAutoscaler control is not a Lumen topology contract.

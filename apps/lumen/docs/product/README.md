@@ -54,3 +54,4 @@ outcome and remains unbound until its release work is ready.
 | High-availability shard expansion | topology-and-availability.md |
 | Bounded Raft shutdown and failover | topology-and-availability.md |
 | Deterministic consensus conformance | topology-and-availability.md |
+| Distributed search routing and merge | topology-and-availability.md |
