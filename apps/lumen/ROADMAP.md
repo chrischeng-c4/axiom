@@ -660,7 +660,7 @@ destination without copying tracker state.
   cutover.
 - Completion evidence: Regional drills prove backup, restore, topology
   cutover, failure handling, and data-consistency checks.
-- Tracking: Not assigned.
+- Tracking: [Milestone #35](https://github.com/chrischeng-c4/axiom/milestone/35).
 
 ### Regional upgrade rollback and recovery
 
