@@ -20,7 +20,7 @@ Read these sources in order for the part you change:
    activation semantics.
 6. [Querying](docs/querying.md) for selection, scoring, result, facet, metric,
    limit, and hydration semantics.
-7. [0.5 search migration](docs/migration-0.5-search.md) for the versioned
+7. [Search v2 migration](docs/migration-search-v2.md) for the versioned
    compatibility window and caller actions.
 8. [Protocol](docs/protocol.md) for the canonical HTTP and runtime-behavior
    source map.

@@ -62,8 +62,8 @@ render a client ServiceAccount, TokenRequest issuer RBAC, and per-collection or
 instance-admin RBAC. An operator or platform owner applies that bundle.
 
 **Planned.** Managed requires Kubernetes ServiceAccount authentication. During
-the planned 0.4.x migration, `auth: disabled` remains accepted but emits a
-deprecation. Version 0.5.0 rejects it.
+the migration window before 0.23.0, `auth: disabled` remains accepted but emits
+a deprecation. Version 0.23.0 rejects it.
 
 ## Keep the identities separate
 
@@ -333,19 +333,19 @@ Every other runtime endpoint is protected. This includes `/debug/cluster`,
 
 ## Migration contract
 
-**Planned.** The 0.4.x compatibility window follows these rules:
+**Planned.** The compatibility window before 0.23.0 follows these rules:
 
-| Input | 0.4.x migration behavior |
+| Input | Before 0.23.0 migration behavior |
 |---|---|
 | `access` is absent | Keep the current external RBAC behavior and emit a deprecation. |
 | `access.allowedServiceAccounts` is empty | Converge a valid explicit deny-all policy. |
 | Current per-collection grants | Keep working and mark them deprecated. |
 | `auth: disabled` in Managed | Keep working and mark it deprecated. |
 
-Version 0.5.0 requires an explicit Managed `access` value. It removes the
+Version 0.23.0 requires an explicit Managed `access` value. It removes the
 per-collection grant model and rejects `auth: disabled` in Managed mode.
 
-These migration warnings and 0.5.0 refusals are not implemented in the current
+These migration warnings and 0.23.0 refusals are not implemented in the current
 source.
 
 ## Responsibility boundaries

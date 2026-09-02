@@ -599,6 +599,18 @@ fn serving_statefulset(
     if let Some(sc) = &s.raft_storage_class {
         pvc_template["spec"]["storageClassName"] = json!(sc);
     }
+    // Embedded mode keeps its index and AOF below the same PVC as the Raft
+    // state. The shared renderer validates this as one exact direct child of
+    // the `raft` parent mount and orders the pair parent-first. Replicated
+    // shards use the Raft backend directly and must not receive this overlay.
+    if lumen.spec.replicas_per_shard <= 1 {
+        volume_mounts.push(json!({
+            "name": "raft",
+            "mountPath": EMBEDDED_DATA_DIR,
+            "subPath": "data",
+            "readOnly": false,
+        }));
+    }
     let serving_plan = ServiceStatefulSet {
         cx,
         name: cx.name,
@@ -1037,3 +1049,6 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
     })
 }
 // CODEGEN-END
+
+#[cfg(test)]
+mod tests;

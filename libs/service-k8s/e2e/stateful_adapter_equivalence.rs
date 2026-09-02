@@ -292,3 +292,37 @@ fn service_links_opt_in_only_adds_the_explicit_pod_field() {
     assert!(legacy["spec"]["template"]["spec"].get("enableServiceLinks").is_none());
     assert_eq!(enabled["spec"]["template"]["spec"]["enableServiceLinks"], true);
 }
+
+#[test]
+fn compatibility_adapter_preserves_safe_same_pvc_child_mount_order() {
+    let cx = RenderCtx {
+        app: "lumen",
+        manager: "lumen-operator",
+        api_version: "v1",
+        kind: "Lumen",
+        name: "lumen",
+        ns: "default",
+        owner: None,
+    };
+    let mut rendered = profile(&cx, 3);
+    rendered.volume_claim = Some(WorkloadVolumeClaim {
+        name: "raft".into(),
+        template: json!({"spec":{"resources":{"requests":{"storage":"20Gi"}}}}),
+        mount_path: "/var/lib/lumen",
+        read_only: false,
+    });
+    rendered.volume_mounts = vec![
+        json!({"name":"config","mountPath":"/etc/lumen","readOnly":true}),
+        json!({"name":"raft","mountPath":"/var/lib/lumen/data","subPath":"data","readOnly":false}),
+    ];
+
+    let actual = service_statefulset(rendered);
+    assert_eq!(
+        actual["spec"]["template"]["spec"]["containers"][0]["volumeMounts"],
+        json!([
+            {"name":"config","mountPath":"/etc/lumen","readOnly":true},
+            {"name":"raft","mountPath":"/var/lib/lumen","readOnly":false},
+            {"name":"raft","mountPath":"/var/lib/lumen/data","subPath":"data","readOnly":false},
+        ])
+    );
+}

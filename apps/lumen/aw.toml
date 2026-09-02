@@ -3,6 +3,11 @@ name = "lumen"
 cap_path = "README.md"
 label = "app:lumen"
 
+[impl]
+build = "cargo test --locked -p lumen --features operator --lib --no-run"
+test = "cargo test --locked -p lumen --features operator --lib"
+harness = "cargo"
+
 [ec.efficiency]
 tool = "meter"
 meter = "apps/lumen"

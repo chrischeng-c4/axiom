@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.31"
+version = "0.5.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -462,6 +462,11 @@ name = "lumen_bench_cli"
 path = "e2e/lumen_bench_cli.rs"
 
 [[test]]
+name = "legacy-3073-app"
+path = "e2e/legacy-3073-app.rs"
+required-features = ["raft-wal"]
+
+[[test]]
 name = "nats_cluster_e2e"
 path = "e2e/nats_cluster_e2e.rs"
 
@@ -477,6 +482,11 @@ path = "e2e/operator_rbac_coverage.rs"
 [[test]]
 name = "operator_render"
 path = "e2e/operator_render.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "report-4018-app"
+path = "e2e/report-4018-app.rs"
 required-features = ["operator"]
 
 [[test]]

@@ -97,7 +97,7 @@ main generated-client boundaries are:
   `401`, `413`, `429`, and `500` response set or the
   `X-Read-Consistency` request header.
 - Rust does not preserve the full OpenAPI union and enum type surface.
-- No generated client has typed 0.5 facet or metric methods, definitions, or
+- No generated client has typed Search v2 facet or metric methods, definitions, or
   results. The target `kind`-discriminated search unions are not in the current
   OpenAPI snapshot.
 - No generated client applies Lumen's planned operation-aware backoff,
@@ -152,7 +152,7 @@ real, but CI enforcement is a future outcome.
 - [Protocol guide](../docs/protocol.md)
 - [Indexing](../docs/indexing.md)
 - [Querying](../docs/querying.md)
-- [0.5 search migration](../docs/migration-0.5-search.md)
+- [Search v2 migration](../docs/migration-search-v2.md)
 - [Current support](../STATUS.md)
 - [Future outcomes and non-goals](../ROADMAP.md)
 - [Authentication](../docs/authentication.md)

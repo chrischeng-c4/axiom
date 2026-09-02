@@ -368,6 +368,51 @@ fn claim_template(
     Ok(template)
 }
 
+fn is_safe_basename(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains('/')
+        && !value.contains('\0')
+}
+
+fn is_exact_storage_child_mount(
+    mount: &Value,
+    volume_name: &str,
+    parent_mount_path: &str,
+    parent_read_only: bool,
+) -> bool {
+    let Some(object) = mount.as_object() else {
+        return false;
+    };
+    if object.len() != 4
+        || !object.contains_key("name")
+        || !object.contains_key("mountPath")
+        || !object.contains_key("subPath")
+        || !object.contains_key("readOnly")
+    {
+        return false;
+    }
+    let Some(sub_path) = object.get("subPath").and_then(Value::as_str) else {
+        return false;
+    };
+    is_safe_basename(sub_path)
+        && object.get("name").and_then(Value::as_str) == Some(volume_name)
+        && object.get("readOnly").and_then(Value::as_bool) == Some(parent_read_only)
+        && object.get("mountPath").and_then(Value::as_str)
+            == Some(format!("{parent_mount_path}/{sub_path}").as_str())
+}
+
+fn overlaps_storage_mount(mount: &Value, volume_name: &str, parent_mount_path: &str) -> bool {
+    mount.get("name").and_then(Value::as_str) == Some(volume_name)
+        || mount
+            .get("mountPath")
+            .and_then(Value::as_str)
+            .is_some_and(|path| {
+                path == parent_mount_path || path.starts_with(&format!("{parent_mount_path}/"))
+            })
+}
+
 /// Render one deterministic StatefulSet and, for an independent claim, its
 /// PVC.  The returned independent PVC is ready before the StatefulSet so a
 /// caller can apply storage before the workload.
@@ -468,16 +513,26 @@ pub fn stateful_instance(
         let mounts = mounts
             .as_array_mut()
             .ok_or(StatefulInstanceError::InvalidPodTemplate)?;
-        if mounts
-            .iter()
-            .any(|mount| mount.get("name").and_then(Value::as_str) == Some(volume_name.as_str()))
-            || mounts.iter().any(|mount| {
-                mount.get("mountPath").and_then(Value::as_str) == Some(mount_path.as_str())
-            })
-        {
-            return Err(StatefulInstanceError::VolumeMountCollision);
+        let mut child = None;
+        let mut unrelated = Vec::with_capacity(mounts.len());
+        for mount in std::mem::take(mounts) {
+            if overlaps_storage_mount(&mount, volume_name, mount_path) {
+                if child.is_some()
+                    || !is_exact_storage_child_mount(&mount, volume_name, mount_path, read_only)
+                {
+                    return Err(StatefulInstanceError::VolumeMountCollision);
+                }
+                child = Some(mount);
+            } else {
+                unrelated.push(mount);
+            }
         }
-        mounts.push(json!({ "name": volume_name, "mountPath": mount_path, "readOnly": read_only }));
+        unrelated
+            .push(json!({ "name": volume_name, "mountPath": mount_path, "readOnly": read_only }));
+        if let Some(child) = child {
+            unrelated.push(child);
+        }
+        *mounts = unrelated;
     }
 
     let mut sts_spec = json!({

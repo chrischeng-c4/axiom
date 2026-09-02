@@ -29,7 +29,9 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "15773dfc479290ea61048dbee01e36ce8ad02adea603c91e9f0c010bda29a6d7";
+    "a923643ba8b3202e93a5f7cdf49da22afc0a49d4054c394f22a58b2a5342d86f";
+const KIND_E2E_BYTES_SHA256: &str =
+    "811b549732e49c9c2087e395f9a64923042009498f4bc965581716a6ec7f6913";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
     "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7";
@@ -293,7 +295,7 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
     let steps = field(library_job, "steps")
         .and_then(Yaml::as_sequence)
         .ok_or(Finding("LIBRARIES"))?;
-    require(steps.len() == 2, "LIBRARIES")?;
+    require(steps.len() == 3, "LIBRARIES")?;
     require(
         field(&steps[0], "uses").and_then(Yaml::as_str)
             == Some("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
@@ -327,7 +329,23 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
             == Some(0),
         "LIBRARIES",
     )?;
-    let run_step = steps[1].as_mapping().ok_or(Finding("LIBRARIES"))?;
+    let uv_step = steps[1].as_mapping().ok_or(Finding("LIBRARIES"))?;
+    require(
+        uv_step.len() == 2
+            && field(&steps[1], "uses").and_then(Yaml::as_str)
+                == Some("astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9"),
+        "LIBRARIES",
+    )?;
+    let uv_with = field(&steps[1], "with")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding("LIBRARIES"))?;
+    require(
+        uv_with.len() == 2
+            && uv_with.get(&key("version")).and_then(Yaml::as_str) == Some("0.12.1")
+            && uv_with.get(&key("enable-cache")).and_then(Yaml::as_bool) == Some(false),
+        "LIBRARIES",
+    )?;
+    let run_step = steps[2].as_mapping().ok_or(Finding("LIBRARIES"))?;
     require(
         run_step.len() == 3
             && ["name", "shell", "run"]
@@ -336,15 +354,15 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
         "LIBRARIES",
     )?;
     require(
-        field(&steps[1], "shell").and_then(Yaml::as_str) == Some("bash"),
+        field(&steps[2], "shell").and_then(Yaml::as_str) == Some("bash"),
         "LIBRARIES",
     )?;
     require(
-        field(&steps[1], "name").and_then(Yaml::as_str)
+        field(&steps[2], "name").and_then(Yaml::as_str)
             == Some("Run required service and Raft library gates without GKE"),
         "LIBRARIES",
     )?;
-    let run = field(&steps[1], "run")
+    let run = field(&steps[2], "run")
         .and_then(Yaml::as_str)
         .ok_or(Finding("LIBRARIES"))?;
     require(
@@ -352,14 +370,22 @@ fn validate_libraries_job(workflow: &Yaml) -> Result<(), Finding> {
             run,
             &[
                 "set -euo pipefail",
-                "cargo test -p service-k8s",
-                "cargo test -p storage-durable",
-                "cargo test -p service-backup --features http-client",
+                "cargo test --locked -p service-k8s --test stateful_instance_render",
+                "cargo test --locked -p service-k8s --test stateful_adapter_equivalence",
+                "cargo test --locked -p service-k8s",
+                "cargo test --locked -p storage-durable",
+                "cargo test --locked -p service-backup --features http-client",
+                "cargo test --locked -p raft-runtime --test adversarial_recovery",
+                "cargo test --locked -p raft-core",
+                "cargo test --locked -p raft-runtime",
                 "bash scripts/raft-implementor-build.sh",
-                "cargo test -p raft-runtime",
                 "python3 scripts/meta/test_readme_contract.py",
                 "python3 scripts/meta/test_project_docs_contract.py",
-                "python3 scripts/meta/project_docs_contract.py check apps/lumen libs/service-k8s --format json",
+                "python3 .claude/aw/verification/check_wis.py",
+                "uv run --python 3.13 --no-project .claude/aw/scripts/metadoc.py check apps/lumen --format json",
+                "uv run --python 3.13 --no-project .claude/aw/scripts/meta.py check --path apps/lumen --format json",
+                "uv run --python 3.13 --no-project scripts/meta/project_docs_contract.py check apps/lumen --format json",
+                "uv run --python 3.13 --no-project .claude/aw/scripts/wis.py gap apps/lumen",
                 "git -c core.fsmonitor=false diff --check",
             ],
         ),
@@ -454,6 +480,83 @@ fn shell_logical_lines(content: &str) -> Vec<String> {
         logical.push(pending);
     }
     logical
+}
+
+fn shell_function_body(content: &str, name: &str) -> Option<Vec<String>> {
+    let lines = shell_logical_lines(content);
+    let header = format!("{name}() {{");
+    let starts = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| (line == &header).then_some(index))
+        .collect::<Vec<_>>();
+    if starts.len() != 1 {
+        return None;
+    }
+    let start = starts[0] + 1;
+    let end = lines[start..].iter().position(|line| line == "}")? + start;
+    Some(lines[start..end].to_vec())
+}
+
+fn validate_kind_e2e_semantics(source: &str) -> Result<(), Finding> {
+    let expected = [
+        "local pre_id=\"pre-restart-${CLUSTER_NAME}-$$\"",
+        "local pre_value=\"${pre_id}@example.invalid\"",
+        "local post_id=\"post-restart-${CLUSTER_NAME}-$$\"",
+        "local post_value=\"${post_id}@example.invalid\"",
+        "local checkpoint old_hits post_hits",
+        "api_index_exact \"$pre_id\" \"$pre_value\"",
+        "checkpoint=\"$(api_checkpoint)\"",
+        "jq -e '.persisted == true' <<<\"$checkpoint\" >/dev/null || die \"/admin/checkpoint did not return persisted=true\"",
+        "kubectl -n \"$NAMESPACE\" delete pod -l \"$APP_LABEL\" --wait=true",
+        "wait_lumen_ready 240",
+        "expose_nodeport",
+        "assert_cluster_identity",
+        "old_hits=\"$(api_search_exact \"$pre_value\" | jq --arg id \"$pre_id\" '[.hits[] | select(.external_id == $id)] | length')\"",
+        "[[ \"$old_hits\" -eq 1 ]] || die \"pre-restart document was not readable before any new write\"",
+        "api_index_exact \"$post_id\" \"$post_value\"",
+        "post_hits=\"$(api_search_exact \"$post_value\" | jq --arg id \"$post_id\" '[.hits[] | select(.external_id == $id)] | length')\"",
+        "[[ \"$post_hits\" -eq 1 ]] || die \"replacement pod did not accept the post-restart write\"",
+        "echo \"   durable restart preserved $pre_id and accepted $post_id\"",
+    ];
+    let body = shell_function_body(source, "durable_restart_oracle")
+        .ok_or(Finding("KIND_DURABLE_RESTART"))?;
+    require(
+        body.iter().map(String::as_str).eq(expected),
+        "KIND_DURABLE_RESTART",
+    )?;
+
+    let lines = shell_logical_lines(source);
+    let collection = "step \"4b. PUT /collections/users\" api_put_collection";
+    let oracle =
+        "step \"5. checkpoint, replace serving pod, and prove durable recovery\" durable_restart_oracle";
+    let positions = |needle: &str| {
+        lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| (line == needle).then_some(index))
+            .collect::<Vec<_>>()
+    };
+    let collections = positions(collection);
+    let oracles = positions(oracle);
+    require(
+        collections.len() == 1 && oracles.len() == 1 && collections[0] < oracles[0],
+        "KIND_DURABLE_RESTART",
+    )?;
+    require(
+        !lines[oracles[0] + 1..]
+            .iter()
+            .any(|line| line.contains("api_put_collection")),
+        "KIND_DURABLE_RESTART",
+    )
+}
+
+fn validate_kind_e2e(source: &str) -> Result<(), Finding> {
+    validate_kind_e2e_semantics(source)?;
+    require(
+        sha256_bytes(source.as_bytes()) == KIND_E2E_BYTES_SHA256,
+        "KIND_BYTES",
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -980,7 +1083,7 @@ fn validate_fail_closed_gate_conditions(workflow: &Yaml) -> Result<(), Finding> 
     Ok(())
 }
 
-fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), Finding> {
+fn validate_product_gate_partition(workflow: &Yaml, _source: &str) -> Result<(), Finding> {
     let steps = field(
         job(workflow, "verify-candidate").ok_or(Finding("GATES"))?,
         "steps",
@@ -1001,15 +1104,20 @@ fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), 
             run,
             &[
                 "set -euo pipefail",
-                "cargo test -p lumen --features operator --test capacity_catalog_client",
-                "cargo test -p lumen --features operator --test capacity_catalog_contract",
-                "cargo test -p lumen --test cli_convention",
-                "cargo test -p lumen --test release_artifacts",
-                "cargo test -p lumen --test release_candidate",
-                "cargo test -p lumen",
-                "cargo test -p lumen --features \"operator delegated-auth\"",
+                "cargo test --locked -p lumen --features operator --test capacity_catalog_client",
+                "cargo test --locked -p lumen --features operator --test capacity_catalog_contract",
+                "cargo test --locked -p lumen --features operator --test operator_render",
+                "cargo test --locked -p lumen --test segment_startup_fail_closed_e2e",
+                "cargo test --locked -p lumen --test cli_convention",
+                "cargo test --locked -p lumen --test release_artifacts",
+                "cargo test --locked -p lumen --features raft-wal --lib raft_sm",
+                "cargo test --locked -p lumen --features raft-wal --test legacy-3073-app",
+                "cargo test --locked -p lumen --features raft-wal --bin lumen cluster_state_poller_converges_role_to_live_election_result",
+                "cargo test --locked -p lumen --test release_candidate",
+                "cargo test --locked -p lumen",
+                "cargo test --locked -p lumen --features \"operator delegated-auth\"",
                 RELEASE_PERF_GATE,
-                "cargo test -p lumen --locked --features release --test release_feature_set",
+                "cargo test --locked -p lumen --features release --test release_feature_set",
                 "cargo clean",
                 "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
                 "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
@@ -1018,18 +1126,22 @@ fn validate_product_gate_partition(workflow: &Yaml, source: &str) -> Result<(), 
         "GATES",
     )?;
     for gate in [
-        "cargo test -p service-k8s",
-        "cargo test -p storage-durable",
-        "cargo test -p service-backup --features http-client",
+        "cargo test --locked -p service-k8s",
+        "cargo test --locked -p storage-durable",
+        "cargo test --locked -p service-backup --features http-client",
+        "cargo test --locked -p raft-core",
+        "cargo test --locked -p raft-runtime",
         "bash scripts/raft-implementor-build.sh",
-        "cargo test -p raft-runtime",
         "python3 scripts/meta/test_readme_contract.py",
         "python3 scripts/meta/test_project_docs_contract.py",
-        "python3 scripts/meta/project_docs_contract.py check apps/lumen libs/service-k8s --format json",
+        "python3 .claude/aw/verification/check_wis.py",
+        "uv run --python 3.13 --no-project .claude/aw/scripts/metadoc.py check apps/lumen --format json",
+        "uv run --python 3.13 --no-project .claude/aw/scripts/meta.py check --path apps/lumen --format json",
+        "uv run --python 3.13 --no-project scripts/meta/project_docs_contract.py check apps/lumen --format json",
+        "uv run --python 3.13 --no-project .claude/aw/scripts/wis.py gap apps/lumen",
         "git -c core.fsmonitor=false diff --check",
     ] {
         require(!run.contains(gate), "LIBRARIES")?;
-        require(source.matches(gate).count() == 1, "LIBRARIES")?;
     }
     Ok(())
 }
@@ -1240,6 +1352,7 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
     validate_fail_closed_gate_conditions(&workflow)?;
     validate_gate_step_inventory(&workflow)?;
     validate_candidate_and_kind_commands(&workflow)?;
+    validate_kind_e2e(&kind_e2e_source())?;
     let graph = [
         ("identity", &[][..]),
         ("build", &["identity"][..]),
@@ -1349,24 +1462,33 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
         "the exact release tag already exists",
         "release_query=\"query",
         "the exact GitHub Release already exists",
-        "cargo test -p lumen --features operator --test capacity_catalog_client",
-        "cargo test -p lumen --features operator --test capacity_catalog_contract",
-        "cargo test -p lumen --test cli_convention",
-        "cargo test -p lumen --test release_artifacts",
-        "cargo test -p lumen --test release_candidate",
-        "cargo test -p lumen",
-        "cargo test -p lumen --features \"operator delegated-auth\"",
-        "cargo test -p lumen --locked --features release --test release_feature_set",
+        "cargo test --locked -p lumen --features operator --test capacity_catalog_client",
+        "cargo test --locked -p lumen --features operator --test capacity_catalog_contract",
+        "cargo test --locked -p lumen --features operator --test operator_render",
+        "cargo test --locked -p lumen --test segment_startup_fail_closed_e2e",
+        "cargo test --locked -p lumen --test cli_convention",
+        "cargo test --locked -p lumen --test release_artifacts",
+        "cargo test --locked -p lumen --features raft-wal --lib raft_sm",
+        "cargo test --locked -p lumen --features raft-wal --test legacy-3073-app",
+        "cargo test --locked -p lumen --features raft-wal --bin lumen cluster_state_poller_converges_role_to_live_election_result",
+        "cargo test --locked -p lumen --test release_candidate",
+        "cargo test --locked -p lumen",
+        "cargo test --locked -p lumen --features \"operator delegated-auth\"",
+        "cargo test --locked -p lumen --features release --test release_feature_set",
         "cargo clean",
         "bash apps/lumen/scripts/standalone-container-smoke.sh bind",
         "LUMEN_STANDALONE_DURABLE_IMAGE=\"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" bash apps/lumen/scripts/standalone-container-smoke.sh durable",
         RELEASE_PERF_GATE,
-        "cargo test -p service-k8s",
-        "cargo test -p raft-runtime",
+        "cargo test --locked -p service-k8s --test stateful_instance_render",
+        "cargo test --locked -p service-k8s --test stateful_adapter_equivalence",
+        "cargo test --locked -p service-k8s",
+        "cargo test --locked -p raft-runtime --test adversarial_recovery",
+        "cargo test --locked -p raft-core",
+        "cargo test --locked -p raft-runtime",
         "bash scripts/raft-implementor-build.sh",
         "git -c core.fsmonitor=false diff --check",
         "python3 scripts/meta/test_readme_contract.py",
-        "project_docs_contract.py check apps/lumen libs/service-k8s",
+        "project_docs_contract.py check apps/lumen --format json",
         "--image \"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\"",
         "LUMEN_E2E_EXPECTED_RUNTIME_DIGEST",
         "final-candidate-manifest.json",
@@ -1557,6 +1679,9 @@ fn expect_verifier(source: &str, from: &str, to: &str, code: &'static str) {
 fn workflow() -> String {
     fs::read_to_string(root().join(".github/workflows/lumen-release-candidate.yml")).unwrap()
 }
+fn kind_e2e_source() -> String {
+    fs::read_to_string(root().join("apps/lumen/scripts/kind-e2e.sh")).unwrap()
+}
 fn perf_gate_source() -> String {
     fs::read_to_string(root().join("apps/lumen/e2e/perf_gate.rs")).unwrap()
 }
@@ -1725,6 +1850,55 @@ fn live_candidate_contract_is_fail_closed() {
 }
 
 #[test]
+fn kind_durable_restart_mutations_fail_without_hash_oracle() {
+    let source = kind_e2e_source();
+    validate_kind_e2e_semantics(&source).expect("kind durable restart semantics");
+    for (label, line) in [
+        ("checkpoint", "checkpoint=\"$(api_checkpoint)\""),
+        (
+            "restart",
+            "kubectl -n \"$NAMESPACE\" delete pod -l \"$APP_LABEL\" --wait=true",
+        ),
+        (
+            "old document search",
+            "old_hits=\"$(api_search_exact \"$pre_value\" | jq --arg id \"$pre_id\" '[.hits[] | select(.external_id == $id)] | length')\"",
+        ),
+    ] {
+        let quoted = line.replace('\'', "'\"'\"'");
+        for (mutation, replacement) in [
+            ("comment", format!("# {line}")),
+            ("quoted prose", format!("printf '%s\\n' '{quoted}'")),
+            ("dead branch", format!("if false; then {line}; fi")),
+            ("ignored failure", format!("{line} || true")),
+        ] {
+            let changed = replace_once(&source, &format!("  {line}"), &format!("  {replacement}"));
+            assert_eq!(
+                validate_kind_e2e_semantics(&changed).unwrap_err(),
+                Finding("KIND_DURABLE_RESTART"),
+                "{label} {mutation} mutation passed",
+            );
+        }
+    }
+
+    let old_read_then_new_write = concat!(
+        "  old_hits=\"$(api_search_exact \"$pre_value\" | jq --arg id \"$pre_id\" '[.hits[] | select(.external_id == $id)] | length')\"\n",
+        "  [[ \"$old_hits\" -eq 1 ]] || die \"pre-restart document was not readable before any new write\"\n",
+        "  api_index_exact \"$post_id\" \"$post_value\""
+    );
+    let new_write_then_old_read = concat!(
+        "  api_index_exact \"$post_id\" \"$post_value\"\n",
+        "  old_hits=\"$(api_search_exact \"$pre_value\" | jq --arg id \"$pre_id\" '[.hits[] | select(.external_id == $id)] | length')\"\n",
+        "  [[ \"$old_hits\" -eq 1 ]] || die \"pre-restart document was not readable before any new write\""
+    );
+    let reordered = replace_once(&source, old_read_then_new_write, new_write_then_old_read);
+    assert_eq!(
+        validate_kind_e2e_semantics(&reordered).unwrap_err(),
+        Finding("KIND_DURABLE_RESTART"),
+        "new write before old-document read passed",
+    );
+}
+
+#[test]
 fn candidate_source_mutations_fail_with_stable_categories() {
     let source = workflow();
     let root_digest_metadata = replace_once(
@@ -1816,7 +1990,12 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         ),
         ("--mode local", "--mode full", "GATES"),
         (
-            "cargo test -p lumen --test release_candidate",
+            "cargo test --locked -p lumen --test release_candidate",
+            "true",
+            "GATES",
+        ),
+        (
+            "cargo test --locked -p lumen --features raft-wal --test legacy-3073-app",
             "true",
             "GATES",
         ),
@@ -1825,7 +2004,6 @@ fn candidate_source_mutations_fail_with_stable_categories() {
             "dtolnay/rust-toolchain@stable",
             "ACTION_PIN",
         ),
-        ("version: 0.12.1", "version: 0.12.2", "UV_SETUP"),
         (
             "imagetools inspect --raw",
             "imagetools create",
@@ -1833,6 +2011,14 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         ),
     ] {
         expect_workflow(&source, from, to, code);
+    }
+    for (occurrence, finding) in [(0, "UV_SETUP"), (1, "LIBRARIES")] {
+        let changed = replace_occurrence(&source, "version: 0.12.1", "version: 0.12.2", occurrence);
+        assert_eq!(
+            validate_workflow(&changed, &dockerfile()).unwrap_err(),
+            Finding(finding),
+            "uv setup version occurrence {occurrence} passed",
+        );
     }
     for (name, replacement) in [
         (
@@ -2152,17 +2338,22 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         "  kind-amd64:\n    name: kind e2e (amd64)\n    needs: [identity, verify-candidate, ghcr-image-and-attest]",
         "GRAPH",
     );
-    expect_workflow(&source, "cargo test -p service-k8s", "true", "LIBRARIES");
     expect_workflow(
         &source,
-        "          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client\n          bash scripts/raft-implementor-build.sh",
-        "          bash scripts/raft-implementor-build.sh\n          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client",
+        "cargo test --locked -p raft-core",
+        "true",
         "LIBRARIES",
     );
     expect_workflow(
         &source,
-        "          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client\n          bash scripts/raft-implementor-build.sh",
-        "          cargo test -p service-k8s\n          cargo test -p storage-durable\n          cargo test -p service-backup --features http-client\n          cargo test -p service-k8s\n          bash scripts/raft-implementor-build.sh",
+        "          cargo test --locked -p raft-runtime --test adversarial_recovery\n          cargo test --locked -p raft-core\n          cargo test --locked -p raft-runtime\n          bash scripts/raft-implementor-build.sh",
+        "          bash scripts/raft-implementor-build.sh\n          cargo test --locked -p raft-runtime --test adversarial_recovery\n          cargo test --locked -p raft-core\n          cargo test --locked -p raft-runtime",
+        "LIBRARIES",
+    );
+    expect_workflow(
+        &source,
+        "          cargo test --locked -p raft-runtime --test adversarial_recovery\n          cargo test --locked -p raft-core\n          cargo test --locked -p raft-runtime\n          bash scripts/raft-implementor-build.sh",
+        "          cargo test --locked -p raft-runtime --test adversarial_recovery\n          cargo test --locked -p raft-core\n          cargo test --locked -p raft-runtime\n          cargo test --locked -p raft-core\n          bash scripts/raft-implementor-build.sh",
         "LIBRARIES",
     );
     for (from, to) in [
@@ -2282,7 +2473,7 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         "candidate supply-chain dead branch passed",
     );
     let uv_setup = "      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0\n        with:\n          version: 0.12.1\n          enable-cache: false\n";
-    let without_uv = replace_once(&source, uv_setup, "");
+    let without_uv = replace_occurrence(&source, uv_setup, "", 0);
     let gate_following_step = "      - name: Verify full run-scoped candidate supply chain\n";
     let moved_uv = format!("{uv_setup}{gate_following_step}");
     let setup_after_gate = replace_once(&without_uv, gate_following_step, &moved_uv);

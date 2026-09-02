@@ -8,7 +8,7 @@ query grammar, or retry table.
 
 Use the machine-readable contract for exact current HTTP shapes. Use the
 indexing and querying guides for behavior that spans requests. Those guides
-keep current behavior separate from the 0.5 target.
+keep current behavior separate from the Search v2 target.
 
 ## Contract map
 
@@ -16,10 +16,10 @@ keep current behavior separate from the 0.5 target.
 |---|---|---|
 | HTTP methods, paths, operation IDs, declared request and response schemas, status codes, media types, and security | [`lumen spec` OpenAPI](../clients/openapi.json) | Run `lumen spec` or request `GET /openapi.json`. |
 | QUERY and POST twins, read-consistency header, and routed response behavior | This protocol guide and current OpenAPI | Run `lumen spec`, then use `lumen llm --topic local-search` or `select-query`. |
-| Current and target schema, write, durability, rebuild, and activation meaning | [Indexing guide](indexing.md) | Read the current and 0.5 subsections separately. |
+| Current and target schema, write, durability, rebuild, and activation meaning | [Indexing guide](indexing.md) | Read the current and Search v2 subsections separately. |
 | Source ownership, current query navigation, and target query, result, facet, metric, and limit meaning | [Querying guide](querying.md) | Run `lumen llm --topic querying --format json`. |
 | Source-database adapter boundary | [Architecture](../ARCHITECTURE.md#source-data-flow) | Run `lumen llm --topic integrate-source-db`. |
-| 0.4.x to 0.5.0 wire and activation changes | [0.5 search migration](migration-0.5-search.md) | Follow the compatibility table before changing a caller. |
+| Current wire contract to Search v2 activation | [Search v2 migration](migration-search-v2.md) | Follow the compatibility table before changing a caller. |
 | Generated source, target languages, connection inputs, and language-specific limits | [Generated-client guide](../clients/README.md) | Run `lumen spec gen --lang <language> --out <dir>` for `ts`, `py`, or `rust`. |
 | Connection profiles, request resilience, workload projection, and source helpers | [Client integration guide](client-integration.md) | Separate current manual work from the planned generated-client behavior. |
 | GKE endpoint, topology, and support tier | [GKE guide](gke.md) | Check current zonal evidence separately from the regional target. |
@@ -63,7 +63,7 @@ when the caller must retry after ownership or leader change. Use
 document for declared status and media-type details.
 
 Use `lumen llm --topic querying` to choose between current request shapes and
-the documented 0.5 target. Use `lumen llm --topic integrate-source-db` for the
+the documented Search v2 target. Use `lumen llm --topic integrate-source-db` for the
 caller-owned adapter boundary. Neither topic implements a migration.
 
 `POST /collections/{collection_id}/reindex/stream` is a special NDJSON path.
@@ -90,7 +90,7 @@ important protocol and generated-client boundaries are:
   rule.
 - Generated-client token rotation is a separate authentication outcome. It is
   not part of protocol parity and is not implemented.
-- The 0.5 scoring/filter split, strict result contract, facets, metrics, and
+- The Search v2 scoring/filter split, strict result contract, facets, metrics, and
   capability activation are documented targets. They are not current OpenAPI
   operations or schemas.
 
@@ -108,7 +108,7 @@ for completion evidence. These links do not mean those outcomes are complete.
 - [Generated clients](../clients/README.md)
 - [Indexing](indexing.md)
 - [Querying](querying.md)
-- [0.5 search migration](migration-0.5-search.md)
+- [Search v2 migration](migration-search-v2.md)
 - [Authentication](authentication.md)
 - [Deployment](deployment.md)
 - [Client integration](client-integration.md)

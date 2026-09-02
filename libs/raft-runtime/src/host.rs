@@ -382,12 +382,12 @@ pub(crate) struct RpcTracker {
 /// message is a FIFO barrier: a later heartbeat must neither replace nor pass
 /// a pending control message such as `TimeoutNow`.
 #[derive(Default)]
-struct PeerLaneQueue {
+pub(crate) struct PeerLaneQueue {
     messages: VecDeque<RaftMsg>,
 }
 
 impl PeerLaneQueue {
-    fn enqueue(&mut self, message: RaftMsg) {
+    pub(crate) fn enqueue(&mut self, message: RaftMsg) {
         match message {
             RaftMsg::Append(next) => {
                 if let Some(RaftMsg::Append(pending)) = self.messages.back_mut() {
@@ -400,9 +400,90 @@ impl PeerLaneQueue {
         }
     }
 
-    fn dequeue(&mut self) -> Option<RaftMsg> {
+    pub(crate) fn dequeue(&mut self) -> Option<RaftMsg> {
         self.messages.pop_front()
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.messages.len()
+    }
+}
+
+/// Apply the durable Raft state into a caller supplied state machine.  The
+/// production host and the deterministic conformance host intentionally share
+/// this primitive so cold replay, installed snapshots, and command ordering do
+/// not have two subtly different implementations.
+pub(crate) fn apply_ready(
+    node: &mut RaftNode,
+    sm: &dyn RaftStateMachine,
+    applied_tx: Option<&watch::Sender<Index>>,
+    snapshot_policy: SnapshotPolicy,
+    strict: bool,
+) -> anyhow::Result<()> {
+    if let Some(bytes) = node.take_installed_snapshot() {
+        let mut reader = std::io::Cursor::new(bytes);
+        if let Err(e) = sm.restore(&mut reader) {
+            if strict {
+                return Err(e);
+            }
+            tracing::error!(error = %e, "raft: state-machine restore from snapshot failed");
+        }
+    }
+    let mut advanced = false;
+    for entry in node.take_committed() {
+        if entry.index <= sm.applied_index() {
+            continue;
+        }
+        if let Err(err) = sm.apply(entry.index, &entry.command) {
+            if strict {
+                return Err(err);
+            }
+            tracing::warn!(index = entry.index, error = %err, "raft: apply error (entry no-ops)");
+        }
+        advanced = true;
+    }
+    if advanced {
+        if let Some(tx) = applied_tx {
+            let _ = tx.send_replace(sm.applied_index());
+        }
+    }
+    let SnapshotPolicy::EveryEntries(every) = snapshot_policy else {
+        return Ok(());
+    };
+    let applied = sm.applied_index();
+    if applied == 0 || applied.saturating_sub(node.snapshot_index()) < every {
+        return Ok(());
+    }
+    let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
+    match sm.snapshot(&mut sink) {
+        Ok(()) => node.compact(applied, sink.into_bytes()),
+        Err(e) if strict => return Err(e),
+        Err(e) => tracing::warn!(error = %e, "raft: snapshot capture failed; skip compaction"),
+    }
+    Ok(())
+}
+
+/// Cold-start uses the same applier as every ordinary step.  It intentionally
+/// leaves store-load policy to the caller: the production host retains its
+/// historical best-effort load behavior, while conformance opening returns a
+/// load error to its caller.
+pub(crate) fn cold_start(
+    node: &mut RaftNode,
+    sm: &dyn RaftStateMachine,
+    strict: bool,
+) -> anyhow::Result<()> {
+    apply_ready(node, sm, None, SnapshotPolicy::Disabled, strict)
+}
+
+/// Persist exactly the core durable image.  The production wrapper adds its
+/// latched-failure policy; deterministic conformance returns this error to the
+/// scheduler.  Both therefore save identical bytes at identical step points.
+pub(crate) fn persist_node(store: &RaftStore, node: &RaftNode) -> std::io::Result<()> {
+    store.save(&node.persisted())
 }
 
 #[derive(Default)]
@@ -447,7 +528,7 @@ impl Shared {
         if let Some(err) = self.latched_failure.lock().unwrap().clone() {
             return Err(err);
         }
-        match self.store.save(&node.persisted()) {
+        match persist_node(&self.store, node) {
             Ok(()) => Ok(()),
             Err(e) => {
                 let err = StorageFailed {
@@ -467,47 +548,13 @@ impl Shared {
     /// Installs any received snapshot, applies newly committed entries to the
     /// state machine in order, bumps `applied_tx`, then maybe compacts.
     fn apply_ready(&self, node: &mut RaftNode) {
-        // 1. install a received snapshot first.
-        if let Some(bytes) = node.take_installed_snapshot() {
-            let mut reader = std::io::Cursor::new(bytes);
-            if let Err(e) = self.sm.restore(&mut reader) {
-                tracing::error!(error = %e, "raft: state-machine restore from snapshot failed");
-            }
-        }
-        // 2. apply newly committed entries (idempotent: skip <= applied).
-        let mut advanced = false;
-        for e in node.take_committed() {
-            if e.index <= self.sm.applied_index() {
-                continue;
-            }
-            if let Err(err) = self.sm.apply(e.index, &e.command) {
-                tracing::warn!(index = e.index, error = %err, "raft: apply error (entry no-ops)");
-            }
-            advanced = true;
-        }
-        if advanced {
-            let _ = self.applied_tx.send_replace(self.sm.applied_index());
-        }
-        // 3. compaction (gated on policy; safe — the SM and node share one applier).
-        self.maybe_compact(node);
-    }
-
-    fn maybe_compact(&self, node: &mut RaftNode) {
-        let SnapshotPolicy::EveryEntries(n) = self.cfg.snapshot else {
-            return;
-        };
-        let applied = self.sm.applied_index();
-        if applied == 0 || applied.saturating_sub(node.snapshot_index()) < n {
-            return;
-        }
-        let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
-        match self.sm.snapshot(&mut sink) {
-            Ok(()) => {
-                let bytes = sink.into_bytes();
-                node.compact(applied, bytes);
-            }
-            Err(e) => tracing::warn!(error = %e, "raft: snapshot capture failed; skip compaction"),
-        }
+        let _ = apply_ready(
+            node,
+            self.sm.as_ref(),
+            Some(&self.applied_tx),
+            self.cfg.snapshot,
+            false,
+        );
     }
 
     fn leader_url(&self, node: &RaftNode) -> (Option<NodeId>, Option<String>) {
@@ -861,22 +908,9 @@ impl RaftHost {
             Some(state) => RaftNode::from_persisted(id, &membership, state),
             None => RaftNode::new(id, &membership),
         };
-        // Cold-start: drive any committed-but-unapplied resident entries (and a
-        // persisted snapshot) into the state machine before serving — inline,
-        // before the node enters the Mutex (no async lock available here).
-        if let Some(bytes) = node.take_installed_snapshot() {
-            let mut reader = std::io::Cursor::new(bytes);
-            if let Err(e) = sm.restore(&mut reader) {
-                tracing::error!(error = %e, "raft: cold-start snapshot restore failed");
-            }
-        }
-        for e in node.take_committed() {
-            if e.index > sm.applied_index() {
-                if let Err(err) = sm.apply(e.index, &e.command) {
-                    tracing::warn!(index = e.index, error = %err, "raft: cold-start apply error");
-                }
-            }
-        }
+        // Keep the historical best-effort store-load behavior here.  The
+        // shared cold-start primitive only handles the recovered Raft state.
+        let _ = cold_start(&mut node, sm.as_ref(), false);
 
         let client =
             transport_h2c::h2c_client_with(Some(cfg.rpc_timeout), None).expect("h2c client");

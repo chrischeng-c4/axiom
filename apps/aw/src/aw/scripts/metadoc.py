@@ -497,11 +497,19 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
     # row" unfalsifiable -- there would always be some other index it could
     # have belonged to.
     #
-    # The directories are taken from the *changed* paths, not from a walk of
-    # `docs/`: an index whose own area files were untouched is not part of this
-    # run, and reading it would report a defect nobody in this run introduced.
-    for folder in sorted({p.rsplit("/", 1)[0] for p in changed
-                          if p.startswith(f"{areas}/")}):
+    # The directories are taken from changed indexes and changed *areas*, not
+    # every changed file under `docs/`. A file in an unindexed directory is
+    # reference material, so it must not make P8 demand an index that does not
+    # declare that directory as an area family. An index stays included even
+    # when it was deleted: its missing state is the P8 finding that prevents
+    # existing areas from being silently demoted to reference documents.
+    folders = {
+        path.rsplit("/", 1)[0]
+        for path in changed
+        if path.startswith(f"{areas}/")
+        and (path.endswith(f"/{INDEX}") or is_area(repo, project, path))
+    }
+    for folder in sorted(folders):
         index_path = f"{folder}/{INDEX}"
         if not (repo / index_path).is_file():
             out.append(Finding("P8", index_path, "missing; every area file is "
