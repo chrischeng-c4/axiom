@@ -209,6 +209,10 @@ name = "raft_persistence"
 path = "e2e/raft_persistence.rs"
 
 [[test]]
+name = "raft_publish_misdirect"
+path = "e2e/raft_publish_misdirect.rs"
+
+[[test]]
 name = "retention_backfill"
 path = "e2e/retention_backfill.rs"
 
