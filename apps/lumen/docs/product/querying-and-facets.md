@@ -30,6 +30,16 @@
 - Open: Define exact limits and failures.
 - Neighbours: Facet governance and distributed convergence.
 
+## Facet resource governance
+
+- Problem: A facet request can consume unbounded resources.
+- Who: Operators and search callers.
+- Promise: Facet work has explicit admission and resource limits.
+- Outcome: `facet-resource-governance`. Tracking: Not assigned.
+- Non-goals: Silent approximate results.
+- Open: Define budgets and refusal classes.
+- Neighbours: Exact facets and runtime configuration.
+
 ## Non-goals in this area
 
 Lumen does not execute embedding models or become an OLAP engine.
