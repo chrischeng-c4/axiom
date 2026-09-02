@@ -80,12 +80,12 @@
 - Open: Freeze the corpus, replay, and mutant-kill contract.
 - Neighbours: Managed embedded data durability.
 
-## Distributed search routing and merge
+## Distributed search routing and merge (Milestone #18)
 
 - Problem: A multi-shard search needs safe routing and merge rules.
 - Who: Distributed-search callers.
 - Promise: Lumen routes search work and merges results through one declared contract.
-- Outcome: `distributed-search-routing-and-merge`. Tracking: Not assigned.
+- Outcome: `distributed-search-routing-and-merge`. Tracking: [Milestone #18](https://github.com/chrischeng-c4/axiom/milestone/18).
 - Non-goals: Partial or unordered result claims.
 - Open: Define failure, cursor, and merge semantics.
 - Neighbours: Distributed facet convergence.

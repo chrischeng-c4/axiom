@@ -649,7 +649,7 @@ destination without copying tracker state.
   caller source-record ownership outside Lumen.
 - Completion evidence: Multi-shard tests prove routing, merge order, failure,
   cursor, retry, and resource cleanup behavior.
-- Tracking: Not assigned.
+- Tracking: [Milestone #18](https://github.com/chrischeng-c4/axiom/milestone/18).
 
 ### Regional topology migration and backup
 
