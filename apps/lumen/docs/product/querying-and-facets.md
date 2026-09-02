@@ -40,12 +40,12 @@
 - Open: Define budgets and refusal classes.
 - Neighbours: Exact facets and runtime configuration.
 
-## Distributed facet convergence
+## Distributed facet convergence (Milestone #21)
 
 - Problem: Shards must merge exact facet state safely.
 - Who: Distributed-search callers.
 - Promise: Routed search merges declared exact facet state across shards.
-- Outcome: `distributed-facet-convergence`. Tracking: Not assigned.
+- Outcome: `distributed-facet-convergence`. Tracking: [Milestone #21](https://github.com/chrischeng-c4/axiom/milestone/21).
 - Non-goals: Best-effort partial answers.
 - Open: Define shard-failure and cleanup behavior.
 - Neighbours: Distributed routing and merge.

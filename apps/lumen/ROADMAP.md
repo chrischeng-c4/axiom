@@ -177,7 +177,7 @@ destination without copying tracker state.
   metrics, missing and unbucketed counts, and truncation with a single-shard
   oracle. Fault tests cover leader movement, retry, timeout, shard failure,
   cancellation, resource cleanup, and no partial response.
-- Tracking: [#3812](https://github.com/chrischeng-c4/axiom/issues/3812) (`lumen@0.4.50`).
+- Tracking: [Milestone #21](https://github.com/chrischeng-c4/axiom/milestone/21).
 
 ### Generated-client search v2 parity
 
