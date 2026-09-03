@@ -8,11 +8,11 @@ source "$SCRIPT_DIR/sift-candidate.sh"
 recovery_dir="${1:-}"
 [[ "$#" == "1" && "$recovery_dir" == /* \
   && -d "$recovery_dir" && ! -L "$recovery_dir" ]] || {
-  echo "usage: cleanup-sift-candidate.sh /absolute/path/to/candidate.failed" >&2
+  echo "usage: cleanup-sift-candidate.sh /absolute/path/to/candidate-or-failed" >&2
   exit 2
 }
 
-for command in awk cmp cp find gcloud grep jq mktemp rm seq sleep sort; do
+for command in awk cmp cp find gcloud grep jq mktemp openssl rm seq sleep sort; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required command not found: $command" >&2
     exit 1
@@ -20,70 +20,96 @@ for command in awk cmp cp find gcloud grep jq mktemp rm seq sleep sort; do
 done
 
 failure_receipt="$recovery_dir/candidate-preparation-failure.json"
-[[ -f "$failure_receipt" && ! -L "$failure_receipt" ]] || {
-  echo "candidate failure receipt is missing or unsafe" >&2
-  exit 1
-}
-jq -e '
-  . as $failure
-  | type == "object"
-  and keys == [
-    "acquisition_id", "artifact_registry_repository", "cloud_build_id",
-    "exit_code", "failed_at", "git_sha", "image_tag", "project_id",
-    "region", "registry", "reservation_uri", "run_id", "schema",
-    "source_bundle_sha256", "source_prefix", "submit_intent_published",
-    "submit_response_received", "submit_started"
-  ]
-  and .schema == "axiom.gcp.sift.candidate-preparation-failure.v2"
-  and (.project_id | type) == "string"
-  and (.project_id | test("^[a-z][a-z0-9-]{4,62}$"))
-  and (.region | type) == "string"
-  and (.region | test("^[a-z]+-[a-z]+[0-9]$"))
-  and (.artifact_registry_repository | type) == "string"
-  and (.artifact_registry_repository | test("^[a-z][a-z0-9._-]{0,62}$"))
-  and (.run_id | type) == "string" and (.run_id | test("^[a-z0-9][a-z0-9-]{0,17}$"))
-  and (.git_sha | type) == "string" and (.git_sha | test("^[0-9a-f]{40}$"))
-  and (.source_bundle_sha256 | type) == "string"
-  and (.source_bundle_sha256 | test("^[0-9a-f]{64}$"))
-  and ((.cloud_build_id == "")
-    or ((.cloud_build_id | type) == "string"
-      and (.cloud_build_id | test("^[A-Za-z0-9-]{1,128}$"))))
-  and (.submit_response_received | type) == "boolean"
-  and .submit_response_received == (.cloud_build_id != "")
-  and (.submit_intent_published | type) == "boolean"
-  and (.submit_started | type) == "boolean"
-  and ((.submit_started == false) or .submit_intent_published)
-  and ((.cloud_build_id == "")
-    or (.submit_started and .submit_intent_published))
-  and (.acquisition_id | type) == "string"
-  and (.acquisition_id | test("^[0-9a-f]{32}$"))
-  and .registry == (.region + "-docker.pkg.dev/" + .project_id + "/" + .artifact_registry_repository)
-  and .image_tag == (.git_sha + "-" + .run_id + "-" + .acquisition_id)
-  and (.source_prefix | type) == "string"
-  and (.source_prefix | endswith("/source/axiom-gcp-operator-" + $failure.run_id))
-  and .reservation_uri == (.source_prefix + "/candidate-reservation.json")
-  and (.exit_code | type) == "number" and (.exit_code | floor) == .exit_code
-  and .exit_code > 0 and .exit_code <= 255
-  and (.failed_at | type) == "string" and (.failed_at | length) > 0
-' "$failure_receipt" >/dev/null || {
-  echo "candidate failure receipt is invalid" >&2
-  exit 1
-}
+candidate_receipt="$recovery_dir/candidate.json"
+failure_receipt_present=0
+candidate_receipt_present=0
+[[ ! -e "$failure_receipt" && ! -L "$failure_receipt" ]] \
+  || failure_receipt_present=1
+[[ ! -e "$candidate_receipt" && ! -L "$candidate_receipt" ]] \
+  || candidate_receipt_present=1
 
-PROJECT_ID="$(jq -er '.project_id' "$failure_receipt")"
-REGION="$(jq -er '.region' "$failure_receipt")"
-ARTIFACT_REGISTRY_REPOSITORY="$(jq -er '.artifact_registry_repository' "$failure_receipt")"
-RUN_ID="$(jq -er '.run_id' "$failure_receipt")"
-GIT_SHA="$(jq -er '.git_sha' "$failure_receipt")"
-SOURCE_SHA="$(jq -er '.source_bundle_sha256' "$failure_receipt")"
-ACQUISITION_ID="$(jq -er '.acquisition_id' "$failure_receipt")"
-RESERVATION_URI="$(jq -er '.reservation_uri' "$failure_receipt")"
-KNOWN_BUILD_ID="$(jq -er '.cloud_build_id' "$failure_receipt")"
-REGISTRY="$(jq -er '.registry' "$failure_receipt")"
-IMAGE_TAG="$(jq -er '.image_tag' "$failure_receipt")"
-GCS_SOURCE_PREFIX="$(jq -er '.source_prefix' "$failure_receipt")"
-SUBMIT_INTENT_PUBLISHED="$(jq -r '.submit_intent_published' "$failure_receipt")"
-SUBMIT_STARTED="$(jq -r '.submit_started' "$failure_receipt")"
+if [[ "$failure_receipt_present" == "1" \
+  && "$candidate_receipt_present" == "1" ]]; then
+  echo "candidate cleanup receipts are ambiguous" >&2
+  exit 1
+elif [[ "$candidate_receipt_present" == "1" ]]; then
+  verify_sift_candidate_directory "$recovery_dir" || {
+    echo "completed candidate receipt is invalid" >&2
+    exit 1
+  }
+  identity_receipt="$candidate_receipt"
+  SUBMIT_INTENT_PUBLISHED=true
+  SUBMIT_STARTED=true
+elif [[ "$failure_receipt_present" == "1" ]]; then
+  [[ -f "$failure_receipt" && ! -L "$failure_receipt" ]] || {
+    echo "candidate failure receipt is unsafe" >&2
+    exit 1
+  }
+  jq -e '
+    . as $failure
+    | type == "object"
+    and keys == [
+      "acquisition_id", "artifact_registry_repository", "cloud_build_id",
+      "exit_code", "failed_at", "git_sha", "image_tag", "project_id",
+      "region", "registry", "reservation_uri", "run_id", "schema",
+      "source_bundle_sha256", "source_prefix", "submit_intent_published",
+      "submit_response_received", "submit_started"
+    ]
+    and .schema == "axiom.gcp.sift.candidate-preparation-failure.v2"
+    and (.project_id | type) == "string"
+    and (.project_id | test("^[a-z][a-z0-9-]{4,62}$"))
+    and (.region | type) == "string"
+    and (.region | test("^[a-z]+-[a-z]+[0-9]$"))
+    and (.artifact_registry_repository | type) == "string"
+    and (.artifact_registry_repository | test("^[a-z][a-z0-9._-]{0,62}$"))
+    and (.run_id | type) == "string" and (.run_id | test("^[a-z0-9][a-z0-9-]{0,17}$"))
+    and (.git_sha | type) == "string" and (.git_sha | test("^[0-9a-f]{40}$"))
+    and (.source_bundle_sha256 | type) == "string"
+    and (.source_bundle_sha256 | test("^[0-9a-f]{64}$"))
+    and ((.cloud_build_id == "")
+      or ((.cloud_build_id | type) == "string"
+        and (.cloud_build_id | test("^[A-Za-z0-9-]{1,128}$"))))
+    and (.submit_response_received | type) == "boolean"
+    and .submit_response_received == (.cloud_build_id != "")
+    and (.submit_intent_published | type) == "boolean"
+    and (.submit_started | type) == "boolean"
+    and ((.submit_started == false) or .submit_intent_published)
+    and ((.cloud_build_id == "")
+      or (.submit_started and .submit_intent_published))
+    and (.acquisition_id | type) == "string"
+    and (.acquisition_id | test("^[0-9a-f]{32}$"))
+    and .registry == (.region + "-docker.pkg.dev/" + .project_id + "/" + .artifact_registry_repository)
+    and .image_tag == (.git_sha + "-" + .run_id + "-" + .acquisition_id)
+    and (.source_prefix | type) == "string"
+    and (.source_prefix | endswith("/source/axiom-gcp-operator-" + $failure.run_id))
+    and .reservation_uri == (.source_prefix + "/candidate-reservation.json")
+    and (.exit_code | type) == "number" and (.exit_code | floor) == .exit_code
+    and .exit_code > 0 and .exit_code <= 255
+    and (.failed_at | type) == "string" and (.failed_at | length) > 0
+  ' "$failure_receipt" >/dev/null || {
+    echo "candidate failure receipt is invalid" >&2
+    exit 1
+  }
+  identity_receipt="$failure_receipt"
+  SUBMIT_INTENT_PUBLISHED="$(jq -r '.submit_intent_published' "$failure_receipt")"
+  SUBMIT_STARTED="$(jq -r '.submit_started' "$failure_receipt")"
+else
+  echo "candidate cleanup receipt is missing" >&2
+  exit 1
+fi
+
+PROJECT_ID="$(jq -er '.project_id' "$identity_receipt")"
+REGION="$(jq -er '.region' "$identity_receipt")"
+ARTIFACT_REGISTRY_REPOSITORY="$(jq -er '.artifact_registry_repository' "$identity_receipt")"
+RUN_ID="$(jq -er '.run_id' "$identity_receipt")"
+GIT_SHA="$(jq -er '.git_sha' "$identity_receipt")"
+SOURCE_SHA="$(jq -er '.source_bundle_sha256' "$identity_receipt")"
+ACQUISITION_ID="$(jq -er '.acquisition_id' "$identity_receipt")"
+RESERVATION_URI="$(jq -er '.reservation_uri' "$identity_receipt")"
+KNOWN_BUILD_ID="$(jq -er '.cloud_build_id' "$identity_receipt")"
+REGISTRY="$(jq -er '.registry' "$identity_receipt")"
+IMAGE_TAG="$(jq -er '.image_tag' "$identity_receipt")"
+GCS_SOURCE_PREFIX="$(jq -er '.source_prefix' "$identity_receipt")"
 DISCOVERY_ATTEMPTS="${CANDIDATE_CLEANUP_DISCOVERY_ATTEMPTS:-6}"
 DISCOVERY_DELAY_SECONDS="${CANDIDATE_CLEANUP_DISCOVERY_DELAY_SECONDS:-10}"
 WAIT_ATTEMPTS="${CANDIDATE_CLEANUP_WAIT_ATTEMPTS:-60}"
@@ -119,27 +145,27 @@ verify_sift_candidate_reservation "$reservation" || {
   exit 1
 }
 jq -e \
-  --slurpfile failure "$failure_receipt" \
+  --slurpfile identity "$identity_receipt" \
   --slurpfile sift "$recovery_dir/preexisting-sift-images.json" \
   --slurpfile rig "$recovery_dir/preexisting-rig-images.json" \
   --slurpfile runner "$recovery_dir/preexisting-sift-acceptance-runner-images.json" '
-    ($failure[0]) as $f
-    | .project_id == $f.project_id
-    and .region == $f.region
-    and .artifact_registry_repository == $f.artifact_registry_repository
-    and .run_id == $f.run_id
-    and .git_sha == $f.git_sha
-    and .source_bundle_sha256 == $f.source_bundle_sha256
-    and .acquisition_id == $f.acquisition_id
-    and .registry == $f.registry
-    and .image_tag == $f.image_tag
-    and .source_prefix == $f.source_prefix
-    and .reservation_uri == $f.reservation_uri
+    ($identity[0]) as $i
+    | .project_id == $i.project_id
+    and .region == $i.region
+    and .artifact_registry_repository == $i.artifact_registry_repository
+    and .run_id == $i.run_id
+    and .git_sha == $i.git_sha
+    and .source_bundle_sha256 == $i.source_bundle_sha256
+    and .acquisition_id == $i.acquisition_id
+    and .registry == $i.registry
+    and .image_tag == $i.image_tag
+    and .source_prefix == $i.source_prefix
+    and .reservation_uri == $i.reservation_uri
     and .preexisting_images.sift == $sift[0]
     and .preexisting_images.rig == $rig[0]
     and .preexisting_images.sift_acceptance_runner == $runner[0]
   ' "$reservation" >/dev/null || {
-  echo "candidate reservation does not match its recovery receipt" >&2
+  echo "candidate reservation does not match its cleanup receipt" >&2
   exit 1
 }
 submit_intent="$recovery_dir/candidate-submit-intent.json"

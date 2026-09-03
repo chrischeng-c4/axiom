@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ACCEPTANCE_ROOT/scripts/source-prefix.sh"
+source "$ACCEPTANCE_ROOT/scripts/sift-candidate.sh"
 
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/sift-candidate-cleanup-e2e.XXXXXX")"
 fake_bin="$test_root/bin"
@@ -734,5 +735,167 @@ SIFT_CANDIDATE_REPLACE_RESERVATION_BEFORE_DELETE=1 run_cleanup \
 [[ "$(cat "$state_dir/source-reservation.generation")" == "102" ]]
 rg -F "storage rm $reservation_uri --if-generation-match=101 --quiet" \
   "$calls" >/dev/null
+
+# A completed immutable candidate is also an exact cleanup authority. It has
+# stronger evidence than a preparation-failure receipt because it binds the
+# final Cloud Build and all three immutable image digests. The cleanup must
+# refuse an ambiguous directory that contains both receipt types, then accept
+# the completed candidate after the stale failure receipt is removed.
+jq -n --arg git_sha "$git_sha" --arg source_bundle_sha256 "$source_sha" '
+  {
+    git_sha:$git_sha,
+    source_archive:("git-archive:" + $git_sha),
+    source_bundle_sha256:$source_bundle_sha256,
+    source_bundle_bytes:123
+  }
+' > "$recovery_dir/candidate-source.json"
+jq -n --arg git_sha "$git_sha" --arg source_bundle_sha256 "$source_sha" '
+  {
+    schema:"axiom.gcp.sift.candidate-gate.v1",
+    git_sha:$git_sha,
+    source_bundle_sha256:$source_bundle_sha256,
+    entrypoint:"apps/sift/test.sh --candidate",
+    completed_at:"2026-09-03T00:00:02Z",
+    status:"passed"
+  }
+' > "$recovery_dir/candidate-gate.json"
+printf 'candidate passed\n' > "$recovery_dir/candidate-gate.log"
+cp "$state_dir/build.json" "$recovery_dir/cloud-build-submit.json"
+cp "$state_dir/build.json" "$recovery_dir/cloud-build-final.json"
+jq -n '{
+  bucket:"axiom-test_cloudbuild",
+  name:"source/axiom-gcp-operator-cleanup-retry/source.tgz"
+}' > "$recovery_dir/cloud-build-source-object.json"
+jq -n \
+  --arg git_sha "$git_sha" --arg source_bundle_sha256 "$source_sha" \
+  --arg source_uri "$source_prefix/source.tgz" '
+  {
+    build_id:"build-cleanup",
+    git_sha:$git_sha,
+    source_uri:$source_uri,
+    source_bundle_sha256:$source_bundle_sha256,
+    staged_source_sha256:$source_bundle_sha256
+  }
+' > "$recovery_dir/cloud-build-source-binding.json"
+for image in sift rig sift-acceptance-runner; do
+  digest="$(jq -er --arg image "$image" '
+    .results.images[] | select(.name | contains("/" + $image + ":")) | .digest
+  ' "$state_dir/build.json")"
+  printf '%s\n' "$digest" > "$state_dir/${image}.digest"
+  printf '%s\n' "$digest" > "$state_dir/${image}.tag"
+done
+jq -n \
+  --arg sift "$registry/sift@$(cat "$state_dir/sift.digest")" \
+  --arg rig "$registry/rig@$(cat "$state_dir/rig.digest")" \
+  --arg acceptance_runner "$registry/sift-acceptance-runner@$(cat "$state_dir/sift-acceptance-runner.digest")" '
+  {sift:$sift,rig:$rig,acceptance_runner:$acceptance_runner}
+' > "$recovery_dir/images.json"
+jq -n '{}' > "$recovery_dir/preexisting-artifact-registry.json"
+jq -n '{}' > "$recovery_dir/preexisting-cloud-build-source-bucket.json"
+: > "$recovery_dir/preexisting-cloud-build-source-objects.txt"
+
+file_hashes='{}'
+while IFS= read -r name; do
+  digest="$(sift_candidate_file_sha256 "$recovery_dir/$name")"
+  file_hashes="$(jq -c --arg name "$name" --arg digest "$digest" \
+    '. + {($name):$digest}' <<<"$file_hashes")"
+done < <(sift_candidate_required_files)
+jq -n \
+  --arg git_sha "$git_sha" --arg image_tag "$image_tag" \
+  --arg registry "$registry" --arg source_prefix "$source_prefix" \
+  --arg acquisition_id "$acquisition_id" \
+  --arg reservation_uri "$reservation_uri" \
+  --arg source_bundle_sha256 "$source_sha" \
+  --arg source_object_uri "$source_prefix/source.tgz" \
+  --arg sift_image "$registry/sift@$(cat "$state_dir/sift.digest")" \
+  --arg rig_image "$registry/rig@$(cat "$state_dir/rig.digest")" \
+  --arg acceptance_runner_image "$registry/sift-acceptance-runner@$(cat "$state_dir/sift-acceptance-runner.digest")" \
+  --argjson file_sha256 "$file_hashes" '
+  {
+    schema:"axiom.gcp.sift.candidate.v1",
+    project_id:"axiom-test",
+    region:"asia-east1",
+    artifact_registry_repository:"courier",
+    registry:$registry,
+    run_id:"cleanup-retry",
+    git_sha:$git_sha,
+    image_tag:$image_tag,
+    acquisition_id:$acquisition_id,
+    reservation_uri:$reservation_uri,
+    source_prefix:$source_prefix,
+    source_bundle_sha256:$source_bundle_sha256,
+    source_object_uri:$source_object_uri,
+    cloud_build_id:"build-cleanup",
+    sift_image:$sift_image,
+    rig_image:$rig_image,
+    acceptance_runner_image:$acceptance_runner_image,
+    completed_at:"2026-09-03T00:00:03Z",
+    file_sha256:$file_sha256
+  }
+' > "$recovery_dir/candidate.json"
+verify_sift_candidate_directory "$recovery_dir"
+
+for image in sift rig sift-acceptance-runner; do
+  digest="$(jq -er --arg image "$image" '
+    .results.images[] | select(.name | contains("/" + $image + ":")) | .digest
+  ' "$state_dir/build.json")"
+  printf '%s\n' "$digest" > "$state_dir/${image}.digest"
+  printf '%s\n' "$digest" > "$state_dir/${image}.tag"
+done
+rm -f "$recovery_dir/candidate-cleanup.json" \
+  "$recovery_dir/candidate-cleanup-failures.log"
+restore_source_state
+: > "$state_dir/sift-delete-failed-once"
+: > "$calls"
+ambiguous_status=0
+run_cleanup > "$test_root/ambiguous-receipts.log" 2>&1 \
+  || ambiguous_status=$?
+[[ "$ambiguous_status" != "0" && -e "$state_dir/sift.tag" \
+  && ! -e "$state_dir/source-removed" ]] || {
+  echo "candidate cleanup accepted ambiguous cleanup receipts" >&2
+  cat "$test_root/ambiguous-receipts.log" >&2
+  exit 1
+}
+if rg -e '^(builds cancel|artifacts docker tags delete|artifacts docker images delete|storage rm) ' \
+    "$calls" >/dev/null; then
+  echo "ambiguous candidate cleanup issued a mutating command" >&2
+  cat "$calls" >&2
+  exit 1
+fi
+
+rm -f "$recovery_dir/candidate-preparation-failure.json"
+: > "$calls"
+printf 'tampered\n' >> "$recovery_dir/candidate-gate.log"
+tampered_status=0
+run_cleanup > "$test_root/tampered-complete-candidate.log" 2>&1 \
+  || tampered_status=$?
+[[ "$tampered_status" != "0" && -e "$state_dir/sift.tag" \
+  && ! -e "$state_dir/source-removed" ]] || {
+  echo "candidate cleanup accepted a tampered completed candidate" >&2
+  cat "$test_root/tampered-complete-candidate.log" >&2
+  exit 1
+}
+if [[ -s "$calls" ]]; then
+  echo "tampered completed candidate cleanup called gcloud" >&2
+  cat "$calls" >&2
+  exit 1
+fi
+printf 'candidate passed\n' > "$recovery_dir/candidate-gate.log"
+verify_sift_candidate_directory "$recovery_dir"
+
+: > "$calls"
+run_cleanup > "$test_root/complete-candidate.log" 2>&1
+for image in sift rig sift-acceptance-runner; do
+  [[ ! -e "$state_dir/${image}.tag" && ! -e "$state_dir/${image}.digest" ]] || {
+    echo "completed candidate cleanup left an image artifact: $image" >&2
+    exit 1
+  }
+done
+[[ -e "$state_dir/source-removed" ]]
+jq -e '
+  .schema == "axiom.gcp.sift.candidate-cleanup.v1"
+  and .status == "clean"
+  and .cloud_build_ids == ["build-cleanup"]
+' "$recovery_dir/candidate-cleanup.json" >/dev/null
 
 echo "Sift candidate cleanup retry E2E: ok"
