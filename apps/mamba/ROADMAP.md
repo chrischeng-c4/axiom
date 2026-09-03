@@ -55,7 +55,7 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
   `mamba add` and `mamba sync` into a fresh `.venv`, and runs the kit's pytest
   cases on that interpreter, exiting zero for each promised kit; and
   `cargo test -p mamba --test mambalibs` stays green.
-- Tracking: Not assigned.
+- Tracking: [Milestone #129](https://github.com/chrischeng-c4/axiom/milestone/129).
 
 ### CPython runtime replacement
 

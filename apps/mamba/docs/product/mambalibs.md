@@ -6,7 +6,7 @@ one of two carriers, in this order: a PyO3 extension wheel installed into a
 CPython `.venv` first, and a `MambaModule` inside the mamba runtime second. The
 wheel's Python API is the contract the runtime carrier must match.
 
-## mambalibs CPython wheels
+## mambalibs CPython wheels (Milestone #129)
 
 - Problem: no kit reaches a CPython user today. The workspace declares no `pyo3`
   dependency and no maturin `pyproject.toml`; the package manager parses
@@ -43,7 +43,7 @@ wheel's Python API is the contract the runtime carrier must match.
   parity, whose `mamba add`, `mamba sync` and `.venv` path is the install
   route; before [runtime.md](runtime.md) § CPython runtime replacement, whose
   `MambaModule` carrier must match this wheel's Python API.
-- Outcome: `mambalibs-cpython-wheels`. Tracking: Not assigned.
+- Outcome: `mambalibs-cpython-wheels`. Tracking: [Milestone #129](https://github.com/chrischeng-c4/axiom/milestone/129).
 
 ## Non-goals in this area
 
