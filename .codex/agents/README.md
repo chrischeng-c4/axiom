@@ -35,5 +35,5 @@ projected: `tools` (Codex has no per-tool allowlist; the `## Never` sections
 carry the same boundaries as prose) and `skills` (the bodies name the
 `/aw-e2e-for` / `/aw-impl-for` workflows directly).
 
-See `.claude/rules/operations/team-division.md` for the division of labor
-this fleet implements.
+See `AGENTS.md`, "Use Codex subagents; effort is pinned per role", for the
+division of labor this fleet implements.

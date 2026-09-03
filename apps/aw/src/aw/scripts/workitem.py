@@ -478,6 +478,220 @@ def commit_message(commit: str) -> str:
     return completed.stdout
 
 
+def is_ancestor(commit: str, head: str = "HEAD") -> bool:
+    """Whether `commit` is reachable from `head` in the local object graph.
+
+    `merge-base --is-ancestor` answers rc 0/1 only when both sides name real
+    local objects; anything else -- `commit` missing from the local store,
+    `head` unresolvable, git itself broken -- exits with something else and no
+    documented way to tell those apart from its own rc alone. The two cases
+    resolve oppositely, though, once `head` is checked directly: if
+    `head^{commit}` resolves locally, `head` is a real local commit and the
+    only thing that could have made the pair fail is `commit` not existing in
+    this store -- and an object this store does not have cannot be an
+    ancestor of anything in it, since every ancestor of a local commit is
+    itself local. That case is a routine False, not a refusal: it is exactly
+    the shape of evidence a squash-merge landing proof exists to accept
+    through the GitHub API instead. If `head` does not resolve either, nothing
+    downstream of this call can be trusted, and the failure is raised rather
+    than guessed at.
+    """
+    completed = subprocess.run(
+        ["git", "-c", "core.fsmonitor=false", "merge-base", "--is-ancestor", commit, head],
+        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+    head_resolved = subprocess.run(
+        ["git", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "--quiet",
+         f"{head}^{{commit}}"],
+        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+    )
+    if head_resolved.returncode == 0:
+        return False
+    raise GhError(
+        f"cannot test whether {commit} is an ancestor of {head}: {completed.stderr.strip()}"
+    )
+
+
+def commit_message_via_api(commit: str, repo: str) -> str:
+    """The exact message of `commit`, read from GitHub rather than the local tree.
+
+    A commit whose object never reaches this checkout -- swept off a squashed
+    branch before it was ever fetched here -- still has a message the tracker
+    kept. `payload["sha"]` is checked against the request because GitHub
+    resolves an abbreviated id to whichever full one it currently means; an
+    exact readback is the only way to know the message answers the commit
+    that was asked for.
+    """
+    raw = gh("api", f"repos/{repo}/commits/{commit}")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhError(f"commits/{commit} on {repo} did not return JSON") from exc
+    if payload.get("sha") != commit:
+        raise GhError(
+            f"commits/{commit} on {repo} resolved to a different sha ({payload.get('sha')!r})"
+        )
+    message = payload.get("commit", {}).get("message")
+    if not isinstance(message, str) or not message:
+        raise GhError(f"commits/{commit} on {repo} carries no commit message")
+    return message
+
+
+def default_branch(repo: str) -> str:
+    """The branch a squash-merge landing proof must land on."""
+    raw = gh("api", f"repos/{repo}")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhError(f"repos/{repo} did not return JSON") from exc
+    branch = payload.get("default_branch")
+    if not branch:
+        raise GhError(f"repos/{repo} carries no default_branch")
+    return branch
+
+
+def pulls_for_commit(commit: str, repo: str) -> list[dict]:
+    """Every pull request GitHub associates with `commit` on `repo`."""
+    raw = gh("api", f"repos/{repo}/commits/{commit}/pulls")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhError(f"commits/{commit}/pulls on {repo} did not return JSON") from exc
+    if not isinstance(payload, list):
+        raise GhError(f"commits/{commit}/pulls on {repo} did not return a list")
+    return payload
+
+
+def pull_request(number: int, repo: str) -> dict:
+    """The full pull request record for `number` on `repo`."""
+    raw = gh("api", f"repos/{repo}/pulls/{number}")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhError(f"pulls/{number} on {repo} did not return JSON") from exc
+    if not isinstance(payload, dict):
+        raise GhError(f"pulls/{number} on {repo} did not return an object")
+    return payload
+
+
+def pull_request_commit_shas(number: int, repo: str) -> list[str]:
+    """Every commit sha GitHub lists under pull request `number`, paginated.
+
+    Mirrors `fetch_issues_by_label`'s page-flattening: `--paginate --slurp`
+    hands back one list per page rather than one flat list once a PR carries
+    more commits than a single page holds -- this landing proof's own PR
+    carried 111.
+    """
+    raw = gh(
+        "api", "--paginate", "--slurp",
+        f"repos/{repo}/pulls/{number}/commits?per_page=100",
+    )
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhError(f"pulls/{number}/commits on {repo} did not return JSON") from exc
+    rows = ([row for page in loaded for row in page]
+            if loaded and isinstance(loaded[0], list) else loaded)
+    shas: list[str] = []
+    for row in rows:
+        sha = row.get("sha") if isinstance(row, dict) else None
+        if not sha:
+            raise GhError(f"pulls/{number}/commits on {repo} returned a commit with no sha")
+        shas.append(sha)
+    return shas
+
+
+@dataclass(frozen=True)
+class LandingProof:
+    """One commit's message, proven readable, and how it was proven to land."""
+
+    commit: str
+    message: str
+    route: str
+
+
+def landing_proof(commit: str, repo: str, head: str = "HEAD") -> LandingProof:
+    """Prove `commit` landed on `head`'s history and return its exact message.
+
+    Two routes, and only two. Route A is `is_ancestor`: `commit` sits directly
+    in `head`'s ancestry, which is the common case for a checkout that has not
+    been rebased since the evidence commit was made. Route B exists because a
+    GitHub squash merge rewrites the PR's commits into one new commit on
+    `head` and leaves the originals reachable from nothing -- `is_ancestor`
+    then answers False for evidence that is genuinely landed. Route B proves
+    the same fact a different way: exactly one pull request merged `commit`
+    into `repo`'s default branch, that PR really is merged, `commit` is really
+    among its commits, and the PR's own merge commit *is* an ancestor of
+    `head`.
+
+    What Route B never does is read the squash commit's message. That message
+    is the concatenation of every commit message in the PR -- GitHub's own
+    squash template -- so it can contain a `Refs #<iid>` line and a digest
+    trailer that belong to a wholly different leg, or to no real evidence at
+    all. The message this function returns always comes from `commit` itself,
+    fetched locally or through `commit_message_via_api`; the merge commit is
+    consulted only for its sha, never for its prose.
+    """
+    if not re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        raise GhError(f"{commit!r} is not a full lowercase-hex commit id")
+
+    reasons: list[str] = []
+    message: str | None = None
+    try:
+        message = commit_message(commit)
+    except GhError as local_error:
+        reasons.append(f"local read failed: {local_error}")
+        try:
+            message = commit_message_via_api(commit, repo)
+        except GhError as api_error:
+            reasons.append(f"API read failed: {api_error}")
+    if message is None:
+        raise GhError(f"cannot read the message of {commit}: " + "; ".join(reasons))
+
+    if is_ancestor(commit, head):
+        return LandingProof(commit, message, "ancestry")
+
+    branch = default_branch(repo)
+    raw_pulls = pulls_for_commit(commit, repo)
+    candidates = [
+        pull for pull in raw_pulls
+        if pull.get("merged_at")
+        and (pull.get("base") or {}).get("ref") == branch
+        and ((pull.get("base") or {}).get("repo") or {}).get("full_name") == repo
+    ]
+    if len(candidates) != 1:
+        raise GhError(
+            f"{commit} is not an ancestor of {head}, and GitHub returns "
+            f"{len(candidates)} of {len(raw_pulls)} pull request(s) merged into "
+            f"{repo}:{branch} for it; landing proof needs exactly one"
+        )
+    number = candidates[0].get("number")
+    if not isinstance(number, int):
+        raise GhError(f"{commit}'s candidate pull request carries no integer number")
+
+    pr = pull_request(number, repo)
+    if pr.get("merged") is not True:
+        raise GhError(f"PR #{number} on {repo} is not merged")
+    if (pr.get("base") or {}).get("ref") != branch:
+        raise GhError(f"PR #{number} on {repo} does not target {branch}")
+    if ((pr.get("base") or {}).get("repo") or {}).get("full_name") != repo:
+        raise GhError(f"PR #{number} does not target {repo}")
+    merge = pr.get("merge_commit_sha")
+    if not isinstance(merge, str) or not re.fullmatch(r"[0-9a-f]{40,64}", merge):
+        raise GhError(f"PR #{number} on {repo} carries no valid merge_commit_sha")
+
+    if commit not in pull_request_commit_shas(number, repo):
+        raise GhError(f"PR #{number} commits do not include {commit}")
+    if not is_ancestor(merge, head):
+        raise GhError(f"merge commit {merge} of PR #{number} is not an ancestor of {head}")
+
+    return LandingProof(commit, message, f"squash-merged PR #{number} ({merge})")
+
+
 def project_label(project: str) -> str:
     """Accept a bare project name or an already-qualified label."""
     if ":" in project:

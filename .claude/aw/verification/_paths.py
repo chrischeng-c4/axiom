@@ -120,7 +120,7 @@ def skill_invocation(skill: str) -> str:
 # `grill-epic-to-td` wrote `docs/technical/<subsystem>.md` sections and ADRs
 # beside them; both skills and the whole `docs/technical/` tree are deleted,
 # and a design decision now lives in the `//!` or `///` block of the module
-# or type that owns it (`.claude/rules/authoring/source-carries-its-own-design.md`).
+# or type that owns it (`CLAUDE.md`, "Authoring").
 # `check-meta` is gone too, but not by deletion -- it folded into
 # `grill-me-to-meta`, whose three-step landing sequence runs `meta.py check`
 # as its second step. The check that used to be a skill a human had to

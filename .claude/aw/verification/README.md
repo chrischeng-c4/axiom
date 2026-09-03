@@ -108,8 +108,7 @@ into it are deleted too, along with `prd.py`, renamed to `metadoc.py` and
 widened from one write root (`docs/product/`) to four
 (`README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**`) in the same change. There is
 no technical-design step: a design decision lives in the `//!` or `///` block
-of the module or type that owns it
-(`.claude/rules/authoring/source-carries-its-own-design.md`). The three grills
+of the module or type that owns it (`CLAUDE.md`, "Authoring"). The three grills
 that used to open and shape work items — `grill-me-to-epic`, `grill-me-to-change`
 and `grill-epic-to-changes` — folded first into a single `grill-meta-to-wis`,
 which split again on 2026-09-02 into `grill-meta-to-milestone` (the
