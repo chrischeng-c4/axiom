@@ -193,6 +193,18 @@ record_failure() {
   echo "$1" >&2
 }
 
+remote_object_is_absent_error() {
+  local error_file="$1"
+  grep -Eiq \
+    '(^|[^[:alpha:]])(not[ _-]?found|404)([^[:alpha:]]|$)|matched no (objects|URLs)|no URLs matched' \
+    "$error_file"
+}
+
+remote_prefix_is_empty_error() {
+  local error_file="$1"
+  grep -Eiq 'matched no (objects|URLs)|no URLs matched' "$error_file"
+}
+
 verify_live_object_generation() {
   local uri="$1"
   local expected="$2"
@@ -232,7 +244,7 @@ source_prefix_is_empty() {
     [[ ! -s "$output" ]]
     return
   fi
-  grep -Eiq '(matched no URLs|no URLs matched|not[ _-]?found|404)' "$error"
+  remote_prefix_is_empty_error "$error"
 }
 
 discover_builds() {
@@ -423,8 +435,7 @@ if verify_live_object "$RESERVATION_URI" "$reservation" reservation; then
     if verify_live_object "$(sift_candidate_submit_intent_uri "$GCS_SOURCE_PREFIX")" \
         "$submit_intent" submit-intent; then
       live_submit_intent=1
-    elif grep -Eiq '(matched no URLs|no URLs matched|not[ _-]?found|404)' \
-        "$work_root/submit-intent.stderr"; then
+    elif remote_object_is_absent_error "$work_root/submit-intent.stderr"; then
       if [[ "$SUBMIT_INTENT_PUBLISHED" == "true" ]]; then
         if source_prefix_has_only_reservation missing-intent; then
           reservation_only_finalize=1
@@ -442,13 +453,12 @@ if verify_live_object "$RESERVATION_URI" "$reservation" reservation; then
       "$reservation" unexpected-submit-intent; then
     echo "unexpected candidate submit intent matches the reservation" >&2
     exit 1
-  elif ! grep -Eiq '(matched no URLs|no URLs matched|not[ _-]?found|404)' \
+  elif ! remote_object_is_absent_error \
       "$work_root/unexpected-submit-intent.stderr"; then
     echo "an unverified candidate submit intent exists" >&2
     exit 1
   fi
-elif grep -Eiq '(matched no URLs|no URLs matched|not[ _-]?found|404)' \
-    "$work_root/reservation.stderr" \
+elif remote_object_is_absent_error "$work_root/reservation.stderr" \
     && source_prefix_is_empty missing-control; then
   source_absent_finalize=1
 else
@@ -982,8 +992,7 @@ if [[ "$source_cleanup_safe" == "1" ]]; then
     record_failure "candidate source objects still exist after cleanup"
     source_cleanup_safe=0
   elif [[ "$source_list_status" != "0" ]] \
-      && ! grep -Eiq '(matched no URLs|no URLs matched|not[ _-]?found|404)' \
-        "$source_list_error"; then
+      && ! remote_prefix_is_empty_error "$source_list_error"; then
     record_failure "could not verify candidate source removal"
     source_cleanup_safe=0
   fi

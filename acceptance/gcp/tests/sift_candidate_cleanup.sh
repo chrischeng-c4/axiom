@@ -377,13 +377,17 @@ case "${1:-} ${2:-} ${3:-} ${4:-}" in
     ;;
   "storage ls --recursive "*)
     if [[ -e "$state/source-removed" ]]; then
+      if [[ -n "${SIFT_CANDIDATE_PREFIX_LIST_ERROR:-}" ]]; then
+        echo "$SIFT_CANDIDATE_PREFIX_LIST_ERROR" >&2
+        exit 1
+      fi
       if [[ "${SIFT_CANDIDATE_FAIL_SOURCE_LIST_ONCE:-0}" == "1" \
         && ! -e "$state/source-list-failed-once" ]]; then
         : > "$state/source-list-failed-once"
         echo "injected source inventory failure" >&2
         exit 72
       fi
-      echo "matched no URLs" >&2
+      echo "ERROR: (gcloud.storage.ls) One or more URLs matched no objects." >&2
       exit 1
     fi
     [[ -e "$state/source-object-removed" ]] \
@@ -652,6 +656,31 @@ SIFT_CANDIDATE_FAIL_SOURCE_LIST_ONCE=1 run_cleanup \
   exit 1
 }
 [[ ! -e "$recovery_dir/candidate-cleanup.json" ]]
+
+# A missing bucket, denied request, or transport failure does not prove that a
+# run-scoped prefix is empty. The read-only retry must keep failing and must not
+# publish a cleanup receipt or repeat a mutation for any of these list errors.
+for prefix_error in \
+  'ERROR: (gcloud.storage.ls) bucket not found (404)' \
+  'ERROR: (gcloud.storage.ls) HTTPError 403: Access denied' \
+  'ERROR: (gcloud.storage.ls) transport endpoint is not connected'; do
+  : > "$calls"
+  prefix_error_status=0
+  SIFT_CANDIDATE_PREFIX_LIST_ERROR="$prefix_error" run_cleanup \
+    > "$test_root/prefix-list-error.log" 2>&1 || prefix_error_status=$?
+  [[ "$prefix_error_status" != "0" \
+    && ! -e "$recovery_dir/candidate-cleanup.json" ]] || {
+    echo "candidate cleanup accepted an unproven empty prefix: $prefix_error" >&2
+    cat "$test_root/prefix-list-error.log" >&2
+    exit 1
+  }
+  if rg -e '^(builds cancel|artifacts docker tags delete|artifacts docker images delete|storage rm) ' \
+      "$calls" >/dev/null; then
+    echo "prefix-list error retry issued a mutating command" >&2
+    cat "$calls" >&2
+    exit 1
+  fi
+done
 
 run_cleanup > "$test_root/source-retry-second.log" 2>&1
 jq -e '.status == "clean"' "$recovery_dir/candidate-cleanup.json" >/dev/null
