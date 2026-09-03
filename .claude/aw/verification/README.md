@@ -1,6 +1,6 @@
 # Verification
 
-Gates for the two ten-skill AW mirrors, the release Milestone contract, and
+Gates for the two nine-skill AW mirrors, the release Milestone contract, and
 the remaining work-item schemas.
 
 ```
@@ -61,12 +61,11 @@ apps/aw/src/aw/
 .claude/aw/
   verification/   this directory
 .claude/skills/
-  aw-ask-user/                aw-build/                    aw-e2e-for/
-  aw-grill-me-to-meta/        aw-grill-meta-to-milestone/  aw-grill-milestone-to-issue/
-  aw-impl-for/                aw-prepare-goal/             aw-review/
-  aw-test-for/
+  aw-ask-user/                aw-e2e-for/                  aw-grill-me-to-meta/
+  aw-grill-meta-to-milestone/ aw-grill-milestone-to-issue/ aw-impl-for/
+  aw-prepare-goal/            aw-review/                   aw-test-for/
 .agents/skills/
-  the same ten SKILL.md files, byte-identical for Codex
+  the same nine SKILL.md files, byte-identical for Codex
 ```
 
 This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why
@@ -84,7 +83,7 @@ namespace survived only because it was literally in each directory's name;
 since the rename it means the directory and frontmatter name are both
 `aw-<skill>`.
 
-The thirteen scripts cannot be split across the ten skill directories, and that
+The thirteen scripts cannot be split across the nine skill directories, and that
 is not a preference: `e2e.py` and `impl.py` each load `leg.py` by
 `Path(__file__).parent / "leg.py"`, and `leg.change_module()` loads `change.py`
 the same way. One directory is load-bearing.
@@ -134,7 +133,7 @@ directory for a file none of them owns.
 |---|---|
 | `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
-| `check_plugin.py` | a missing or drifted ten-skill mirror, missing script, legacy issue-epic writer, or incomplete type and Milestone contract |
+| `check_plugin.py` | a missing or drifted nine-skill mirror, missing script, legacy issue-epic writer, or incomplete type and Milestone contract |
 | `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that skips Plan mode |
 | `check_milestone.py` | a malformed SemVer-core title, wrong next-version bump, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
 | `check_type_registry.py` | a missing, duplicate, unknown, intake, or legacy executable type; wrong flow; unsafe retype; or lifecycle close without matching commit evidence |
@@ -346,7 +345,7 @@ proves that the same receipt resumes to `COMPLETE`.
 
 The cutover order is fixed:
 
-1. Prepare the scripts, ten mirrored skills, versioned manifest, and green
+1. Prepare the scripts, nine mirrored skills, versioned manifest, and green
    full verification suite in one reviewed change. Do not publish it yet.
 2. Create every missing canonical GitHub label, then verify that all seven
    delivery labels and both intake labels exist.

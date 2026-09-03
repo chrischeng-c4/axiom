@@ -74,11 +74,11 @@ SKILLS_DIR = REPO / ".claude/skills"
 # command from the directory -- and the frontmatter `name:` is held equal to
 # the directory name by check_plugin.py, so `aw-<skill>/` is invoked as
 # `/aw-<skill>` and listed as `aw-<skill>`. One prefix, one namespace. Naming
-# the ten here rather than globbing keeps a stray directory from silently
+# the nine here rather than globbing keeps a stray directory from silently
 # joining the population under test.
 NAMESPACE = "aw"
 SKILL_PREFIX = f"{NAMESPACE}-"      # directory, invocation, and frontmatter name: aw-<skill>
-SKILLS = ("ask-user", "build", "e2e-for", "grill-me-to-meta",
+SKILLS = ("ask-user", "e2e-for", "grill-me-to-meta",
           "grill-meta-to-milestone", "grill-milestone-to-issue", "impl-for",
           "prepare-goal", "review", "test-for")
 
@@ -111,7 +111,10 @@ def skill_invocation(skill: str) -> str:
 # left the ladder on 2026-08-26, and the `review-prompt` and `verdict` verbs
 # went with it. The read-only closers arrived on 2026-09-02: `test-for`
 # verifies a scope's lifecycle evidence and reruns the full project gates,
-# `review` audits one project, and `build` wraps cargo for one project.
+# and `review` audits one project. A `build` skill sat beside them for part
+# of that day and left the same way: a kind or GKE run is not lifecycle
+# work, so it became the standalone `/build:debug` and `/build:release`
+# (`scripts/build/`), outside this namespace and this checker.
 #
 # The technical-design step is gone the same way. `grill-change-to-td` and
 # `grill-epic-to-td` wrote `docs/technical/<subsystem>.md` sections and ADRs
@@ -158,9 +161,9 @@ def skill_invocation(skill: str) -> str:
 # time either phase starts, the work item has already said what the change
 # is; what remains is a fixed sequence of verbs and the exit codes they
 # return, and the only question a gate could raise is whether it counts.
-# `test-for`, `review`, and `build` are procedural for the plainer reason:
-# each runs declared commands read-only (or one cargo build) and reports
-# exit codes, with nothing underspecified to resolve.
+# `test-for` and `review` are procedural for the plainer reason: each runs
+# declared commands read-only and reports exit codes, with nothing
+# underspecified to resolve.
 #
 # `grill-me-to-meta` is interviewing for the reason `grill-me-to-prd` was: it
 # runs before any work item exists, so everything it writes -- across all
@@ -184,7 +187,7 @@ def skill_invocation(skill: str) -> str:
 # guessed the human meant.
 INTERVIEWING = ("ask-user", "grill-me-to-meta", "grill-meta-to-milestone",
                 "grill-milestone-to-issue", "prepare-goal")
-PROCEDURAL = ("build", "e2e-for", "impl-for", "review", "test-for")
+PROCEDURAL = ("e2e-for", "impl-for", "review", "test-for")
 
 # The nine scripts sit in one directory, not inside a skill. They were under
 # `wi-epic-grill/scripts/` (then `grill-me-to-epic`, folded into

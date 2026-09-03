@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy one StatefulSet app to the (already-awake) acceptance cluster, run its
-# verify contract, collect evidence, and ALWAYS tear the namespace down — the
-# PVCs go with it, so nothing bills after the run.
+# Deploy one StatefulSet app to an already-reachable cluster, run its verify
+# contract, collect evidence, and ALWAYS tear the namespace down — the PVCs
+# go with it, so nothing bills after the run.
+#
+# Nothing here (or under verify/) is GKE-specific: it needs KUBECONFIG,
+# kubectl, kustomize, and an image the nodes can pull, so /build:debug reuses
+# it unchanged on a local kind cluster (scripts/build/debug.sh).
 #
 # usage: IMAGE=ghcr.io/<owner>/<app>@sha256:... EVIDENCE_DIR=... run-app.sh <app>
+#   KEEP_NAMESPACE=1  skip the namespace delete and print how to remove it —
+#                     a local-debug affordance; the GHA workflow never sets it.
 
 app="${1:?usage: run-app.sh <keep|defer|relay|loom>}"
 case "$app" in
   keep|defer|relay|loom) ;;
   *) echo "unsupported app '$app' (keep|defer|relay|loom)" >&2; exit 2 ;;
 esac
-: "${IMAGE:?IMAGE is required (digest-pinned GHCR ref)}"
+: "${IMAGE:?IMAGE is required (digest-pinned GHCR ref, or a kind-loaded local tag)}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
-: "${KUBECONFIG:?KUBECONFIG must point at the task-local file ensure-cluster.sh wrote}"
+: "${KUBECONFIG:?KUBECONFIG must point at a task-local file (ensure-cluster.sh or kind get kubeconfig wrote it)}"
 RUN_ID="${RUN_ID:?RUN_ID is required}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,13 +48,17 @@ collect_evidence() {
 cleanup() {
   local rc=$?
   collect_evidence
-  # --wait so the PVCs (and their Persistent Disks) are actually gone before
-  # this returns; a leaked PVC on the persistent cluster bills indefinitely.
-  kubectl delete namespace "$ns" --ignore-not-found --wait=true --timeout=300s \
-    >> "$app_evidence/teardown.log" 2>&1 || {
-    echo "WARNING: namespace $ns did not delete cleanly; check for leaked PVCs" >&2
-    rc=1
-  }
+  if [ "${KEEP_NAMESPACE:-0}" = 1 ]; then
+    echo "namespace $ns kept; delete with: kubectl --kubeconfig $KUBECONFIG delete ns $ns" >&2
+  else
+    # --wait so the PVCs (and their Persistent Disks) are actually gone before
+    # this returns; a leaked PVC on the persistent cluster bills indefinitely.
+    kubectl delete namespace "$ns" --ignore-not-found --wait=true --timeout=300s \
+      >> "$app_evidence/teardown.log" 2>&1 || {
+      echo "WARNING: namespace $ns did not delete cleanly; check for leaked PVCs" >&2
+      rc=1
+    }
+  fi
   rm -rf "$render_dir"
   exit "$rc"
 }

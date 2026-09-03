@@ -19,7 +19,7 @@
 # `!cancelled() && result != 'failure'` needs-guards below.
 name: gke-acceptance
 # gh run list exposes no workflow_dispatch inputs, so the app list rides on
-# the run title — scripts/gh/gke-acceptance.sh reads it back from there.
+# the run title — scripts/build/release.sh reads it back from there.
 run-name: gke-acceptance ${{ inputs.apps }} @ ${{ inputs.ref || github.ref_name }}
 
 on:

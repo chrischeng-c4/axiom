@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Release route of /aw-build for keep / defer / relay / loom: dispatch the
+# /build:release for keep / defer / relay / loom: dispatch the
 # gke-acceptance workflow for one app at the pushed HEAD, watch it to a
 # terminal state, download the evidence bundle, and report whether the node
 # pool was parked. The workflow owns build → terraform + kustomize deploy →
 # e2e verify → park; this script only drives it through gh and reads back.
 #
-# usage: scripts/gh/gke-acceptance.sh <app> [--rerun] [--out <dir>]
+# usage: scripts/build/release.sh <app> [--rerun] [--out <dir>]
 #   app      one of: keep defer relay loom
 #   --rerun  dispatch even when this sha+app already has a successful run
 #   --out    evidence download directory

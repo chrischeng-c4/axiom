@@ -86,6 +86,26 @@ PROJECT_ID=<PROJECT_ID> KEEP_IMAGE=ghcr.io/<owner>/keep:sha-<git12>@sha256:... A
 `<APP>_IMAGE` is required per selected app and should be digest-pinned.
 `PARK=0` leaves the pool awake (e.g. the acceptance/gcp harness runs next).
 
+## Local kind run (/build:debug)
+
+`scripts/run-app.sh` and `verify/` are cluster-agnostic (KUBECONFIG, kubectl,
+kustomize, port-forward, and an image the nodes can pull), so the same
+deploy → verify → teardown runs on a local kind cluster before anything is
+pushed:
+
+```bash
+scripts/build/debug.sh keep            # docker build (cargo debug profile) → kind load → run-app.sh
+scripts/build/debug.sh keep --keep     # leave the namespace up for inspection; prints the delete command
+scripts/build/debug.sh keep --fresh    # recreate the kind cluster first
+scripts/build/debug.sh keep --image ghcr.io/<owner>/keep@sha256:...   # deploy a prebuilt image instead
+```
+
+The kind cluster `axiom-build-debug` persists between runs (like the GKE
+cluster; only the namespace is torn down). Evidence lands in
+`${TMPDIR:-/tmp}/build-debug-<app>-<timestamp>/` (`docker-build.log`,
+`kubeconfig`, and the same `<app>/` bundle the GHA run uploads). `run.sh`,
+`ensure-cluster.sh`, and `park.sh` are GKE-only and are not used here.
+
 ## Shared-pool caution
 
 `acceptance-pool` is shared with the acceptance/gcp lumen/sift/tape harness.

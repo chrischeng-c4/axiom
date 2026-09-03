@@ -34,7 +34,7 @@ into the README.
 ## `aw` is `apps/aw` plus both `skills/aw-*` mirrors
 
 `aw` is the Typer CLI at `apps/aw` — its engine is the argparse scripts under
-`apps/aw/src/aw/scripts/` — and the ten skills under `.agents/skills/aw-*/`
+`apps/aw/src/aw/scripts/` — and the nine skills under `.agents/skills/aw-*/`
 and `.claude/skills/aw-*/`. The protocol is still stdout and exit codes; the
 CLI adds no validation of its own, it rebuilds each verb's argv and hands it
 to the engine module's `main(argv)`.
@@ -46,7 +46,7 @@ into the `apps/aw` uv project. The verification suite stayed at
 `_paths.SCRIPTS`; the migrations data stayed at `.claude/aw/migrations/`. The
 retired plugin root and `${CLAUDE_PLUGIN_ROOT}` still resolve nowhere.
 
-AW has ten project skills in two runtime roots. Codex reads
+AW has nine project skills in two runtime roots. Codex reads
 `.agents/skills/aw-*/SKILL.md`. Claude Code reads
 `.claude/skills/aw-*/SKILL.md`. Each matching pair must be byte-identical.
 Both runtimes run the one CLI as `uv run --project apps/aw aw <group> …` from
@@ -67,10 +67,11 @@ rule refuses a doc whose `aw` invocation names anything else.
 
 ## Skills
 
-Ten entry points: the `aw-*` skills below. Each is invoked by a human.
+Nine entry points: the `aw-*` skills below. Each is invoked by a human.
 (`/git-commit`, `/git-rebase`, `/git-push`, `/git-land`, `/gh-create-pr`,
-`/gh-merge-pr`, `/lumen-build-release` and `/ui-ux-pro-max`
-exist beside them as standalone utilities outside the AW system;
+`/gh-merge-pr`, `/build:debug`, `/build:release`, `/lumen-build-release` and
+`/ui-ux-pro-max` exist beside them as standalone utilities outside the AW
+system;
 `/project-readme-check` was deleted on 2026-09-02 — its deterministic
 validators under `scripts/meta/` remain and run directly.) `grill-me-to-meta`
 interviews a human and writes prose under one project's `README.md`,
@@ -86,10 +87,23 @@ every open release Milestone) and hand each queue head to the matching phase
 scripts, which can refuse them — `impl-for` absorbs the retired
 `maint-for-wi`, routing maintenance heads through the maint verbs;
 `test-for` and `review` are read-only closers that verify lifecycle evidence
-and audit a project without writing; `build` wraps `cargo build` for debug
-and, for release, dispatches the `gke-acceptance` workflow (keep, defer,
-relay, loom) or hands lumen to `/lumen-build-release`; `ask-user` writes
-nothing.
+and audit a project without writing; `ask-user` writes nothing.
+
+`/build:debug` and `/build:release` stand outside AW; they replaced
+`aw-build` on 2026-09-02, because a cluster run is not lifecycle work. Debug
+builds the app's image locally from the working tree with the cargo debug
+profile, loads it into the persistent kind cluster `axiom-build-debug`, and
+runs the acceptance harness's deploy → verify → teardown against it
+(`scripts/build/debug.sh`; a dirty tree is allowed and tagged `-dirty`).
+Release dispatches the `gke-acceptance` workflow — image → terraform +
+kustomize deploy on GKE → verify → park the pool whatever the result
+(`scripts/build/release.sh`; it refuses a dirty or unpushed tree). Both cover
+keep, defer, relay, and loom, hand lumen to `/lumen-build-release`, and
+refuse anything else rather than fall back to `cargo build`. Neither is the
+`apps/<name>/build.sh debug|release` versioned contract in `CONTRIBUTING.md`,
+and neither is `/aw-e2e-for`: that skill writes the red-first
+`apps/<p>/e2e/*.rs` contract for one typed issue, these two run a built
+artifact on a cluster and write nothing.
 
 There is no technical-design step. Two old grills — one per issue epic, one per change —
 wrote per-subsystem technical-design sections and ADRs beside them, under a
@@ -114,7 +128,6 @@ pair, or a skill that calls the legacy issue-epic writer.
 | `/aw-impl-for` | a scope's queue head has landed e2e evidence, or is a maintenance type | drives impl for behavior heads and maint for `type:refactor`/`test`/`docs`/`chore` heads, closing each issue to advance the queue |
 | `/aw-test-for` | a scope's work looks finished and needs closing regression verification | read-only: checks each issue's lifecycle trailers against its commits, then runs the project gates unfiltered; writes nothing |
 | `/aw-review` | one project needs a full audit outside the lifecycle | read-only: uncommitted diff, `aw meta check`, `aw wis gap`, README-declared gates; produces a findings report and writes nothing |
-| `/aw-build` | one project needs a debug compile or a release run | debug runs `cargo build -p <crate>` and reports verbatim warnings and errors; release is the CI/CD pipeline — `scripts/gh/gke-acceptance.sh <app>` dispatches `gke-acceptance` (image → terraform + kustomize deploy on GKE → e2e verify → park the pool whatever the result) for keep, defer, relay, and loom; lumen goes through `/lumen-build-release`; any other project is refused rather than given a bare `--release` |
 | `/aw-prepare-goal` | a project, typed issue, release Milestone, or bare intent must become decidable conditions | reads the project or tracker, selects the next route by type, and sets no goal unless the human explicitly asks |
 | `/aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
 

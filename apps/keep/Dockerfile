@@ -7,8 +7,13 @@
 # excludes target/ and .git to keep the context sane.
 #
 #   docker build -f apps/keep/Dockerfile -t keep:dev .
+#   docker build --build-arg CARGO_PROFILE=debug -f apps/keep/Dockerfile -t keep:debug .
 
 FROM rust:1.92-slim-bookworm AS builder
+# release (default; CI / GKE) or debug (/build:debug — unoptimized, matches
+# `cargo build` on the host). Only these two values work: the binary is
+# copied out of target/<profile>/.
+ARG CARGO_PROFILE=release
 WORKDIR /src
 # Only ca-certificates needed — keep links no openssl.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
@@ -20,8 +25,8 @@ COPY --chown=root:root . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release -p keep --bin keep \
- && cp target/release/keep /usr/local/bin/
+    cargo build $([ "$CARGO_PROFILE" = release ] && echo --release) -p keep --bin keep \
+ && cp "target/$CARGO_PROFILE/keep" /usr/local/bin/
 
 # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching
 # the k8s securityContext). No shell, no init shim — a single tokio binary

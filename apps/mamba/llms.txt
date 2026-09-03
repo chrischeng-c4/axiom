@@ -107,7 +107,7 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 
 ## Build & install
 
-- Build: `cargo build [--release] -p mamba --bin mamba` (or via the `/aw-build` skill)
+- Build: `cargo build [--release] -p mamba --bin mamba`
 - The old `mamba-build-{debug,release}` skill scripts (version bump, `~/.cargo/bin` install, macOS codesign) are deleted; install and codesign are manual steps now
 
 ## Issue tracking

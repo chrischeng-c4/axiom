@@ -75,7 +75,18 @@ http_json() {
 kill_pod_and_wait() {
   echo "deleting ${APP}-0 to prove PVC durability" >&2
   kubectl -n "$ns" delete pod "${APP}-0" --wait=true --timeout=180s >&2
-  # After delete returns the old pod is gone; the StatefulSet recreates -0.
+  # delete returns once the old pod is gone; the StatefulSet controller
+  # recreates -0 a moment later, and `kubectl wait` on a pod that does not
+  # exist yet fails at once with NotFound (hit on kind, 2026-09-02). Poll for
+  # the replacement first, then wait for it to become Ready.
+  local deadline=$((SECONDS + 120))
+  until kubectl -n "$ns" get pod "${APP}-0" >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      echo "timed out waiting for the StatefulSet to recreate ${APP}-0" >&2
+      return 1
+    fi
+    sleep 2
+  done
   kubectl -n "$ns" wait --for=condition=Ready "pod/${APP}-0" --timeout=300s >&2
 }
 
