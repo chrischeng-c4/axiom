@@ -26,6 +26,19 @@ def test_normalise_declared_preserves_repository_root_paths(
     assert maint._normalise_declared(token, "apps/aw") == expected
 
 
+def test_normalise_declared_preserves_acceptance_only_at_repository_root() -> None:
+    assert (
+        maint._normalise_declared(
+            "acceptance/gcp/scripts/verify-tape.sh", "apps/tape"
+        )
+        == "acceptance/gcp/scripts/verify-tape.sh"
+    )
+    assert (
+        maint._normalise_declared("fixtures/acceptance/example.sh", "apps/tape")
+        == "apps/tape/fixtures/acceptance/example.sh"
+    )
+
+
 @pytest.mark.parametrize("token", ["/tmp/outside", "../outside", "src/../outside"])
 def test_normalise_declared_refuses_absolute_or_parent_paths(token: str) -> None:
     with pytest.raises(maint.MaintError):

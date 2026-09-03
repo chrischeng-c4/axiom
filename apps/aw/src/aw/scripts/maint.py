@@ -252,7 +252,7 @@ def _normalise_declared(token: str, owner: str) -> str:
         raise MaintError(f"change point path escapes the repository: {token!r}")
     repo_roots = {
         "apps", "libs", ".github", ".cargo", "scripts", "tools", "tooling",
-        "ci", "config", "configs", "build",
+        "ci", "config", "configs", "build", "acceptance",
     }
     root_names = CHORE_NAMES | {"CONTRIBUTING.md", "LICENSE", "LICENSE.md"}
     if parts and (parts[0] in repo_roots or value in root_names):
