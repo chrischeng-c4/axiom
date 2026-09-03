@@ -312,12 +312,12 @@ assert_prebuilt_identity() {
   }
   assert_named_pods_use_candidate "$OPERATOR_NAMESPACE" "app.kubernetes.io/name=tape-operator" operator "$operator_replicas"
   cr_image="$(kubectl -n "$NAMESPACE" get tape "$TAPE_NAME" -o jsonpath='{.spec.image}')"
-  stateful_image="$(kubectl -n "$NAMESPACE" get statefulset "$TAPE_NAME" -o jsonpath='{.spec.template.spec.containers[?(@.name=="tape")].image}')"
+  stateful_image="$(kubectl -n "$NAMESPACE" get statefulset "$TAPE_NAME" -o jsonpath='{.spec.template.spec.containers[?(@.name=="server")].image}')"
   [[ "$cr_image" == "$IMAGE_TAG" && "$stateful_image" == "$IMAGE_TAG" ]] || {
     echo "!! Tape CR or StatefulSet does not bind the candidate image" >&2
     return 1
   }
-  assert_named_pods_use_candidate "$NAMESPACE" "$SERVER_LABEL" tape 1
+  assert_named_pods_use_candidate "$NAMESPACE" "$SERVER_LABEL" server 1
   version="$(kubectl -n "$NAMESPACE" exec pod/"${TAPE_NAME}-0" -- tape --version)"
   [[ "$version" == "tape $EXPECTED_VERSION" ]] || {
     echo "!! running Tape version is '$version', expected 'tape $EXPECTED_VERSION'" >&2

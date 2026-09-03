@@ -29,6 +29,13 @@ CARGO_TOML = ROOT / "apps/tape/Cargo.toml"
 STATEFULSET = ROOT / "apps/tape/k8s/base/statefulset.yaml"
 OPERATOR_DEPLOYMENT = ROOT / "apps/tape/k8s/operator/deployment.yaml"
 PROMOTION_WORKFLOW_SHA256 = "3042fba754460473df9ae899173243d3d504543ec0524cd3e91e01acf986ad9e"
+KIND_SERVER_STATEFULSET_SELECTOR = (
+    "  stateful_image=\"$(kubectl -n \"$NAMESPACE\" get statefulset \"$TAPE_NAME\" "
+    "-o jsonpath='{.spec.template.spec.containers[?(@.name==\"server\")].image}')\""
+)
+KIND_SERVER_POD_INVENTORY = (
+    '  assert_named_pods_use_candidate "$NAMESPACE" "$SERVER_LABEL" server 1'
+)
 
 TAPE_GATES = (
     "python3 apps/tape/scripts/verify-release-contract.py --self-test",
@@ -331,6 +338,22 @@ test = false'''
     return version
 
 
+def assert_kind_candidate_identity(kind: str) -> None:
+    for required in (
+        'IMAGE_MODE="${TAPE_E2E_IMAGE_MODE:-local}"',
+        "assert_named_pods_use_candidate",
+        "TAPE_E2E_EXPECTED_RUNTIME_DIGEST",
+        'tape --version',
+    ):
+        if required not in kind:
+            fail(f"Kind prebuilt identity check lacks {required}")
+    lines = kind.splitlines()
+    if lines.count(KIND_SERVER_STATEFULSET_SELECTOR) != 1:
+        fail("Kind prebuilt identity check lacks operator-rendered server StatefulSet selector")
+    if lines.count(KIND_SERVER_POD_INVENTORY) != 1:
+        fail("Kind prebuilt identity check lacks operator-rendered server pod inventory")
+
+
 def parse_needs(job: str) -> tuple[str, ...]:
     match = re.search(r"^    needs: \[([^]]+)\]$", job, re.MULTILINE)
     if not match:
@@ -462,14 +485,7 @@ def check_contract(candidate: str, promotion: str) -> None:
     if '"tape-release-gates":"success"' not in supporting["candidate verifier"] or '"tape-release-gates":"success"' not in supporting["artifact verifier"]:
         fail("candidate verifiers do not require Tape gates")
     kind = supporting["Kind script"]
-    for required in (
-        'IMAGE_MODE="${TAPE_E2E_IMAGE_MODE:-local}"',
-        "assert_named_pods_use_candidate",
-        "TAPE_E2E_EXPECTED_RUNTIME_DIGEST",
-        'tape --version',
-    ):
-        if required not in kind:
-            fail(f"Kind prebuilt identity check lacks {required}")
+    assert_kind_candidate_identity(kind)
     dockerfile = supporting["release Dockerfile"]
     assert_release_versions(
         supporting["Tape Cargo manifest"],
@@ -730,7 +746,9 @@ def build_fixture(root: Path) -> tuple[str, dict[str, object], dict[str, object]
 def self_test() -> None:
     candidate = CANDIDATE_PATH.read_text()
     promotion = PROMOTION_PATH.read_text()
-    original_hashes = {path: sha256(path) for path in (CANDIDATE_PATH, PROMOTION_PATH)}
+    original_hashes = {
+        path: sha256(path) for path in (CANDIDATE_PATH, PROMOTION_PATH, KIND_SCRIPT)
+    }
     check_contract(candidate, promotion)
 
     static_mutations = {
@@ -911,6 +929,37 @@ def self_test() -> None:
             continue
         fail(f"negative control passed: {name}")
 
+    kind = KIND_SCRIPT.read_text()
+    assert_kind_candidate_identity(kind)
+    kind_mutations = {
+        "kind-statefulset-server-selector": (
+            replace_once(
+                kind,
+                KIND_SERVER_STATEFULSET_SELECTOR,
+                KIND_SERVER_STATEFULSET_SELECTOR.replace('name=="server"', 'name=="tape"'),
+                "kind-statefulset-server-selector",
+            ),
+            "Kind prebuilt identity check lacks operator-rendered server StatefulSet selector",
+        ),
+        "kind-server-pod-inventory": (
+            replace_once(
+                kind,
+                KIND_SERVER_POD_INVENTORY,
+                KIND_SERVER_POD_INVENTORY.replace(" server 1", " tape 1"),
+                "kind-server-pod-inventory",
+            ),
+            "Kind prebuilt identity check lacks operator-rendered server pod inventory",
+        ),
+    }
+    for name, (mutation, expected) in kind_mutations.items():
+        try:
+            assert_kind_candidate_identity(mutation)
+        except ContractError as error:
+            if str(error) != expected:
+                fail(f"negative control {name} failed for the wrong reason: {error}")
+            continue
+        fail(f"negative control passed: {name}")
+
     with tempfile.TemporaryDirectory(prefix="tape-release-contract-") as tmp:
         fixture = Path(tmp)
         commit, acceptance, cleanup = build_fixture(fixture)
@@ -987,7 +1036,7 @@ def self_test() -> None:
     for path, before in original_hashes.items():
         if sha256(path) != before:
             fail(f"self-test did not restore {path.relative_to(ROOT)} byte for byte")
-    print("release contract self-test passed: positive fixture plus 28 negative mutations")
+    print("release contract self-test passed: positive fixture plus 30 negative mutations")
 
 
 def main() -> None:
