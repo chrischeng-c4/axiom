@@ -9,6 +9,9 @@
 # Usage:
 #   bash apps/tape/scripts/kind-e2e.sh
 #   TAPE_KEEP_CLUSTER=1 bash apps/tape/scripts/kind-e2e.sh
+#   TAPE_E2E_IMAGE_MODE=prebuilt TAPE_E2E_IMAGE=ghcr.io/chrischeng-c4/tape@sha256:<digest> \
+#     TAPE_E2E_EXPECTED_VERSION=0.5.0 TAPE_E2E_EXPECTED_RUNTIME_DIGEST=sha256:<digest> \
+#     bash apps/tape/scripts/kind-e2e.sh
 #
 # Requirements: docker, kind, kubectl, curl, jq.
 # The default cleanup deletes only the named Kind cluster. Set
@@ -25,10 +28,44 @@ NAMESPACE="${TAPE_KIND_NAMESPACE:-tape}"
 OPERATOR_NAMESPACE="tape-system"
 TAPE_NAME="tape"
 IMAGE_TAG="${TAPE_E2E_IMAGE:-tape:kind}"
+IMAGE_MODE="${TAPE_E2E_IMAGE_MODE:-local}"
 HOST_PORT="${TAPE_E2E_HOST_PORT:-17137}"
 NODE_PORT="${TAPE_E2E_NODE_PORT:-30713}"
 SERVER_LABEL="app.kubernetes.io/name=tape,app.kubernetes.io/instance=${TAPE_NAME},app.kubernetes.io/component=server"
 CLUSTER_CREATED=0
+EXPECTED_VERSION=""
+EXPECTED_RUNTIME_DIGEST=""
+ROOT_DIGEST=""
+
+if [[ "$IMAGE_MODE" == "prebuilt" ]]; then
+  [[ ! "$IMAGE_TAG" =~ [[:space:][:cntrl:]] ]] || {
+    echo "!! TAPE_E2E_IMAGE contains whitespace or control characters" >&2
+    exit 1
+  }
+  [[ "$IMAGE_TAG" =~ ^ghcr\.io/chrischeng-c4/tape@sha256:[0-9a-f]{64}$ ]] || {
+    echo "!! prebuilt TAPE_E2E_IMAGE must be ghcr.io/chrischeng-c4/tape@sha256:<64 hex>" >&2
+    exit 1
+  }
+  cargo_version="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$TAPE_DIR/Cargo.toml" | head -n1)"
+  EXPECTED_VERSION="${TAPE_E2E_EXPECTED_VERSION:-}"
+  [[ -n "$EXPECTED_VERSION" && "$EXPECTED_VERSION" == "$cargo_version" ]] || {
+    echo "!! TAPE_E2E_EXPECTED_VERSION must match Cargo version $cargo_version" >&2
+    exit 1
+  }
+  EXPECTED_RUNTIME_DIGEST="${TAPE_E2E_EXPECTED_RUNTIME_DIGEST:-}"
+  [[ "$EXPECTED_RUNTIME_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "!! TAPE_E2E_EXPECTED_RUNTIME_DIGEST must be sha256:<64 hex>" >&2
+    exit 1
+  }
+  ROOT_DIGEST="${IMAGE_TAG##*@}"
+  [[ "$EXPECTED_RUNTIME_DIGEST" != "$ROOT_DIGEST" ]] || {
+    echo "!! runtime child digest must differ from the root index digest" >&2
+    exit 1
+  }
+elif [[ "$IMAGE_MODE" != "local" ]]; then
+  echo "!! TAPE_E2E_IMAGE_MODE must be local or prebuilt" >&2
+  exit 1
+fi
 
 step() {
   local label="$1"
@@ -222,8 +259,71 @@ EOF
 }
 
 build_and_load_image() {
+  if [[ "$IMAGE_MODE" == "prebuilt" ]]; then
+    return 0
+  fi
   docker build -f "$TAPE_DIR/Dockerfile" -t "$IMAGE_TAG" "$REPO_ROOT"
   kind load docker-image "$IMAGE_TAG" --name "$CLUSTER_NAME"
+}
+
+normalize_runtime_image_id() {
+  local raw="$1"
+  if [[ "$raw" =~ ^ghcr\.io/chrischeng-c4/tape@(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^docker-pullable://ghcr\.io/chrischeng-c4/tape@(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^(containerd|cri-o|docker)://(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi
+}
+
+assert_named_pods_use_candidate() {
+  local namespace="$1" label="$2" container="$3" desired="$4"
+  local pods pod_count desired_specs image_ids runtime_id normalized
+  pods="$(kubectl -n "$namespace" get pods -l "$label" -o json)"
+  pod_count="$(jq -er '.items | length' <<<"$pods")"
+  desired_specs="$(jq --arg name "$container" --arg image "$IMAGE_TAG" '[.items[].spec.containers[] | select(.name == $name and .image == $image)] | length' <<<"$pods")"
+  image_ids="$(jq --arg name "$container" '[.items[] | (.status.containerStatuses // [])[] | select(.name == $name and (.imageID | type) == "string" and (.imageID | length) > 0)] | length' <<<"$pods")"
+  [[ "$pod_count" -eq "$desired" && "$desired_specs" -eq "$desired" && "$image_ids" -eq "$desired" ]] || {
+    echo "!! $container pods do not all use the expected candidate image" >&2
+    return 1
+  }
+  while IFS= read -r runtime_id; do
+    normalized="$(normalize_runtime_image_id "$runtime_id")" || {
+      echo "!! unrecognized $container runtime imageID: $runtime_id" >&2
+      return 1
+    }
+    [[ "$normalized" == "$ROOT_DIGEST" || "$normalized" == "$EXPECTED_RUNTIME_DIGEST" ]] || {
+      echo "!! $container runtime imageID does not bind the candidate root or platform child" >&2
+      return 1
+    }
+  done < <(jq -r --arg name "$container" '.items[] | .status.containerStatuses[] | select(.name == $name) | .imageID' <<<"$pods")
+}
+
+assert_prebuilt_identity() {
+  [[ "$IMAGE_MODE" == "prebuilt" ]] || return 0
+  local operator_replicas cr_image stateful_image version
+  operator_replicas="$(kubectl -n "$OPERATOR_NAMESPACE" get deployment/tape-operator -o jsonpath='{.spec.replicas}')"
+  [[ "$operator_replicas" =~ ^[1-9][0-9]*$ ]] || {
+    echo "!! Tape operator replica count is invalid" >&2
+    return 1
+  }
+  assert_named_pods_use_candidate "$OPERATOR_NAMESPACE" "app.kubernetes.io/name=tape-operator" operator "$operator_replicas"
+  cr_image="$(kubectl -n "$NAMESPACE" get tape "$TAPE_NAME" -o jsonpath='{.spec.image}')"
+  stateful_image="$(kubectl -n "$NAMESPACE" get statefulset "$TAPE_NAME" -o jsonpath='{.spec.template.spec.containers[?(@.name=="tape")].image}')"
+  [[ "$cr_image" == "$IMAGE_TAG" && "$stateful_image" == "$IMAGE_TAG" ]] || {
+    echo "!! Tape CR or StatefulSet does not bind the candidate image" >&2
+    return 1
+  }
+  assert_named_pods_use_candidate "$NAMESPACE" "$SERVER_LABEL" tape 1
+  version="$(kubectl -n "$NAMESPACE" exec pod/"${TAPE_NAME}-0" -- tape --version)"
+  [[ "$version" == "tape $EXPECTED_VERSION" ]] || {
+    echo "!! running Tape version is '$version', expected 'tape $EXPECTED_VERSION'" >&2
+    return 1
+  }
+  echo "   prebuilt identity verified: version=$EXPECTED_VERSION runtime_digest=$EXPECTED_RUNTIME_DIGEST"
 }
 
 install_operator() {
@@ -296,6 +396,7 @@ step "install Tape CRD and operator" install_operator
 step "apply single-node Tape CR and wait for its PVC" apply_tape_instance
 
 INITIAL_UID="$(wait_for_ready_pod)"
+step "verify candidate image identity" assert_prebuilt_identity
 step "expose operator-owned Tape pod on NodePort :$NODE_PORT" expose_api
 step "append durable pre-restart event" append_event "before-restart"
 step "verify pre-restart replay" assert_replay '["before-restart"]'
@@ -308,6 +409,7 @@ if [[ "$REPLACEMENT_UID" == "$INITIAL_UID" ]]; then
   exit 1
 fi
 step "confirm API after replacement" wait_for_api
+step "verify replacement still uses the candidate image" assert_prebuilt_identity
 step "verify durable replay after replacement" assert_replay '["before-restart"]'
 step "append fresh post-restart event" append_event "after-restart"
 step "verify ordered replay across replacement" assert_replay '["before-restart","after-restart"]'
