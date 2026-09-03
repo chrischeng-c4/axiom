@@ -241,7 +241,7 @@ _PATH_TOKEN = re.compile(
 
 
 def _normalise_declared(token: str, owner: str) -> str:
-    value = token.strip().strip("`'\"(),.;")
+    value = token.strip().lstrip("`'\"(,;").rstrip("`'\"(),.;")
     value = re.sub(r":\d+$", "", value)
     while value.startswith("./"):
         value = value[2:]
