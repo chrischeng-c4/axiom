@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
 CANDIDATE_PATH = ROOT / ".github/workflows/tape-release-candidate.yml"
 PROMOTION_PATH = ROOT / ".github/workflows/tape-release.yml"
 GKE_MAKER = ROOT / "apps/tape/scripts/make-gke-release-receipt.py"
+GKE_HARNESS = ROOT / "acceptance/gcp/scripts/verify-tape.sh"
 CANDIDATE_VERIFIER = ROOT / "apps/tape/scripts/verify-release-candidate.sh"
 ARTIFACT_VERIFIER = ROOT / "apps/tape/scripts/verify-release-artifacts.sh"
 KIND_SCRIPT = ROOT / "apps/tape/scripts/kind-e2e.sh"
@@ -364,6 +365,7 @@ def parse_needs(job: str) -> tuple[str, ...]:
 def check_contract(candidate: str, promotion: str) -> None:
     supporting = {
         "GKE receipt maker": GKE_MAKER.read_text(),
+        "GKE harness": GKE_HARNESS.read_text(),
         "candidate verifier": CANDIDATE_VERIFIER.read_text(),
         "artifact verifier": ARTIFACT_VERIFIER.read_text(),
         "Kind script": KIND_SCRIPT.read_text(),
@@ -482,6 +484,7 @@ def check_contract(candidate: str, promotion: str) -> None:
         fail("GKE receipt schema is inconsistent")
     if '"tape-release-gates": "success"' not in supporting["GKE receipt maker"]:
         fail("GKE receipt maker does not require Tape gates")
+    assert_tape_gke_failover(supporting["GKE harness"], supporting["GKE receipt maker"])
     if '"tape-release-gates":"success"' not in supporting["candidate verifier"] or '"tape-release-gates":"success"' not in supporting["artifact verifier"]:
         fail("candidate verifiers do not require Tape gates")
     kind = supporting["Kind script"]
@@ -510,6 +513,44 @@ def check_contract(candidate: str, promotion: str) -> None:
     assert_reviewed_promotion_bytes(promotion)
 
 
+def assert_tape_gke_failover(harness: str, maker: str) -> None:
+    required_harness = (
+        'local exclude="${1:-}"',
+        'if [[ "$ordinal" == "$exclude" ]]; then',
+        'wait_for_replacement_pod_uid() {',
+        'if [[ -n "$replacement_uid" && "$replacement_uid" != "$previous_uid" && "$ready" == "True" ]]; then',
+        'initial_term="$(jq -e \'.term\' "$EVIDENCE_DIR/kubernetes/tape-raftz-initial.json")"',
+        'initial_pod_uid="$(pod_uid "$initial_leader")"',
+        'kubectl -n tape delete "pod/tape-${initial_leader}" --wait=false',
+        'start_pod_forwards "$initial_leader"',
+        'survivor_leader="$(wait_for_leader "$initial_leader")"',
+        'survivor_term="$(jq -e \'.term\'',
+        'if (( survivor_term <= initial_term )); then',
+        'replacement_pod_uid="$(wait_for_replacement_pod_uid "$initial_leader" "$initial_pod_uid")"',
+        '--arg leader_pod_uid_before "$initial_pod_uid"',
+        '--arg leader_pod_uid_after "$replacement_pod_uid"',
+    )
+    positions: list[int] = []
+    for required in required_harness:
+        position = harness.find(required)
+        if position < 0:
+            fail(f"Tape GKE failover harness lacks {required}")
+        positions.append(position)
+    if positions != sorted(positions):
+        fail("Tape GKE failover harness observes replacement before survivor proof")
+    if harness.count('if [[ "$ordinal" == "$exclude" ]]; then') != 2:
+        fail("Tape GKE failover harness does not exclude the deleted ordinal from both port-forward loops")
+    for required in (
+        '"leader_pod_uid_before",',
+        '"leader_pod_uid_after",',
+        'or not isinstance(failover.get("leader_pod_uid_before"), str)',
+        'or not isinstance(failover.get("leader_pod_uid_after"), str)',
+        'or failover.get("leader_pod_uid_before") == failover.get("leader_pod_uid_after")',
+    ):
+        if required not in maker:
+            fail(f"Tape GKE receipt maker lacks strict Pod UID proof: {required}")
+
+
 def replace_once(text: str, old: str, new: str, label: str) -> str:
     if text.count(old) != 1:
         fail(f"self-test fixture for {label} is not unique")
@@ -519,6 +560,14 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 def expect_static_failure(name: str, candidate: str, promotion: str) -> None:
     try:
         check_contract(candidate, promotion)
+    except ContractError:
+        return
+    fail(f"negative control passed: {name}")
+
+
+def expect_failover_failure(name: str, harness: str, maker: str) -> None:
+    try:
+        assert_tape_gke_failover(harness, maker)
     except ContractError:
         return
     fail(f"negative control passed: {name}")
@@ -698,6 +747,8 @@ def build_fixture(root: Path) -> tuple[str, dict[str, object], dict[str, object]
         "raft_failover": {
             "leader_before": "0",
             "leader_after": "1",
+            "leader_pod_uid_before": "leader-pod-uid",
+            "leader_pod_uid_after": "replacement-pod-uid",
             "distinct": True,
             "term_before": 1,
             "term_after": 2,
@@ -860,6 +911,43 @@ def self_test() -> None:
     for name, (candidate_mutation, promotion_mutation) in static_mutations.items():
         expect_static_failure(name, candidate_mutation, promotion_mutation)
 
+    harness = GKE_HARNESS.read_text()
+    maker = GKE_MAKER.read_text()
+    assert_tape_gke_failover(harness, maker)
+    failover_mutations = {
+        "failover-delete-waits-for-replacement": replace_once(
+            harness,
+            'kubectl -n tape delete "pod/tape-${initial_leader}" --wait=false',
+            'kubectl -n tape delete "pod/tape-${initial_leader}" --wait=true',
+            "failover-delete-waits-for-replacement",
+        ),
+        "failover-forwarding-includes-deleted-ordinal": replace_once(
+            harness,
+            'start_pod_forwards "$initial_leader"',
+            "start_pod_forwards",
+            "failover-forwarding-includes-deleted-ordinal",
+        ),
+        "failover-skips-only-one-port-forward-loop": harness.replace(
+            'if [[ "$ordinal" == "$exclude" ]]; then',
+            'if false; then',
+            1,
+        ),
+        "failover-survivor-does-not-exclude-original": replace_once(
+            harness,
+            'survivor_leader="$(wait_for_leader "$initial_leader")"',
+            'survivor_leader="$(wait_for_leader)"',
+            "failover-survivor-does-not-exclude-original",
+        ),
+        "failover-omits-replacement-uid-readiness-check": replace_once(
+            harness,
+            'if [[ -n "$replacement_uid" && "$replacement_uid" != "$previous_uid" && "$ready" == "True" ]]; then',
+            'if false; then',
+            "failover-omits-replacement-uid-readiness-check",
+        ),
+    }
+    for name, mutation in failover_mutations.items():
+        expect_failover_failure(name, mutation, maker)
+
     cargo = CARGO_TOML.read_text()
     dockerfile = DOCKERFILE.read_text()
     statefulset = STATEFULSET.read_text()
@@ -1007,6 +1095,42 @@ def self_test() -> None:
             "incomplete-gke-functional-result",
             success=False,
         )
+        same_leader = copy.deepcopy(acceptance)
+        same_leader["acceptance"]["tape"]["raft_failover"]["leader_after"] = "0"
+        same_leader_path = fixture / "evidence/same-leader-acceptance.json"
+        write_json(same_leader_path, same_leader)
+        run_checked(
+            maker_command(fixture, same_leader_path, fixture / "evidence/cleanup.json", fixture / "same-leader-receipt.json"),
+            "same-failover-leader",
+            success=False,
+        )
+        same_uid = copy.deepcopy(acceptance)
+        same_uid["acceptance"]["tape"]["raft_failover"]["leader_pod_uid_after"] = "leader-pod-uid"
+        same_uid_path = fixture / "evidence/same-uid-acceptance.json"
+        write_json(same_uid_path, same_uid)
+        run_checked(
+            maker_command(fixture, same_uid_path, fixture / "evidence/cleanup.json", fixture / "same-uid-receipt.json"),
+            "same-failover-pod-uid",
+            success=False,
+        )
+        missing_uid = copy.deepcopy(acceptance)
+        del missing_uid["acceptance"]["tape"]["raft_failover"]["leader_pod_uid_after"]
+        missing_uid_path = fixture / "evidence/missing-uid-acceptance.json"
+        write_json(missing_uid_path, missing_uid)
+        run_checked(
+            maker_command(fixture, missing_uid_path, fixture / "evidence/cleanup.json", fixture / "missing-uid-receipt.json"),
+            "missing-failover-pod-uid",
+            success=False,
+        )
+        non_increasing_term = copy.deepcopy(acceptance)
+        non_increasing_term["acceptance"]["tape"]["raft_failover"]["term_after"] = 1
+        non_increasing_term_path = fixture / "evidence/non-increasing-term-acceptance.json"
+        write_json(non_increasing_term_path, non_increasing_term)
+        run_checked(
+            maker_command(fixture, non_increasing_term_path, fixture / "evidence/cleanup.json", fixture / "non-increasing-term-receipt.json"),
+            "non-increasing-failover-term",
+            success=False,
+        )
         dirty = copy.deepcopy(cleanup)
         dirty["status"] = "dirty"
         dirty_path = fixture / "evidence/dirty-cleanup.json"
@@ -1036,7 +1160,7 @@ def self_test() -> None:
     for path, before in original_hashes.items():
         if sha256(path) != before:
             fail(f"self-test did not restore {path.relative_to(ROOT)} byte for byte")
-    print("release contract self-test passed: positive fixture plus 30 negative mutations")
+    print("release contract self-test passed: positive fixture plus 39 negative mutations")
 
 
 def main() -> None:
