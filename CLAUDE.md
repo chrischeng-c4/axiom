@@ -9,304 +9,205 @@ project:
 
 # CLAUDE.md - Claude Code bootstrap
 
-This file and `.claude/rules/**/*.md` are what loads at launch, and they are the
-whole of it. `AGENTS.md` is deliberately not imported here.
+This file is the whole of what loads at launch, and it is hand-maintained: a
+rule that has stopped being true stays in every session's context until a
+human deletes it. `README.md` is the repository inventory; a project's
+promises live in its own `README.md` under `## Capabilities`, its local
+workflow and verification in its `CONTRIBUTING.md`.
 
-Both halves of that were measured. `codex exec` loads `AGENTS.md` from its
-workdir into its instructions with no tool call; Claude Code loads no
-`AGENTS.md` at all unless a `CLAUDE.md` imports one. So the two files have one
-reader each, and **editing `AGENTS.md` changes what codex is told, not what
-you are told**. Until 2026-08-26 it was a production input to two codex review
-skills; those left the ladder, so it is now codex's bootstrap for a
-human-driven session and nothing here reads it. Do not treat it as
-documentation and do not move repo facts into it for tidiness.
+## Reach for a skill or a subagent before doing it by hand
 
-`.claude/rules/**/*.md` are hand-maintained — nothing generates them and nothing
-detects drift — so a rule that has stopped being true stays in every session's
-context until a human deletes it.
+Delegation is the default. Every standalone skill wraps a script whose exit
+codes are the enforcement — `scripts/git/*.sh`, `scripts/gh/*.sh`,
+`scripts/build/*.sh`, the `aw` phase scripts — and every project agent's
+definition is the write boundary its phase runs inside. Re-typing those
+commands in the main session keeps the work and drops the refusal: no
+`refused:` line, no `--force-with-lease` selection, no `C0`, no effort hook.
+The main session writing `apps/<p>/e2e/*.rs` or `apps/<p>/src/**` itself is
+the case that needs a stated reason.
 
-Read `README.md` for repository inventory. Project promises live in each
-project's own `README.md`, under `## Capabilities`; local workflow and
-verification live in its `CONTRIBUTING.md`. There is no third META-doc —
-`<project>/CAPABILITIES.md` was deleted on 2026-08-17 and its content merged
-into the README.
+| The human asks for | Reach for | Not |
+|---|---|---|
+| a commit, a rebase onto main, a push, or "land this" | `git-commit`, `git-rebase`, `git-push`, `git-land` | `git add -A && git commit`, `git rebase`, `git push --force` typed here |
+| a pull request, or its merge | `gh-create-pr`, `gh-merge-pr` | `gh pr create` / `gh pr merge` typed here |
+| a debug or release run of keep, defer, relay, or loom | `build-debug <app>`, `build-release <app>` | `cargo build`, `docker build`, `kind load`, `gh workflow run` |
+| a lumen release | `lumen-build-release` | tagging or publishing by hand |
+| a project's META-docs, its release Milestone, or a Milestone's issue set | `aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`, `aw-grill-milestone-to-issue`, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside a grill |
+| a queue head's e2e contract | `aw-e2e-for`, run by `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main session |
+| a queue head's implementation, or a maintenance head | `aw-impl-for`, run by `<p>-dev` | writing `apps/<p>/src/**` in the main session |
+| closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
+| a decision the session has been making alone | `aw-ask-user` | one more stated assumption |
+| a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` here |
+| a paid GKE acceptance run to launch and watch | `gke-operator` | polling `gcloud`/`kubectl` from the main session |
+| an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
+| UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
+
+**Skills.** Nineteen, each a directory `.claude/skills/<name>/` with a
+byte-identical twin at `.agents/skills/<name>/`: the nine `aw-*` lifecycle
+skills under `## Skills` plus `git-commit`, `git-rebase`, `git-push`,
+`git-land`, `gh-create-pr`, `gh-merge-pr`, `build-debug`, `build-release`,
+`lumen-build-release`, `ui-ux-pro-max`. A skill's name is its directory
+name — no leading slash, no colon form. Invoke one through the Skill tool by
+that name — the human types it, or the session invokes it when the human
+asked for its outcome in prose — never by re-typing the commands underneath
+it. Each `SKILL.md` names what stays with the human: a `refused:` exit, a
+force push to a persistent ref, or a failing check is not yours to work
+around.
+
+**Subagents.** 91 under `.claude/agents/`: two per project (22 apps, 22
+libs) plus `aw-dev`, `gke-operator`, and `agy-operator`.
+
+| Agent | Model / effort | Owns | Never |
+|---|---|---|---|
+| `<p>-e2e-dev` | opus / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
+| `<p>-dev` | sonnet / `medium` | source plus colocated unit tests, verified by running them; for apps it runs `aw-impl-for`, impl and maint legs | `e2e/` |
+| `aw-dev` | sonnet / `medium` | one bounded change to the `apps/aw` CLI, verified with pytest through `uv` | protocol or lifecycle redesign |
+| `gke-operator` | sonnet / `medium` | launching and watching a paid GKE acceptance run; reports raw observations | acceptance, tracker, source |
+| `agy-operator` | sonnet / `low` | one frozen AGY dispatch round | authoring, verifying, Git, tracker |
+
+Dispatch through the Agent tool with the description prefixed
+`[effort=<level>]` (`low`, `medium`, `high`, `xhigh`, or `max`) and
+`subagent_type` naming a registered agent whose frontmatter `effort:`
+matches; `.claude/hooks/require_agent_effort.py` refuses a missing marker,
+an unknown value, a built-in or unregistered agent, or a mismatch. When no
+registered agent has the right ownership at that effort, keep the work here
+or report the gap — never claim another effort to pass the hook. The model
+tier is a default, not a ceiling: a hard case may raise `model` at dispatch
+time, and ownership does not move with it. For apps the phase script's
+`commit` is the runner's only Git write, and acceptance reads the commits,
+not the runner's summary; `libs/<name>/` has no phase script, so the lib
+e2e-dev authors and runs its cases directly, the lib dev verifies with
+`cargo test -p <crate> --lib` then the full crate suite, and the controller
+owns every lib commit. One writer per worktree at a time — phase scripts
+measure named reds against HEAD, so two concurrent writers poison each
+other's baseline; cross-project parallelism means separate `app/<name>` /
+`lib/<name>` worktrees, and before dispatching a ladder phase
+`git -c core.fsmonitor=false status --short` must show no other writer's
+uncommitted work in the target write root. A dev stalled twice on the same
+task is not re-dispatched; the controller takes over.
+
+**The main session keeps** the five interviewing skills
+(`aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`,
+`aw-grill-milestone-to-issue`, `aw-prepare-goal`, `aw-ask-user` — they need
+AskUserQuestion, which subagents do not have), dispatch scheduling, final
+acceptance, git land, tracker semantic decisions, AGY payload authorization,
+long read-only investigations, and any task too small to be worth
+delegating.
+
+## Git and worktrees
+
+- Run every git command as `git -c core.fsmonitor=false …`. This checkout
+  enables `core.fsmonitor`, and a stalled daemon blocks every command that
+  reads the index — indefinitely, with no error.
+- One project, one worktree: `app/<name>` for an application, `lib/<name>`
+  for a library, the retained `project-mamba` and `project-lumen` for those
+  legacy roots, and `examples` for the repo-root `examples/` tree (worktree
+  `/Users/chrischeng/axiom/examples`; day-to-day `examples/` edits go through
+  that branch and rebase-merge back into `main`, the discipline `app/lumen`
+  already relies on).
+- `main`, `app/*`, `lib/*`, `project-mamba`, `project-lumen`, and `examples`
+  are persistent refs: never delete or force-overwrite one without the
+  user's explicit confirmation, converge by rebase, and preserve dirty
+  worktree changes. The work-item scripts manage tracker state without
+  creating or switching branches.
 
 ## `aw` is `apps/aw` plus both `skills/aw-*` mirrors
 
-`aw` is the Typer CLI at `apps/aw` — its engine is the argparse scripts under
-`apps/aw/src/aw/scripts/` — and the nine skills under `.agents/skills/aw-*/`
-and `.claude/skills/aw-*/`. The protocol is still stdout and exit codes; the
-CLI adds no validation of its own, it rebuilds each verb's argv and hands it
-to the engine module's `main(argv)`.
-
-It was a Claude Code plugin at `plugins/aw/` until 2026-08-21, then bare
-scripts under `.claude/aw/scripts/` until 2026-09-02, when the engine moved
-into the `apps/aw` uv project. The verification suite stayed at
-`.claude/aw/verification/` and resolves the engine through its
-`_paths.SCRIPTS`; the migrations data stayed at `.claude/aw/migrations/`. The
-retired plugin root and `${CLAUDE_PLUGIN_ROOT}` still resolve nowhere.
-
-AW has nine project skills in two runtime roots. Codex reads
-`.agents/skills/aw-*/SKILL.md`. Claude Code reads
-`.claude/skills/aw-*/SKILL.md`. Each matching pair must be byte-identical.
-Both runtimes run the one CLI as `uv run --project apps/aw aw <group> …` from
-the repository root — nine groups: `change`, `milestone`, `e2e`, `impl`,
-`maint`, `wis`, `meta`, `metadoc`, and `version`. That exact prefix is what
-the engine prints in its `next.command:` lines, and `uv` supplies the pinned
-Python 3.13 — a bare `python3` is 3.9 on at least one machine here, where the
-failure is a `ModuleNotFoundError` traceback that reads like a broken script
-rather than a wrong interpreter.
-
-There is no `aw` on `PATH`. The Rust application at `apps/agentic-workflow`
-that carried the name is deleted, and `cargo uninstall agentic-workflow`
-removed the copy on `PATH` — so
-a stray `aw wi …` now fails with "command not found" instead of running,
-mutating the tracker, and printing something plausible. The retired binary's
-verbs stay retired: the CLI's groups are the nine above, and `meta.py`'s M2
-rule refuses a doc whose `aw` invocation names anything else.
+`aw` is the Typer CLI at `apps/aw` (engine: the argparse scripts under
+`apps/aw/src/aw/scripts/`), run from the repository root as
+`uv run --project apps/aw aw <group> …` — groups `change`, `milestone`,
+`e2e`, `impl`, `maint`, `wis`, `meta`, `metadoc`, `version`. That prefix is
+what its `next.command:` lines print, and `uv` supplies the pinned Python
+3.13; a bare `python3` is 3.9 on at least one machine here. The protocol is
+stdout and exit codes. There is no `aw` on `PATH`: the Rust binary that
+carried the name is deleted, so
+a stray `aw wi …` now fails with "command not found" instead of mutating the
+tracker, and `meta.py`'s M2 rule refuses a doc naming any other group. The
+verification suite is `.claude/aw/verification/`; nothing in the repository
+calls its `run_all.py`, so it is a check a human runs.
 
 ## Skills
 
-Nine entry points: the `aw-*` skills below. Each is invoked by a human.
-(`/git-commit`, `/git-rebase`, `/git-push`, `/git-land`, `/gh-create-pr`,
-`/gh-merge-pr`, `/build:debug`, `/build:release`, `/lumen-build-release` and
-`/ui-ux-pro-max` exist beside them as standalone utilities outside the AW
-system;
-`/project-readme-check` was deleted on 2026-09-02 — its deterministic
-validators under `scripts/meta/` remain and run directly.) `grill-me-to-meta`
-interviews a human and writes prose under one project's `README.md`,
-`STATUS.md`, `ROADMAP.md` and `docs/**`, and hands the run to `metadoc.py`,
-which refuses a commit that wrote anywhere else and is the only writer of its
-own commit; `grill-meta-to-milestone` and `grill-milestone-to-issue` split the
-retired `grill-meta-to-wis` in two — the first measures the gap with
-`aw wis gap` and settles the promise↔Milestone structure, the second settles
-one Milestone's typed issue set and order, both through
-`aw milestone`/`aw change`; `e2e-for` and `impl-for` take a scope (`#<iid>`,
-`milestone:<n>`, exact `<project>@<version>` title, or a bare `<project>` for
-every open release Milestone) and hand each queue head to the matching phase
-scripts, which can refuse them — `impl-for` absorbs the retired
-`maint-for-wi`, routing maintenance heads through the maint verbs;
-`test-for` and `review` are read-only closers that verify lifecycle evidence
-and audit a project without writing; `ask-user` writes nothing.
-
-`/build:debug` and `/build:release` stand outside AW; they replaced
-`aw-build` on 2026-09-02, because a cluster run is not lifecycle work. Debug
-builds the app's image locally from the working tree with the cargo debug
-profile, loads it into the persistent kind cluster `axiom-build-debug`, and
-runs the acceptance harness's deploy → verify → teardown against it
-(`scripts/build/debug.sh`; a dirty tree is allowed and tagged `-dirty`).
-Release dispatches the `gke-acceptance` workflow — image → terraform +
-kustomize deploy on GKE → verify → park the pool whatever the result
-(`scripts/build/release.sh`; it refuses a dirty or unpushed tree). Both cover
-keep, defer, relay, and loom, hand lumen to `/lumen-build-release`, and
-refuse anything else rather than fall back to `cargo build`. Neither is the
-`apps/<name>/build.sh debug|release` versioned contract in `CONTRIBUTING.md`,
-and neither is `/aw-e2e-for`: that skill writes the red-first
-`apps/<p>/e2e/*.rs` contract for one typed issue, these two run a built
-artifact on a cluster and write nothing.
-
-There is no technical-design step. Two old grills — one per issue epic, one per change —
-wrote per-subsystem technical-design sections and ADRs beside them, under a
-`technical/` tree nested inside each project's `docs` directory, from
-2026-08-26 until 2026-08-27; both skills and that whole tree are deleted.
-Over that lifetime they produced no section at all and five ADRs, and the rule
-that already governed this — `.claude/rules/authoring/source-carries-its-own-design.md`
-— says the `.rs` file is the authoring surface. A design decision goes in the
-`//!` or `///` block of the module or type that owns it.
-
-They load as project skills from the runtime-specific root above, not as the
-retired `aw` plugin. Each directory and frontmatter name is `aw-<skill>`.
-`check_plugin.py` refuses a missing skill, a mismatched
-pair, or a skill that calls the legacy issue-epic writer.
+The nine `aw-*` entry points:
 
 | Skill | Reach for it when | It does |
 |---|---|---|
-| `/aw-grill-me-to-meta` | a project's `README.md`, `STATUS.md`, `ROADMAP.md`, or a `docs/**` section is missing, stale, wrong, or no longer wanted | interviews you, then writes those four paths for one project through the landing sequence `aw metadoc check` → `aw meta check` → `aw metadoc commit`; absorbs the retired standalone meta-checking skill as that sequence's second step |
-| `/aw-grill-meta-to-milestone` | a future `docs/**` promise has no release Milestone, or a Milestone binds to no promise | runs `aw wis gap` (G1, G3–G5), then `aw milestone next-version`/`skeleton`/`create --draft`; the Milestone title owns the version and the promise heading gains `(Milestone #<number>)` |
-| `/aw-grill-milestone-to-issue` | a release Milestone's issue set, types, or order is missing or wrong | answers G2, G6 and G7; creates typed issues through `aw change`, assigns them to the Milestone, and finalizes `## Development Order` — the assigned issues own the work set and that list owns the sequence |
-| `/aw-e2e-for` | a scope's queue head is `type:feat`, `type:fix`, or `type:perf` | drives e2e for each behavior queue head in the scope; a Milestone yields at most one e2e commit per run, and maintenance heads are reported as `/aw-impl-for` work |
-| `/aw-impl-for` | a scope's queue head has landed e2e evidence, or is a maintenance type | drives impl for behavior heads and maint for `type:refactor`/`test`/`docs`/`chore` heads, closing each issue to advance the queue |
-| `/aw-test-for` | a scope's work looks finished and needs closing regression verification | read-only: checks each issue's lifecycle trailers against its commits, then runs the project gates unfiltered; writes nothing |
-| `/aw-review` | one project needs a full audit outside the lifecycle | read-only: uncommitted diff, `aw meta check`, `aw wis gap`, README-declared gates; produces a findings report and writes nothing |
-| `/aw-prepare-goal` | a project, typed issue, release Milestone, or bare intent must become decidable conditions | reads the project or tracker, selects the next route by type, and sets no goal unless the human explicitly asks |
-| `/aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
+| `aw-grill-me-to-meta` | a project's `README.md`, `STATUS.md`, `ROADMAP.md`, or a `docs/**` section is missing, stale, wrong, or no longer wanted | interviews you, then writes those four paths for one project through the landing sequence `aw metadoc check` → `aw meta check` → `aw metadoc commit`; absorbs the retired standalone meta-checking skill as that sequence's second step |
+| `aw-grill-meta-to-milestone` | a future `docs/**` promise has no release Milestone, or a Milestone binds to no promise | runs `aw wis gap` (G1, G3–G5), then `aw milestone next-version`/`skeleton`/`create --draft`; the Milestone title owns the version and the promise heading gains `(Milestone #<number>)` |
+| `aw-grill-milestone-to-issue` | a release Milestone's issue set, types, or order is missing or wrong | answers G2, G6 and G7; creates typed issues through `aw change`, assigns them to the Milestone, and finalizes `## Development Order` — the assigned issues own the work set and that list owns the sequence |
+| `aw-e2e-for` | a scope's queue head is `type:feat`, `type:fix`, or `type:perf` | drives e2e for each behavior queue head in the scope; a Milestone yields at most one e2e commit per run, and maintenance heads are reported as `aw-impl-for` work |
+| `aw-impl-for` | a scope's queue head has landed e2e evidence, or is a maintenance type | drives impl for behavior heads and maint for `type:refactor`/`test`/`docs`/`chore` heads, closing each issue to advance the queue |
+| `aw-test-for` | a scope's work looks finished and needs closing regression verification | read-only: checks each issue's lifecycle trailers against its commits, then runs the project gates unfiltered; writes nothing |
+| `aw-review` | one project needs a full audit outside the lifecycle | read-only: uncommitted diff, `aw meta check`, `aw wis gap`, README-declared gates; produces a findings report and writes nothing |
+| `aw-prepare-goal` | a project, typed issue, release Milestone, or bare intent must become decidable conditions | reads the project or tracker, selects the next route by type, and sets no goal unless the human explicitly asks |
+| `aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
 
-The usual behavior sequence is `grill-me-to-meta` → `grill-meta-to-milestone`
-→ `grill-milestone-to-issue` → `e2e-for` → `impl-for` → `test-for`.
-Maintenance heads route through `impl-for`'s maint leg. These are
-machine-checked handoffs. A release Milestone must bind to a product promise.
-`aw milestone next` selects one queue head. `aw change fetch` records its type
-and flow. Each phase commit is recorded by `aw change lifecycle`, and
-`aw change close` advances the queue only after all required evidence matches
-the commit. `prepare-goal` and `ask-user` stand outside the lifecycle.
+The behavior sequence is `aw-grill-me-to-meta` → `aw-grill-meta-to-milestone`
+→ `aw-grill-milestone-to-issue` → `aw-e2e-for` → `aw-impl-for` →
+`aw-test-for`; maintenance heads route through `aw-impl-for`'s maint leg;
+`aw-prepare-goal` and `aw-ask-user` stand outside it. The handoffs are
+machine-checked by the engine — a release Milestone must bind to a product
+promise, `aw milestone next` selects the one executable queue head,
+`aw change close` advances the queue only after every required piece of
+evidence matches its commit — so a grill interviews (Plan mode first, never
+inventing an answer you did not give, offering only gates the repository
+already runs), and the execution skills read `#<iid>` as one typed issue and
+only `milestone:<number>` or an exact `<project>@<version>` title as a
+Milestone. Each `SKILL.md` carries the rest.
 
-Release Milestone titles use the SemVer core form
-`<project>@<major>.<minor>.<patch>`. Each version field is a non-negative
-integer without leading zeroes. `aw milestone next-version <project>` reads
-all open and closed release Milestones for that project. It defaults to a
-minor bump and resets patch to zero. A major bump, patch bump, or exact version
-is an explicit human choice. If no prior release Milestone exists, the human
-chooses the initial version. This planning policy does not change a project's
-build or release version rules.
-
-Every `grill-*` skill enters Plan mode as step 1. It does not read, ask, or
-write until the runtime confirms Plan mode. If the runtime cannot switch modes
-from a skill, it stops and asks the human to enter Plan mode first.
-
-- A grill never writes product source and never invents an answer you did not
-  give. It offers only gates the repository already runs, and it stops asking
-  once the body's own sections are answered.
-- On `grill-milestone-to-issue`, GitHub's native issue `milestone` field is
-  the only
-  ownership relation. Milestone creation uses the exact draft order line.
-  Assignment requires an open Milestone and the same one `app:*` or `lib:*`
-  label. The first final update must match all assigned issues. An
-  `epic:<iid>` label is legacy data, not ownership.
-- A delivery issue has exactly one type: `type:feat`, `type:fix`,
-  `type:refactor`, `type:perf`, `type:test`, `type:docs`, or `type:chore`.
-  Behavior types are `feat`, `fix`, and `perf`; they route through e2e then
-  impl. Maintenance types are `refactor`, `test`, `docs`, and `chore`; they
-  route through maint. `spike` and `report` are intake. `type:change` and all
-  other legacy types are rejected.
-- `grill-me-to-meta` writes only `README.md`, `STATUS.md`, `ROADMAP.md` and
-  `docs/**` for the one project it names, one `## <title>` section per
-  promise — never for an issue number, because a promise can predate the
-  work item that will carry it. That allowlist is measured rather than asked
-  for: `aw metadoc check` reads the dirty set against HEAD and refuses every
-  path outside it, along with a section missing one of its own kind's
-  bullets (a section is exactly one of `Outcome:`-shaped or
-  `Status rows:`-shaped), a STATUS or ROADMAP id that resolves nowhere, and a
-  heading that gained a `(Milestone #<number>)` — binding a section to a
-  release Milestone is `grill-meta-to-milestone`'s job, not this one's, and this check refuses a run
-  that did it anyway. `aw metadoc commit` re-runs all of it, stages the
-  allowlist, and writes the `Meta-Project:` / `Meta-Top:` / `Meta-Index:` /
-  `Meta-Section:` / `Meta-Unbound:` trailers that make the commit findable; a
-  META-doc commit written by hand carries none of them. A section is bound to
-  its release Milestone — the heading gains `(Milestone #<number>)` and
-  `Tracking:` gains the Milestone link — by `grill-meta-to-milestone`, and by
-  nothing else.
-- `aw wis gap` prints seven rows, each with the size of what it read printed
-  beside the count (`3 / 31`), not a bare count: G1 a future promise no release
-  Milestone owns, G2 an open release Milestone or unmilestoned delivery issue no
-  promise reaches, G3 a promise bound to a Milestone that cannot carry it,
-  G4 a ROADMAP outcome no promise claims,
-  G5 a STATUS row no promise claims, G6 an e2e case the crate manifest does
-  not run, G7 a README gate that names no cargo target. A row it could not
-  read — a missing `docs/` area file, an absent `STATUS.md`, `gh` exiting
-  non-zero outside a git directory — prints `?` UNMEASURED with the reason
-  instead of `0`, and is counted separately, so a run that could not reach
-  the tracker never reports `=> ALIGNED`. It writes nothing; every write the
-  two downstream grills make goes through `aw milestone` / `aw change`.
-- Execution skills treat `#<iid>` as one typed issue. They treat only
-  `milestone:<number>` or an exact `<project>@<version>` title as a Milestone.
-  A bare number never means a Milestone. A Milestone run first calls
-  `aw milestone next <ref> --json`. This command checks the complete assigned
-  child set before it returns the first open row. Any structural error stops
-  the run. The returned issue is the only executable queue head.
-- `prepare-goal` prints text and sets nothing. `/goal` is a Claude Code
-  built-in that nothing here implements, and a goal exists only once the human
-  pastes one of the printed lines — which starts a turn on the spot, and
-  supersedes whatever goal was already running.
-- `aw meta check` reads and never writes; it is the second step of
-  `grill-me-to-meta`'s landing sequence now, where the standalone skill it
-  came from used to be run by a human who had to remember to. Its baseline
-  was 103 findings over 182 documents, nearly all
-  of them markers left behind by the deleted CLI. Those are cleared, and so
-  are the three rules added on 2026-08-20 — `M5` a gate whose test-name
-  filter cargo exits 0 on, `M6` a gate naming a package or target that is not
-  in the checkout, `M7` a self-graded `Status:`/`Maturity:` field — which
-  landed at 151, 5 and 526 findings and reached zero the same day the 60
-  project READMEs carrying them were rewritten. It reports `=> CLEAN` over
-  184 tracked META-docs and 64 project READMEs; the count was 185 until
-  `4a30ca3097` deleted `apps/lumen`'s retired trees.
-- All seven rules are ratcheted to zero by
-  `.claude/aw/verification/check_meta_clean.py`, which `run_all.py` runs with a
-  negative control. That is weaker than it sounds: nothing in this repository
-  calls `run_all.py` — no CI workflow, no git hook, no phase script — so the
-  ratchet is one a human runs, and a finding in a file you edited is still the
-  signal.
+`build-debug <app>` and `build-release <app>` stand outside AW: debug runs
+the acceptance harness against a working-tree image on the kind cluster
+`axiom-build-debug`, release dispatches the paid `gke-acceptance` workflow
+from a clean pushed tree. Both cover keep, defer, relay, and loom, hand lumen
+to `lumen-build-release`, and refuse anything else rather than fall back to
+`cargo build`.
 
 ## Authority Order
 
 - `<project>/README.md` owns product promises, work roots, and gates.
 - `<project>/CONTRIBUTING.md` owns project-local edit and verification rules.
-- `.claude/rules/**/*.md` owns reusable agent instructions, one concern per
-  semantic path.
-- Skills are thin human-invoked entry points. Hard enforcement is the exit code
-  of the phase scripts, not a guard binary.
+- This file owns the repo-wide agent instructions — routing, Git allocation,
+  lifecycle, write roots, authoring shape. There is no other rules layer.
+- Skills are thin entry points — typed by a human, or invoked by the session
+  on the human's behalf. Hard enforcement is the exit code of the scripts
+  behind them, not a guard binary.
 
 ## External implementation workers
 
-Repository operating policy. It does not override a host's own approval gate
-for sending data outside the machine.
-
-When a bounded task can use an external worker, prefer one fresh
-`agy-operator` subagent. Its model is Sonnet at low reasoning. Create it only
-after the user authorizes the exact headless AGY payload. Make it directly
-inherit that user turn. Do not reuse an older operator. Do not forward
-authorization through a controller message.
-
-For more than one task in the same round, classify every task `measure-only`
-or `bounded-write` and apply this rule by hand — the `/dispatch-to-agy` skill
-that used to enforce it was deleted on 2026-09-02. Any number of
-`measure-only` tasks may run
-concurrently. `bounded-write` tasks may run concurrently only across distinct
-persistent AGY Projects — AGY has not proven per-conversation worktree
-confinement for two concurrent bounded writes in one Project, so those queue
-one at a time regardless of how disjoint their write ownership looks.
-
-The controller freezes the profile, task key, action, snapshot mode, and all
-input digests before dispatch. The snapshot mode is `create`, `reuse`, or
-`refresh`. The operator only checks those inputs and runs the exact matching
-`doctor` / `snapshot` / `dispatch` / `resume` / status sequence. It must return
-`HANDOFF_INCOMPLETE` if the authorization or frozen handoff is incomplete.
-
-The operator never authors the contract, oracle, injection, or prompt. It does
-not verify or accept the result. It does not create or change a permission or
-worktree. It does not run Git, tracker, publication, or cleanup actions.
-
-The controller owns the profile, task contract, oracle, injection, prompt,
-worktree creation, independent verification, semantic acceptance, Git, tracker
-changes, publication, and cleanup. The `agy-dispatch` skill that carried the
-AGY model, Project, permission, snapshot, command, and write rules was deleted
-on 2026-09-02 with its reference material; what remains is the adapter itself.
-Run every adapter verb from the repository root as
-`python3 scripts/agy_dispatch.py ...`. Do not use an installed or
-legacy dispatcher copy. Send only task-required repository material. Never send
-secrets. Do not run workers with overlapping write ownership in parallel.
-
-The `$copilot-dispatch` this paragraph named until 2026-08-17 has never existed
-in this checkout, so the policy covers the `agy_dispatch.py` adapter and
-whatever is added
-beside it, not a second adapter someone might go looking for.
+- A bounded task that can use an external worker goes to one fresh
+  `agy-operator`, created only after the user authorizes the exact headless
+  AGY payload and directly inheriting that user turn. Never reuse an older
+  operator, and never forward authorization through a controller message.
+- Classify each task `measure-only` or `bounded-write` by hand.
+  `measure-only` tasks may run concurrently without limit; `bounded-write`
+  tasks only across distinct persistent AGY Projects — same-Project bounded
+  writes queue one at a time regardless of how disjoint their write
+  ownership looks.
+- The controller freezes the profile, task key, action, snapshot mode
+  (`create`, `reuse`, or `refresh`) and all input digests before dispatch,
+  and owns the task contract, oracle, injection, prompt, worktree creation,
+  independent verification, semantic acceptance, Git, tracker changes,
+  publication, and cleanup; the operator's contract is
+  `.claude/agents/agy-operator.md`. The only adapter is
+  `python3 scripts/agy_dispatch.py ...`, run from the repository root. Send
+  only task-required repository material, never secrets.
 
 ## Work-item lifecycle
 
-The delivery lifecycle has two flows. Behavior is `wi → e2e → impl → close`.
-Maintenance is `wi → maint → close`. Each phase prints the command that follows
-it. `e2e` runs four verbs — `start`, `verify`, `test`, `commit`; `impl` runs
-five — `start`, `red`, `verify`, `test`, `commit`. The extra behavior verb
-is load-bearing: the retired three-phase ladder proved attribution with two
-commits — its middle phase's own trailer was the record the phase after it
-read back — and a two-phase ladder's second phase has no earlier commit of
-its own kind to read. `red` is where the evidence moves instead — it records the
-named failing tests, the head sha, and a per-test-file sha256 to
-`.aw/impl-red/<iid>.json`, and only passes at the moment the tests are
-written and the implementation is not; write the implementation first and
-`red` finds nothing failing to name, and refuses.
-
-A phase's green must be attributable to a named red measured immediately before
-it in the same tree. That is what the commit trailers `E2E-Red:`, `Impl-Red:`,
-and `Impl-Contract:` carry: `e2e`'s own commit carries `E2E-Red:`; `impl`'s
-`verify`/`test` refuse a tree that has drifted from the `red` record before
-`impl`'s commit ever writes `Impl-Red:`/`Impl-Contract:` back onto it.
-
-Maintenance does not invent a red. `aw maint start` freezes the type, baseline,
-GHAN change points, and clean tree. A controller reads each declared command,
-checks its paths, runs it outside `aw maint`, and records its exact exit and
-output digest with `aw maint record`. Refactor records the same gates before
-and after. Test, docs, and chore record their after gates. The commit carries
-`Maint-Contract:` and `Maint-Change-Digest:`.
+Behavior is `wi → e2e → impl → close`; maintenance is `wi → maint → close`.
+`e2e` runs `start`, `verify`, `test`, `commit`; `impl` runs `start`, `red`,
+`verify`, `test`, `commit`; each phase prints the command that follows it.
+A phase's green must be attributable to a named red measured immediately
+before it in the same tree: `red` records the failing tests, the head sha,
+and a per-test-file sha256 to `.aw/impl-red/<iid>.json` and refuses once the
+implementation exists; `e2e`'s commit carries `E2E-Red:`, and `impl`'s
+carries `Impl-Red:`/`Impl-Contract:` after `verify`/`test` refuse a tree that
+drifted from the record. Maintenance invents no red: `aw maint start`
+freezes the type, baseline, GHAN change points, and clean tree; the
+controller runs each declared gate outside `aw maint` and records its exact
+exit and output digest with `aw maint record` (refactor before and after;
+test, docs, chore after); the commit carries `Maint-Contract:` and
+`Maint-Change-Digest:`.
 
 ### Work-item terminal states
 
@@ -320,17 +221,16 @@ The closed type registry lives at `apps/aw/src/aw/scripts/wi_types.py`:
 | `spike` | an ADR-style decision records spawned WI refs or explicit no-action; expiry converges to `gave_up` |
 | `report` | typed `triage` accepts and links a spawned change, or closes as `duplicate`, `invalid`, or `by-design` |
 
-`workitem.py` keeps the legacy `epic` enum for read compatibility. New writes
-must not create or update issue-based epics. Only typed delivery issues enter
-the executable backlog. A `spike` never lands
-investigation code in product source. A `report` remains in the intake queue
-until triage, and both converge by spawn-and-link instead of changing type in
-place.
+A delivery issue has exactly one type; `type:change` and every other legacy
+type is rejected, and `spike` and `report` converge by spawn-and-link, never
+by changing type in place. GitHub's native issue `milestone` field is the
+only ownership relation: an `epic:<iid>` label is legacy data, and new writes
+must not create or update issue-based epics.
 
 ## Artifact write order
 
 Every behavior change to a project under `apps/<name>/` is authored one phase
-at a time, red first. A phase does not start until its predecessor has landed
+at a time, red first; a phase does not start until its predecessor has landed
 its commit.
 
 | Phase | Writes | What lands there |
@@ -347,55 +247,90 @@ Maintenance has one `maint` phase. Its type selects its write boundary:
 | `docs` | product documents or documentation-only comments; executable code stays unchanged |
 | `chore` | only build, config, dependency, or tooling paths listed in the issue GHAN |
 
-- This table is not advice. `C0` refuses any dirty path outside the phase's
-  write root against `leg.LEG_ROOTS`. The retired ladder told `unit` from
-  `logic` inside their shared `src/` root against `leg.LEG_TEST_FILES` — by
-  filename, never by reading a `#[cfg(test)]` span; that boundary gate is
-  gone with those two phases. What `leg.LEG_TEST_FILES` still gates is an
-  existence requirement: an `impl` commit that touches no test file is
-  refused by `C0`.
-- Never open `src/**` first. Reaching implementation before the contract exists
-  means nothing can refuse the implementation afterwards.
-- Write the phase-1 case so it **fails against the current tree**, and run it to
-  observe that failure before moving on. A contract that was green before the
-  change was written proves nothing about the change.
-- `libs/<name>/` has no ladder. `leg.leg_root` resolves under `apps/` only.
-- `external-contracts/` and `tech-design/` are not write roots and not authoring
-  surfaces, and a `// SPEC-MANAGED: <path>#<anchor>` header names a producer that
-  no longer exists. The `.rs` file is the authoring surface; editing the markdown
-  a header names propagates nowhere.
-- `docs/product/` exists under every `apps/*` and `libs/*` since 2026-08-26,
-  and as of 2026-08-27 `metadoc.py`'s write allowlist widens past it to four
-  paths per project: `README.md`, `STATUS.md`, `ROADMAP.md`, and everything
-  under `docs/**` — not `docs/product/` alone, because a promise and the
-  STATUS row that measures it are one edit now, not two skills' worth. It is
-  where `grill-me-to-meta` writes, before any work item exists, one
-  `## <title>` section per promise; the heading gains its
-  `(Milestone #<number>)` when `grill-meta-to-milestone` binds the release. The
-  technical-design tree that landed
-  beside `docs/product/` on the same day, under `docs`'s own `technical/`,
-  is deleted as of 2026-08-27, ADRs included — a design decision lives in the
-  `.rs` file that owns it.
-  `docs/**` is not `tech-design/` under a new name: nothing generates from
-  it, no source header points at it, and it is prose a human was interviewed
-  into. Nor is it a ladder write root — `C0` refuses a dirty `docs/` path
-  like any other path outside a phase's write root, so land a META-doc
-  before `aw e2e start`, not during.
+- These tables are enforced, not advised: `C0` refuses any dirty path outside
+  the phase's write root (`leg.LEG_ROOTS`) and an `impl` commit that touches
+  no test file (`leg.LEG_TEST_FILES`, matched by filename). `libs/<name>/`
+  has no ladder: `leg.leg_root` resolves under `apps/` only.
+- Never open `src/**` first; a contract that was green before the change was
+  written proves nothing about the change, so run the phase-1 case and
+  observe its failure before moving on.
+- `docs/**` (with `README.md`, `STATUS.md`, `ROADMAP.md`) is where
+  `aw-grill-me-to-meta` writes, before any work item exists. It is not a
+  ladder write root — `C0` refuses a dirty `docs/` path like any other — so
+  land a META-doc before `aw e2e start`, not during.
+- `external-contracts/` and `tech-design/` are not write roots; a
+  `// SPEC-MANAGED:` header names a producer that no longer exists. A design
+  decision goes in the `//!` or `///` block of the module or type that owns
+  it (`## Authoring` below).
 
 ## Test Layout
 
 Every `apps/<p>` and `libs/<p>` crate owes an `e2e/` tree. Externally
 observable behavior goes in `{apps,libs}/<p>/e2e/*.rs` — Rust, one file per
-case, run by `cargo test -p <crate>`. Declare each one: `autotests = false`
-plus a `[[test]]` stanza per file, so the `Cargo.toml` manifest is the
-inventory and nothing starts or stops running without showing up in a diff.
+case, run by `cargo test -p <crate>` — declared with `autotests = false` plus
+a `[[test]]` stanza per file, so the `Cargo.toml` manifest is the inventory.
 Rules observable only inside the implementation stay as colocated unit tests
-under their semantic `src/**` owner (`cargo test -p <crate> --lib`).
+under their semantic `src/**` owner (`cargo test -p <crate> --lib`). Write
+the `e2e/*.rs` case before the `src/**` change it judges.
 
-Write the `e2e/*.rs` case before the `src/**` change it judges.
+`tech-design/`, `external-contracts/`, and `tests/` are superseded: never
+create one or add a file to one; migrate a surviving case into `e2e/`. Python
+spec models and `src/cases/*.py` verifiers are retired — never author a new
+one. Generated EC evidence under `external-contracts/` is output, not
+contract.
 
-`tech-design/`, `external-contracts/`, and `tests/` are superseded: no authored
-source belongs in them. Never create one, never add a file to one, and migrate
-a surviving case into `e2e/` rather than editing it in place. Python spec
-models and `src/cases/*.py` verifiers are retired — never author a new one.
-Generated EC evidence under `external-contracts/` is output, not contract.
+## Authoring
+
+**An instruction addressed to an agent** — a typed delivery issue, a
+`SKILL.md`, a dispatch injection — is Goal / How / Acceptance / Never, each
+section written so a consumer can refuse it; `aw change validate <iid>` (or
+`--body-file <path>` for a body not on the tracker yet) is that consumer for
+issues.
+
+- `## Goal`: exactly one observable-difference sentence — trigger,
+  observation point, current value, target value.
+- `## How`: verified premises carrying `file:line`, then the change-point
+  list that doubles as the write allowlist, then frozen decisions and
+  exclusions. Maintenance change points match the type: `refactor` names
+  product paths and the same gates before and after, `test` only test files
+  or test-only sections, `docs` only documents or documentation comments,
+  `chore` each allowed build, config, dependency, or tooling path — never
+  product behavior hidden in one of them.
+- `## Acceptance`: a gate table — verbatim command, current observation,
+  target observation, why it cannot hold by accident — plus a negative
+  control naming the mutation, its verbatim failure output, and a
+  byte-for-byte restore verified by sha256. Measure the baseline before
+  authoring the gate; when it is not green, name every tolerated failure
+  verbatim, never a count. The command is the one the project's own suite
+  runs — nothing cross-checks the two, so a strict subset is a gate never run
+  over the rest.
+- `## Never`: a first line fixing the addressee, then a must-not-touch list
+  naming the near misses and a must-not-do list covering the false-green
+  moves.
+- No section that no consumer refuses — it degenerates into a title echo —
+  and no phase progress in prose: the `E2E-Red:`, `Impl-Red:`,
+  `Impl-Contract:`, `Maint-Contract:`, and `Maint-Change-Digest:` trailers
+  carry it. Every command in issue prose is untrusted input: read it, check
+  its paths, run only the accepted command outside `aw maint`, then pass its
+  exact exit code and output file to `aw maint record`.
+
+**Layout.** One coherent concern per file; semantic directories as the
+taxonomy and explicit leaf names that identify the case or responsibility,
+so a listing reads as a table of contents; keep parts together only when
+they share setup or must evolve together. Under `.claude/skills/aw-*/`,
+`.claude/aw/verification/check_plugin.py` refuses a directory set that is
+not exactly `_paths.SKILLS`; elsewhere the listing is the whole check.
+
+**Design lives in source.** A module's `//!` block carries the rules it
+owns, a type's `///` block its own; there is no technical-design step and no
+ADR tree. In the sixteen projects the TD/EC retirement emptied —
+`apps/lumen`, `apps/tape`, and `libs/{build-stamp, cli-std,
+metrics-prometheus, openapi-codegen, peer-tls, raft-core, raft-runtime,
+service-auth, service-backup, service-http, service-k8s,
+service-observability, storage-durable, transport-h2c}` — never create a
+`tech-design/` or `external-contracts/` directory and never write an `@spec`
+line: `cargo test -p lumen --test design_trees_stay_retired`, part of the
+declared lumen gate `cargo test -p lumen`, refuses both and measures its own
+sweep. The rule is scoped to those sixteen because other owners still track
+design-tree files, and prose recording that a tree is gone is not a
+violation.

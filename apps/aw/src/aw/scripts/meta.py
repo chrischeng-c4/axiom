@@ -244,9 +244,9 @@ CARGO_PKG_FLAGS = ("-p", "--package")
 # nothing goes red when the code behind one stops being any of those things --
 # they are the state of the world on the day somebody typed them.
 #
-# That makes them the exact defect `.claude/rules/authoring/agent-instruction-ghan.md`
-# refuses: "Do not add a section that no consumer refuses; an unrefusable
-# section degenerates into a title echo." A capability's refusable content is
+# That makes them the exact defect `CLAUDE.md`'s "Authoring" section
+# refuses: a section that no consumer refuses degenerates into a title echo.
+# A capability's refusable content is
 # its promise, its named surface, and its gate command -- the three things
 # `CONTRIBUTING.md` line 1625 asks for. These fields sit beside those three
 # looking like more of them.

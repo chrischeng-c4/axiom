@@ -1568,7 +1568,7 @@ Other rows still depend on their named reader or a human review.
 | Layer | Doc | Fact owner | Required headings | Inherits |
 |---|---|---|---|---|
 | repo | `/AGENTS.md` | what a Codex reviewer may and may not do to this checkout | none | none — deliberately not a projection of anything |
-| repo | `/CLAUDE.md` | the work-item lifecycle, per-phase write roots, and the rules that refuse against them | none | `.claude/rules/**/*.md`, loaded alongside it |
+| repo | `/CLAUDE.md` | the work-item lifecycle, per-phase write roots, and the rules that refuse against them | none | none — the only file loaded at launch; there is no separate rules layer |
 | repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
 | repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
 | project | `<project>/README.md` | project identity, primary user workflow, functional surface, product promises, capability sources, and the gate that verifies each | `## Brief`<br>`## Primary workflow`<br>`## Contract discovery`<br>`## Capabilities`<br>`## Supporting documents` | repo README + CONTRIBUTING |
