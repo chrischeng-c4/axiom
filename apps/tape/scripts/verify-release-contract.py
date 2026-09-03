@@ -28,6 +28,7 @@ DOCKERFILE = ROOT / "apps/tape/Dockerfile.release"
 CARGO_TOML = ROOT / "apps/tape/Cargo.toml"
 STATEFULSET = ROOT / "apps/tape/k8s/base/statefulset.yaml"
 OPERATOR_DEPLOYMENT = ROOT / "apps/tape/k8s/operator/deployment.yaml"
+PROMOTION_WORKFLOW_SHA256 = "3042fba754460473df9ae899173243d3d504543ec0524cd3e91e01acf986ad9e"
 
 TAPE_GATES = (
     "python3 apps/tape/scripts/verify-release-contract.py --self-test",
@@ -295,6 +296,15 @@ def assert_no_rebuild(text: str) -> None:
                         fail(f"promotion contains rebuild command: {' '.join(sequence)}")
 
 
+def assert_reviewed_promotion_bytes(text: str) -> None:
+    actual = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if actual != PROMOTION_WORKFLOW_SHA256:
+        fail(
+            "promotion workflow bytes are not in the reviewed SHA-256 allowlist: "
+            f"expected {PROMOTION_WORKFLOW_SHA256}, got {actual}"
+        )
+
+
 def assert_release_versions(
     cargo_toml: str,
     dockerfile: str,
@@ -475,6 +485,7 @@ def check_contract(candidate: str, promotion: str) -> None:
     for line in dockerfile.splitlines():
         if line.startswith("FROM ") and "binary-source-${SOURCE}" not in line and "@sha256:" not in line:
             fail(f"release Dockerfile has mutable base image: {line}")
+    assert_reviewed_promotion_bytes(promotion)
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -800,6 +811,15 @@ def self_test() -> None:
                 "promotion-rebuild-shell-variable-wrapper",
             ),
         ),
+        "promotion-rebuild-dynamic-shell-command": (
+            candidate,
+            replace_once(
+                promotion,
+                "      pull-requests: read\n    steps:\n",
+                "      pull-requests: read\n    steps:\n      - run: |\n          runner=bash\n          \"$runner\" -c 'docker build .'\n",
+                "promotion-rebuild-dynamic-shell-command",
+            ),
+        ),
         "promotion-mutable-source": (
             candidate,
             replace_once(promotion, 'docker buildx imagetools create --tag "$semver_ref" "$root_ref"', 'docker buildx imagetools create --tag "$semver_ref" "${image_repo}:${version}"', "promotion-mutable-source"),
@@ -950,7 +970,7 @@ def self_test() -> None:
     for path, before in original_hashes.items():
         if sha256(path) != before:
             fail(f"self-test did not restore {path.relative_to(ROOT)} byte for byte")
-    print("release contract self-test passed: positive fixture plus 26 negative mutations")
+    print("release contract self-test passed: positive fixture plus 27 negative mutations")
 
 
 def main() -> None:
