@@ -108,6 +108,10 @@ path = "e2e/implementor_build_coverage.rs"
 name = "adversarial_recovery"
 path = "e2e/adversarial_recovery.rs"
 
+[[test]]
+name = "publish_preflight"
+path = "e2e/publish_preflight.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 server-lifecycle = { path = "../server-lifecycle" }

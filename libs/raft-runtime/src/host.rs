@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use axum::extract::State;
+use axum::body::{to_bytes, Body};
+use axum::extract::{FromRequest, Request, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -37,6 +38,7 @@ use crate::store::RaftStore;
 
 /// The maximum size of a snapshot chunk streamed during snapshot generation.
 pub const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
+const PUBLISH_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 /// A bounded chunk sink that consumes streaming writes in chunks of up to `SNAPSHOT_CHUNK_SIZE`.
 pub struct ChunkSink<F = Box<dyn FnMut(&[u8]) -> std::io::Result<()> + Send>> {
@@ -1483,7 +1485,7 @@ impl RaftHost {
         let resp = match self
             .shared
             .http_client()
-            .post(format!("{leader_url}/raft/publish"))
+            .post(format!("{leader_url}{}", Self::PUBLISH_PATH))
             // Unlike Vote/AppendEntries, publish includes durable quorum
             // commit and local state-machine apply. Its request budget is the
             // proposal deadline, not the short peer transport timeout.
@@ -1586,6 +1588,10 @@ impl RaftHost {
         Ok(applied)
     }
 
+    /// The leader-side write target. The direct router, registry router, and
+    /// follower forward client all use this one public path.
+    pub const PUBLISH_PATH: &'static str = "/raft/publish";
+
     /// Peer raft RPCs + producer forward + status; merge into the service app so
     /// they ride the h2c serve port.
     pub fn router(&self) -> Router {
@@ -1594,7 +1600,7 @@ impl RaftHost {
             .route("/raft/append-entries", post(append_entries))
             .route("/raft/install-snapshot", post(install_snapshot))
             .route("/raft/timeout-now", post(timeout_now))
-            .route("/raft/publish", post(publish_handler))
+            .route(Self::PUBLISH_PATH, post(publish_handler))
             .route("/raftz", get(raftz))
             .with_state(Arc::clone(&self.shared))
     }
@@ -1718,11 +1724,25 @@ pub(crate) async fn timeout_now(
 /// the seq; or `421` with a leader hint if this node is not the leader.
 pub(crate) async fn publish_handler(
     State(s): State<Arc<Shared>>,
-    Json(env): Json<PublishEnvelope>,
+    request: Request,
 ) -> axum::response::Response {
-    if env.group_id != s.group_id.0 {
-        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+    let (parts, body) = request.into_parts();
+    let body = match to_bytes(body, PUBLISH_BODY_LIMIT).await {
+        Ok(body) => body,
+        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    };
+
+    // A well-formed foreign envelope is a caller error on every host. This is
+    // the only body verdict that precedes the follower routing response.
+    if let Ok(env) = serde_json::from_slice::<PublishEnvelope>(&body) {
+        if env.group_id != s.group_id.0 {
+            return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+        }
     }
+
+    // Read both values in one node-lock snapshot. A follower must answer with
+    // its route before media-type or JSON validation, but must not return a
+    // leader hint that came from a different node state.
     let leader = {
         let n = s.node.lock().await;
         if n.is_leader() {
@@ -1740,6 +1760,18 @@ pub(crate) async fn publish_handler(
             }),
         )
             .into_response();
+    }
+
+    // Reconstruct the original request so the elected leader retains Axum's
+    // standard Json extractor behavior: 415 for media type, 400 for syntax,
+    // and 422 for an invalid envelope shape.
+    let request = Request::from_parts(parts, Body::from(body));
+    let Json(env) = match Json::<PublishEnvelope>::from_request(request, &()).await {
+        Ok(env) => env,
+        Err(rejection) => return rejection.into_response(),
+    };
+    if env.group_id != s.group_id.0 {
+        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
     }
     match s.try_propose_applied(env.command).await {
         Some(ProposalOutcome::Completed { index: seq }) => {
@@ -1841,6 +1873,11 @@ pub(crate) async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publish_path_is_the_canonical_peer_write_route() {
+        assert_eq!(RaftHost::PUBLISH_PATH, "/raft/publish");
+    }
 
     fn append(marker: u64) -> RaftMsg {
         RaftMsg::Append(AppendReq {

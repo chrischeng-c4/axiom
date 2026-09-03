@@ -6,7 +6,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
-use axum::extract::State;
+use axum::body::{to_bytes, Body};
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -95,7 +96,7 @@ impl RaftRegistry {
             .route("/raft/append-entries", post(append_entries_demux))
             .route("/raft/install-snapshot", post(install_snapshot_demux))
             .route("/raft/timeout-now", post(timeout_now_demux))
-            .route("/raft/publish", post(publish_demux))
+            .route(RaftHost::PUBLISH_PATH, post(publish_demux))
             .route("/raftz", get(raftz_demux))
             .with_state(Arc::clone(&self.shared))
     }
@@ -159,15 +160,34 @@ async fn timeout_now_demux(
 
 async fn publish_demux(
     State(reg): State<Arc<RegistryShared>>,
-    Json(env): Json<PublishEnvelope>,
+    request: Request,
 ) -> axum::response::Response {
+    let (parts, body) = request.into_parts();
+    let body = match to_bytes(body, 2 * 1024 * 1024).await {
+        Ok(body) => body,
+        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    };
+    let envelope = serde_json::from_slice::<PublishEnvelope>(&body);
     let host = {
         let groups = reg.groups.lock().unwrap();
-        groups.get(&GroupId(env.group_id.clone())).cloned()
+        match &envelope {
+            Ok(env) => groups.get(&GroupId(env.group_id.clone())).cloned(),
+            Err(_) if groups.len() == 1 => groups.values().next().cloned(),
+            Err(_) => None,
+        }
     };
     match host {
-        Some(h) => publish_handler(State(Arc::clone(&h.shared)), Json(env)).await,
-        None => (StatusCode::NOT_FOUND, "group not found").into_response(),
+        Some(h) => {
+            let request = Request::from_parts(parts, Body::from(body));
+            publish_handler(State(Arc::clone(&h.shared)), request).await
+        }
+        None => {
+            if envelope.is_ok() {
+                (StatusCode::NOT_FOUND, "group not found").into_response()
+            } else {
+                (StatusCode::BAD_REQUEST, "invalid publish envelope").into_response()
+            }
+        }
     }
 }
 
