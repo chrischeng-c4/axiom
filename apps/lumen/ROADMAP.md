@@ -613,31 +613,6 @@ regression gate. Search v2 is outside this release, and its activation remains
   retry succeeds without broad deletion.
 - Tracking: [Milestone #34](https://github.com/chrischeng-c4/axiom/milestone/34).
 
-### Managed embedded data durability
-
-- ID: `managed-embedded-data-durability`
-- Outcome: A one-replica Managed Lumen runtime persists its index and AOF on
-  the retained PVC child path.
-- Boundary: The operator keeps the storage parent mount and adds only the
-  exact `data` child mount for the embedded Raft store. This does not recover
-  data that an earlier node-local runtime already lost.
-- Completion evidence: Render and restart tests prove the exact parent and
-  child PVC mounts, a persisted checkpoint, pre-restart search after Pod
-  replacement, legacy PVC adoption, and fail-closed corruption handling.
-- Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
-
-### Deterministic consensus conformance
-
-- ID: `deterministic-consensus-conformance`
-- Outcome: Raft recovery and membership safety have deterministic adversarial
-  replay evidence.
-- Boundary: The deterministic host shares cold-start, persist, apply-ready,
-  and peer-lane primitives but starts no transport, task, wall-clock, or sleep.
-- Completion evidence: The fixed corpus, replay parser, and harness-only
-  mutants prove safety across bounded elections, partitions, restarts,
-  compactions, and membership transitions.
-- Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
-
 ### Distributed search routing and merge
 
 - ID: `distributed-search-routing-and-merge`

@@ -65,9 +65,9 @@
 - Problem: Shutdown and leadership change must finish within explicit bounds.
 - Who: Replicated-runtime operators.
 - Promise: Raft shutdown and failover expose bounded, recoverable behavior.
-- Outcome: `bounded-raft-shutdown-and-failover`. Tracking: [Milestone #8](https://github.com/chrischeng-c4/axiom/milestone/8).
+- Status rows: `bounded-raft-shutdown-and-failover`. Tracking: [Milestone #8](https://github.com/chrischeng-c4/axiom/milestone/8).
+- Limits today: This does not add Standalone high availability or GKE certification.
 - Non-goals: Unbounded background shutdown.
-- Open: Define timer, drain, and retry limits.
 - Neighbours: Quorum-safe runtime rollout.
 
 ## Deterministic consensus conformance (Milestone #7)
@@ -75,9 +75,9 @@
 - Problem: Adversarial scheduling can hide consensus safety failures.
 - Who: Raft-runtime maintainers and Lumen operators.
 - Promise: Deterministic replay proves declared recovery and membership invariants.
-- Outcome: `deterministic-consensus-conformance`. Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
+- Status rows: `deterministic-consensus-conformance`. Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
+- Limits today: This evidence does not replace production network testing.
 - Non-goals: Replacing production network testing.
-- Open: Freeze the corpus, replay, and mutant-kill contract.
 - Neighbours: Managed embedded data durability.
 
 ## Distributed search routing and merge (Milestone #18)
