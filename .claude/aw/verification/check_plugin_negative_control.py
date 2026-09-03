@@ -15,7 +15,6 @@ REPO = HERE.parents[2]
 CHECKER = HERE / "check_plugin.py"
 SKILLS = (
     "aw-ask-user",
-    "aw-build",
     "aw-e2e-for",
     "aw-grill-me-to-meta",
     "aw-grill-meta-to-milestone",

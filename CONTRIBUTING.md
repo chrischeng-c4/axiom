@@ -1846,9 +1846,11 @@ summary drift from it", not "run a projector".
 Every project `build.sh` must use the same two-mode contract. The per-project
 `<project>-build-{debug,release}` skill wrappers are deleted (2026-09-02;
 only `/lumen-build-release` survives, and it is Lumen's own candidate-receipt
-release workflow, not this contract). A plain compile goes through `/aw-build`
-or `cargo build -p <crate>` directly; the versioned debug/release modes below
-run the project's own `apps/<name>/build.sh` from the repository root.
+release workflow, not this contract). A plain compile is
+`cargo build -p <crate>` directly; `/build:debug` and `/build:release` are
+cluster runs (local kind, GKE) for keep/defer/relay/loom and not this contract
+either. The versioned debug/release modes below run the project's own
+`apps/<name>/build.sh` from the repository root.
 
 ### Debug builds
 

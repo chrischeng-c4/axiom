@@ -7,8 +7,14 @@ ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REGION="${REGION:-asia-east1}"
 GKE_ZONE="${GKE_ZONE:-asia-east1-a}"
 PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
-PERSISTENT_CLUSTER_STATE_DIR="${PERSISTENT_CLUSTER_STATE_DIR:-/tmp/axiom-gcp-operator-cluster}"
 NODE_SERVICE_ACCOUNT_ID="${NODE_SERVICE_ACCOUNT_ID:-axiom-operator-acceptance-node}"
+# State lives in GCS (see cluster/main.tf backend block); the default bucket
+# name matches acceptance/gke-harness/bootstrap's derivation. TF_DATA_DIR still
+# points at /tmp so provider downloads and backend config never land in the
+# repo tree — unlike the state that used to live beside it, both are
+# reproducible, so losing this directory costs one `init`.
+TFSTATE_BUCKET="${TFSTATE_BUCKET:-${PROJECT_ID}-axiom-tfstate}"
+CLUSTER_TF_DATA_DIR="${CLUSTER_TF_DATA_DIR:-/tmp/axiom-gcp-operator-cluster/.terraform}"
 
 if cluster_json="$(gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json 2>/dev/null)"; then
@@ -21,8 +27,8 @@ if cluster_json="$(gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME"
     '[.nodePools[]? | select(.name == $p)] | length' <<<"$cluster_json")" != "1" ]]; then
     echo "WARNING: $PERSISTENT_CLUSTER_NAME has no '$data_plane_pool' node pool; the spec.placement leg will fail." >&2
     echo "  it is declared in acceptance/gcp/cluster/main.tf; add it in place (scale-to-zero, free at rest):" >&2
-    echo "  TF_DATA_DIR=$PERSISTENT_CLUSTER_STATE_DIR/.terraform terraform -chdir=$ACCEPTANCE_ROOT/cluster apply \\" >&2
-    echo "    -state=$PERSISTENT_CLUSTER_STATE_DIR/cluster.tfstate -auto-approve \\" >&2
+    echo "  TF_DATA_DIR=$CLUSTER_TF_DATA_DIR terraform -chdir=$ACCEPTANCE_ROOT/cluster init -input=false -backend-config=bucket=$TFSTATE_BUCKET" >&2
+    echo "  TF_DATA_DIR=$CLUSTER_TF_DATA_DIR terraform -chdir=$ACCEPTANCE_ROOT/cluster apply -auto-approve \\" >&2
     echo "    -var=project_id=$PROJECT_ID -var=region=$REGION -var=gke_zone=$GKE_ZONE \\" >&2
     echo "    -var=cluster_name=$PERSISTENT_CLUSTER_NAME -var=node_service_account_id=$NODE_SERVICE_ACCOUNT_ID" >&2
   fi
@@ -59,12 +65,12 @@ fi
 # name, and the run died with NO message at all (`test` prints nothing on
 # failure) -- after paying the full ~10 minutes of cluster creation. Every
 # prior run reused an existing cluster, so this path had never once run.
-mkdir -p "$PERSISTENT_CLUSTER_STATE_DIR"
-TF_DATA_DIR="$PERSISTENT_CLUSTER_STATE_DIR/.terraform" terraform \
-  -chdir="$ACCEPTANCE_ROOT/cluster" init -input=false >&2
-TF_DATA_DIR="$PERSISTENT_CLUSTER_STATE_DIR/.terraform" terraform \
-  -chdir="$ACCEPTANCE_ROOT/cluster" apply \
-  -state="$PERSISTENT_CLUSTER_STATE_DIR/cluster.tfstate" -auto-approve \
+mkdir -p "$CLUSTER_TF_DATA_DIR"
+TF_DATA_DIR="$CLUSTER_TF_DATA_DIR" terraform \
+  -chdir="$ACCEPTANCE_ROOT/cluster" init -input=false \
+  -backend-config="bucket=$TFSTATE_BUCKET" >&2
+TF_DATA_DIR="$CLUSTER_TF_DATA_DIR" terraform \
+  -chdir="$ACCEPTANCE_ROOT/cluster" apply -auto-approve \
   -var="project_id=$PROJECT_ID" -var="region=$REGION" -var="gke_zone=$GKE_ZONE" \
   -var="cluster_name=$PERSISTENT_CLUSTER_NAME" \
   -var="node_service_account_id=$NODE_SERVICE_ACCOUNT_ID" >&2

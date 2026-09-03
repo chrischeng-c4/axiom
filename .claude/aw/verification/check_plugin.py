@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check ten byte-identical AW skills and their typed-delivery contract."""
+"""Check nine byte-identical AW skills and their typed-delivery contract."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from pathlib import Path
 
 SKILLS = (
     "aw-ask-user",
-    "aw-build",
     "aw-e2e-for",
     "aw-grill-me-to-meta",
     "aw-grill-meta-to-milestone",
@@ -229,12 +228,6 @@ def collect(repo: Path) -> Reporter:
             "Never pass a test filter to a declared gate.",
             "Never fix a finding in this skill",
         ),
-        "aw-build": (
-            "cargo build -p <crate>",
-            "--release",
-            "/lumen-build-release",
-            "Never run a lumen release as a bare cargo build.",
-        ),
         "aw-prepare-goal": (
             "milestone:<number>",
             "aw milestone next",
@@ -378,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     if report.failed:
         print(f"\n=> RED: {len(report.failed)} failure(s)")
         return 1
-    print("\n=> GREEN: ten byte-identical typed-delivery AW skill pairs")
+    print("\n=> GREEN: nine byte-identical typed-delivery AW skill pairs")
     return 0
 
 

@@ -637,7 +637,7 @@ gcloud container node-pools describe "$placement_pool" \
   --format=json > "$EVIDENCE_DIR/kubernetes/data-plane-node-pool.json" 2>"$EVIDENCE_DIR/kubernetes/data-plane-node-pool-absent.txt" || {
   echo "node pool '$placement_pool' does not exist on $GKE_CLUSTER_NAME; spec.placement cannot be proven against a pool boundary." >&2
   echo "  it is declared in acceptance/gcp/cluster/main.tf — apply it against the persistent cluster's state:" >&2
-  echo "  TF_DATA_DIR=/tmp/axiom-gcp-operator-cluster/.terraform terraform -chdir=acceptance/gcp/cluster apply -state=/tmp/axiom-gcp-operator-cluster/cluster.tfstate ..." >&2
+  echo "  TF_DATA_DIR=/tmp/axiom-gcp-operator-cluster/.terraform terraform -chdir=acceptance/gcp/cluster init -backend-config=bucket=\$PROJECT_ID-axiom-tfstate && terraform -chdir=acceptance/gcp/cluster apply ..." >&2
   exit 1
 }
 jq -e --arg k "$placement_label_key" --arg v "$placement_label_value" \
