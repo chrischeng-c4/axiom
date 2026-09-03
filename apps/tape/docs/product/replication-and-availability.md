@@ -7,11 +7,11 @@ change.
 
 ## Replicated group with peer mTLS
 
-- Problem: one of the three `raft_cluster` cases is red today: a
-  follower-forwarded append answers 415 where 421 is expected since the
-  shared runtime's publish handler moved to a JSON extractor. The failover
-  cases share one 15 s deadline, so the proof is timing-sensitive on a
-  loaded host.
+- Problem: a publisher that reaches a follower needs an answer it can act
+  on, and an operator needs a replication proof that reruns the same way on
+  a loaded host. Before tape@0.5.0 a direct publish to a follower was refused
+  for its body before its routing, and the failover cases shared one 15 s
+  deadline.
 - Who: operators; every publisher, through the durability of the answer.
 - Promise: three members elect a leader, replicate every append, forward
   writes from followers, and catch a fresh member up by install-snapshot. A
@@ -26,17 +26,17 @@ change.
 
 ## Deterministic failover (Milestone #115)
 
-- Problem: the red forwarding case and the shared deadline above mean the
-  group's promise is measured by a clock, not by the group's own state, and
-  the subscription outcome cannot prove that a lease table survives a
-  failover it cannot observe.
+- Problem: a forwarding case refused for its body and a shared deadline
+  meant the group's promise was measured by a clock, not by the group's own
+  state, and the subscription outcome cannot prove that a lease table
+  survives a failover it cannot observe.
 - Who: operators, through a proof they can rerun; the subscription epic, as
   its prerequisite.
 - Promise: every replication and failover case observes each step through
   its own readiness and leadership surfaces instead of one shared wall-clock
-  deadline, and the follower-forwarded append passes against the shared
-  runtime's JSON publish handler. Twenty consecutive single-threaded runs on
-  a loaded host are green.
+  deadline, and a follower answers a direct publish with 421 and the leader's
+  id before the shared runtime's handler judges the body. Twenty consecutive
+  single-threaded runs on a loaded host are green.
 - Non-goals: any public contract change; this is harness and runtime-adapter
   work.
 - Open: none; the ROADMAP boundary is complete.

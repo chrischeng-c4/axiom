@@ -106,13 +106,37 @@ async fn is_leader(client: &reqwest::Client, base: &str) -> bool {
     body["is_leader"].as_bool().unwrap_or(false)
 }
 
+/// The elected leader, sampled until one node has claimed it three times
+/// running. A single sample can catch a candidate mid-term and hand the
+/// caller a node that steps down before the first append reaches it.
 async fn wait_leader<'a>(client: &reqwest::Client, bases: &[&'a str]) -> &'a str {
     let deadline = phase_deadline();
+    let mut stable: Option<&'a str> = None;
+    let mut samples = 0;
     loop {
-        for base in bases {
-            if is_leader(client, base).await {
-                return base;
+        let seen = {
+            let mut seen = None;
+            for base in bases {
+                if is_leader(client, base).await {
+                    seen = Some(*base);
+                    break;
+                }
             }
+            seen
+        };
+        match seen {
+            Some(base) if stable == Some(base) => samples += 1,
+            Some(base) => {
+                stable = Some(base);
+                samples = 1;
+            }
+            None => {
+                stable = None;
+                samples = 0;
+            }
+        }
+        if samples >= 3 {
+            return stable.expect("three stable samples name a leader");
         }
         assert!(
             Instant::now() < deadline,
@@ -161,7 +185,11 @@ where
         }
         assert!(
             Instant::now() < deadline,
-            "{base} never converged to {what}, got {got:?}"
+            "{base} never converged to {what}; last observed {} events \
+             (first {:?}, last {:?})",
+            got.len(),
+            got.first(),
+            got.last()
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -317,7 +345,7 @@ async fn concurrent_ingress_across_all_replicas_commits_without_raft_timeouts() 
             &client,
             base,
             |got| got.len() == EVENTS,
-            "all 256 concurrent events",
+            &format!("all {EVENTS} concurrent events"),
         )
         .await;
     }

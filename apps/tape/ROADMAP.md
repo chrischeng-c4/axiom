@@ -108,14 +108,14 @@ follow once subscriptions carry per-message state.
 - ID: `deterministic-failover`
 - Outcome: The replication and failover cases observe each step through their
   own readiness and leadership surfaces instead of one shared wall-clock
-  deadline, and the follower-forwarded append case passes against the shared
-  runtime's JSON publish handler.
+  deadline, and a follower answers a direct publish with 421 and the leader's
+  id before the shared runtime's handler judges the body.
 - Boundary: This is test-harness and runtime-adapter work; it changes no
   public contract. It is the prerequisite for proving that a lease table
   survives failover in the subscription outcome.
 - Completion evidence: Every `raft_cluster` and `raft_failover` case is green
   twenty consecutive times with a single test thread on a loaded host, and no
-  case carries a shared deadline constant.
+  two waits in a case share one deadline instant.
 - Tracking: [Milestone #115](https://github.com/chrischeng-c4/axiom/milestone/115)
 
 ### Pub/Sub rebaseline

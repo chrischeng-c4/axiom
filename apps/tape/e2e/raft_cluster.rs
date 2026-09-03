@@ -310,6 +310,9 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
     c.wait_converged(2).await;
 
     // A direct POST to a follower's raft peer route answers 421 + leader hint.
+    // This assertion was red on `origin/main` from `8b5f1d148d` (the shared
+    // handler moved to a `Json` extractor, which answered 415 to this bare
+    // body first) until `5126cade01` (#4006) judged leadership before it.
     let resp = c
         .client
         .post(format!("{}/raft/publish", c.urls[&(follower as u64)]))

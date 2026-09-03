@@ -95,7 +95,7 @@ impl RaftRegistry {
             .route("/raft/append-entries", post(append_entries_demux))
             .route("/raft/install-snapshot", post(install_snapshot_demux))
             .route("/raft/timeout-now", post(timeout_now_demux))
-            .route("/raft/publish", post(publish_demux))
+            .route(RaftHost::PUBLISH_PATH, post(publish_demux))
             .route("/raftz", get(raftz_demux))
             .with_state(Arc::clone(&self.shared))
     }
@@ -157,16 +157,22 @@ async fn timeout_now_demux(
     }
 }
 
+/// The group is the routing key, so an envelope the demux cannot read cannot
+/// be routed to a host that would judge leadership before the body; that
+/// ordering starts once a group's [`publish_handler`] is reached.
 async fn publish_demux(
     State(reg): State<Arc<RegistryShared>>,
-    Json(env): Json<PublishEnvelope>,
+    body: axum::body::Bytes,
 ) -> axum::response::Response {
+    let Ok(env) = serde_json::from_slice::<PublishEnvelope>(&body) else {
+        return (StatusCode::BAD_REQUEST, "invalid publish envelope").into_response();
+    };
     let host = {
         let groups = reg.groups.lock().unwrap();
-        groups.get(&GroupId(env.group_id.clone())).cloned()
+        groups.get(&GroupId(env.group_id)).cloned()
     };
     match host {
-        Some(h) => publish_handler(State(Arc::clone(&h.shared)), Json(env)).await,
+        Some(h) => publish_handler(State(Arc::clone(&h.shared)), body).await,
         None => (StatusCode::NOT_FOUND, "group not found").into_response(),
     }
 }

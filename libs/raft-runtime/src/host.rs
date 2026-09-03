@@ -1449,7 +1449,7 @@ impl RaftHost {
         let resp = match self
             .shared
             .http_client()
-            .post(format!("{leader_url}/raft/publish"))
+            .post(format!("{leader_url}{}", Self::PUBLISH_PATH))
             // Unlike Vote/AppendEntries, publish includes durable quorum
             // commit and local state-machine apply. Its request budget is the
             // proposal deadline, not the short peer transport timeout.
@@ -1552,6 +1552,11 @@ impl RaftHost {
         Ok(applied)
     }
 
+    /// The leader-side write target: where a follower forwards its own
+    /// proposal and where a direct publish is served. One literal, so the
+    /// client in [`RaftHost::forward`] and the route cannot drift apart.
+    pub const PUBLISH_PATH: &'static str = "/raft/publish";
+
     /// Peer raft RPCs + producer forward + status; merge into the service app so
     /// they ride the h2c serve port.
     pub fn router(&self) -> Router {
@@ -1560,7 +1565,7 @@ impl RaftHost {
             .route("/raft/append-entries", post(append_entries))
             .route("/raft/install-snapshot", post(install_snapshot))
             .route("/raft/timeout-now", post(timeout_now))
-            .route("/raft/publish", post(publish_handler))
+            .route(Self::PUBLISH_PATH, post(publish_handler))
             .route("/raftz", get(raftz))
             .with_state(Arc::clone(&self.shared))
     }
@@ -1682,12 +1687,27 @@ pub(crate) async fn timeout_now(
 
 /// Leader-side write target (the redirect destination): propose + apply, return
 /// the seq; or `421` with a leader hint if this node is not the leader.
+///
+/// Leadership is judged before the body is. A misdirected publish is a
+/// routing error, and a media-type or deserialization verdict (415/400/422)
+/// from a node that cannot accept the proposal sends the caller back to the
+/// same wrong node with a "fixed" body; `421 {"error": "not-leader",
+/// "leader": <id>}` lets it retarget. So the body arrives as raw bytes and is
+/// parsed optimistically: the one verdict that outranks leadership is a
+/// well-formed envelope addressed to another group, which is a caller error
+/// on every node. The leadership check and the hint are read under a single
+/// lock, so a term change between them cannot answer `421` with no leader or
+/// admit a proposal on a node that just stepped down. This is the one place
+/// the ordering lives; a consumer's wrapper is not the layer for it.
 pub(crate) async fn publish_handler(
     State(s): State<Arc<Shared>>,
-    Json(env): Json<PublishEnvelope>,
+    body: axum::body::Bytes,
 ) -> axum::response::Response {
-    if env.group_id != s.group_id.0 {
-        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+    let env = serde_json::from_slice::<PublishEnvelope>(&body);
+    if let Ok(env) = &env {
+        if env.group_id != s.group_id.0 {
+            return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+        }
     }
     let leader = {
         let n = s.node.lock().await;
@@ -1707,6 +1727,16 @@ pub(crate) async fn publish_handler(
         )
             .into_response();
     }
+    let env = match env {
+        Ok(env) => env,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("invalid publish envelope: {error}"),
+            )
+                .into_response();
+        }
+    };
     match s.try_propose_applied(env.command).await {
         Some(ProposalOutcome::Completed { index: seq }) => {
             (StatusCode::OK, Json(serde_json::json!({ "seq": seq }))).into_response()

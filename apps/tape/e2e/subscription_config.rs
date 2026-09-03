@@ -43,18 +43,23 @@
 //!
 //! **`authorization_is_answered_before_ack_deadline_seconds_is_read` is this
 //! file's own negative control, and it is green against the current tree.**
+//! Only its third row does the guarding. The data plane's bearer check is a
+//! `route_layer` (`apps/tape/src/server.rs:601`), which answers `401` to a
+//! missing or unknown token before any extractor runs, so the anonymous and
+//! unknown-token rows stay green under every implementation and are here as
+//! the boundary's description, not its proof. The reader-token row is the
+//! proof: that caller passes the layer and reaches the handler, where
 //! `subscription_create` takes `body: axum::body::Bytes` and calls
-//! `crate::auth::authorize` before it parses anything, which is why an
-//! unauthenticated caller gets `401` rather than a validation verdict. The
-//! obvious way to add a validated field is to swap that `Bytes` for a typed
-//! `Json<...>` extractor — and axum runs an extractor *before* the handler
-//! body, so that one edit would answer `400`/`422` to a caller holding no
-//! token at all. That turns the new field into an unauthenticated oracle for
-//! which topics and request shapes a node accepts, and it is a regression this
-//! work item can introduce without touching a single line of auth code. The
-//! case must stay green; `an_authorized_create_still_enforces_the_range` is
-//! its red partner, proving the validation is still reachable once past the
-//! boundary.
+//! `crate::auth::authorize` before it parses anything, so it gets `403`
+//! rather than a validation verdict. The obvious way to add a validated field
+//! is to swap that `Bytes` for a typed `Json<...>` extractor — and axum runs
+//! an extractor *before* the handler body, so that one edit would answer
+//! `400`/`422` to a read-only caller on a topic it has no write grant for.
+//! That turns the new field into a validation oracle for a caller the
+//! authorizer would refuse, and it is a regression this work item can
+//! introduce without touching a single line of auth code. The case must stay
+//! green; `an_authorized_create_still_enforces_the_range` is its red partner,
+//! proving the validation is still reachable once past the boundary.
 
 use std::net::SocketAddr;
 
@@ -576,11 +581,6 @@ async fn malformed_ack_deadline_seconds_values_are_refused_and_create_nothing() 
             answer.status,
             answer.body
         );
-        assert!(
-            !answer.status.is_success(),
-            "`{ACK_FIELD}`: {value} ({label}) must not be accepted; got {}",
-            answer.status
-        );
         assert_absent(&client, addr, "acks", &name).await;
     }
 
@@ -608,10 +608,13 @@ async fn malformed_ack_deadline_seconds_values_are_refused_and_create_nothing() 
 /// rest of it: replacing the handler's `body: axum::body::Bytes` with a typed
 /// `Json<SubscriptionCreateRequest>` extractor. Axum runs an extractor before
 /// the handler body, so that edit moves validation *ahead* of
-/// `crate::auth::authorize` and hands an anonymous caller a `400` describing
-/// the allowed range — a validation oracle reachable with no token, on a topic
-/// the caller has no grant for. Every other case in this file would still be
-/// green after that edit.
+/// `crate::auth::authorize` and hands a read-only caller a `400` describing
+/// the allowed range — a validation oracle on a topic the caller has no write
+/// grant for. The reader-token row is the one that catches it: the anonymous
+/// and unknown-token rows are answered `401` by the data plane's `route_layer`
+/// before any extractor runs, so they hold under that edit too and only
+/// document the boundary. Every other case in this file would still be green
+/// after that edit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn authorization_is_answered_before_ack_deadline_seconds_is_read() {
     let addr = start_server_with_auth().await;

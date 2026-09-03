@@ -191,10 +191,8 @@ source below states its direct contribution.
 - Promise: Elect a leader among three members, replicate every append,
   forward writes from followers, catch a fresh member up by snapshot, survive
   a leader kill without committed loss, and restart a single member onto its
-  applied floor. One follower-forwarding case is currently red against the
-  shared runtime's JSON publish handler; the [STATUS](STATUS.md) row
-  `raft-replication` names it and the `deterministic-failover` outcome owns
-  the repair.
+  applied floor. A follower answers a direct publish with 421 and the
+  leader's id before it judges the request body.
 - Sources:
   - [`apps/tape`](./) defines the replicated command set, the applied-floor
     recovery, and the peer mTLS listener that keeps raft routes off the public
@@ -203,7 +201,7 @@ source below states its direct contribution.
     the log, snapshots, and forwarding.
   - [`libs/peer-tls`](../../libs/peer-tls/README.md) provides the mutual TLS
     material and verification for peer links.
-- Gate: `cargo test -p tape --test raft_cluster --test raft_persistence --test raft_peer_mtls`
+- Gate: `cargo test -p tape --test raft_cluster --test raft_persistence --test raft_peer_mtls --test raft_publish_misdirect`
 - Gate: `cargo test -p tape --test raft_failover`
 
 ### Backup and seed

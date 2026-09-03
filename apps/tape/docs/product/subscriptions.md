@@ -51,7 +51,8 @@ checklist; four of the seven H1 outcomes land here.
   oldest-unacked-age metric is exposed per subscription.
 - Non-goals: push delivery, streaming pull, exactly-once delivery, and
   per-key ordering are their own sections or non-goals.
-- Open: none; settled by #3928.
+- Open: none; the ack-deadline range, wire names, and lease semantics are
+  frozen in the issues assigned to Milestone #117.
 - Neighbours: supersedes the pull-window and ack promise of Named pull
   subscriptions; depends on
   [replication-and-availability.md](replication-and-availability.md)

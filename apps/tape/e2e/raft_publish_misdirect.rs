@@ -280,7 +280,7 @@ async fn follower_publish_names_the_leader_when_the_body_parses() {
 
 /// A publish POST with no `Content-Type` is misdirected, not unsupported.
 ///
-/// This is the shape `raft_cluster.rs:313` sends: the serialized `TapeCommand`
+/// This is the shape `raft_cluster.rs:316` sends: the serialized `TapeCommand`
 /// bytes with no media type declared. Against the current tree the `Json`
 /// extractor claims the request first and answers `415`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
