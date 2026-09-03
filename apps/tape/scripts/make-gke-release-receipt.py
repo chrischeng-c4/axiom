@@ -217,6 +217,8 @@ def validate_evidence(
     if not isinstance(failover, dict) or set(failover) != {
         "leader_before",
         "leader_after",
+        "leader_pod_uid_before",
+        "leader_pod_uid_after",
         "distinct",
         "term_before",
         "term_after",
@@ -228,6 +230,11 @@ def validate_evidence(
     if (
         failover.get("distinct") is not True
         or failover.get("leader_before") == failover.get("leader_after")
+        or not isinstance(failover.get("leader_pod_uid_before"), str)
+        or not failover.get("leader_pod_uid_before")
+        or not isinstance(failover.get("leader_pod_uid_after"), str)
+        or not failover.get("leader_pod_uid_after")
+        or failover.get("leader_pod_uid_before") == failover.get("leader_pod_uid_after")
         or failover.get("leader_pod_replaced") != "passed"
         or not isinstance(before, int)
         or isinstance(before, bool)

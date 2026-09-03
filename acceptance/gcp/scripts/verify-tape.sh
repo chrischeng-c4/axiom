@@ -153,14 +153,21 @@ stop_pod_forwards() {
 
 start_pod_forwards() {
   stop_pod_forwards
+  local exclude="${1:-}"
   local ordinal port deadline
   for ordinal in 0 1 2; do
+    if [[ "$ordinal" == "$exclude" ]]; then
+      continue
+    fi
     port="$(pod_port "$ordinal")"
     kubectl -n tape port-forward "pod/tape-${ordinal}" "${port}:7137" \
       >>"$EVIDENCE_DIR/kubernetes/tape-raftz-tape-${ordinal}-port-forward.log" 2>&1 &
     pod_forward_pids+=("$!")
   done
   for ordinal in 0 1 2; do
+    if [[ "$ordinal" == "$exclude" ]]; then
+      continue
+    fi
     port="$(pod_port "$ordinal")"
     deadline=$((SECONDS + 60))
     while (( SECONDS < deadline )); do
@@ -174,6 +181,30 @@ start_pod_forwards() {
 raftz_ordinal() {
   curl --max-time 3 --silent --show-error --fail \
     "http://127.0.0.1:$(pod_port "$1")/raftz"
+}
+
+pod_uid() {
+  kubectl -n tape get "pod/tape-$1" -o jsonpath='{.metadata.uid}'
+}
+
+wait_for_replacement_pod_uid() {
+  local ordinal="$1"
+  local previous_uid="$2"
+  local deadline=$((SECONDS + 180))
+  local replacement_uid ready
+  while (( SECONDS < deadline )); do
+    replacement_uid="$(pod_uid "$ordinal" 2>/dev/null || true)"
+    ready="$(kubectl -n tape get "pod/tape-${ordinal}" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    if [[ -n "$replacement_uid" && "$replacement_uid" != "$previous_uid" && "$ready" == "True" ]]; then
+      printf '%s\n' "$replacement_uid"
+      return 0
+    fi
+    sleep 3
+  done
+  echo "replacement pod tape-${ordinal} did not become Ready with a new UID" >&2
+  capture_topology_diagnostics
+  return 1
 }
 
 find_leader() {
@@ -439,18 +470,29 @@ start_pod_forwards
 initial_leader="$(wait_for_leader)"
 printf '%s\n' "$initial_leader" > "$EVIDENCE_DIR/kubernetes/tape-raft-leader-initial.txt"
 raftz_ordinal "$initial_leader" > "$EVIDENCE_DIR/kubernetes/tape-raftz-initial.json"
+initial_term="$(jq -e '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-initial.json")"
+initial_pod_uid="$(pod_uid "$initial_leader")"
+if [[ -z "$initial_pod_uid" ]]; then
+  echo "initial raft leader Pod UID is absent" >&2
+  exit 1
+fi
 
-kubectl -n tape delete "pod/tape-${initial_leader}" --grace-period=1 --wait=true --timeout=120s
-kubectl -n tape wait --for=condition=Ready "pod/tape-${initial_leader}" --timeout=180s
-start_pod_forwards
-# The disruption is the pod deletion itself. A replaced leader that returns
-# fast can legitimately WIN the next election (run 0723133405 did exactly
-# that), so requiring a different ordinal over-constrains raft; the
-# substantive proof is any settled leader plus the committed post-failover
-# write below. The before/after identities and terms are recorded honestly.
-new_leader="$(wait_for_leader)"
-printf '%s\n' "$new_leader" > "$EVIDENCE_DIR/kubernetes/tape-raft-leader-after-failover.txt"
-raftz_ordinal "$new_leader" > "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failover.json"
+kubectl -n tape delete "pod/tape-${initial_leader}" --wait=false
+start_pod_forwards "$initial_leader"
+# Observe the outage-time survivor before waiting for the deleted ordinal to
+# return. The excluded original ordinal cannot satisfy this proof even if its
+# StatefulSet replacement starts quickly.
+survivor_leader="$(wait_for_leader "$initial_leader")"
+printf '%s\n' "$survivor_leader" > "$EVIDENCE_DIR/kubernetes/tape-raft-leader-after-failover.txt"
+raftz_ordinal "$survivor_leader" > "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failover.json"
+survivor_term="$(jq -e '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failover.json")"
+if (( survivor_term <= initial_term )); then
+  echo "survivor raft term did not increase during leader outage" >&2
+  capture_topology_diagnostics
+  exit 1
+fi
+replacement_pod_uid="$(wait_for_replacement_pod_uid "$initial_leader" "$initial_pod_uid")"
+leader_after="$survivor_leader"
 stop_pod_forwards
 
 start_forward
@@ -495,10 +537,12 @@ jq -n \
   --arg object "$first_object" \
   --argjson bytes "$object_size" \
   --arg leader_before "$initial_leader" \
-  --arg leader_after "$new_leader" \
+  --arg leader_after "$leader_after" \
+  --arg leader_pod_uid_before "$initial_pod_uid" \
+  --arg leader_pod_uid_after "$replacement_pod_uid" \
   --argjson term_before "$(jq '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-initial.json")" \
   --argjson term_after "$(jq '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failover.json")" \
-  '{schema:$schema, operator_reconcile_1x1:"passed", append_replay_lifecycle:"passed", subscription_pull_ack_cursor:"passed", subscription_lag_gauge:"passed", pod_restart_data_retention:"passed", gcs_backup:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_from_backup:"passed", bootstrap_seed_uri_restart:"passed", seed_cleared_rolling_restart_retention:"passed", topology_1_to_3:{from:1,to:3,ready_pods:3}, raft_failover:{leader_before:$leader_before,leader_after:$leader_after,distinct:($leader_before != $leader_after),term_before:$term_before,term_after:$term_after,leader_pod_replaced:"passed"}, post_failover_write_committed:"passed"}' \
+  '{schema:$schema, operator_reconcile_1x1:"passed", append_replay_lifecycle:"passed", subscription_pull_ack_cursor:"passed", subscription_lag_gauge:"passed", pod_restart_data_retention:"passed", gcs_backup:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_from_backup:"passed", bootstrap_seed_uri_restart:"passed", seed_cleared_rolling_restart_retention:"passed", topology_1_to_3:{from:1,to:3,ready_pods:3}, raft_failover:{leader_before:$leader_before,leader_after:$leader_after,leader_pod_uid_before:$leader_pod_uid_before,leader_pod_uid_after:$leader_pod_uid_after,distinct:($leader_before != $leader_after),term_before:$term_before,term_after:$term_after,leader_pod_replaced:"passed"}, post_failover_write_committed:"passed"}' \
   > "$EVIDENCE_DIR/tape-acceptance.json"
 
 jq -n \
