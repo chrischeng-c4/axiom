@@ -9,3 +9,6 @@ description = "Shared build.rs stamping for service CLIs — git short-sha, buil
 [lib]
 name = "build_stamp"
 path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"

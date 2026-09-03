@@ -64,11 +64,32 @@ fn git_head_rerun_hint(head_path: &Path) -> Option<String> {
 /// Best-effort short SHA of HEAD. Returns `None` outside a git workspace (or
 /// when the `git` binary itself is absent).
 fn short_sha() -> Option<String> {
-    let out = Command::new("git")
+    short_sha_in(Path::new("."))
+}
+
+fn short_sha_in(working_directory: &Path) -> Option<String> {
+    let out = git_command_in(working_directory)
         .args(["rev-parse", "--short=8", "HEAD"])
         .output()
         .ok()?;
     decode_short_sha(out.status.success(), &out.stdout)
+}
+
+fn git_command_in(working_directory: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(working_directory);
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    ] {
+        command.env_remove(variable);
+    }
+    command
 }
 
 /// Pure decode of a `git rev-parse` invocation's outcome, split out from
@@ -146,10 +167,42 @@ mod tests {
     }
 
     #[test]
-    fn short_sha_resolves_inside_this_git_workspace() {
-        // Integration-style sanity check: this crate lives inside a git
-        // checkout, so the real (non-mocked) code path should resolve.
-        assert!(short_sha().is_some());
+    fn short_sha_resolves_inside_an_isolated_git_workspace() {
+        let repository = tempfile::tempdir().unwrap();
+        let init = git_command_in(repository.path())
+            .args(["init", "--quiet"])
+            .status()
+            .unwrap();
+        assert!(init.success());
+
+        let commit = git_command_in(repository.path())
+            .args([
+                "-c",
+                "user.name=build-stamp-test",
+                "-c",
+                "user.email=build-stamp-test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--message=initial",
+            ])
+            .status()
+            .unwrap();
+        assert!(commit.success());
+
+        let full_sha = git_command_in(repository.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(full_sha.status.success());
+        let full_sha = String::from_utf8(full_sha.stdout).unwrap();
+        let expected = &full_sha.trim()[..8];
+        let sha = short_sha_in(repository.path()).unwrap();
+        assert_eq!(sha, expected);
     }
 
     #[test]
