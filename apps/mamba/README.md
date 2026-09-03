@@ -6,10 +6,12 @@ Force-typed Python compiler. Lexes Python source with `logos`, lowers through HI
 
 Delivery order since 2026-09-03: the `uv`-shaped package manager ships first,
 as a drop-in for the common `uv` workflow that needs no mamba runtime; the
-CPython runtime replacement (tiers T1 to T7 under
-[Runtime replacement order](#runtime-replacement-order)) comes second.
+mambalibs kits reach CPython users second, as PyO3 extension wheels installed
+through that package manager; the CPython runtime replacement (tiers T1 to T7
+under [Runtime replacement order](#runtime-replacement-order)) comes third,
+and its `MambaModule` carrier for a kit matches the wheel's Python API.
 [STATUS.md](STATUS.md) records what the package manager supports today and
-[ROADMAP.md](ROADMAP.md) orders the two outcomes.
+[ROADMAP.md](ROADMAP.md) orders the three outcomes.
 
 For implementation map, see [llms.txt](llms.txt).
 
@@ -49,9 +51,10 @@ is the one `mamba <verb> --help` prints.
 
 The compiler and runtime work, ordered T1 to T7. This order is the ROADMAP
 outcome [cpython-runtime-replacement](ROADMAP.md#cpython-runtime-replacement)
-and starts after `uv-workflow-parity`. Each tier's exit gate is still to be
-written, so no tier below is claimed; the capabilities that are claimed, with
-their gates, are under [Capabilities](#capabilities).
+and starts after `uv-workflow-parity` and `mambalibs-cpython-wheels`. Each
+tier's exit gate is still to be written, so no tier below is claimed; the
+capabilities that are claimed, with their gates, are under
+[Capabilities](#capabilities).
 
 ### Roadmap tiers
 
@@ -901,7 +904,7 @@ Layer order is **managed → semantic → regenerable** — you cannot specify w
 
 ## Non-goals
 
-- A second ABI for out-of-tree native modules. Native code ships as a kit inside mamba (C3).
+- A third carrier for a mambalibs kit. A kit ships as a PyO3 CPython wheel first ([ROADMAP](ROADMAP.md#mambalibs-cpython-wheels)) and as a `MambaModule` inside the mamba runtime second; no CPython C-API emulation layer and no bridged CPython carries a kit.
 - "Issues closed per week" or any proxy metric. The capability gates and standardization layers above are the only completion signal.
 
 ## Status
@@ -912,7 +915,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 |-------|------|------------------|
 | Capability      | C1 Py3.12 parity            | No — ① type **74.1%** enforced (auto-measured) + **100%** sound · ② ~18% run-correct |
 | Capability      | C2 Perf > CPython           | No — compute median ~13× faster, but object/float slower **and** memory regresses; the boxed value model is the keystone |
-| Capability      | C3 mambalibs end-to-end     | No — most kits stub-only |
+| Capability      | C3 mambalibs end-to-end     | No — most kits stub-only; the first carrier is the PyO3 wheels, ROADMAP `mambalibs-cpython-wheels` |
 | Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/auth/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache |
 | Runtime         | core substrate stability    | **99.1%** — sound; only edge crashes (deep recursion, gen-nesting cap, MRO, async-gen hang) |
 | Ceiling         | match Golang (`mamba/go`)   | ~4× behind Go on compute today (Go ~50× vs CPython, mamba ~13×); gap = value model + codegen, not JIT-vs-AOT |
@@ -995,7 +998,10 @@ whose rows are in [STATUS.md](STATUS.md) and whose next outcome is
 - ID: `mambalibs-end-to-end`
 - Promise: Each mambalibs module under `mambalibs/` replaces a C-backed stdlib
   or third-party module with a native implementation and passes its own
-  end-to-end cases, including the HTTP/2 client.
+  end-to-end cases, including the HTTP/2 client. A kit reaches a Python
+  program as a PyO3 CPython wheel first and as a `MambaModule` inside the
+  mamba runtime second; the wheel's Python API is the contract the runtime
+  carrier matches ([ROADMAP](ROADMAP.md#mambalibs-cpython-wheels)).
 - Sources:
   - [`apps/mamba`](./) owns the `mambalibs/` workspace members and the
     `mambalibs` end-to-end target that drives them.
@@ -1026,7 +1032,7 @@ whose rows are in [STATUS.md](STATUS.md) and whose next outcome is
 | Document | Use it for |
 |---|---|
 | [STATUS.md](STATUS.md) | The package manager's support matrix, one row per workflow, each with its gate. |
-| [ROADMAP.md](ROADMAP.md) | The two outcomes in delivery order and the three non-goals. |
+| [ROADMAP.md](ROADMAP.md) | The three outcomes in delivery order and the four non-goals. |
 | [docs/product/README.md](docs/product/README.md) | The product promises each outcome and STATUS row comes from. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build discipline, the test layout, and the verification rules for a change. |
 | [llms.txt](llms.txt) | The implementation map for agents. |

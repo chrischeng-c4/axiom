@@ -1,10 +1,12 @@
 # Runtime
 
-The compiler and runtime side of mamba: CPython 3.12 parity, CPU and memory
-under CPython, and the mambalibs replacements. This area is the README
-capabilities `cpython-312-parity`, `cpu-and-memory-under-cpython`, and
-`mambalibs-end-to-end`. It is second in delivery order: the package manager
-ships first, and nothing here changes its contract.
+The compiler and runtime side of mamba: CPython 3.12 parity and CPU and memory
+under CPython. This area is the README capabilities `cpython-312-parity` and
+`cpu-and-memory-under-cpython`; the mambalibs kits are their own area,
+[mambalibs.md](mambalibs.md), and the runtime carrier for a kit comes after
+its wheel. It is third in delivery order: the package manager ships first,
+the mambalibs wheels second, and nothing here changes the package manager's
+contract.
 
 ## CPython runtime replacement
 
@@ -28,8 +30,10 @@ ships first, and nothing here changes its contract.
   `uv-workflow-parity`. Whether each tier's exit gate is a new `[[test]]`
   target or a case set inside the existing conformance targets.
 - Neighbours: starts after
-  [package-manager.md](package-manager.md) § uv workflow parity; a compiled
-  `mamba run <file>` stays the opt-in path that outcome defines.
+  [package-manager.md](package-manager.md) § uv workflow parity, and after
+  [mambalibs.md](mambalibs.md) § mambalibs CPython wheels, whose Python API
+  the `MambaModule` carrier must match; a compiled `mamba run <file>` stays
+  the opt-in path the parity outcome defines.
 - Outcome: `cpython-runtime-replacement`. Tracking: Not assigned.
 
 ## Non-goals in this area

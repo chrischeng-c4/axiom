@@ -9,7 +9,11 @@ workflow's public contract changes. The compiler and runtime capabilities in
 the README (`cpython-312-parity`, `cpu-and-memory-under-cpython`, and
 `mambalibs-end-to-end`) are measured by their own README gates and have no row
 here; their promise is the ROADMAP outcome
-[cpython-runtime-replacement](ROADMAP.md#cpython-runtime-replacement).
+[cpython-runtime-replacement](ROADMAP.md#cpython-runtime-replacement). The
+mambalibs kits' promise to a CPython user — a PyO3 wheel installed into the
+project `.venv` — is the ROADMAP outcome
+[mambalibs-cpython-wheels](ROADMAP.md#mambalibs-cpython-wheels); no row
+measures it until a wheel exists.
 
 ## State definitions
 
