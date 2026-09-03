@@ -15,7 +15,7 @@ A promise with no gate under it is not claimed.
 
 | Capability | Root WI | Notes |
 |---|---:|---|
-| Build Script Version Stamp | - | emits `<PREFIX>_GIT_SHA`, `<PREFIX>_BUILT_AT`, and `<PREFIX>_TARGET` |
+| Build Script Version Stamp | - | emits `<PREFIX>_GIT_SHA`, `<PREFIX>_BUILT_AT`, and `<PREFIX>_TARGET`; an exact 40-character hexadecimal `<PREFIX>_SOURCE_REVISION` overrides the local short-SHA fallback |
 
 ### Build Script Version Stamp
 

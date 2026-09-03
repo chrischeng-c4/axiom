@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/kubernetes-ownership.sh"
+
 : "${MANIFEST_DIR:?MANIFEST_DIR is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 
@@ -39,6 +42,9 @@ esac
 mkdir -p "$EVIDENCE_DIR/kubernetes"
 
 if [[ "$app" == "sift" ]]; then
+  : "${PROJECT_ID:?PROJECT_ID is required for Sift ownership receipts}"
+  : "${RUN_ID:?RUN_ID is required for Sift ownership receipts}"
+  : "${ACCEPTANCE_LOCK_ACQUISITION_ID:?ACCEPTANCE_LOCK_ACQUISITION_ID is required for Sift ownership receipts}"
   kubectl get customresourcedefinition fqdnnetworkpolicies.networking.gke.io \
     >/dev/null 2>&1 || {
       echo "Sift requires GKE Dataplane V2 with FQDN Network Policy enabled; missing fqdnnetworkpolicies.networking.gke.io" >&2
@@ -78,7 +84,21 @@ wait_crd_established() {
   return 1
 }
 
-kubectl apply -f "$MANIFEST_DIR/$app/crd.yaml"
+if [[ "$app" == "sift" ]]; then
+  ownership_root="$EVIDENCE_DIR/kubernetes/ownership"
+  create_owned_namespace \
+    "$operator_namespace" "$ownership_root" "$PROJECT_ID" "$RUN_ID" \
+    "$ACCEPTANCE_LOCK_ACQUISITION_ID"
+  create_owned_namespace \
+    "$cr_namespace" "$ownership_root" "$PROJECT_ID" "$RUN_ID" \
+    "$ACCEPTANCE_LOCK_ACQUISITION_ID"
+  create_owned_kubernetes_resource \
+    customresourcedefinition "$crd" "$MANIFEST_DIR/$app/crd.yaml" \
+    "$ownership_root" "$PROJECT_ID" "$RUN_ID" \
+    "$ACCEPTANCE_LOCK_ACQUISITION_ID"
+else
+  kubectl apply -f "$MANIFEST_DIR/$app/crd.yaml"
+fi
 # Not `kubectl wait --for=condition=Established`: between the apply returning
 # and the apiextensions controller first writing status, `.status.conditions`
 # does not exist, and `kubectl wait` treats an absent field as an error

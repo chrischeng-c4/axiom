@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$ACCEPTANCE_ROOT/scripts/source-prefix.sh"
 FINALIZER="$ACCEPTANCE_ROOT/scripts/finalize-sift-mvp-acceptance.sh"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/sift-mvp-evidence.XXXXXX")"
 cleanup_tmp() {
@@ -10,10 +11,13 @@ cleanup_tmp() {
   find "$tmp" -depth -type d -empty -delete
 }
 trap cleanup_tmp EXIT INT TERM
+candidate_digest="$(printf '0%.0s' {1..64})"
+candidate_git_sha="0123456789abcdef0123456789abcdef01234567"
 
 write_verification() {
   local status="$1"
-  jq -n --arg status "$status" --arg digest "$(printf '0%.0s' {1..64})" '{
+  jq -n --arg status "$status" --arg digest "$candidate_digest" \
+    --arg git_sha "$candidate_git_sha" '{
     schema:"axiom.gcp.operator.verification.v1",
     project_id:"project-1",
     region:"asia-east1",
@@ -26,10 +30,11 @@ write_verification() {
       candidate:{
         sift_image:("example.invalid/sift@sha256:" + $digest),
         rig_image:("example.invalid/rig@sha256:" + $digest),
-        git_sha:"0123456789ab",
+        acceptance_runner_image:("example.invalid/sift-acceptance-runner@sha256:" + $digest),
+        git_sha:$git_sha,
         source_bundle_sha256:$digest,
         cloud_build_id:"build-0123456789ab",
-        source_object_uri:"gs://project-1-cloudbuild/source/candidate.tar.gz",
+        source_object_uri:"gs://project-1-cloudbuild/source/axiom-gcp-operator-sift-test/candidate.tar.gz",
         immutable:true
       },
       topology:{
@@ -47,6 +52,7 @@ write_verification() {
         otlp_grpc:"passed",
         partial_success:"passed",
         remote_write_1:"passed",
+        prometheus_query_range:"passed",
         remote_write_2_rejected_415:"passed",
         mcp_read_only_tools:"passed",
         mcp_host_origin:"passed",
@@ -114,7 +120,8 @@ write_verification() {
 write_cleanup() {
   local status="$1"
   local run_id="${2:-sift-test}"
-  jq -n --arg status "$status" --arg run_id "$run_id" '{
+  jq -n --arg status "$status" --arg run_id "$run_id" \
+    --arg digest "$candidate_digest" --arg git_sha "$candidate_git_sha" '{
     schema:"axiom.gcp.operator.cleanup.v1",
     project_id:"project-1",
     region:"asia-east1",
@@ -122,6 +129,16 @@ write_cleanup() {
     run_id:$run_id,
     verified_at:"2026-09-01T00:00:00Z",
     status:$status,
+    candidate:{
+      sift_image:("example.invalid/sift@sha256:" + $digest),
+      rig_image:("example.invalid/rig@sha256:" + $digest),
+      acceptance_runner_image:("example.invalid/sift-acceptance-runner@sha256:" + $digest),
+      git_sha:$git_sha,
+      source_bundle_sha256:$digest,
+      cloud_build_id:"build-0123456789ab",
+      source_object_uri:"gs://project-1-cloudbuild/source/axiom-gcp-operator-sift-test/candidate.tar.gz",
+      immutable:true
+    },
     preserved:{artifact_registry:true,preexisting_apis:true}
   }' > "$tmp/cleanup.json"
 }
@@ -137,6 +154,7 @@ jq -e '
   and .acceptance.sift.cleanup_evidence.schema == "axiom.gcp.operator.cleanup.v1"
   and .acceptance.sift.cleanup_evidence.run_id == "sift-test"
   and .acceptance.sift.cleanup_evidence.status == "clean"
+  and .acceptance.sift.cleanup_evidence.candidate == .acceptance.sift.candidate
 ' "$tmp/acceptance.json" >/dev/null
 cmp "$tmp/acceptance.json" "$tmp/sift-mvp-acceptance.json"
 
@@ -178,6 +196,17 @@ fi
 
 write_cleanup clean
 write_verification verification-passed
+jq '.candidate.git_sha = "fedcba9876543210fedcba9876543210fedcba98"' \
+  "$tmp/cleanup.json" > "$tmp/mismatched-cleanup.json"
+mv "$tmp/mismatched-cleanup.json" "$tmp/cleanup.json"
+if EVIDENCE_DIR="$tmp" "$FINALIZER" >/dev/null 2>&1; then
+  echo "finalizer accepted cleanup evidence from another candidate" >&2
+  exit 1
+fi
+[[ ! -e "$tmp/acceptance.json" ]]
+
+write_cleanup clean
+write_verification verification-passed
 jq '.acceptance.sift = {
   schema:"axiom.gcp.sift.mvp.verification.v1",
   status:"verification-passed",
@@ -193,5 +222,110 @@ if EVIDENCE_DIR="$tmp" "$FINALIZER" >/dev/null 2>&1; then
   exit 1
 fi
 [[ ! -e "$tmp/acceptance.json" ]]
+
+receipt_dir="$tmp/cleanup-receipt"
+fake_bin="$tmp/bin"
+mkdir -p "$receipt_dir" "$fake_bin"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'case "$*" in' \
+  '  *"artifacts docker images describe"*) echo "not found" >&2; exit 1 ;;' \
+  '  *"storage ls"*) echo "matched no URLs" >&2; exit 1 ;;' \
+  '  *"builds list"*) printf "[]\\n" ;;' \
+  '  *) exit 0 ;;' \
+  'esac' > "$fake_bin/gcloud"
+chmod +x "$fake_bin/gcloud"
+source_prefix="gs://project-1-cloudbuild/source/axiom-gcp-operator-sift-test"
+write_source_prefix_receipt \
+  "$receipt_dir/source-prefix.json" "project-1" "sift-test" "$source_prefix"
+jq -n --arg git_sha "$candidate_git_sha" \
+  '{git_sha:$git_sha}' > "$receipt_dir/run.json"
+jq -n --arg git_sha "$candidate_git_sha" --arg digest "$candidate_digest" \
+  '{git_sha:$git_sha,source_bundle_sha256:$digest}' \
+  > "$receipt_dir/candidate-source.json"
+jq -n --arg git_sha "$candidate_git_sha" --arg digest "$candidate_digest" '
+  {
+    schema:"axiom.gcp.sift.candidate-gate.v1",
+    git_sha:$git_sha,
+    source_bundle_sha256:$digest,
+    entrypoint:"apps/sift/test.sh --candidate",
+    completed_at:"2026-09-02T00:00:00Z",
+    status:"passed"
+  }' > "$receipt_dir/candidate-gate.json"
+jq -n --arg git_sha "$candidate_git_sha" --arg digest "$candidate_digest" '
+  {
+    build_id:"build-0123456789ab",
+    git_sha:$git_sha,
+    source_uri:"gs://project-1-cloudbuild/source/axiom-gcp-operator-sift-test/candidate.tar.gz",
+    source_bundle_sha256:$digest,
+    staged_source_sha256:$digest
+  }' > "$receipt_dir/cloud-build-source-binding.json"
+jq -n '
+  {
+    source:{
+      storageSource:{
+        bucket:"project-1-cloudbuild",
+        object:"source/axiom-gcp-operator-sift-test/candidate.tar.gz"
+      }
+    }
+  }' > "$receipt_dir/cloud-build-submit.json"
+jq -n --arg digest "$candidate_digest" '
+  {
+    sift:("example.invalid/sift@sha256:" + $digest),
+    rig:("example.invalid/rig@sha256:" + $digest),
+    acceptance_runner:("example.invalid/sift-acceptance-runner@sha256:" + $digest)
+  }' > "$receipt_dir/images.json"
+printf '{}\n' > "$receipt_dir/sift-mvp-verification.json"
+PATH="$fake_bin:$PATH" \
+  PROJECT_ID=project-1 REGION=asia-east1 GKE_ZONE=asia-east1-a \
+  RUN_ID=sift-test REGISTRY=example.invalid IMAGE_TAG=candidate \
+  GCS_SOURCE_PREFIX="$source_prefix" \
+  EVIDENCE_DIR="$receipt_dir" ACCEPTANCE_APPS=sift \
+  PERSISTENT_CLUSTER_CHECK_REQUIRED=0 KUBERNETES_CHECK_REQUIRED=0 \
+  "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" >/dev/null
+jq -e --arg git_sha "$candidate_git_sha" --arg digest "$candidate_digest" '
+  .status == "clean"
+  and .candidate.git_sha == $git_sha
+  and .candidate.source_bundle_sha256 == $digest
+  and .candidate.sift_image == ("example.invalid/sift@sha256:" + $digest)
+  and .candidate.rig_image == ("example.invalid/rig@sha256:" + $digest)
+  and .candidate.acceptance_runner_image == ("example.invalid/sift-acceptance-runner@sha256:" + $digest)
+' "$receipt_dir/cleanup.json" >/dev/null
+
+rm -f "$receipt_dir/cleanup.json"
+jq '.status = "failed"' "$receipt_dir/candidate-gate.json" \
+  > "$receipt_dir/failed-candidate-gate.json"
+mv "$receipt_dir/failed-candidate-gate.json" "$receipt_dir/candidate-gate.json"
+if PATH="$fake_bin:$PATH" \
+  PROJECT_ID=project-1 REGION=asia-east1 GKE_ZONE=asia-east1-a \
+  RUN_ID=sift-test REGISTRY=example.invalid IMAGE_TAG=candidate \
+  GCS_SOURCE_PREFIX="$source_prefix" \
+  EVIDENCE_DIR="$receipt_dir" ACCEPTANCE_APPS=sift \
+  PERSISTENT_CLUSTER_CHECK_REQUIRED=0 KUBERNETES_CHECK_REQUIRED=0 \
+  "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" >/dev/null 2>&1; then
+  echo "verify-clean accepted a failed candidate gate" >&2
+  exit 1
+fi
+[[ ! -e "$receipt_dir/cleanup.json" ]]
+jq '.status = "passed"' "$receipt_dir/candidate-gate.json" \
+  > "$receipt_dir/passed-candidate-gate.json"
+mv "$receipt_dir/passed-candidate-gate.json" "$receipt_dir/candidate-gate.json"
+
+jq '.git_sha = "fedcba9876543210fedcba9876543210fedcba98"' \
+  "$receipt_dir/cloud-build-source-binding.json" \
+  > "$receipt_dir/mismatched-build.json"
+mv "$receipt_dir/mismatched-build.json" \
+  "$receipt_dir/cloud-build-source-binding.json"
+if PATH="$fake_bin:$PATH" \
+  PROJECT_ID=project-1 REGION=asia-east1 GKE_ZONE=asia-east1-a \
+  RUN_ID=sift-test REGISTRY=example.invalid IMAGE_TAG=candidate \
+  GCS_SOURCE_PREFIX="$source_prefix" \
+  EVIDENCE_DIR="$receipt_dir" ACCEPTANCE_APPS=sift \
+  PERSISTENT_CLUSTER_CHECK_REQUIRED=0 KUBERNETES_CHECK_REQUIRED=0 \
+  "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" >/dev/null 2>&1; then
+  echo "verify-clean accepted cleanup evidence from mixed candidate sources" >&2
+  exit 1
+fi
+[[ ! -e "$receipt_dir/cleanup.json" ]]
 
 echo "Sift MVP evidence finalization E2E: ok"

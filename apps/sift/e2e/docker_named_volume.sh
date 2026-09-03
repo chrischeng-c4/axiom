@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git -c core.fsmonitor=false rev-parse --show-toplevel)"
+repo_root="${SIFT_REPO_ROOT:-$(git -c core.fsmonitor=false rev-parse --show-toplevel)}"
 run_id="$$"
 image="sift-volume-e2e:${run_id}"
 volume="sift-volume-e2e-${run_id}"

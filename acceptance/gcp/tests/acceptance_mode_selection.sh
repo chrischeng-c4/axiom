@@ -22,13 +22,29 @@ SIFT_VERIFY_SCRIPT="${SIFT_VERIFY_SCRIPT_OVERRIDE:-$ACCEPTANCE_ROOT/scripts/veri
 SIFT_LOAD_DIGEST_SCRIPT="$ACCEPTANCE_ROOT/scripts/sift-load-digest.py"
 SIFT_FINALIZER="$ACCEPTANCE_ROOT/scripts/finalize-sift-mvp-acceptance.sh"
 SIFT_EVIDENCE_VALIDATOR="$ACCEPTANCE_ROOT/scripts/validate-sift-mvp-evidence.py"
+SIFT_CANDIDATE_SCRIPT="$ACCEPTANCE_ROOT/scripts/sift-candidate.sh"
+SIFT_PREPARE_SCRIPT="$ACCEPTANCE_ROOT/scripts/prepare-sift-candidate.sh"
+SIFT_CANDIDATE_CLEANUP_SCRIPT="$ACCEPTANCE_ROOT/scripts/cleanup-sift-candidate.sh"
+SIFT_CONTAINED_SCRIPT="$ACCEPTANCE_ROOT/scripts/run-sift-contained.sh"
+SIFT_CONTAINER_BOUNDARY="$ACCEPTANCE_ROOT/scripts/sift-container-boundary.sh"
+SIFT_ACCEPTANCE_RUNNER_IMAGE="$ACCEPTANCE_ROOT/images/Dockerfile.sift-acceptance-runner"
 PROCESS_TREE_SCRIPT="$ACCEPTANCE_ROOT/scripts/process-tree.sh"
+PROCESS_START_TOKEN_HELPER="$ACCEPTANCE_ROOT/scripts/process-start-token.py"
+RUN_LOG_SCRIPT="$ACCEPTANCE_ROOT/scripts/run-log.sh"
+RUN_SUPERVISOR="$ACCEPTANCE_ROOT/scripts/run-supervisor.py"
+SOURCE_PREFIX_SCRIPT="$ACCEPTANCE_ROOT/scripts/source-prefix.sh"
+ACCEPTANCE_LOCK_SCRIPT="$ACCEPTANCE_ROOT/scripts/acceptance-lock.sh"
+KUBERNETES_OWNERSHIP_SCRIPT="$ACCEPTANCE_ROOT/scripts/kubernetes-ownership.sh"
 SIFT_AUTH_DELEGATOR_FILTER="$ACCEPTANCE_ROOT/scripts/sift-auth-delegator.jq"
 SIFT_ARCHIVE_FQDN_FILTER="$ACCEPTANCE_ROOT/scripts/sift-archive-fqdn-policy.jq"
 ENV_VARIABLES="$ACCEPTANCE_ROOT/environment/variables.tf"
 ENV_GKE="$ACCEPTANCE_ROOT/environment/gke.tf"
 CLUSTER_TF="$ACCEPTANCE_ROOT/cluster/main.tf"
 SCHEMA="$ACCEPTANCE_ROOT/evidence/schema.json"
+SIFT_TEST_IMAGE_WORKFLOW="$ACCEPTANCE_ROOT/../../.github/workflows/sift-test-image.yml"
+BUILD_STAMP="$ACCEPTANCE_ROOT/../../libs/build-stamp/src/lib.rs"
+SIFT_COMPLIANCE_SCRIPT="$ACCEPTANCE_ROOT/../../apps/sift/e2e/prometheus_compliance.sh"
+SIFT_CANDIDATE_ROOT_TEST="$ACCEPTANCE_ROOT/../../apps/sift/e2e/candidate_root.sh"
 
 fail() {
   echo "acceptance-mode oracle: $1" >&2
@@ -247,20 +263,95 @@ present "cleanup is no longer trapped on EXIT" 'trap cleanup EXIT'              
 present "the interrupt trap is gone"           "trap 'exit 130' INT"                "$RUN_SCRIPT"
 present "the cloud-time cap trap is gone"      '45-minute cloud acceptance cap reached' "$RUN_SCRIPT"
 present "the acceptance run is no longer isolated in its own process group" \
-  'start_new_session=True' "$RUN_SCRIPT"
+  'start_new_session=True' "$RUN_SUPERVISOR"
 present "the outer isolation wrapper no longer kills surviving group members" \
-  'os.killpg(child.pid, signal.SIGKILL)' "$RUN_SCRIPT"
+  'signal_group(signal.SIGKILL)' "$RUN_SUPERVISOR"
+present "the outer isolation wrapper does not wait for cloud readiness" \
+  'ready_state == "ready"' "$RUN_SUPERVISOR"
+present "the outer isolation wrapper has no independent cloud deadline" \
+  'run_deadline = now + args.deadline_seconds' "$RUN_SUPERVISOR"
+present "the outer isolation wrapper has no bounded preflight" \
+  'preflight_deadline = time.monotonic() + args.preflight_deadline_seconds' "$RUN_SUPERVISOR"
+present "the outer isolation wrapper has no bounded cleanup grace" \
+  'shutdown_deadline = now + args.shutdown_grace_seconds' "$RUN_SUPERVISOR"
+present "run.sh no longer binds cloud readiness to a nonce" \
+  'AXIOM_GCP_ACCEPTANCE_SUPERVISOR_READY_TOKEN' "$RUN_SCRIPT"
+supervisor_ready_publish_line="$(line_of \
+  'mv "${AXIOM_GCP_ACCEPTANCE_SUPERVISOR_READY_PATH}.tmp"' "$RUN_SCRIPT")"
+watchdog_ready_publish_line="$(line_of \
+  'mv "${watchdog_ready_file}.tmp" "$watchdog_ready_file"' "$RUN_SCRIPT")"
+[[ -n "$supervisor_ready_publish_line" && -n "$watchdog_ready_publish_line" \
+  && "$supervisor_ready_publish_line" -lt "$watchdog_ready_publish_line" ]] \
+  || fail "inner watchdog readiness can publish before the outer nonce receipt"
+watchdog_generation_check_line="$(line_of \
+  'if process_generation_state "$watchdog_pid" "$watchdog_token"; then' "$RUN_SCRIPT")"
+watchdog_ready_accept_line="$(line_of 'watchdog_ready=1' "$RUN_SCRIPT")"
+[[ -n "$watchdog_generation_check_line" && -n "$watchdog_ready_accept_line" \
+  && "$watchdog_generation_check_line" -lt "$watchdog_ready_accept_line" ]] \
+  || fail "run.sh can accept readiness without a live exact watchdog generation"
+present "run.sh no longer fixes the cleanup grace at fifteen minutes" \
+  '--shutdown-grace-seconds 900' "$RUN_SCRIPT"
 absent "the watchdog again depends on Bash 4 BASHPID" 'BASHPID' "$RUN_SCRIPT"
 present "the cloud-time cap no longer stops descendant processes" \
   'signal_recorded_processes "$watchdog_descendants" KILL' "$RUN_SCRIPT"
-present "the cloud-time cap no longer records the isolated process group" \
-  'record_process_group_members' "$RUN_SCRIPT"
+[[ "$(rg -F -c 'append_process_group_members' "$RUN_SCRIPT")" -ge 3 ]] \
+  || fail "the watchdog no longer refreshes process-generation records during the run and shutdown"
 present "the cloud-time cap misses group members created during TERM grace" \
   'append_process_group_members' "$RUN_SCRIPT"
+present "recovery no longer checks exact recorded process generations" \
+  'recorded_processes_have_live_member' "$CLEANUP_SCRIPT"
+present "recovery no longer checks the dedicated watchdog generation" \
+  '"$STATE_DIR/watchdog-process.txt"' "$CLEANUP_SCRIPT"
+present "recovery no longer checks the dedicated run-log generation" \
+  '"$STATE_DIR/run-log-process.txt"' "$CLEANUP_SCRIPT"
+present "process generations no longer use the high-resolution OS helper" \
+  'PROCESS_START_TOKEN_HELPER' "$PROCESS_TREE_SCRIPT"
+absent "process generations again use second-resolution ps output" \
+  'ps -o lstart' "$PROCESS_TREE_SCRIPT"
+present "an unreadable live process token no longer fails closed" \
+  'cannot verify the live acceptance run process generation' "$CLEANUP_SCRIPT"
+absent "recovery again trusts a bare numeric process group" \
+  'process_group_has_live_member' "$CLEANUP_SCRIPT"
 present "EXIT cleanup no longer rescans after stopping the watchdog" \
-  'for scan_attempt in 1 2 3 4 5; do' "$RUN_SCRIPT"
+  'shutdown_process_group_members' "$RUN_SCRIPT"
+present "EXIT cleanup no longer confirms each creator is stopped" \
+  'wait_for_process_generation_stopped "$pid" "$token" 40' "$PROCESS_TREE_SCRIPT"
+present "EXIT cleanup no longer reaches a frozen fixed point" \
+  '[[ "$stable" == "1" ]] || return 1' "$PROCESS_TREE_SCRIPT"
+present "EXIT cleanup no longer freezes historical escaped generations" \
+  'done < "$output"' "$PROCESS_TREE_SCRIPT"
+present "EXIT cleanup no longer verifies historical generations are gone" \
+  '&& ! recorded_processes_have_live_member "$output"' "$PROCESS_TREE_SCRIPT"
+present "a failed process scan no longer blocks destructive cleanup" \
+  'process-group membership is incomplete; refusing destructive cleanup' "$RUN_SCRIPT"
+present "cloud work can start before the first complete watchdog scan" \
+  'watchdog could not complete the initial process-group scan' "$RUN_SCRIPT"
 present "EXIT cleanup no longer kills the watchdog process tree" \
   'signal_recorded_processes "$watchdog_descendants" KILL' "$RUN_SCRIPT"
+present "EXIT cleanup can hand off while a recorded child remains unverifiable" \
+  'a process appeared in the final EXIT scan; refusing cleanup' "$RUN_SCRIPT"
+present "the long-lived log reader is no longer excluded by exact process generation" \
+  'process_record_is_excluded "$exclusion_record" "$pid" "$token"' "$PROCESS_TREE_SCRIPT"
+present "the run no longer keeps tee alive through destructive cleanup" \
+  'start_run_log "$EVIDENCE_DIR/run.log"' "$RUN_SCRIPT"
+present "the shared run-log helper no longer records tee birth identity" \
+  'RUN_LOG_TEE_TOKEN="$(process_start_token "$RUN_LOG_TEE_PID")"' "$RUN_LOG_SCRIPT"
+present "the watchdog is no longer stopped by exact generation with a deadline" \
+  'stop_process_generation_bounded "$watchdog_pid" "$watchdog_token"' "$RUN_SCRIPT"
+present "the watchdog no longer records its birth token" \
+  'watchdog_token="$(process_start_token "$watchdog_pid")"' "$RUN_SCRIPT"
+absent "watchdog shutdown again waits without a deadline" \
+  'wait "$watchdog_pid"' "$RUN_SCRIPT"
+absent "watchdog shutdown again signals a bare PID" \
+  'kill "$watchdog_pid"' "$RUN_SCRIPT"
+present "the run-log sink no longer requires a nonce-bound completion receipt" \
+  'RUN_LOG_RECEIPT_NONCE' "$RUN_LOG_SCRIPT"
+absent "run-log shutdown again waits on a possibly reused bare PID" \
+  'wait "$pid"' "$RUN_LOG_SCRIPT"
+present "the run no longer closes and waits for tee after cleanup" \
+  'finish_run_log' "$RUN_SCRIPT"
+absent "run.sh again uses an untracked process-substitution tee" \
+  'exec > >(tee -a "$EVIDENCE_DIR/run.log")' "$RUN_SCRIPT"
 present "the false-green sentinel is gone"     'run_completed=1'                    "$RUN_SCRIPT"
 present "cleanup no longer refuses ec=0 without the sentinel" 'run aborted before completion' "$RUN_SCRIPT"
 present "the backup service account is no longer swept" 'wait_for_empty "backup service account"' "$VERIFY_CLEAN_SCRIPT"
@@ -268,51 +359,331 @@ present "the backup service account is no longer swept" 'wait_for_empty "backup 
 # --- Sift MVP is independent, bounded, and evidence-complete --------------
 present "sift-only mode does not invoke its verifier" 'verify-sift-mvp.sh"' "$RUN_SCRIPT"
 present "sift-only mode lost the 90-minute cap" 'sift_cloud_cap=5400' "$RUN_SCRIPT"
-present "sift-only mode accepts a caller-supplied image again" \
-  'prebuilt images are not accepted' "$RUN_SCRIPT"
-present "sift-only mode accepts a caller-supplied CLI again" \
-  'caller-supplied SIFT_CLI is not accepted' "$RUN_SCRIPT"
-present "sift-only mode no longer builds Sift and Rig in one receipt" \
-  'cloudbuild.sift-mvp.yaml' "$RUN_SCRIPT"
+present "sift-only mode no longer enters the contained controller" \
+  'exec "$SCRIPT_DIR/run-sift-contained.sh" "$@"' "$RUN_SCRIPT"
+present "the contained controller no longer requires one complete candidate" \
+  'verify_sift_candidate_directory "$SIFT_CANDIDATE_DIR"' "$SIFT_CONTAINED_SCRIPT"
+present "the contained controller can again mount the candidate directory writable through an overlapping run path" \
+  'paths_overlap "$SIFT_CANDIDATE_DIR" "$writable_directory"' "$SIFT_CONTAINED_SCRIPT"
+present "the contained controller no longer resolves prospective writable paths before creating them" \
+  'canonicalize_without_creating "$STATE_DIR"' "$SIFT_CONTAINED_SCRIPT"
+candidate_precreate_guard_line="$(line_of \
+  'paths_overlap "$SIFT_CANDIDATE_DIR" "$planned_writable_directory"' \
+  "$SIFT_CONTAINED_SCRIPT")"
+writable_directory_create_line="$(line_of \
+  'mkdir -p "$STATE_DIR" "$EVIDENCE_DIR" "$CONTAINMENT_DIR"' \
+  "$SIFT_CONTAINED_SCRIPT")"
+[[ "$candidate_precreate_guard_line" =~ ^[0-9]+$ \
+  && "$writable_directory_create_line" =~ ^[0-9]+$ \
+  && "$candidate_precreate_guard_line" -lt "$writable_directory_create_line" ]] \
+  || fail "candidate overlap must be rejected before writable directories are created"
+present "sift-only mode accepts a caller-supplied image or CLI again" \
+  'contained Sift acceptance reads its CLI and images only from the candidate image' "$RUN_SCRIPT"
+present "sift-only mode accepts a caller-supplied compliance binary again" \
+  'INPUT_SIFT_BIN="${SIFT_BIN:-}"' "$RUN_SCRIPT"
+present "candidate preparation no longer builds all three fixed images together" \
+  'cloudbuild.sift-mvp.yaml' "$SIFT_PREPARE_SCRIPT"
 present "Sift candidate source is no longer archived from the fixed Git commit" \
-  'git -c core.fsmonitor=false -C "$REPO_ROOT" archive' "$RUN_SCRIPT"
+  'git -c core.fsmonitor=false -C "$REPO_ROOT" archive' "$SIFT_PREPARE_SCRIPT"
 present "Sift Cloud Build again submits the mutable worktree" \
-  'gcloud builds submit "$CANDIDATE_SOURCE_ARCHIVE"' "$RUN_SCRIPT"
-present "Sift local CLI is no longer built from the fixed candidate archive" \
-  '--manifest-path "$candidate_source_dir/Cargo.toml"' "$RUN_SCRIPT"
+  'gcloud builds submit "$source_archive"' "$SIFT_PREPARE_SCRIPT"
+present "the contained controller image no longer embeds the candidate Sift CLI" \
+  'COPY --from=builder /out/sift /usr/local/bin/sift' \
+  "$SIFT_ACCEPTANCE_RUNNER_IMAGE"
+present "Sift GCP acceptance no longer runs the complete fixed candidate gate" \
+  'bash "$source_dir/apps/sift/test.sh" --candidate' "$SIFT_PREPARE_SCRIPT"
+present "Sift GCP acceptance does not bind the gate to the extracted source root" \
+  'SIFT_REPO_ROOT="$source_dir"' "$SIFT_PREPARE_SCRIPT"
+present "Sift candidate compliance no longer verifies the built full SHA" \
+  'SIFT_EXPECTED_SOURCE_REVISION="$candidate_revision"' \
+  "$ACCEPTANCE_ROOT/../../apps/sift/test.sh"
+present "Sift candidate compliance no longer compares the actual full SHA" \
+  'if actual != expected:' "$SIFT_COMPLIANCE_SCRIPT"
+present "the stale fixed-path candidate negative test is gone" \
+  'Prometheus compliance accepted a stale fixed-path Sift binary' \
+  "$SIFT_CANDIDATE_ROOT_TEST"
+present "Sift GCP acceptance no longer records the candidate gate result" \
+  'axiom.gcp.sift.candidate-gate.v1' "$SIFT_PREPARE_SCRIPT"
+present "Sift verification no longer binds to the candidate gate receipt" \
+  'candidate_gate_receipt="$EVIDENCE_DIR/candidate-gate.json"' "$SIFT_VERIFY_SCRIPT"
+present "cleanup evidence no longer binds to the candidate gate receipt" \
+  '--slurpfile gate "$EVIDENCE_DIR/candidate-gate.json"' "$VERIFY_CLEAN_SCRIPT"
 present "Sift Cloud Build no longer checks the uploaded source bytes" \
-  'Cloud Build staged source does not match the fixed candidate archive' "$RUN_SCRIPT"
+  'Cloud Build staged source does not match the candidate archive' "$SIFT_PREPARE_SCRIPT"
 present "Sift Cloud Build receipts are no longer bound to the candidate SHA" \
-  '.substitutions._GIT_SHA == $git_sha' "$RUN_SCRIPT"
+  '.substitutions._GIT_SHA == $c.git_sha' "$SIFT_CANDIDATE_SCRIPT"
 present "Sift Cloud Build receipts are no longer bound to the candidate source digest" \
-  '.substitutions._SOURCE_BUNDLE_SHA256 == $source_bundle_sha256' "$RUN_SCRIPT"
+  '.substitutions._SOURCE_BUNDLE_SHA256 == $c.source_bundle_sha256' "$SIFT_CANDIDATE_SCRIPT"
 present "Sift Cloud Build receipts are no longer bound to the run" \
-  '.substitutions._RUN_ID == $run_id' "$RUN_SCRIPT"
+  '.substitutions._RUN_ID == $c.run_id' "$SIFT_CANDIDATE_SCRIPT"
+present "Sift candidate image tags no longer include the random acquisition identity" \
+  'IMAGE_TAG="${GIT_SHA}-${RUN_ID}-${acquisition_id}"' "$SIFT_PREPARE_SCRIPT"
+present "Sift candidate validation no longer binds the image tag to the random acquisition identity" \
+  '.image_tag == (.git_sha + "-" + .run_id + "-" + .acquisition_id)' \
+  "$SIFT_CANDIDATE_SCRIPT"
+present "candidate preparation no longer fails closed on source-bucket inventory errors" \
+  'could not inventory the pre-existing Cloud Build source bucket' "$SIFT_PREPARE_SCRIPT"
+present "candidate preparation no longer writes a run-scoped source-prefix receipt" \
+  'write_source_prefix_receipt' "$SIFT_PREPARE_SCRIPT"
+present "cleanup no longer verifies the source-prefix receipt before deletion" \
+  'verify_source_prefix_receipt' "$CLEANUP_SCRIPT"
+present "verify-clean no longer verifies the source-prefix receipt" \
+  'verify_source_prefix_receipt' "$VERIFY_CLEAN_SCRIPT"
+present "the source-prefix guard no longer requires the exact run path" \
+  '/source/axiom-gcp-operator-' "$SOURCE_PREFIX_SCRIPT"
+present "candidate preparation no longer binds the reported Cloud Build object to the exact prefix" \
+  'validated_source_object_uri' "$SIFT_PREPARE_SCRIPT"
+present "candidate failure no longer records whether submit returned a build ID" \
+  'submit_response_received:$submit_response_received' "$SIFT_PREPARE_SCRIPT"
+present "candidate failure no longer distinguishes a published submit intent from a started build" \
+  'submit_intent_published:$submit_intent_published' "$SIFT_PREPARE_SCRIPT"
+present "candidate failure no longer starts its receipt-driven recovery" \
+  'bash "$SCRIPT_DIR/cleanup-sift-candidate.sh" "$recovery_dir"' \
+  "$SIFT_PREPARE_SCRIPT"
+present "candidate recovery no longer discovers a submit whose response was lost" \
+  '--filter="tags=axiom-acquisition-${ACQUISITION_ID}"' \
+  "$SIFT_CANDIDATE_CLEANUP_SCRIPT"
+present "candidate recovery no longer verifies exact build substitutions" \
+  '.substitutions._SOURCE_BUNDLE_SHA256 == $source_sha' \
+  "$SIFT_CANDIDATE_CLEANUP_SCRIPT"
+present "candidate recovery can delete a moved image tag again" \
+  'candidate tag no longer matches its Cloud Build receipt' \
+  "$SIFT_CANDIDATE_CLEANUP_SCRIPT"
+present "candidate recovery no longer deletes exact source objects" \
+  'gcloud storage rm "$source_uri" --quiet' \
+  "$SIFT_CANDIDATE_CLEANUP_SCRIPT"
+present "candidate recovery no longer deletes its reservation with a generation precondition" \
+  '--if-generation-match="$reservation_generation"' \
+  "$SIFT_CANDIDATE_CLEANUP_SCRIPT"
+present "candidate recovery no longer deletes its submit intent with a generation precondition" \
+  '--if-generation-match="$submit_intent_generation"' \
+  "$SIFT_CANDIDATE_CLEANUP_SCRIPT"
+present "cleanup no longer validates the exact Cloud Build source object" \
+  'verify_cloud_build_source_evidence' "$CLEANUP_SCRIPT"
+present "main cleanup no longer deletes the candidate reservation with a generation precondition" \
+  '--if-generation-match="$reservation_generation"' "$CLEANUP_SCRIPT"
+present "main cleanup no longer deletes the candidate submit intent with a generation precondition" \
+  '--if-generation-match="$submit_intent_generation"' "$CLEANUP_SCRIPT"
+present "the run no longer uses create-only Kubernetes Lease acquisition" \
+  'kubectl create -f - -o json' "$RUN_SCRIPT"
+present "the run no longer persists a provisional Lease intent" \
+  'write_acceptance_lock_intent' "$RUN_SCRIPT"
+present "the run no longer writes an exact shared GKE Lease receipt" \
+  'write_acceptance_lock_receipt' "$RUN_SCRIPT"
+present "the Sift preflight can again treat Kubernetes API failure as absence" \
+  'require_kubernetes_resource_absent namespace "$namespace"' "$RUN_SCRIPT"
+present "the Sift preflight no longer refuses an existing Sift CRD" \
+  'customresourcedefinition sifts.sift.axiom.dev' "$RUN_SCRIPT"
+present "Sift deploy no longer creates namespaces with ownership receipts" \
+  'create_owned_namespace' "$DEPLOY_SCRIPT"
+present "Sift deploy no longer creates its CRD with an ownership receipt" \
+  'create_owned_kubernetes_resource' "$DEPLOY_SCRIPT"
+present "fresh-PVC restore no longer owns its namespace by UID" \
+  'create_owned_namespace' "$SIFT_VERIFY_SCRIPT"
+present "cleanup no longer deletes Sift namespaces through UID receipts" \
+  'delete_owned_kubernetes_resource' "$CLEANUP_SCRIPT"
+present "Kubernetes ownership no longer persists intent before create" \
+  'write_kubernetes_ownership_intent' "$KUBERNETES_OWNERSHIP_SCRIPT"
+present "Kubernetes ownership no longer binds cleanup to the live UID" \
+  'verify_kubernetes_ownership_receipt' "$KUBERNETES_OWNERSHIP_SCRIPT"
+present "cleanup no longer verifies Sift ownership before deleting a CR" \
+  'assert_owned_kubernetes_resource' "$CLEANUP_SCRIPT"
+present "Kubernetes cleanup no longer uses UID/resourceVersion preconditions" \
+  'preconditions:{uid:$uid,resourceVersion:$resource_version}' \
+  "$KUBERNETES_OWNERSHIP_SCRIPT"
+absent "Sift cleanup again deletes the fixed CRD without a UID precondition" \
+  'kubectl delete customresourcedefinition sifts.sift.axiom.dev' "$CLEANUP_SCRIPT"
+ownership_assert_line="$(line_of 'assert_owned_kubernetes_resource' "$CLEANUP_SCRIPT")"
+sift_instance_delete_line="$(line_of 'delete_sift_instance sift sift' "$CLEANUP_SCRIPT")"
+[[ "$ownership_assert_line" =~ ^[0-9]+$ \
+  && "$sift_instance_delete_line" =~ ^[0-9]+$ \
+  && "$ownership_assert_line" -lt "$sift_instance_delete_line" ]] \
+  || fail "Sift CR deletion can run before namespace and CRD ownership checks"
+present "the run no longer derives one host-wide claim for this project, run, and mode" \
+  'acceptance_run_claim_path' "$RUN_SCRIPT"
+present "the run no longer installs its complete local claim atomically" \
+  'ln "$claim_candidate" "$local_run_claim"' "$RUN_SCRIPT"
+present "the run no longer binds cleanup to its local owner identity" \
+  'write_acceptance_run_owner' "$RUN_SCRIPT"
+present "the EXIT trap no longer passes its one-time cleanup handoff nonce" \
+  'ACCEPTANCE_RUN_OWNER_HANDOFF_NONCE="$cleanup_handoff_nonce"' "$RUN_SCRIPT"
+present "the local owner receipt no longer stores only the handoff nonce digest" \
+  '.cleanup_handoff_digest == $cleanup_handoff_digest' "$ACCEPTANCE_LOCK_SCRIPT"
+absent "the public acquisition ID is again accepted as a cleanup handoff" \
+  'ACCEPTANCE_RUN_OWNER_ACQUISITION_ID=' "$CLEANUP_SCRIPT"
+present "cleanup no longer rejects a live run owner" \
+  'authorize_acceptance_cleanup || exit 1' "$CLEANUP_SCRIPT"
+present "cleanup no longer verifies the shared GKE Lease before Kubernetes deletion" \
+  'verify_acceptance_lock_receipt' "$CLEANUP_SCRIPT"
+present "cleanup no longer gates Kubernetes deletion on the verified shared GKE Lease" \
+  'if [[ "$kubernetes_cleanup_authorized" == "1" ]]' "$CLEANUP_SCRIPT"
+present "cleanup no longer deletes the shared Lease with UID and resourceVersion preconditions" \
+  '"$raw_path" "$uid" "$resource_version"; then' "$CLEANUP_SCRIPT"
+present "the shared GKE Lease receipt no longer binds the Kubernetes UID" \
+  '.uid == $uid' "$ACCEPTANCE_LOCK_SCRIPT"
+lock_create_line="$(line_of 'kubectl create -f - -o json' "$RUN_SCRIPT")"
+lock_intent_line="$(line_of 'write_acceptance_lock_intent' "$RUN_SCRIPT")"
+run_owner_line="$(line_of 'write_acceptance_run_owner' "$RUN_SCRIPT")"
+atomic_claim_line="$(line_of 'ln "$claim_candidate" "$local_run_claim"' "$RUN_SCRIPT")"
+cleanup_armed_line="$(line_of 'cleanup_armed=1' "$RUN_SCRIPT")"
+cloud_submit_line="$(line_of 'build_id="$(gcloud builds submit' "$RUN_SCRIPT")"
+terraform_apply_line="$(line_of '-chdir="$TERRAFORM_ENVIRONMENT_DIR" apply' "$RUN_SCRIPT")"
+candidate_copy_line="$(line_of 'copy_sift_candidate_evidence' "$RUN_SCRIPT")"
+[[ "$lock_create_line" =~ ^[0-9]+$ && "$lock_intent_line" =~ ^[0-9]+$ \
+  && "$run_owner_line" =~ ^[0-9]+$ && "$atomic_claim_line" =~ ^[0-9]+$ \
+  && "$cleanup_armed_line" =~ ^[0-9]+$ && "$cloud_submit_line" =~ ^[0-9]+$ \
+  && "$terraform_apply_line" =~ ^[0-9]+$ && "$candidate_copy_line" =~ ^[0-9]+$ \
+  && "$run_owner_line" -lt "$atomic_claim_line" \
+  && "$atomic_claim_line" -lt "$lock_intent_line" \
+  && "$candidate_copy_line" -lt "$lock_intent_line" \
+  && "$lock_intent_line" -lt "$lock_create_line" \
+  && "$cleanup_armed_line" -lt "$lock_create_line" \
+  && "$lock_create_line" -lt "$cloud_submit_line" \
+  && "$lock_create_line" -lt "$terraform_apply_line" ]] \
+  || fail "the Lease intent and cleanup trap must precede acquisition, Cloud Build, and run Terraform"
+prepare_gate_line="$(line_of 'bash "$source_dir/apps/sift/test.sh" --candidate' "$SIFT_PREPARE_SCRIPT")"
+prepare_reservation_line="$(line_of '"$receipts/candidate-reservation.json" "$reservation_uri" reservation || exit 1' "$SIFT_PREPARE_SCRIPT")"
+prepare_intent_line="$(line_of '"$receipts/candidate-submit-intent.json" "$submit_intent_uri" submit-intent' "$SIFT_PREPARE_SCRIPT")"
+prepare_submit_line="$(line_of 'if ! gcloud builds submit "$source_archive"' "$SIFT_PREPARE_SCRIPT")"
+[[ "$prepare_gate_line" =~ ^[0-9]+$ \
+  && "$prepare_reservation_line" =~ ^[0-9]+$ \
+  && "$prepare_intent_line" =~ ^[0-9]+$ \
+  && "$prepare_submit_line" =~ ^[0-9]+$ \
+  && "$prepare_gate_line" -lt "$prepare_reservation_line" \
+  && "$prepare_reservation_line" -lt "$prepare_intent_line" \
+  && "$prepare_intent_line" -lt "$prepare_submit_line" ]] \
+  || fail "Sift candidate gate, reservation, submit intent, and Cloud Build are out of order"
+present "candidate reservation and submit intent are no longer create-only" \
+  '--if-generation-match=0' "$SIFT_PREPARE_SCRIPT"
+present "candidate preparation no longer claims the final directory atomically" \
+  'if ! mkdir "$CANDIDATE_DIR"; then' "$SIFT_PREPARE_SCRIPT"
+absent "candidate preparation again moves receipts into an unclaimed final directory" \
+  'mv "$receipts" "$CANDIDATE_DIR"' "$SIFT_PREPARE_SCRIPT"
+cloud_guard_line="$(line_of 'require_acceptance_run_lock "Cloud Build submit"' "$RUN_SCRIPT")"
+terraform_guard_line="$(line_of 'require_acceptance_run_lock "Terraform apply"' "$RUN_SCRIPT")"
+sift_deploy_guard_line="$(line_of 'require_acceptance_run_lock "Sift deploy"' "$RUN_SCRIPT")"
+sift_deploy_line="$(line_of '"$SCRIPT_DIR/deploy.sh" sift' "$RUN_SCRIPT")"
+[[ "$cloud_guard_line" =~ ^[0-9]+$ && "$terraform_guard_line" =~ ^[0-9]+$ \
+  && "$sift_deploy_guard_line" =~ ^[0-9]+$ && "$sift_deploy_line" =~ ^[0-9]+$ \
+  && "$cloud_guard_line" -lt "$cloud_submit_line" \
+  && "$terraform_guard_line" -lt "$terraform_apply_line" \
+  && "$sift_deploy_guard_line" -lt "$sift_deploy_line" ]] \
+  || fail "run mutations must revalidate the exact live Lease before Cloud Build, Terraform, and deploy"
+present "the run cannot recover an accepted Lease after a lost create response" \
+  'verify_acceptance_lock_json' "$RUN_SCRIPT"
+cleanup_lock_line="$(line_of 'acceptance_lock_receipt="$EVIDENCE_DIR/acceptance-lock.json"' "$CLEANUP_SCRIPT")"
+cleanup_session_line="$(line_of 'acceptance_cleanup_session_patch' "$CLEANUP_SCRIPT")"
+cleanup_build_line="$(line_of '&& ! stop_run_cloud_builds; then' "$CLEANUP_SCRIPT")"
+[[ "$cleanup_lock_line" =~ ^[0-9]+$ && "$cleanup_session_line" =~ ^[0-9]+$ \
+  && "$cleanup_build_line" =~ ^[0-9]+$ \
+  && "$cleanup_lock_line" -lt "$cleanup_session_line" \
+  && "$cleanup_session_line" -lt "$cleanup_build_line" ]] \
+  || fail "cleanup must claim a unique session before touching run-tagged Cloud Builds"
+present "cleanup no longer rechecks its session before destructive phases" \
+  'assert_acceptance_cleanup_session' "$CLEANUP_SCRIPT"
+present "cleanup cannot recover the patch-before-receipt window from durable intent" \
+  'verify_acceptance_cleanup_session_intent_identity' "$CLEANUP_SCRIPT"
+present "cleanup no longer uses a resourceVersion CAS for dead-owner takeover" \
+  'acceptance_cleanup_session_takeover_patch' "$CLEANUP_SCRIPT"
+present "cleanup no longer reports a dead-owner session takeover" \
+  'took over the cleanup session after its recorded owner stopped' "$CLEANUP_SCRIPT"
+present "cleanup can again require a candidate receipt after an early failed build" \
+  '&& -f "$EVIDENCE_DIR/sift-mvp-verification.json"' "$VERIFY_CLEAN_SCRIPT"
+present "verify-clean no longer checks the exact Cloud Build source object" \
+  'verify_cloud_build_source_evidence' "$VERIFY_CLEAN_SCRIPT"
 present "Sift Cloud Build receipts no longer bind the deployed image digests" \
-  'any(.results.images[]?; .name == $name and .digest == $digest)' "$RUN_SCRIPT"
-candidate_digest_line="$(line_of 'SIFT_IMAGE="$(resolve_digest sift)"' "$RUN_SCRIPT")"
+  'and .digest == ($c.sift_image | split("@")[-1])' "$SIFT_CANDIDATE_SCRIPT"
+present "Sift test-image workflow no longer resolves one immutable commit" \
+  'sha: ${{ steps.source.outputs.sha }}' "$SIFT_TEST_IMAGE_WORKFLOW"
+present "Sift test-image workflow publishes without the candidate gate" \
+  'run: bash apps/sift/test.sh --candidate' "$SIFT_TEST_IMAGE_WORKFLOW"
+present "Sift test-image binaries no longer receive the immutable full SHA" \
+  'SIFT_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}' "$SIFT_TEST_IMAGE_WORKFLOW"
+present "build-stamp no longer accepts an explicit archive source revision" \
+  'source_revision_variable = format!("{prefix}_SOURCE_REVISION")' "$BUILD_STAMP"
+[[ "$(rg -F -c 'ref: ${{ needs.resolve.outputs.sha }}' "$SIFT_TEST_IMAGE_WORKFLOW")" == "3" ]] \
+  || fail "Sift test-image candidate, build, and publish jobs do not use the same resolved commit"
+candidate_digest_line="$(line_of 'SIFT_IMAGE="$(jq -er' "$RUN_SCRIPT")"
 gke_bootstrap_line="$(line_of 'echo ">> persistent Standard GKE cluster bootstrap or reuse"' "$RUN_SCRIPT")"
 [[ -n "$candidate_digest_line" && -n "$gke_bootstrap_line" \
   && "$candidate_digest_line" -lt "$gke_bootstrap_line" ]] \
-  || fail "GKE starts before the Sift and Rig candidate digests are fixed"
+  || fail "GKE starts before the candidate receipt fixes all image digests"
+owner_receipt_line="$(line_of 'write_sift_container_owner' "$SIFT_CONTAINED_SCRIPT")"
+run_start_line="$(line_of 'docker start --attach "$run_container_id"' "$SIFT_CONTAINED_SCRIPT")"
+stopped_receipt_line="$(line_of 'write_sift_container_stopped_receipt' "$SIFT_CONTAINED_SCRIPT")"
+cleanup_container_line="$(line_of 'cleanup_container_id="$(docker create' "$SIFT_CONTAINED_SCRIPT")"
+[[ "$owner_receipt_line" =~ ^[0-9]+$ && "$run_start_line" =~ ^[0-9]+$ \
+  && "$stopped_receipt_line" =~ ^[0-9]+$ && "$cleanup_container_line" =~ ^[0-9]+$ \
+  && "$owner_receipt_line" -lt "$run_start_line" \
+  && "$run_start_line" -lt "$stopped_receipt_line" \
+  && "$stopped_receipt_line" -lt "$cleanup_container_line" ]] \
+  || fail "Sift cleanup can start before the exact controller container is proven stopped"
+present "the Sift controller is no longer read-only" '--read-only' "$SIFT_CONTAINED_SCRIPT"
+present "the Sift controller keeps Linux capabilities" '--cap-drop=ALL' "$SIFT_CONTAINED_SCRIPT"
+present "the Sift controller can gain privileges" '--security-opt=no-new-privileges' "$SIFT_CONTAINED_SCRIPT"
+present "the Sift controller image again runs as root" 'USER 65532:65532' "$SIFT_ACCEPTANCE_RUNNER_IMAGE"
+absent "the Sift controller can again control its Docker host" '/var/run/docker.sock' "$SIFT_CONTAINED_SCRIPT"
+present "the Sift controller lost exact interrupted-run recovery" \
+  'run-sift-contained.sh [--recover]' "$SIFT_CONTAINED_SCRIPT"
+present "an interrupted cleanup container is no longer recorded before start" \
+  'write_sift_cleanup_container_owner' "$SIFT_CONTAINED_SCRIPT"
+present "cleanup-container recovery no longer validates the exact prior owner" \
+  'verify_sift_cleanup_container_owner' "$SIFT_CONTAINED_SCRIPT"
 present "cleanup no longer discovers every run-tagged Cloud Build" \
   '--filter="tags=axiom-run-${RUN_ID}"' "$CLEANUP_SCRIPT"
+present "cleanup no longer binds Sift builds to the candidate acquisition" \
+  '--filter="tags=axiom-acquisition-${candidate_acquisition_id}"' "$CLEANUP_SCRIPT"
+present "cleanup no longer rechecks the live candidate control objects" \
+  'verify_live_sift_candidate_control_objects' "$CLEANUP_SCRIPT"
+present "cleanup no longer rechecks the full candidate build before source deletion" \
+  'verify_current_sift_candidate_build_inventory' "$CLEANUP_SCRIPT"
+present "cleanup no longer runs a receipt-free check before deleting candidate controls" \
+  'VERIFY_CLEAN_WRITE_RECEIPT=0' "$CLEANUP_SCRIPT"
+present "verify-clean can produce a receipt while candidate controls remain" \
+  'candidate control objects cannot produce a clean receipt' "$VERIFY_CLEAN_SCRIPT"
 present "cleanup no longer waits for Cloud Build cancellation" \
   'Cloud Build $build_id did not reach a terminal state after cancellation' "$CLEANUP_SCRIPT"
 present "verify-clean no longer rejects active run-tagged Cloud Builds" \
   'a run-tagged Cloud Build is still active or has an unknown status' "$VERIFY_CLEAN_SCRIPT"
+present "verify-clean no longer validates the final candidate build resource" \
+  'verify_sift_candidate_build_receipt' "$VERIFY_CLEAN_SCRIPT"
 present_re "the Sift verifier accepts a mutable Sift image" \
   '^\[\[ "\$SIFT_IMAGE" == \*@sha256:\* \]\] \|\| \{$' "$SIFT_VERIFY_SCRIPT"
 present_re "the Sift verifier accepts a mutable Rig image" \
   '^\[\[ "\$RIG_IMAGE" == \*@sha256:\* \]\] \|\| \{$' "$SIFT_VERIFY_SCRIPT"
+present_re "the Sift verifier accepts a mutable controller image" \
+  '^\[\[ "\$ACCEPTANCE_RUNNER_IMAGE" == \*@sha256:\* \]\] \|\| \{$' "$SIFT_VERIFY_SCRIPT"
 present "terminal candidate evidence lost its source bundle digest" \
   'source_bundle_sha256:$source_bundle_sha256' "$SIFT_VERIFY_SCRIPT"
 present "terminal candidate evidence lost its Cloud Build id" \
   'cloud_build_id:$cloud_build_id' "$SIFT_VERIFY_SCRIPT"
 present "terminal candidate evidence lost its staged source object" \
   'source_object_uri:$source_object_uri' "$SIFT_VERIFY_SCRIPT"
+present "terminal candidate evidence lost the immutable controller image" \
+  'acceptance_runner_image:$acceptance_runner_image' "$SIFT_VERIFY_SCRIPT"
 present "the paired Sift build lost its source digest tag" \
   'axiom-source-${_SOURCE_BUNDLE_SHA256}' "$ACCEPTANCE_ROOT/cloudbuild.sift-mvp.yaml"
+present "the paired Sift build lost its unique acquisition tag" \
+  'axiom-acquisition-${_CANDIDATE_ACQUISITION_ID}' \
+  "$ACCEPTANCE_ROOT/cloudbuild.sift-mvp.yaml"
+present "the paired Sift build no longer publishes the controller image" \
+  '${_REGISTRY}/sift-acceptance-runner:${_TAG}' "$ACCEPTANCE_ROOT/cloudbuild.sift-mvp.yaml"
+present "cleanup no longer removes the run-scoped controller image" \
+  'delete_run_image sift-acceptance-runner' "$CLEANUP_SCRIPT"
+present "cleanup no longer deletes images by immutable digest" \
+  'gcloud artifacts docker images delete "$REGISTRY/$image@$digest"' \
+  "$CLEANUP_SCRIPT"
+present "cleanup no longer removes only its exact run image tag first" \
+  'gcloud artifacts docker tags delete' "$CLEANUP_SCRIPT"
+absent "cleanup again deletes all tags attached to a digest" \
+  '--delete-tags' "$CLEANUP_SCRIPT"
+image_delete_line="$(line_of 'if ! delete_run_image sift; then' "$CLEANUP_SCRIPT")"
+source_delete_line="$(line_of 'gcloud storage rm "$source_uri" --quiet' "$CLEANUP_SCRIPT")"
+[[ "$image_delete_line" =~ ^[0-9]+$ && "$source_delete_line" =~ ^[0-9]+$ \
+  && "$image_delete_line" -lt "$source_delete_line" ]] \
+  || fail "staged source can be deleted before candidate image cleanup finishes"
+present "verify-clean no longer rejects a leftover controller image" \
+  'sift-acceptance-runner:$IMAGE_TAG' "$VERIFY_CLEAN_SCRIPT"
 present "Terraform lost the sift-only enum" '"sift"' "$ENV_VARIABLES"
 present "Terraform lost the run-scoped Sift node pool" 'resource "google_container_node_pool" "sift_mvp"' "$ENV_GKE"
 rg -q '^\s*disk_type\s*=\s*"pd-standard"\s*$' "$ENV_GKE" \
@@ -329,6 +700,10 @@ present "the Sift verifier no longer validates the run-scoped node-pool shape" \
   'sift-node-pool.json' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier no longer checks actual pod node placement" \
   'verify_pods_on_run_nodes() {' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier no longer requires all eleven primary role pods" \
+  "'app.kubernetes.io/name=sift' sift-topology 11" "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier no longer requires all eleven restored role pods" \
+  "'app.kubernetes.io/name=sift' sift-restore-topology 11" "$SIFT_VERIFY_SCRIPT"
 absent "the gRPC probe escaped to the shared acceptance pool" \
   'cloud.google.com/gke-nodepool: acceptance-pool' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost GCS outage testing" 'archive-iam-disabled' "$SIFT_VERIFY_SCRIPT"
@@ -361,6 +736,18 @@ present "cleanup no longer finalizes Sift evidence after verify-clean" \
   'sift-mvp-verification.json' "$CLEANUP_SCRIPT"
 present "cleanup no longer requires a clean cleanup receipt" \
   '$cleanup[0].status != "clean"' "$SIFT_FINALIZER"
+present "cleanup evidence is no longer bound to the verified candidate" \
+  '$cleanup[0].candidate != .acceptance.sift.candidate' "$SIFT_FINALIZER"
+present "verify-clean no longer reconstructs the immutable candidate receipt" \
+  'candidate cleanup receipt inputs do not describe one immutable build' "$VERIFY_CLEAN_SCRIPT"
+absent "cleanup again deletes every Sift auth-delegator binding in the shared cluster" \
+  '-l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=sift' "$CLEANUP_SCRIPT"
+absent "verify-clean again requires every Sift auth-delegator binding to disappear" \
+  '-l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=sift' "$VERIFY_CLEAN_SCRIPT"
+present "verify-clean lost the primary acceptance auth binding check" \
+  'sift.sift.sift.auth-delegator' "$VERIFY_CLEAN_SCRIPT"
+present "verify-clean lost the restore acceptance auth binding check" \
+  'sift.sift-restore.sift-restore.auth-delegator' "$VERIFY_CLEAN_SCRIPT"
 present "cleanup no longer invokes the Sift evidence finalizer" \
   'finalize-sift-mvp-acceptance.sh' "$CLEANUP_SCRIPT"
 present "the finalizer no longer creates terminal Sift evidence" \
@@ -375,10 +762,20 @@ present "cleanup queries can again hide API failures as empty results" \
   'inventory_output() {' "$VERIFY_CLEAN_SCRIPT"
 present "cleanup no longer verifies newly deleted image digests" \
   'deleted-image-*.txt' "$VERIFY_CLEAN_SCRIPT"
+present "cleanup no longer verifies the live tag digest before deletion" \
+  'live image tag does not match the immutable receipt' "$CLEANUP_SCRIPT"
+present "cleanup no longer rechecks the tag immediately before deletion" \
+  'run image tag changed immediately before deletion' "$CLEANUP_SCRIPT"
+present "cleanup no longer detects a tag move after exact tag deletion" \
+  'run image tag still exists after exact tag deletion' "$CLEANUP_SCRIPT"
 present "the Sift verifier lost its authenticated non-2xx status helper" \
   'auth_curl_status() {' "$SIFT_VERIFY_SCRIPT"
 present "Remote Write 2.0 rejection again aborts before its 415 assertion" \
   'remote_write_v2_status="$(auth_curl_status ' "$SIFT_VERIFY_SCRIPT"
+present "the Sift verifier no longer executes Prometheus query_range" \
+  '/prometheus/api/v1/query_range' "$SIFT_VERIFY_SCRIPT"
+present "terminal evidence no longer records Prometheus query_range" \
+  'prometheus_query_range:"passed"' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost its same-ID retry probe" \
   'smoke-idempotency' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier no longer proves retry count and digest stability" \
@@ -648,13 +1045,28 @@ ns_delete_line="$(line_of 'kubectl delete namespace "$namespace" --ignore-not-fo
 # A Sift CR owns cluster-scoped children through an operator finalizer. Delete
 # that CR while the operator namespace is still live. Otherwise the namespace
 # and CRD stay Terminating with nobody left to remove the finalizer.
-sift_cr_delete_line="$(line_of 'kubectl delete sift.sift.axiom.dev "$name" --namespace "$namespace"' "$CLEANUP_SCRIPT")"
+sift_cr_delete_line="$(line_of 'delete_sift_instance sift sift' "$CLEANUP_SCRIPT")"
 [[ "$sift_cr_delete_line" =~ ^[0-9]+$ ]] \
   || fail "could not locate cleanup's ordered Sift CR delete"
 (( sift_cr_delete_line < ns_delete_line )) \
   || fail "Sift CRs must be deleted before the namespace sweep (cr@$sift_cr_delete_line, namespaces@$ns_delete_line)"
 present "cleanup lost the orphaned Sift finalizer fallback" \
   'patch sift.sift.axiom.dev "$name" --namespace "$namespace"' "$CLEANUP_SCRIPT"
+present "cleanup no longer checks the binding owner UID before its finalizer fallback" \
+  'service-k8s.axiom.dev/owner-uid' "$CLEANUP_SCRIPT"
+present "cleanup no longer requires an accepted Sift CR deletion before fallback" \
+  '.metadata.deletionTimestamp | strings | select(length > 0)' "$CLEANUP_SCRIPT"
+present "cleanup uses the wrong Sift API version for its preconditioned delete" \
+  '/apis/sift.axiom.dev/v1alpha1/namespaces/' "$CLEANUP_SCRIPT"
+present "cleanup no longer uses Kubernetes delete preconditions" \
+  'resourceVersion: $resource_version' "$CLEANUP_SCRIPT"
+present "cleanup no longer applies an atomic finalizer patch" \
+  '{op:"test", path:"/metadata/uid", value:$uid}' "$CLEANUP_SCRIPT"
+binding_delete_line="$(line_of '"$binding_path" "$binding_uid" "$binding_resource_version"' "$CLEANUP_SCRIPT")"
+binding_patch_line="$(line_of 'kubectl patch sift.sift.axiom.dev "$name"' "$CLEANUP_SCRIPT")"
+[[ "$binding_delete_line" =~ ^[0-9]+$ && "$binding_patch_line" =~ ^[0-9]+$ \
+  && "$binding_delete_line" -lt "$binding_patch_line" ]] \
+  || fail "Sift cleanup must delete the exactly owned auth binding before removing the CR finalizer"
 
 present "the lumen-sift pre-flight list names lumen-auth-client" \
   'mode_namespaces=(lumen lumen-system sift sift-system lumen-auth-client)' "$RUN_SCRIPT"

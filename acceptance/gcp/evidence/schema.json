@@ -116,12 +116,13 @@
                 "status": {"const": "passed"},
                 "candidate": {
                   "type": "object",
-                  "required": ["sift_image", "rig_image", "git_sha", "source_bundle_sha256", "cloud_build_id", "source_object_uri", "immutable"],
+                  "required": ["sift_image", "rig_image", "acceptance_runner_image", "git_sha", "source_bundle_sha256", "cloud_build_id", "source_object_uri", "immutable"],
                   "additionalProperties": false,
                   "properties": {
                     "sift_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
                     "rig_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
-                    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"},
+                    "acceptance_runner_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+                    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
                     "source_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                     "cloud_build_id": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,128}$"},
                     "source_object_uri": {"type": "string", "pattern": "^gs://"},
@@ -143,7 +144,7 @@
                 },
                 "protocols": {
                   "type": "object",
-                  "required": ["otlp_http_json", "otlp_http_protobuf", "otlp_gzip", "otlp_grpc", "partial_success", "remote_write_1", "remote_write_2_rejected_415", "mcp_read_only_tools", "mcp_host_origin", "cross_project_denied", "cross_project_same_id"],
+                  "required": ["otlp_http_json", "otlp_http_protobuf", "otlp_gzip", "otlp_grpc", "partial_success", "remote_write_1", "prometheus_query_range", "remote_write_2_rejected_415", "mcp_read_only_tools", "mcp_host_origin", "cross_project_denied", "cross_project_same_id"],
                   "additionalProperties": false,
                   "properties": {
                     "otlp_http_json": {"const": "passed"},
@@ -152,6 +153,7 @@
                     "otlp_grpc": {"const": "passed"},
                     "partial_success": {"const": "passed"},
                     "remote_write_1": {"const": "passed"},
+                    "prometheus_query_range": {"const": "passed"},
                     "remote_write_2_rejected_415": {"const": "passed"},
                     "mcp_read_only_tools": {"const": "passed"},
                     "mcp_host_origin": {"const": "passed"},
@@ -303,6 +305,7 @@
                     "run_id",
                     "verified_at",
                     "status",
+                    "candidate",
                     "preserved"
                   ],
                   "additionalProperties": false,
@@ -314,6 +317,21 @@
                     "run_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,17}$"},
                     "verified_at": {"type": "string", "minLength": 20},
                     "status": {"const": "clean"},
+                    "candidate": {
+                      "type": "object",
+                      "required": ["sift_image", "rig_image", "acceptance_runner_image", "git_sha", "source_bundle_sha256", "cloud_build_id", "source_object_uri", "immutable"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "sift_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+                        "rig_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+                        "acceptance_runner_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+                        "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+                        "source_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "cloud_build_id": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,128}$"},
+                        "source_object_uri": {"type": "string", "pattern": "^gs://"},
+                        "immutable": {"const": true}
+                      }
+                    },
                     "preserved": {
                       "type": "object",
                       "required": ["artifact_registry", "preexisting_apis"],

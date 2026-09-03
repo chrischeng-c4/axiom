@@ -1,11 +1,12 @@
 // CODEGEN-BEGIN
-//! Shared `build.rs` stamping: git short-sha, built-at epoch, and target
+//! Shared `build.rs` stamping: immutable or local git sha, built-at epoch, and target
 //! triple as `cargo:rustc-env=<PREFIX>_*` directives.
 //!
 //! Consuming crates call [`stamp`] with their env-var prefix (e.g. `"LUMEN"`)
-//! from their `build.rs`'s `fn main()`. Every stamp is best-effort: outside a
-//! git checkout (e.g. a source tarball) the sha falls back to `"unknown"`,
-//! and downstream `env!`/`option_env!` consumers degrade the same way.
+//! from their `build.rs`'s `fn main()`. An exact `<PREFIX>_SOURCE_REVISION`
+//! carries a full Git SHA into archive builds. Without it, every stamp remains
+//! best-effort: outside a git checkout the sha falls back to `"unknown"`, and
+//! downstream `env!`/`option_env!` consumers degrade the same way.
 //! Nothing here fails the build.
 
 use std::path::Path;
@@ -26,7 +27,11 @@ pub fn stamp(prefix: &str) {
         println!("{hint}");
     }
 
-    let git_sha = short_sha().unwrap_or_else(|| "unknown".to_string());
+    let source_revision_variable = format!("{prefix}_SOURCE_REVISION");
+    println!("cargo:rerun-if-env-changed={source_revision_variable}");
+    let git_sha = explicit_source_revision(&source_revision_variable)
+        .or_else(short_sha)
+        .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env={prefix}_GIT_SHA={git_sha}");
 
     let built_at = built_at_now();
@@ -34,6 +39,18 @@ pub fn stamp(prefix: &str) {
 
     let target = target_from_env();
     println!("cargo:rustc-env={prefix}_TARGET={target}");
+}
+
+/// Read a caller-supplied immutable Git revision for archive and image builds.
+/// Local builds keep the existing best-effort short-SHA fallback.
+fn explicit_source_revision(variable: &str) -> Option<String> {
+    decode_source_revision(std::env::var(variable).ok())
+}
+
+fn decode_source_revision(value: Option<String>) -> Option<String> {
+    let value = value?;
+    (value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
 }
 
 /// Cargo's `cargo:rerun-if-changed=<head_path>` directive, only when that
@@ -108,6 +125,24 @@ mod tests {
             decode_short_sha(true, b"c3ff13cd\n"),
             Some("c3ff13cd".to_string())
         );
+    }
+
+    #[test]
+    fn explicit_source_revision_accepts_and_normalizes_a_full_git_sha() {
+        assert_eq!(
+            decode_source_revision(Some("0123456789ABCDEF0123456789ABCDEF01234567".into())),
+            Some("0123456789abcdef0123456789abcdef01234567".into())
+        );
+    }
+
+    #[test]
+    fn explicit_source_revision_rejects_short_or_non_hex_values() {
+        assert_eq!(decode_source_revision(Some("deadbeef".into())), None);
+        assert_eq!(
+            decode_source_revision(Some("0123456789abcdef0123456789abcdef0123456z".into())),
+            None
+        );
+        assert_eq!(decode_source_revision(Some(String::new())), None);
     }
 
     #[test]

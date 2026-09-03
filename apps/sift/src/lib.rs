@@ -4011,34 +4011,39 @@ async fn prometheus_instant_query(
     let evaluation_time = params
         .time
         .as_deref()
-        .map(prometheus::parse_prom_time)
+        .map(prometheus::parse_prom_time_nanos)
         .transpose()
         .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?
-        .unwrap_or_else(|| Utc::now().timestamp_millis() as f64 / 1_000.0);
+        .unwrap_or_else(|| Utc::now().timestamp_nanos_opt().unwrap_or(i64::MAX));
     state
         .projections
         .catch_up(projection::PROJECTION_METRIC_STORE)
         .map_err(|error| ApiError::internal(error.to_string()))?;
     let mut query = prom_metric_query(&params.project, params.environment, &parsed)?;
-    query.start_time = Some(
-        prometheus::seconds_rfc3339(evaluation_time - 300.0)
-            .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?,
-    );
-    query.end_time = Some(
-        prometheus::seconds_rfc3339(evaluation_time + 0.001)
-            .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?,
-    );
+    query.start_time = evaluation_time
+        .checked_sub(PROM_LOOKBACK_NANOS)
+        .map(prometheus::nanos_rfc3339)
+        .transpose()
+        .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
+    query.end_time = evaluation_time
+        .checked_add(1)
+        .map(prometheus::nanos_rfc3339)
+        .transpose()
+        .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
     let page = state
         .projections
         .query_metrics(&query)
         .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
+    ensure_complete_prom_metric_page(&page)?;
     let mut latest = page
         .series
         .iter()
         .filter_map(|series| {
-            prom_active_points(&series.points)
-                .last()
-                .map(|point| (series, point.value))
+            prom_latest_values(&series.points, &[evaluation_time])
+                .into_iter()
+                .next()
+                .flatten()
+                .map(|value| (series, value))
         })
         .collect::<Vec<_>>();
     let result = match parsed.function {
@@ -4047,7 +4052,7 @@ async fn prometheus_instant_query(
             .map(|(series, value)| {
                 serde_json::json!({
                     "metric": prom_series_labels(series),
-                    "value": [evaluation_time, prom_number(value)]
+                    "value": [prom_nanos_to_seconds(evaluation_time), prom_number(value)]
                 })
             })
             .collect::<Vec<_>>(),
@@ -4055,12 +4060,16 @@ async fn prometheus_instant_query(
             .series
             .iter()
             .filter_map(|series| {
-                prom_rate(prom_active_points(&series.points)).map(|value| (series, value))
+                prom_rate_values(&series.points, &[evaluation_time])
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .map(|value| (series, value))
             })
             .map(|(series, value)| {
                 serde_json::json!({
                     "metric": prom_series_labels(series),
-                    "value": [evaluation_time, prom_number(value)]
+                    "value": [prom_nanos_to_seconds(evaluation_time), prom_number(value)]
                 })
             })
             .collect::<Vec<_>>(),
@@ -4073,7 +4082,7 @@ async fn prometheus_instant_query(
                 .map(|value| {
                     vec![serde_json::json!({
                         "metric": {},
-                        "value": [evaluation_time, prom_number(value)]
+                        "value": [prom_nanos_to_seconds(evaluation_time), prom_number(value)]
                     })]
                 })
                 .unwrap_or_default()
@@ -4100,18 +4109,23 @@ async fn prometheus_range_query(
         .map_err(|error| ApiError::temporarily_unavailable(error.to_string()))?;
     let parsed = prometheus::parse_promql(&params.query)
         .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
-    let start = prometheus::parse_prom_time(&params.start)
+    let start = prometheus::parse_prom_time_nanos(&params.start)
         .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
-    let end = prometheus::parse_prom_time(&params.end)
+    let end = prometheus::parse_prom_time_nanos(&params.end)
         .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
-    let step = params
-        .step
-        .parse::<f64>()
-        .map_err(|_| ApiError::bad_request("bad_data", "step must be seconds"))?;
-    if !start.is_finite() || !end.is_finite() || start >= end || !step.is_finite() || step <= 0.0 {
+    let step = prometheus::parse_prom_duration_nanos(&params.step)
+        .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
+    if start >= end || step <= 0 {
         return Err(ApiError::bad_request(
             "bad_data",
             "query_range requires start < end and step > 0",
+        ));
+    }
+    let evaluation_count = (i128::from(end) - i128::from(start)) / i128::from(step) + 1;
+    if evaluation_count > i128::from(PROM_MAX_RANGE_EVALUATIONS) {
+        return Err(ApiError::bad_request(
+            "bad_data",
+            format!("query_range supports at most {PROM_MAX_RANGE_EVALUATIONS} evaluation steps"),
         ));
     }
     state
@@ -4119,19 +4133,25 @@ async fn prometheus_range_query(
         .catch_up(projection::PROJECTION_METRIC_STORE)
         .map_err(|error| ApiError::internal(error.to_string()))?;
     let mut query = prom_metric_query(&params.project, params.environment, &parsed)?;
-    query.start_time = Some(
-        prometheus::seconds_rfc3339(start)
-            .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?,
-    );
-    query.end_time = Some(
-        prometheus::seconds_rfc3339(end + 0.001)
-            .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?,
-    );
+    query.start_time = start
+        .checked_sub(PROM_LOOKBACK_NANOS)
+        .map(prometheus::nanos_rfc3339)
+        .transpose()
+        .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
+    query.end_time = end
+        .checked_add(1)
+        .map(prometheus::nanos_rfc3339)
+        .transpose()
+        .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
     let page = state
         .projections
         .query_metrics(&query)
         .map_err(|error| ApiError::bad_request("bad_data", error.to_string()))?;
-    let result = prom_range_result(&page.series, parsed.function, start, step);
+    ensure_complete_prom_metric_page(&page)?;
+    let evaluation_count = usize::try_from(evaluation_count)
+        .map_err(|_| ApiError::bad_request("bad_data", "invalid evaluation count"))?;
+    ensure_prom_range_work_budget(page.series.len(), evaluation_count)?;
+    let result = prom_range_result(&page.series, parsed.function, start, end, step);
     Ok(Json(serde_json::json!({
         "status": "success",
         "data": {"resultType": "matrix", "result": result}
@@ -4157,6 +4177,37 @@ fn prom_metric_query(
         }
     }
     Ok(query)
+}
+
+fn ensure_complete_prom_metric_page(page: &projection::MetricPage) -> Result<(), ApiError> {
+    if page.has_more {
+        return Err(ApiError::bad_request(
+            "bad_data",
+            format!(
+                "Prometheus selector matches more than {} series; narrow the selector",
+                projection::MAX_METRIC_QUERY_LIMIT
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_prom_range_work_budget(
+    series_count: usize,
+    evaluation_count: usize,
+) -> Result<(), ApiError> {
+    let work_samples = series_count
+        .checked_mul(evaluation_count)
+        .ok_or_else(|| ApiError::bad_request("bad_data", "query_range sample budget overflowed"))?;
+    if work_samples > PROM_MAX_RANGE_WORK_SAMPLES {
+        return Err(ApiError::bad_request(
+            "bad_data",
+            format!(
+                "query_range would evaluate {work_samples} series samples; the limit is {PROM_MAX_RANGE_WORK_SAMPLES}"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn prom_series_labels(series: &projection::MetricSeriesResultV1) -> BTreeMap<String, String> {
@@ -4193,29 +4244,6 @@ fn prom_number(value: f64) -> String {
     }
 }
 
-fn prom_rate(points: &[projection::MetricPointV1]) -> Option<f64> {
-    let first = points.first()?;
-    let last = points.last()?;
-    let seconds = (last.time_unix_nano - first.time_unix_nano) as f64 / 1_000_000_000.0;
-    if seconds <= 0.0 {
-        return None;
-    }
-    let delta = if last.value >= first.value {
-        last.value - first.value
-    } else {
-        last.value.max(0.0)
-    };
-    Some(delta / seconds)
-}
-
-fn prom_active_points(points: &[projection::MetricPointV1]) -> &[projection::MetricPointV1] {
-    let start = points
-        .iter()
-        .rposition(|point| point.stale)
-        .map_or(0, |index| index + 1);
-    &points[start..]
-}
-
 fn prom_aggregate(function: prometheus::PromFunction, values: &[f64]) -> Option<f64> {
     match function {
         prometheus::PromFunction::Sum => Some(values.iter().sum()),
@@ -4232,64 +4260,229 @@ fn prom_aggregate(function: prometheus::PromFunction, values: &[f64]) -> Option<
 fn prom_range_result(
     series: &[projection::MetricSeriesResultV1],
     function: prometheus::PromFunction,
-    start: f64,
-    step: f64,
+    start: i64,
+    end: i64,
+    step: i64,
 ) -> Vec<serde_json::Value> {
+    let evaluation_count = ((i128::from(end) - i128::from(start)) / i128::from(step) + 1) as usize;
+    let evaluation_times = (0..evaluation_count)
+        .map(|index| {
+            (i128::from(start) + i128::from(step) * index as i128)
+                .try_into()
+                .expect("evaluation time was validated")
+        })
+        .collect::<Vec<_>>();
     if function == prometheus::PromFunction::Raw || function == prometheus::PromFunction::Rate {
         return series
             .iter()
             .filter_map(|series| {
-                let points = if function == prometheus::PromFunction::Rate {
-                    series
-                        .points
-                        .windows(2)
-                        .filter(|window| !window[0].stale && !window[1].stale)
-                        .filter_map(|window| {
-                            prom_rate(window).map(|value| (&window[1], value))
-                        })
-                        .collect::<Vec<_>>()
+                let step_values = if function == prometheus::PromFunction::Rate {
+                    prom_rate_values(&series.points, &evaluation_times)
                 } else {
-                    series
-                        .points
-                        .iter()
-                        .filter(|point| !point.stale)
-                        .map(|point| (point, point.value))
-                        .collect::<Vec<_>>()
+                    prom_latest_values(&series.points, &evaluation_times)
                 };
-                if points.is_empty() {
+                let values = evaluation_times
+                    .iter()
+                    .zip(step_values)
+                    .filter_map(|(evaluation_time, value)| {
+                        value.map(|value| {
+                            serde_json::json!([
+                                prom_nanos_to_seconds(*evaluation_time),
+                                prom_number(value)
+                            ])
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if values.is_empty() {
                     return None;
-                }
-                let mut buckets = BTreeMap::<i64, (f64, String)>::new();
-                for (point, value) in points {
-                    let timestamp = point.time_unix_nano as f64 / 1_000_000_000.0;
-                    let bucket = ((timestamp - start) / step).floor() as i64;
-                    buckets.insert(bucket, (timestamp, prom_number(value)));
                 }
                 Some(serde_json::json!({
                     "metric": prom_series_labels(series),
-                    "values": buckets.into_values().map(|(timestamp, value)| serde_json::json!([timestamp, value])).collect::<Vec<_>>()
+                    "values": values
                 }))
             })
             .collect();
     }
-    let mut buckets = BTreeMap::<i64, (f64, Vec<f64>)>::new();
+    let mut aggregates = vec![PromStepAggregate::default(); evaluation_times.len()];
     for series in series {
-        for point in series.points.iter().filter(|point| !point.stale) {
-            let timestamp = point.time_unix_nano as f64 / 1_000_000_000.0;
-            let bucket = ((timestamp - start) / step).floor() as i64;
-            let entry = buckets.entry(bucket).or_insert((timestamp, Vec::new()));
-            entry.0 = entry.0.max(timestamp);
-            entry.1.push(point.value);
+        for (aggregate, value) in aggregates
+            .iter_mut()
+            .zip(prom_latest_values(&series.points, &evaluation_times))
+        {
+            if let Some(value) = value {
+                aggregate.observe(value);
+            }
         }
     }
-    let values = buckets
-        .into_values()
-        .filter_map(|(timestamp, values)| {
-            prom_aggregate(function, &values)
-                .map(|value| serde_json::json!([timestamp, prom_number(value)]))
+    let values = evaluation_times
+        .iter()
+        .zip(aggregates)
+        .filter_map(|(evaluation_time, aggregate)| {
+            aggregate.value(function).map(|value| {
+                serde_json::json!([prom_nanos_to_seconds(*evaluation_time), prom_number(value)])
+            })
         })
         .collect::<Vec<_>>();
-    vec![serde_json::json!({"metric": {}, "values": values})]
+    if values.is_empty() {
+        Vec::new()
+    } else {
+        vec![serde_json::json!({"metric": {}, "values": values})]
+    }
+}
+
+const PROM_LOOKBACK_NANOS: i64 = 300_000_000_000;
+const PROM_MAX_RANGE_EVALUATIONS: i64 = 11_000;
+const PROM_MAX_RANGE_WORK_SAMPLES: usize = 1_000_000;
+
+fn prom_nanos_to_seconds(nanos: i64) -> f64 {
+    nanos as f64 / 1_000_000_000.0
+}
+
+fn prom_latest_values(
+    points: &[projection::MetricPointV1],
+    evaluation_times: &[i64],
+) -> Vec<Option<f64>> {
+    let mut next_point = 0usize;
+    evaluation_times
+        .iter()
+        .map(|evaluation_time| {
+            while next_point < points.len() && points[next_point].time_unix_nano <= *evaluation_time
+            {
+                next_point += 1;
+            }
+            let point = points.get(next_point.checked_sub(1)?)?;
+            let oldest_visible = evaluation_time.checked_sub(PROM_LOOKBACK_NANOS);
+            (!point.stale
+                && oldest_visible
+                    .is_none_or(|oldest_visible| point.time_unix_nano > oldest_visible))
+            .then_some(point.value)
+        })
+        .collect()
+}
+
+fn prom_rate_values(
+    points: &[projection::MetricPointV1],
+    evaluation_times: &[i64],
+) -> Vec<Option<f64>> {
+    let mut counter_prefix = Vec::with_capacity(points.len());
+    let mut previous = None;
+    let mut cumulative = 0.0;
+    for point in points {
+        if point.stale {
+            previous = None;
+            cumulative = 0.0;
+        } else if let Some(previous_value) = previous {
+            cumulative += if point.value >= previous_value {
+                point.value - previous_value
+            } else {
+                point.value.max(0.0)
+            };
+            previous = Some(point.value);
+        } else {
+            previous = Some(point.value);
+        }
+        counter_prefix.push(cumulative);
+    }
+
+    let mut next_point = 0usize;
+    let mut epoch_start = 0usize;
+    let mut window_start = 0usize;
+    evaluation_times
+        .iter()
+        .map(|evaluation_time| {
+            while next_point < points.len() && points[next_point].time_unix_nano <= *evaluation_time
+            {
+                if points[next_point].stale {
+                    epoch_start = next_point + 1;
+                    window_start = epoch_start;
+                }
+                next_point += 1;
+            }
+            if next_point <= epoch_start {
+                return None;
+            }
+            window_start = window_start.max(epoch_start);
+            if let Some(oldest_visible) = evaluation_time.checked_sub(PROM_LOOKBACK_NANOS) {
+                while window_start < next_point
+                    && points[window_start].time_unix_nano <= oldest_visible
+                {
+                    window_start += 1;
+                }
+            }
+            if window_start >= next_point {
+                return None;
+            }
+            let last = next_point - 1;
+            let elapsed = points[last].time_unix_nano - points[window_start].time_unix_nano;
+            if elapsed <= 0 {
+                return None;
+            }
+            let delta = counter_prefix[last] - counter_prefix[window_start];
+            Some(delta / (elapsed as f64 / 1_000_000_000.0))
+        })
+        .collect()
+}
+
+#[derive(Clone, Default)]
+struct PromStepAggregate {
+    count: usize,
+    sum: f64,
+    min: Option<f64>,
+    max: Option<f64>,
+}
+
+impl PromStepAggregate {
+    fn observe(&mut self, value: f64) {
+        self.count += 1;
+        self.sum += value;
+        self.min = Some(self.min.map_or(value, |current| current.min(value)));
+        self.max = Some(self.max.map_or(value, |current| current.max(value)));
+    }
+
+    fn value(&self, function: prometheus::PromFunction) -> Option<f64> {
+        if self.count == 0 {
+            return None;
+        }
+        match function {
+            prometheus::PromFunction::Sum => Some(self.sum),
+            prometheus::PromFunction::Avg => Some(self.sum / self.count as f64),
+            prometheus::PromFunction::Min => self.min,
+            prometheus::PromFunction::Max => self.max,
+            prometheus::PromFunction::Count => Some(self.count as f64),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod prometheus_evaluator_tests {
+    use super::*;
+
+    fn point(time_unix_nano: i64, value: f64) -> projection::MetricPointV1 {
+        projection::MetricPointV1 {
+            cursor: 1,
+            event_id: format!("point-{time_unix_nano}"),
+            occurred_at: prometheus::nanos_rfc3339(time_unix_nano).unwrap(),
+            time_unix_nano,
+            value,
+            stale: false,
+            histogram: None,
+            exemplars: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn minimum_nanosecond_has_no_false_lookback_boundary() {
+        assert_eq!(
+            prom_latest_values(&[point(i64::MIN, 8.0)], &[i64::MIN]),
+            vec![Some(8.0)]
+        );
+        assert!(prom_rate_values(
+            &[point(i64::MIN, 1.0), point(i64::MIN + 1, 2.0)],
+            &[i64::MIN + 1]
+        )[0]
+        .is_some());
+    }
 }
 
 fn execute_query_v1(

@@ -3,10 +3,10 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use sift::{
     projection::{
-        ProjectionRuntime, PROJECTION_LOGGING_STORE, PROJECTION_METRIC_STORE,
-        PROJECTION_TRACE_STORE,
+        ProjectionRuntime, METRIC_SCHEMA_VERSION, PROJECTION_LOGGING_STORE,
+        PROJECTION_METRIC_STORE, PROJECTION_TRACE_STORE,
     },
-    DurableJournal, EventEnvelope, SignalKind,
+    DurableJournal, EventEnvelope, MetricPoint, MetricTemporality, SignalKind,
 };
 
 fn event(id: &str, message: &str) -> EventEnvelope {
@@ -18,6 +18,26 @@ fn event(id: &str, message: &str) -> EventEnvelope {
         serde_json::json!({"message": message}),
     );
     event.resource = BTreeMap::from([("service.name".into(), "projection-test".into())]);
+    event
+}
+
+fn metric_event(id: &str) -> EventEnvelope {
+    let mut event = EventEnvelope::for_project(
+        "projection-project",
+        "test",
+        id,
+        SignalKind::Metric,
+        serde_json::json!({}),
+    );
+    event.resource = BTreeMap::from([("service.name".into(), "projection-test".into())]);
+    event.metric = Some(MetricPoint {
+        name: "projection.requests".into(),
+        value: 1.0,
+        stale: false,
+        unit: Some("1".into()),
+        temporality: MetricTemporality::Gauge,
+        exemplars: Vec::new(),
+    });
     event
 }
 
@@ -175,6 +195,53 @@ fn corrupt_projection_snapshot_is_quarantined_and_rebuilt_from_journal() {
     assert_eq!(
         rebuilt.semantic_digest(PROJECTION_LOGGING_STORE).unwrap(),
         expected_digest
+    );
+    assert_eq!(
+        std::fs::read_dir(&state_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("state.corrupt-"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn schema_five_metric_checkpoint_is_quarantined_and_rebuilt_from_journal() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = Arc::new(DurableJournal::open(temp.path()).unwrap());
+    journal.append(metric_event("metric-1")).unwrap();
+    let runtime = ProjectionRuntime::open(temp.path(), journal.clone()).unwrap();
+    runtime.catch_up(PROJECTION_METRIC_STORE).unwrap();
+    runtime.persist_all().unwrap();
+    let expected_digest = runtime.semantic_digest(PROJECTION_METRIC_STORE).unwrap();
+    drop(runtime);
+
+    let state_dir = temp.path().join("indexes").join(PROJECTION_METRIC_STORE);
+    let state_path = state_dir.join("state.json");
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(
+        envelope["checkpoint"]["schema_version"],
+        METRIC_SCHEMA_VERSION
+    );
+    envelope["checkpoint"]["schema_version"] = serde_json::json!(5);
+    std::fs::write(&state_path, serde_json::to_vec_pretty(&envelope).unwrap()).unwrap();
+
+    let rebuilt = ProjectionRuntime::open(temp.path(), journal).unwrap();
+    assert_eq!(rebuilt.current_cursor(PROJECTION_METRIC_STORE).unwrap(), 1);
+    assert_eq!(
+        rebuilt.semantic_digest(PROJECTION_METRIC_STORE).unwrap(),
+        expected_digest
+    );
+    let rebuilt_envelope: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(
+        rebuilt_envelope["checkpoint"]["schema_version"],
+        METRIC_SCHEMA_VERSION
     );
     assert_eq!(
         std::fs::read_dir(&state_dir)

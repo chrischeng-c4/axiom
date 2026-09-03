@@ -57,6 +57,13 @@ upstream receiver suite targets RW2. The Rust `prometheus_api` E2E also requires
 a successful durable write and query readback because the upstream suite does
 not check stored data.
 
+Prometheus queries reject selectors above 1,000 candidate series. Range
+queries also reject more than 11,000 evaluation steps or more than 1,000,000
+series-step evaluations. The metric projection checks candidate cardinality
+before it loads points. It skips disk chunks outside the requested time window
+and rejects a query before it scans more than 250,000 source points or
+materializes more than 64 MiB of source metric data.
+
 The gateway checks request size, schema, project scope, quotas, and sensitive
 fields before it forwards an accepted batch to the store role. The store only
 acknowledges a replicated write after the Raft quorum has made it durable.
@@ -279,7 +286,7 @@ below is an explicit Cargo test target under `apps/sift/e2e`.
 | Unified investigation | `unified-investigation` | Query and correlate every phase-one signal through one product API. | `apps/sift`<br>`libs/index-text` |
 | Durable local data | `durable-local-data` | Keep accepted data in one private and versioned persistent root. | `apps/sift`<br>`libs/storage-durable` |
 | Replicated availability | `replicated-availability` | Keep acknowledged data after one voter fails. | `apps/sift`<br>`libs/raft-core`<br>`libs/raft-runtime`<br>`libs/peer-tls` |
-| Archive and restore | `archive-and-restore` | Commit immutable Parquet archives and restore their exact events. | `apps/sift`<br>`libs/service-backup`<br>`external:apache-parquet` |
+| Archive and restore | `archive-and-restore` | Commit immutable Parquet archives and restore their exact events. | `apps/sift`<br>`libs/storage-segment`<br>`libs/service-projection`<br>`libs/service-backup`<br>`external:apache-parquet` |
 | Agent and CLI access | `agent-and-cli-access` | Let people and agents use the same read-only product schemas. | `apps/sift`<br>`libs/cli-std`<br>`external:model-context-protocol` |
 | Kubernetes operation | `kubernetes-operation` | Run one Sift product as secure role-based GKE workloads. | `apps/sift`<br>`libs/service-k8s`<br>`libs/service-auth` |
 | Structured log collection | `structured-log-collection` | Resume file and CRI collection without silently skipping bytes. | `apps/sift`<br>`libs/service-observability` |

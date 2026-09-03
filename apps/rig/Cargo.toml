@@ -37,3 +37,7 @@ path = "e2e/http_auth_rotation.rs"
 [[test]]
 name = "load_http_request_identity"
 path = "e2e/load_http_request_identity.rs"
+
+[[test]]
+name = "manifest_declared_test_paths"
+path = "e2e/manifest_declared_test_paths.rs"

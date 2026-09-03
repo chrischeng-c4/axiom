@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{bail, Context, Result};
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use regex::Regex;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -260,24 +260,115 @@ pub struct RangeQueryParams {
     pub step: String,
 }
 
-pub fn parse_prom_time(value: &str) -> Result<f64> {
-    value
-        .parse::<f64>()
-        .or_else(|_| {
-            chrono::DateTime::parse_from_rfc3339(value)
-                .map(|value| value.timestamp_millis() as f64 / 1_000.0)
-        })
+pub fn parse_prom_time_nanos(value: &str) -> Result<i64> {
+    if let Ok(value) = DateTime::parse_from_rfc3339(value) {
+        return value
+            .timestamp_nanos_opt()
+            .context("Prometheus timestamp is outside the supported range");
+    }
+    parse_decimal_seconds_nanos(value)
         .with_context(|| format!("invalid Prometheus timestamp `{value}`"))
 }
 
-pub fn seconds_rfc3339(seconds: f64) -> Result<String> {
-    if !seconds.is_finite() {
-        bail!("Prometheus timestamp must be finite");
+pub fn parse_prom_duration_nanos(value: &str) -> Result<i64> {
+    parse_decimal_seconds_nanos(value)
+        .with_context(|| format!("invalid Prometheus duration `{value}`"))
+}
+
+fn parse_decimal_seconds_nanos(value: &str) -> Result<i64> {
+    let (negative, unsigned) = match value.as_bytes().first() {
+        Some(b'-') => (true, &value[1..]),
+        Some(b'+') => (false, &value[1..]),
+        _ => (false, value),
+    };
+    if unsigned.is_empty() {
+        bail!("decimal seconds must contain digits");
     }
-    let millis = (seconds * 1_000.0).round() as i64;
-    Ok(Utc
-        .timestamp_millis_opt(millis)
-        .single()
+    let mut exponent_parts = unsigned.split(['e', 'E']);
+    let mantissa = exponent_parts.next().unwrap_or_default();
+    let exponent = exponent_parts
+        .next()
+        .map(str::parse::<i32>)
+        .transpose()
+        .context("decimal exponent is invalid")?
+        .unwrap_or(0);
+    if exponent_parts.next().is_some() {
+        bail!("decimal seconds contain more than one exponent");
+    }
+    let mut mantissa_parts = mantissa.split('.');
+    let integer = mantissa_parts.next().unwrap_or_default();
+    let fraction = mantissa_parts.next().unwrap_or_default();
+    if mantissa_parts.next().is_some()
+        || (integer.is_empty() && fraction.is_empty())
+        || !integer.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        bail!("decimal seconds have an invalid mantissa");
+    }
+    let digits = format!("{integer}{fraction}");
+    let coefficient = digits
+        .parse::<i128>()
+        .context("decimal seconds exceed the supported precision")?;
+    if coefficient == 0 {
+        return Ok(0);
+    }
+    let fraction_digits =
+        i128::try_from(fraction.len()).context("decimal seconds exceed the supported precision")?;
+    let power = i128::from(exponent) - fraction_digits + 9;
+    let magnitude = if power >= 0 {
+        let power = u32::try_from(power).context("decimal seconds are outside nanosecond range")?;
+        coefficient
+            .checked_mul(
+                10_i128
+                    .checked_pow(power)
+                    .context("decimal seconds are outside nanosecond range")?,
+            )
+            .context("decimal seconds are outside nanosecond range")?
+    } else {
+        let divisor_power =
+            u32::try_from(-power).context("decimal seconds are outside nanosecond range")?;
+        let Some(divisor) = 10_i128.checked_pow(divisor_power) else {
+            return Ok(0);
+        };
+        let quotient = coefficient / divisor;
+        let remainder = coefficient % divisor;
+        quotient + i128::from(remainder >= (divisor + 1) / 2)
+    };
+    let nanos = if negative {
+        magnitude
+            .checked_neg()
+            .context("decimal seconds are outside nanosecond range")?
+    } else {
+        magnitude
+    };
+    i64::try_from(nanos).context("decimal seconds are outside nanosecond range")
+}
+
+pub fn nanos_rfc3339(nanos: i64) -> Result<String> {
+    let seconds = nanos.div_euclid(1_000_000_000);
+    let subsecond = nanos.rem_euclid(1_000_000_000) as u32;
+    Ok(DateTime::<Utc>::from_timestamp(seconds, subsecond)
         .context("Prometheus timestamp is outside the supported range")?
-        .to_rfc3339())
+        .to_rfc3339_opts(SecondsFormat::Nanos, true))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{nanos_rfc3339, parse_prom_time_nanos};
+
+    #[test]
+    fn prometheus_times_keep_exact_nanoseconds() {
+        assert_eq!(
+            parse_prom_time_nanos("1783987200.000999600").unwrap(),
+            1_783_987_200_000_999_600
+        );
+        assert_eq!(
+            parse_prom_time_nanos("2026-07-14T00:00:00.000999600Z").unwrap(),
+            1_783_987_200_000_999_600
+        );
+        assert_eq!(
+            nanos_rfc3339(1_783_987_200_000_999_600).unwrap(),
+            "2026-07-14T00:00:00.000999600Z"
+        );
+    }
 }

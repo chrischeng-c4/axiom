@@ -8,9 +8,13 @@ COMPLIANCE_COMMIT="67b8327a2e93dc28f64d4b21bbce00b362f565d5"
 COMPLIANCE_ARCHIVE_SHA256="9c45856bef0b599445a7e72cd213d476434030fcd2e2e934e9242fedc799ccc8"
 GO_IMAGE="docker.io/library/golang:1.25.0-bookworm@sha256:81dc45d05a7444ead8c92a389621fafabc8e40f8fd1a19d7e5df14e61e98bc1a"
 
-repo_root="$(git -c core.fsmonitor=false rev-parse --show-toplevel)"
-sift_bin="${SIFT_BIN:-$repo_root/target/debug/sift}"
-for command in cargo curl docker tar; do
+repo_root="${SIFT_REPO_ROOT:-$(git -c core.fsmonitor=false rev-parse --show-toplevel)}"
+[[ -z "${SIFT_BIN:-}" ]] || {
+  echo "Prometheus candidate compliance does not accept SIFT_BIN" >&2
+  exit 1
+}
+sift_bin="${CARGO_TARGET_DIR:-$repo_root/target}/debug/sift"
+for command in cargo curl docker python3 tar; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required command not found: $command" >&2
     exit 1
@@ -18,7 +22,27 @@ for command in cargo curl docker tar; do
 done
 
 if [[ ! -x "$sift_bin" ]]; then
-  cargo build -p sift --bin sift
+  cargo build --locked -p sift --bin sift
+fi
+
+expected_revision="${SIFT_EXPECTED_SOURCE_REVISION:-}"
+if [[ -n "$expected_revision" ]]; then
+  [[ "$expected_revision" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "SIFT_EXPECTED_SOURCE_REVISION must be a full lowercase Git SHA" >&2
+    exit 1
+  }
+  "$sift_bin" acceptance-build-info \
+    | python3 -c '
+import json
+import sys
+
+expected = sys.argv[1]
+actual = json.load(sys.stdin).get("git_sha")
+if actual != expected:
+    raise SystemExit(
+        f"candidate binary Git SHA mismatch: expected {expected}, got {actual!r}"
+    )
+' "$expected_revision"
 fi
 
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/sift-prometheus-compliance.XXXXXX")"

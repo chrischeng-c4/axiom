@@ -69,7 +69,9 @@ In Sift-only mode, the boundary is the Sift MVP gate:
 - It sends 18,000,000 unique items during a 30-minute, 10,000-item-per-second load.
 - It runs five more minutes at the same rate while it stops the current store leader VM.
 - It checks OTLP, Remote Write, query, correlation, MCP, project isolation, PVC restart, latency, quorum, auto-repair, GCS outage behavior, 29/31/181-day boundaries, and fresh-PVC restore equality.
-- Sift and Rig images must resolve to immutable digests. Rig is only the test runner.
+- Sift, Rig, and the test-controller image must resolve to immutable digests.
+  Rig is only the in-cluster load runner. The controller is only a host-side
+  acceptance tool.
 - The cloud phase has a 90-minute hard limit. Cleanup covers the namespace, node pool, bucket, GSA, Workload Identity binding, disks, and temporary images.
 
 ## Prerequisites
@@ -89,7 +91,9 @@ storage.googleapis.com
 The caller needs permission to submit Cloud Builds, create/delete the initial Standard GKE
 cluster, bind IAM, create/delete one bucket, and push to
 the existing Docker repository. Required local commands are `cargo`, `curl`,
-`gcloud`, `git`, `jq`, `kubectl`, `python3`, and `terraform`.
+`docker`, `gcloud`, `git`, `gzip`, `jq`, `kubectl`, `openssl`, `ps`, `python3`,
+`rg`, `sort`, `tar`, and `terraform`. Python must provide the `jsonschema`
+package.
 
 ## Exact lifecycle
 
@@ -120,9 +124,9 @@ run proceeds in full `lumen sift` mode, which is not what the caller asked
 for. To skip Lumen's phases entirely, hand a completed Lumen proof to
 `LUMEN_PRIOR_ACCEPTANCE` instead.
 
-Either mode accepts prebuilt images. Supply them as immutable `@sha256`
-digest references — a mutable tag is rejected, because an acceptance run has
-to name the exact bytes it proved:
+The combined, Lumen-auth, and Tape modes accept prebuilt images. Supply them as
+immutable `@sha256` digest references. A mutable tag is rejected because an
+acceptance run must name the exact bytes it proved:
 
 ```bash
 PROJECT_ID=axiom-502607 \
@@ -131,20 +135,63 @@ SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
 acceptance/gcp/scripts/run.sh
 ```
 
-To run the dedicated Sift MVP gate, supply both candidate images by immutable
-digest. This is a paid cloud operation:
+The dedicated Sift MVP gate uses two separate commands. The first command
+creates one candidate from a clean full Git SHA. It runs
+`apps/sift/test.sh --candidate` from a read-only Git archive. It then builds
+Sift, Rig, and the test controller from that same archive. It records all
+three immutable image digests. This command uses Cloud Build. It does not
+create or change GKE resources:
+
+```bash
+PROJECT_ID=axiom-502607 \
+CANDIDATE_DIR="$PWD/.local/sift-candidate-0903000000" \
+RUN_ID=0903000000 \
+acceptance/gcp/scripts/prepare-sift-candidate.sh
+```
+
+Inspect `candidate.json` in that directory. Then start the paid GKE run with
+that exact candidate:
 
 ```bash
 PROJECT_ID=axiom-502607 \
 ACCEPTANCE_APPS=sift \
-SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
-RIG_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/rig@sha256:<digest> \
+SIFT_CANDIDATE_DIR="$PWD/.local/sift-candidate-0903000000" \
 acceptance/gcp/scripts/run.sh
 ```
 
-Omit both to build from the working tree via Cloud Build. That path requires
-a **clean** tree: `run.sh` refuses to upload a dirty source, so the image can
-always be traced back to a commit.
+If Cloud Build starts and candidate preparation fails, the script finds the
+run-tagged build and requests cancellation. It removes only source objects and
+image digests that the saved receipts prove belong to that run. It saves exact
+recovery data at `<CANDIDATE_DIR>.failed`. Do not start GKE from that directory.
+
+If automatic cleanup cannot prove a safe result, it keeps the resources and
+prints a retry command. Run the same command after you fix the permission or
+visibility problem:
+
+```bash
+acceptance/gcp/scripts/cleanup-sift-candidate.sh \
+  "$PWD/.local/sift-candidate-0903000000.failed"
+```
+
+The command is safe to repeat. A successful retry writes
+`candidate-cleanup.json`. Keep the failed directory as the recovery record.
+
+Do not set `SIFT_CLI`, `SIFT_BIN`, `SIFT_IMAGE`, or `RIG_IMAGE` in Sift-only
+mode. The candidate builder checks that the Sift binary reports the same full
+Git SHA before the Prometheus suite starts. The tree must be **clean**.
+`prepare-sift-candidate.sh` refuses a dirty source. It uploads only the fixed
+Git archive. Git-ignored local files cannot enter the build.
+
+Each mutable image tag includes the full Git SHA, run ID, and random
+acquisition ID. Cleanup deletes the reservation and submit-intent control
+objects only when their live Cloud Storage generations still match the saved
+receipts. A later acquisition at the same object URI is therefore kept.
+
+The test controller image is not a Sift product image. It is not deployed to
+GKE. The host runs it as a non-root user. Its root filesystem is read-only.
+It has no Linux capabilities and no Docker socket. The host must prove that
+the exact controller container stopped before it starts a separate cleanup
+container.
 
 To prove Tape in isolation, select Tape-only mode and provide the exact immutable
 Tape image (or omit it to trigger a local Cloud Build). This mode does not build,
@@ -220,12 +267,12 @@ PERSISTENT_CLUSTER_NAME=axiom-operator-acceptance \
 acceptance/gcp/scripts/bootstrap-cluster.sh
 ```
 
-`run.sh` performs this order:
+For combined, Lumen-auth, and Tape modes, `run.sh` performs this order:
 
-1. verify pre-existing APIs/repository and build the Lumen/Sift deployment
+1. verify pre-existing APIs and repository, then build the required deployment
    CLIs locally;
-2. reuse caller-supplied immutable release/candidate images, or submit a
-   target-specific Cloud Build only for each service image that was omitted;
+2. reuse caller-supplied immutable images, or submit a target-specific Cloud
+   Build;
 3. resolve any source-built tag to a `sha256` digest reference;
 4. use each app CLI to render CRD, operator, and instance layers, then validate
    the overlays with `kubectl kustomize`;
@@ -243,14 +290,122 @@ acceptance/gcp/scripts/bootstrap-cluster.sh
    tags/digests and the exact Cloud Build source prefix, and independently
    verify cleanup. The persistent cluster stays available for the next run.
 
-The normal cloud portion has a hard maximum of 2,700 seconds (45 minutes).
-Sift-only mode has a 5,400-second (90-minute) maximum. `EXIT`, `INT`, `TERM`,
-failures, and the watchdog all enter the same cleanup trap. A
+Sift-only mode has a stricter order:
+
+1. `prepare-sift-candidate.sh` runs the complete local candidate gate.
+2. It builds and records the Sift, Rig, and test-controller image digests.
+3. `run.sh` validates the complete candidate directory before GKE access.
+4. The contained controller runs the GKE acceptance with those exact digests.
+5. The host stops the exact controller container and writes a stop receipt.
+6. Only then can a separate contained process run cleanup.
+
+The source prefix must be exactly
+`gs://<bucket>/source/axiom-gcp-operator-<run-id>`. The component that submits
+Cloud Build writes `source-prefix.json` after it proves that this prefix was
+empty. Cleanup checks that receipt again before it deletes any staged source
+object.
+
+Before any cloud mutation, the run installs one host-wide claim with one atomic
+hard-link operation. The claim key includes the project, run, and acceptance
+mode. The complete claim records the state and evidence directories, process
+ID, process-group ID, process start token, random acquisition ID, and a digest
+of a one-time cleanup handoff nonce. A second process cannot use the same run
+identity, even when it selects different directories and starts at the same
+time.
+
+Before the Lease create request, the run saves a provisional intent with that
+acquisition ID and arms the cleanup trap. It then creates one Kubernetes Lease
+in `kube-system`. The intent lets cleanup recover a create request that
+succeeded before its API response or receipt was saved. The run rechecks the
+Lease UID, acquisition ID, and lack of a cleanup session before Cloud Build,
+Terraform apply, and each deployment or verification phase.
+
+The Lease stops two processes, including two processes with the same `RUN_ID`,
+from sharing image tags, source objects, or fixed namespaces. Cleanup uses one
+resource-version compare-and-swap to add a unique cleanup session to that
+Lease. A second cleanup cannot reuse the run receipt. Cleanup checks the exact
+Lease UID, resource version, run identity, acquisition ID, and cleanup session
+before each destructive phase.
+
+Sift also writes one create intent for each fixed namespace and for its CRD.
+Each created object has the project, run ID, and random acquisition ID as
+labels. The saved receipt records the Kubernetes UID. Cleanup deletes an
+object only when its live UID and labels still match that receipt. It sends
+UID and resource-version preconditions with the delete request. A missing API
+response can be recovered from the intent. A replaced namespace or CRD is kept
+and makes cleanup fail.
+
+Cleanup writes a durable session intent before it patches the Lease. If the
+process stops after the patch but before it writes the session receipt, a later
+cleanup can replace that session. A valid old receipt does not create a
+permanent fence. The replacement is allowed only when the live Lease matches
+the immutable old intent and the exact recorded cleanup process generation is
+gone. The replacement uses the Lease UID, resource version, acquisition ID,
+and old session ID in one compare-and-swap patch. Concurrent recovery attempts
+therefore produce one winner. A live owner, or an owner whose process token
+cannot be read, makes recovery fail closed.
+
+Non-Sift recovery cleanup also checks the recorded process start token and process
+group. It refuses to claim a cleanup session while the original run generation
+can still resume. The watchdog records each process ID with its start token.
+A reused numeric process or group ID does not keep the old generation alive.
+Cloud work starts only after the watchdog completes its first full group scan.
+An unreadable token is saved as unsafe. A failed scan or a missing completed
+scan record blocks destructive cleanup. The `EXIT` trap freezes every current
+and historically recorded exact generation. It scans the process group and
+its full parent-child lineage until it reaches a fixed point. A child remains
+owned after it changes its process group or calls `setsid()`. The trap then
+kills the frozen generations and requires a stable empty drain. It also checks
+the dedicated watchdog and log sink generation records. Any scan, token, file
+write, live generation, or unverifiable generation blocks destructive cleanup.
+The normal non-Sift `EXIT` trap gives its direct child the one-time handoff nonce. The
+durable claim contains only its digest, so the acquisition ID alone cannot
+authorize cleanup. An operator-run cleanup is accepted only after the recorded
+process generations are gone.
+
+The run saves the log sink process ID and start token. Process-group scans
+exclude only that exact generation. Before cleanup sends any signal, the parent
+leaves the pipe and switches its output to the regular `run.log` file. Child
+processes can still hold pipe writers, so cleanup stops and verifies them next.
+It closes the sink only after those writers are gone. The sink flushes the log
+and writes a nonce-bound success receipt after normal end of input. Cleanup
+accepts that receipt only after the recorded generation is gone. It gives the
+exact generation a short deadline, then uses `TERM` and `KILL` only after it
+checks the start token again. It never waits on a bare process ID. A missing
+record, an early sink exit, a bad receipt, or an unverifiable token fails the
+run. A broken pipe cannot interrupt resource deletion or the terminal receipt.
+
+After verified cleanup, the process deletes the Lease with UID and resource
+version preconditions. It then writes a terminal release receipt. A later
+cleanup uses that receipt to resume local evidence finalization only. It does
+not recreate the Lease or repeat a destructive cleanup phase.
+
+The normal cloud-work deadline is 2,700 seconds (45 minutes). Sift-only mode
+has a 5,400-second (90-minute) cloud-work deadline. An exact, nonce-bound
+cloud-ready receipt starts both the inner watchdog and the independent outer
+supervisor deadline. The contained GCP preflight has a separate 1,800-second
+limit. Candidate preparation happens before this run. Its Cloud Build has its
+own 5,400-second limit. Cleanup then gets at most 900 seconds (15 minutes).
+The GKE cloud-work limit remains 90 minutes. `EXIT`, `INT`,
+`TERM`, failures, and the watchdog all enter the same cleanup trap. A
 separate explicit cluster teardown is deliberately required; a normal run
 never deletes the reusable cluster.
 
-If a shell or machine failure prevents the trap from finishing, rerun cleanup
-with the values printed in `run.json`:
+If the Sift host wrapper stops before cleanup, rerun the contained wrapper in
+recovery mode. Use the same candidate and directories. Recovery keeps an
+unknown run result as failed. It only resumes cleanup:
+
+```bash
+PROJECT_ID=axiom-502607 REGION=asia-east1 GKE_ZONE=asia-east1-a \
+ACCEPTANCE_APPS=sift \
+SIFT_CANDIDATE_DIR="$PWD/.local/sift-candidate-0903000000" \
+STATE_DIR=/tmp/axiom-gcp-operator-0903000000 \
+EVIDENCE_DIR=/tmp/axiom-gcp-operator-evidence/0903000000 \
+CONTAINMENT_DIR=/tmp/axiom-gcp-operator-containment/0903000000 \
+acceptance/gcp/scripts/run-sift-contained.sh --recover
+```
+
+For a non-Sift run, rerun cleanup with the values printed in `run.json`:
 
 ```bash
 PROJECT_ID=axiom-502607 REGION=asia-east1 GKE_ZONE=asia-east1-a RUN_ID=0722123456 \
@@ -276,10 +431,18 @@ Default evidence root:
 ├── run.json
 ├── run.log
 ├── images.json
+├── candidate.json
+├── candidate-source.json
+├── candidate-gate.json
+├── candidate-gate.log
+├── source-prefix.json
+├── cloud-build-source-binding.json
 ├── cloud-build-submit.json
 ├── cloud-build-final.json
+├── cloud-build-live.json
 ├── terraform-output.json
 ├── acceptance.json
+├── sift-mvp-verification.json
 ├── cleanup.json
 ├── kubernetes/
 │   ├── lumen-crs.json

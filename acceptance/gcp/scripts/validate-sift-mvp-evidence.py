@@ -58,6 +58,7 @@ def normalize_verification(document: object) -> object:
         "run_id": normalized["run_id"],
         "verified_at": "1970-01-01T00:00:00Z",
         "status": "clean",
+        "candidate": copy.deepcopy(normalized_sift["candidate"]),
         "preserved": {"artifact_registry": True, "preexisting_apis": True},
     }
     return normalized

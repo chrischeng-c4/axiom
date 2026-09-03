@@ -2,7 +2,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    ops::Bound::{Excluded, Unbounded},
+    ops::{
+        Bound::{Excluded, Unbounded},
+        Deref, DerefMut,
+    },
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -23,13 +26,26 @@ use crate::{
 use super::{model::ProjectionDescriptor, runtime::Projection};
 
 pub const PROJECTION_METRIC_STORE: &str = "metric-store";
-pub const METRIC_SCHEMA_VERSION: u32 = 5;
+pub const METRIC_SCHEMA_VERSION: u32 = 7;
 pub const METRIC_CHUNK_POINTS: usize = 256;
 pub const DEFAULT_METRIC_MEMTABLE_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_METRIC_CARDINALITY_LIMIT: usize = 10_000;
 pub const DEFAULT_RETAINED_POINTS_PER_SERIES: usize = 100_000;
 pub const MAX_METRIC_QUERY_LIMIT: usize = 1_000;
+pub const MAX_METRIC_QUERY_SOURCE_POINTS: usize = 250_000;
+pub const MAX_METRIC_QUERY_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 pub const ROLLUP_WINDOWS_SECONDS: [u64; 2] = [60, 3_600];
+const MAX_ROLLUP_LOOKBACK_NANOS: i64 = 3_600 * 1_000_000_000;
+
+#[cfg(test)]
+thread_local! {
+    static METRIC_POINT_MEMORY_MEASUREMENTS: std::cell::Cell<u64> = const {
+        std::cell::Cell::new(0)
+    };
+    static METRIC_RESIDENT_POINT_MATERIALIZATIONS: std::cell::Cell<u64> = const {
+        std::cell::Cell::new(0)
+    };
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -171,6 +187,27 @@ pub struct MetricChunkV1 {
     pub points: Vec<MetricPointV1>,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+struct ResidentMetricChunk {
+    chunk: MetricChunkV1,
+    point_count: usize,
+    materialized_bytes: usize,
+}
+
+impl Deref for ResidentMetricChunk {
+    type Target = MetricChunkV1;
+
+    fn deref(&self) -> &Self::Target {
+        &self.chunk
+    }
+}
+
+impl DerefMut for ResidentMetricChunk {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.chunk
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct MetricRollupV1 {
     pub window_seconds: u64,
@@ -306,7 +343,7 @@ struct StoredMetricSeries {
     overflow: bool,
     #[serde(default)]
     sealed_chunks: Vec<SealedMetricChunk>,
-    chunks: Vec<MetricChunkV1>,
+    chunks: Vec<ResidentMetricChunk>,
     #[serde(default)]
     point_count: usize,
     rollups: Vec<MetricRollupV1>,
@@ -320,6 +357,8 @@ struct SealedMetricChunk {
     start_time_unix_nano: i64,
     end_time_unix_nano: i64,
     point_count: usize,
+    encoded_bytes: usize,
+    materialized_bytes: usize,
     sha256: String,
 }
 
@@ -481,6 +520,153 @@ impl MetricProjection {
         Ok(points)
     }
 
+    fn scan_point_count(
+        &self,
+        series: &StoredMetricSeries,
+        start: Option<i64>,
+        end: Option<i64>,
+    ) -> Result<usize> {
+        series
+            .sealed_chunks
+            .iter()
+            .filter(|chunk| {
+                time_ranges_overlap(
+                    chunk.start_time_unix_nano,
+                    chunk.end_time_unix_nano,
+                    start,
+                    end,
+                )
+            })
+            .map(|chunk| {
+                if chunk.point_count == 0 {
+                    bail!("sealed metric chunk {} has no point metadata", chunk.key);
+                }
+                Ok(chunk.point_count)
+            })
+            .chain(
+                series
+                    .chunks
+                    .iter()
+                    .filter(|chunk| {
+                        time_ranges_overlap(
+                            chunk.start_time_unix_nano,
+                            chunk.end_time_unix_nano,
+                            start,
+                            end,
+                        )
+                    })
+                    .map(|chunk| {
+                        if chunk.point_count == 0 {
+                            bail!("resident metric chunk has no trusted point metadata");
+                        }
+                        Ok(chunk.point_count)
+                    }),
+            )
+            .try_fold(0_usize, |total, count| {
+                total
+                    .checked_add(count?)
+                    .context("metric query source point budget overflowed")
+            })
+    }
+
+    fn scan_materialized_bytes(
+        &self,
+        series: &StoredMetricSeries,
+        start: Option<i64>,
+        end: Option<i64>,
+    ) -> Result<usize> {
+        let sealed_bytes = series
+            .sealed_chunks
+            .iter()
+            .filter(|chunk| {
+                time_ranges_overlap(
+                    chunk.start_time_unix_nano,
+                    chunk.end_time_unix_nano,
+                    start,
+                    end,
+                )
+            })
+            .try_fold(0_usize, |total, chunk| {
+                if chunk.encoded_bytes == 0 || chunk.materialized_bytes == 0 {
+                    bail!("sealed metric chunk {} has no byte metadata", chunk.key);
+                }
+                total
+                    .checked_add(chunk.materialized_bytes.max(chunk.encoded_bytes))
+                    .context("metric query source byte budget overflowed")
+            })?;
+        series
+            .chunks
+            .iter()
+            .filter(|chunk| {
+                time_ranges_overlap(
+                    chunk.start_time_unix_nano,
+                    chunk.end_time_unix_nano,
+                    start,
+                    end,
+                )
+            })
+            .try_fold(sealed_bytes, |total, chunk| {
+                if chunk.point_count == 0 || chunk.materialized_bytes == 0 {
+                    bail!("resident metric chunk has no trusted size metadata");
+                }
+                total
+                    .checked_add(chunk.materialized_bytes)
+                    .context("metric query source byte budget overflowed")
+            })
+    }
+
+    fn points_for_scan(
+        &self,
+        series: &StoredMetricSeries,
+        start: Option<i64>,
+        end: Option<i64>,
+    ) -> Result<Vec<MetricPointV1>> {
+        let mut points = Vec::new();
+        for sealed in &series.sealed_chunks {
+            if !time_ranges_overlap(
+                sealed.start_time_unix_nano,
+                sealed.end_time_unix_nano,
+                start,
+                end,
+            ) {
+                continue;
+            }
+            points.extend(
+                self.read_sealed_chunk(sealed)?
+                    .points
+                    .into_iter()
+                    .filter(|point| point_is_in_range(point, start, end)),
+            );
+        }
+        for chunk in &series.chunks {
+            if !time_ranges_overlap(
+                chunk.start_time_unix_nano,
+                chunk.end_time_unix_nano,
+                start,
+                end,
+            ) {
+                continue;
+            }
+            #[cfg(test)]
+            METRIC_RESIDENT_POINT_MATERIALIZATIONS.with(|materializations| {
+                materializations.set(
+                    materializations
+                        .get()
+                        .saturating_add(chunk.point_count as u64),
+                );
+            });
+            points.extend(
+                chunk
+                    .points
+                    .iter()
+                    .filter(|point| point_is_in_range(point, start, end))
+                    .cloned(),
+            );
+        }
+        points.sort_by(point_order);
+        Ok(points)
+    }
+
     fn last_point(&self, series: &StoredMetricSeries) -> Result<Option<MetricPointV1>> {
         if let Some(point) = series.chunks.last().and_then(|chunk| chunk.points.last()) {
             return Ok(Some(point.clone()));
@@ -507,7 +693,7 @@ impl MetricProjection {
             .first()
             .is_some_and(|chunk| chunk.points.len() >= METRIC_CHUNK_POINTS)
         {
-            let resident_bytes = metric_chunk_memory_bytes(&series.chunks[0])?;
+            let resident_bytes = series.chunks[0].materialized_bytes;
             let sealed = store.write(&series.series_id, &series.chunks[0])?;
             series.chunks.remove(0);
             series.resident_bytes = series.resident_bytes.saturating_sub(resident_bytes);
@@ -559,7 +745,7 @@ impl MetricProjection {
                 .series
                 .get_mut(&series_id)
                 .context("selected metric series disappeared")?;
-            let resident_bytes = metric_chunk_memory_bytes(&series.chunks[0])?;
+            let resident_bytes = series.chunks[0].materialized_bytes;
             let sealed = store.write(&series.series_id, &series.chunks[0])?;
             series.chunks.remove(0);
             series.resident_bytes = series.resident_bytes.saturating_sub(resident_bytes);
@@ -570,40 +756,79 @@ impl MetricProjection {
     }
 
     pub fn query(&self, query: &MetricQuery) -> Result<MetricPage> {
+        self.query_with_source_limits(
+            query,
+            MAX_METRIC_QUERY_SOURCE_POINTS,
+            MAX_METRIC_QUERY_SOURCE_BYTES,
+        )
+    }
+
+    #[cfg(test)]
+    fn query_with_source_point_limit(
+        &self,
+        query: &MetricQuery,
+        source_point_limit: usize,
+    ) -> Result<MetricPage> {
+        self.query_with_source_limits(query, source_point_limit, MAX_METRIC_QUERY_SOURCE_BYTES)
+    }
+
+    fn query_with_source_limits(
+        &self,
+        query: &MetricQuery,
+        source_point_limit: usize,
+        source_byte_limit: usize,
+    ) -> Result<MetricPage> {
+        if source_point_limit == 0 || source_byte_limit == 0 {
+            bail!("metric query source point and byte limits must be non-zero");
+        }
         let (start, end) = query.validate()?;
         let state = self.state.read().expect("metric projection lock poisoned");
         let start_series = query
             .after_series_id
             .as_ref()
             .map_or(Unbounded, |series_id| Excluded(series_id.clone()));
-        let mut results = Vec::with_capacity(query.limit.saturating_add(1));
+        let scan_start = start.map(|start| start.saturating_sub(MAX_ROLLUP_LOOKBACK_NANOS));
+        let mut candidates = Vec::new();
         for series in state
             .series
             .range((start_series, Unbounded))
             .map(|(_, series)| series)
+            .filter(|series| metric_series_matches(series, query))
         {
-            if series.project != query.project
-                || query
-                    .environment
-                    .as_ref()
-                    .is_some_and(|environment| &series.environment != environment)
-                || query.name.as_ref().is_some_and(|name| &series.name != name)
-                || !query
-                    .resource_equals
-                    .iter()
-                    .all(|(key, value)| series.resource.get(key) == Some(value))
-                || !query
-                    .attribute_equals
-                    .iter()
-                    .all(|(key, value)| series.attributes.get(key) == Some(value))
-            {
-                continue;
+            if self.scan_point_count(series, start, end)? > 0 {
+                candidates.push(series);
             }
-            let all_points = self.all_points(series)?;
-            let points = all_points
+        }
+        let has_more = candidates.len() > query.limit;
+        let selected = candidates.into_iter().take(query.limit).collect::<Vec<_>>();
+        let scanned_points = selected.iter().try_fold(0_usize, |total, series| {
+            total
+                .checked_add(self.scan_point_count(series, scan_start, end)?)
+                .context("metric query source point budget overflowed")
+        })?;
+        if scanned_points > source_point_limit {
+            bail!(
+                "metric query would scan {scanned_points} source points; the limit is {source_point_limit}"
+            );
+        }
+        let scanned_bytes = selected.iter().try_fold(0_usize, |total, series| {
+            total
+                .checked_add(self.scan_materialized_bytes(series, scan_start, end)?)
+                .context("metric query source byte budget overflowed")
+        })?;
+        if scanned_bytes > source_byte_limit {
+            bail!(
+                "metric query would materialize {scanned_bytes} source bytes; the limit is {source_byte_limit}"
+            );
+        }
+        let mut results = Vec::with_capacity(query.limit);
+        let mut last_scanned_series_id = None;
+        for series in selected {
+            last_scanned_series_id = Some(series.series_id.clone());
+            let scan_points = self.points_for_scan(series, scan_start, end)?;
+            let points = scan_points
                 .iter()
-                .filter(|point| start.is_none_or(|start| point.time_unix_nano >= start))
-                .filter(|point| end.is_none_or(|end| point.time_unix_nano < end))
+                .filter(|point| point_is_in_range(point, start, end))
                 .cloned()
                 .collect::<Vec<_>>();
             if points.is_empty() {
@@ -625,7 +850,7 @@ impl MetricProjection {
                     merge_histograms(&numeric_points)?,
                 )
             };
-            let rollups = make_rollups(&all_points)?
+            let rollups = make_rollups(&scan_points)?
                 .into_iter()
                 .filter(|rollup| start.is_none_or(|start| rollup.end_time_unix_nano > start))
                 .filter(|rollup| end.is_none_or(|end| rollup.start_time_unix_nano < end))
@@ -646,14 +871,9 @@ impl MetricProjection {
                 reset_count,
                 rollups,
             });
-            if results.len() > query.limit {
-                break;
-            }
         }
-        let has_more = results.len() > query.limit;
-        results.truncate(query.limit);
         Ok(MetricPage {
-            next_series_id: results.last().map(|series| series.series_id.clone()),
+            next_series_id: last_scanned_series_id,
             series: results,
             projection_cursor: state.projection_cursor,
             has_more,
@@ -788,7 +1008,7 @@ impl Projection for MetricProjection {
                     .sealed_chunks
                     .iter()
                     .map(|chunk| chunk.point_count)
-                    .chain(series.chunks.iter().map(|chunk| chunk.points.len()))
+                    .chain(series.chunks.iter().map(|chunk| chunk.point_count))
                     .sum();
             }
             let before = series.resident_bytes;
@@ -820,7 +1040,7 @@ impl Projection for MetricProjection {
                     store.mark_obsolete(stored.cursor, &old_keys)?;
                 }
                 series.sealed_chunks.clear();
-                series.chunks = make_chunks(&points);
+                series.chunks = make_chunks(&points)?;
                 series.point_count = points.len();
                 series.rollups.clear();
                 series.resident_bytes = metric_series_memory_bytes(series)?;
@@ -873,11 +1093,22 @@ impl Projection for MetricProjection {
                 .sealed_chunks
                 .iter()
                 .map(|chunk| chunk.point_count)
-                .chain(series.chunks.iter().map(|chunk| chunk.points.len()))
+                .chain(series.chunks.iter().map(|chunk| chunk.point_count))
                 .sum();
             series.rollups.clear();
+            for chunk in &mut series.chunks {
+                if chunk.point_count != chunk.points.len() || chunk.point_count == 0 {
+                    bail!("resident metric chunk point metadata mismatch");
+                }
+                let measured = metric_chunk_memory_bytes(&chunk.chunk)?;
+                if chunk.materialized_bytes != measured || measured == 0 {
+                    bail!("resident metric chunk byte metadata mismatch");
+                }
+            }
             series.resident_bytes = metric_series_memory_bytes(series)?;
-            memtable_bytes = memtable_bytes.saturating_add(series.resident_bytes);
+            memtable_bytes = memtable_bytes
+                .checked_add(series.resident_bytes)
+                .context("metric memtable byte accounting overflowed during restore")?;
             for point in series.chunks.iter().flat_map(|chunk| &chunk.points) {
                 projection_cursor = projection_cursor.max(point.cursor);
             }
@@ -924,14 +1155,20 @@ impl MetricChunkStore {
         })
     }
 
-    fn write(&self, series_id: &str, chunk: &MetricChunkV1) -> Result<SealedMetricChunk> {
+    fn write(&self, series_id: &str, chunk: &ResidentMetricChunk) -> Result<SealedMetricChunk> {
+        if chunk.point_count == 0
+            || chunk.point_count != chunk.points.len()
+            || chunk.materialized_bytes == 0
+        {
+            bail!("resident metric chunk metadata mismatch before seal");
+        }
         let first = chunk
             .points
             .first()
             .context("cannot seal an empty metric chunk")?;
         let last = chunk.points.last().context("metric chunk lost its tail")?;
         validate_series_id(series_id)?;
-        let bytes = serde_json::to_vec(chunk).context("encode sealed metric chunk")?;
+        let bytes = serde_json::to_vec(&chunk.chunk).context("encode sealed metric chunk")?;
         let digest = sha256(&bytes);
         let key = format!(
             "{series_id}/{:020}-{:020}-{digest}.json",
@@ -951,7 +1188,9 @@ impl MetricChunkStore {
             key,
             start_time_unix_nano: chunk.start_time_unix_nano,
             end_time_unix_nano: chunk.end_time_unix_nano,
-            point_count: chunk.points.len(),
+            point_count: chunk.point_count,
+            encoded_bytes: bytes.len(),
+            materialized_bytes: chunk.materialized_bytes,
             sha256: digest,
         })
     }
@@ -966,6 +1205,8 @@ impl MetricChunkStore {
         let chunk: MetricChunkV1 =
             serde_json::from_slice(&bytes).context("decode sealed metric chunk")?;
         if chunk.points.len() != sealed.point_count
+            || bytes.len() != sealed.encoded_bytes
+            || metric_chunk_memory_bytes(&chunk)? != sealed.materialized_bytes
             || chunk.start_time_unix_nano != sealed.start_time_unix_nano
             || chunk.end_time_unix_nano != sealed.end_time_unix_nano
             || chunk.points.is_empty()
@@ -1044,6 +1285,38 @@ impl MetricChunkStore {
     }
 }
 
+fn metric_series_matches(series: &StoredMetricSeries, query: &MetricQuery) -> bool {
+    series.project == query.project
+        && query
+            .environment
+            .as_ref()
+            .is_none_or(|environment| &series.environment == environment)
+        && query.name.as_ref().is_none_or(|name| &series.name == name)
+        && query
+            .resource_equals
+            .iter()
+            .all(|(key, value)| series.resource.get(key) == Some(value))
+        && query
+            .attribute_equals
+            .iter()
+            .all(|(key, value)| series.attributes.get(key) == Some(value))
+}
+
+fn time_ranges_overlap(
+    chunk_start: i64,
+    chunk_end: i64,
+    query_start: Option<i64>,
+    query_end: Option<i64>,
+) -> bool {
+    query_start.is_none_or(|start| chunk_end >= start)
+        && query_end.is_none_or(|end| chunk_start < end)
+}
+
+fn point_is_in_range(point: &MetricPointV1, start: Option<i64>, end: Option<i64>) -> bool {
+    start.is_none_or(|start| point.time_unix_nano >= start)
+        && end.is_none_or(|end| point.time_unix_nano < end)
+}
+
 fn validate_series_id(series_id: &str) -> Result<()> {
     if series_id.len() != 64 || !series_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("metric series id is not a SHA-256 hex digest");
@@ -1053,7 +1326,12 @@ fn validate_series_id(series_id: &str) -> Result<()> {
 
 fn metric_series_memory_bytes(series: &StoredMetricSeries) -> Result<usize> {
     series.chunks.iter().try_fold(0_usize, |total, chunk| {
-        Ok(total.saturating_add(metric_chunk_memory_bytes(chunk)?))
+        if chunk.point_count == 0 || chunk.materialized_bytes == 0 {
+            bail!("resident metric chunk has no trusted size metadata");
+        }
+        total
+            .checked_add(chunk.materialized_bytes)
+            .context("metric resident byte accounting overflowed")
     })
 }
 
@@ -1064,10 +1342,49 @@ fn metric_chunk_memory_bytes(chunk: &MetricChunkV1) -> Result<usize> {
 }
 
 fn metric_point_memory_bytes(point: &MetricPointV1) -> Result<usize> {
-    Ok(serde_json::to_vec(point)
+    #[cfg(test)]
+    METRIC_POINT_MEMORY_MEASUREMENTS.with(|measurements| {
+        measurements.set(measurements.get().saturating_add(1));
+    });
+    let encoded_bytes = serde_json::to_vec(point)
         .context("measure metric memtable point")?
-        .len()
-        .saturating_add(std::mem::size_of::<MetricPointV1>()))
+        .len();
+    let exemplar_bytes = point.exemplars.iter().fold(0_usize, |total, exemplar| {
+        total
+            .saturating_add(std::mem::size_of::<MetricExemplar>())
+            .saturating_add(exemplar.trace_id.len())
+            .saturating_add(exemplar.span_id.len())
+    });
+    let histogram_bytes = point.histogram.as_ref().map_or(0, |histogram| {
+        histogram
+            .explicit_bounds
+            .len()
+            .saturating_mul(std::mem::size_of::<f64>())
+            .saturating_add(
+                histogram
+                    .bucket_counts
+                    .len()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(
+                histogram
+                    .positive_bucket_counts
+                    .len()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(
+                histogram
+                    .negative_bucket_counts
+                    .len()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+    });
+    Ok(encoded_bytes
+        .saturating_add(std::mem::size_of::<MetricPointV1>())
+        .saturating_add(point.event_id.len())
+        .saturating_add(point.occurred_at.len())
+        .saturating_add(exemplar_bytes)
+        .saturating_add(histogram_bytes))
 }
 
 fn identity_material(
@@ -1105,10 +1422,14 @@ fn push_metric_point(series: &mut StoredMetricSeries, point: MetricPointV1) -> R
         .last()
         .is_none_or(|chunk| chunk.points.len() == METRIC_CHUNK_POINTS);
     if needs_chunk {
-        series.chunks.push(MetricChunkV1 {
-            start_time_unix_nano: point.time_unix_nano,
-            end_time_unix_nano: point.time_unix_nano,
-            points: Vec::with_capacity(METRIC_CHUNK_POINTS),
+        series.chunks.push(ResidentMetricChunk {
+            chunk: MetricChunkV1 {
+                start_time_unix_nano: point.time_unix_nano,
+                end_time_unix_nano: point.time_unix_nano,
+                points: Vec::with_capacity(METRIC_CHUNK_POINTS),
+            },
+            point_count: 0,
+            materialized_bytes: 0,
         });
     }
     let chunk = series.chunks.last_mut().expect("metric chunk was created");
@@ -1117,8 +1438,22 @@ fn push_metric_point(series: &mut StoredMetricSeries, point: MetricPointV1) -> R
     }
     chunk.end_time_unix_nano = point.time_unix_nano;
     chunk.points.push(point);
-    series.point_count = series.point_count.saturating_add(1);
-    series.resident_bytes = series.resident_bytes.saturating_add(resident_bytes);
+    chunk.point_count = chunk
+        .point_count
+        .checked_add(1)
+        .context("resident metric chunk point count overflowed")?;
+    chunk.materialized_bytes = chunk
+        .materialized_bytes
+        .checked_add(resident_bytes)
+        .context("resident metric chunk byte count overflowed")?;
+    series.point_count = series
+        .point_count
+        .checked_add(1)
+        .context("metric series point count overflowed")?;
+    series.resident_bytes = series
+        .resident_bytes
+        .checked_add(resident_bytes)
+        .context("metric series resident byte count overflowed")?;
     Ok(())
 }
 
@@ -1129,26 +1464,57 @@ fn pop_oldest_metric_point(series: &mut StoredMetricSeries) -> Result<Option<Str
     let point = chunk.points.remove(0);
     let resident_bytes = metric_point_memory_bytes(&point)?;
     series.point_count = series.point_count.saturating_sub(1);
+    chunk.point_count = chunk
+        .point_count
+        .checked_sub(1)
+        .context("resident metric chunk point count underflowed")?;
+    chunk.materialized_bytes = chunk
+        .materialized_bytes
+        .checked_sub(resident_bytes)
+        .context("resident metric chunk byte count underflowed")?;
     if series.chunks[0].points.is_empty() {
         series.chunks.remove(0);
     } else {
         series.chunks[0].start_time_unix_nano = series.chunks[0].points[0].time_unix_nano;
     }
-    series.resident_bytes = series.resident_bytes.saturating_sub(resident_bytes);
+    series.resident_bytes = series
+        .resident_bytes
+        .checked_sub(resident_bytes)
+        .context("metric series resident byte count underflowed")?;
     Ok(Some(point.event_id))
 }
 
-fn make_chunks(points: &[MetricPointV1]) -> Vec<MetricChunkV1> {
+fn make_chunks(points: &[MetricPointV1]) -> Result<Vec<ResidentMetricChunk>> {
     points
         .chunks(METRIC_CHUNK_POINTS)
-        .filter_map(|points| {
-            Some(MetricChunkV1 {
-                start_time_unix_nano: points.first()?.time_unix_nano,
-                end_time_unix_nano: points.last()?.time_unix_nano,
+        .map(|points| {
+            let first = points
+                .first()
+                .context("cannot build an empty metric chunk")?;
+            let last = points.last().context("metric chunk lost its tail")?;
+            resident_metric_chunk(MetricChunkV1 {
+                start_time_unix_nano: first.time_unix_nano,
+                end_time_unix_nano: last.time_unix_nano,
                 points: points.to_vec(),
             })
         })
         .collect()
+}
+
+fn resident_metric_chunk(chunk: MetricChunkV1) -> Result<ResidentMetricChunk> {
+    if chunk.points.is_empty() {
+        bail!("resident metric chunk cannot be empty");
+    }
+    let point_count = chunk.points.len();
+    let materialized_bytes = metric_chunk_memory_bytes(&chunk)?;
+    if materialized_bytes == 0 {
+        bail!("resident metric chunk byte metadata must be non-zero");
+    }
+    Ok(ResidentMetricChunk {
+        chunk,
+        point_count,
+        materialized_bytes,
+    })
 }
 
 fn make_rollups(points: &[MetricPointV1]) -> Result<Vec<MetricRollupV1>> {
@@ -1179,7 +1545,7 @@ fn make_rollups(points: &[MetricPointV1]) -> Result<Vec<MetricRollupV1>> {
             rollups.push(MetricRollupV1 {
                 window_seconds,
                 start_time_unix_nano: start,
-                end_time_unix_nano: start + window_nanos,
+                end_time_unix_nano: start.saturating_add(window_nanos),
                 point_count: points.len() as u64,
                 sum: values.iter().sum(),
                 min: values.iter().copied().fold(f64::INFINITY, f64::min),
@@ -1307,5 +1673,530 @@ const fn default_query_limit() -> usize {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_point(cursor: u64, time_unix_nano: i64) -> MetricPointV1 {
+        MetricPointV1 {
+            cursor,
+            event_id: format!("event-{cursor}"),
+            occurred_at: "1970-01-01T00:00:10Z".into(),
+            time_unix_nano,
+            value: cursor as f64,
+            stale: false,
+            histogram: None,
+            exemplars: Vec::new(),
+        }
+    }
+
+    fn test_series(
+        series_id: &str,
+        sealed_chunks: Vec<SealedMetricChunk>,
+        chunks: Vec<MetricChunkV1>,
+    ) -> StoredMetricSeries {
+        let chunks = chunks
+            .into_iter()
+            .map(|chunk| resident_metric_chunk(chunk).unwrap())
+            .collect::<Vec<_>>();
+        let point_count = sealed_chunks
+            .iter()
+            .map(|chunk| chunk.point_count)
+            .chain(chunks.iter().map(|chunk| chunk.point_count))
+            .sum();
+        let resident_bytes = chunks.iter().map(|chunk| chunk.materialized_bytes).sum();
+        StoredMetricSeries {
+            series_id: series_id.into(),
+            project: "project-a".into(),
+            environment: "prod".into(),
+            name: "bounded_metric".into(),
+            unit: None,
+            temporality: MetricTemporality::Gauge,
+            resource: BTreeMap::new(),
+            attributes: BTreeMap::new(),
+            overflow: false,
+            sealed_chunks,
+            chunks,
+            point_count,
+            rollups: Vec::new(),
+            resident_bytes,
+        }
+    }
+
+    fn chunk(points: Vec<MetricPointV1>) -> MetricChunkV1 {
+        MetricChunkV1 {
+            start_time_unix_nano: points.first().unwrap().time_unix_nano,
+            end_time_unix_nano: points.last().unwrap().time_unix_nano,
+            points,
+        }
+    }
+
+    fn reset_point_memory_measurements() {
+        METRIC_POINT_MEMORY_MEASUREMENTS.with(|measurements| measurements.set(0));
+        METRIC_RESIDENT_POINT_MATERIALIZATIONS.with(|materializations| materializations.set(0));
+    }
+
+    fn point_memory_measurements() -> u64 {
+        METRIC_POINT_MEMORY_MEASUREMENTS.with(std::cell::Cell::get)
+    }
+
+    fn resident_point_materializations() -> u64 {
+        METRIC_RESIDENT_POINT_MATERIALIZATIONS.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn query_rejects_source_history_before_materializing_it() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(
+                &series_id,
+                Vec::new(),
+                vec![chunk(vec![
+                    test_point(1, 1),
+                    test_point(2, 2),
+                    test_point(3, 3),
+                ])],
+            ),
+        );
+        let mut query = MetricQuery::for_project("project-a");
+        query.limit = 1;
+        reset_point_memory_measurements();
+        let error = projection
+            .query_with_source_point_limit(&query, 2)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("would scan 3 source points; the limit is 2"));
+        assert_eq!(point_memory_measurements(), 0);
+        assert_eq!(resident_point_materializations(), 0);
+    }
+
+    #[test]
+    fn query_skips_sealed_chunks_outside_the_time_window() {
+        let projection = MetricProjection::with_limits(10, 2_000).unwrap();
+        let series_id = "a".repeat(64);
+        let old_sealed = SealedMetricChunk {
+            key: format!("{series_id}/missing.json"),
+            start_time_unix_nano: -20_001_000_000_000,
+            end_time_unix_nano: -20_000_000_000_000,
+            point_count: 1_000,
+            encoded_bytes: 1_000,
+            materialized_bytes: 1_000,
+            sha256: "0".repeat(64),
+        };
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(
+                &series_id,
+                vec![old_sealed],
+                vec![chunk(vec![test_point(1, 10_000_000_000)])],
+            ),
+        );
+        let mut query = MetricQuery::for_project("project-a");
+        query.start_time = Some("1970-01-01T00:00:10Z".into());
+        query.end_time = Some("1970-01-01T00:00:11Z".into());
+        query.limit = 1;
+        let resident_bytes =
+            projection.state.read().unwrap().series[&series_id].chunks[0].materialized_bytes;
+        let page = projection
+            .query_with_source_limits(&query, 1, resident_bytes)
+            .unwrap();
+        assert_eq!(page.series.len(), 1);
+        assert_eq!(page.series[0].points.len(), 1);
+    }
+
+    #[test]
+    fn query_marks_excess_cardinality_without_loading_the_extra_series() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let first_id = "a".repeat(64);
+        let second_id = "b".repeat(64);
+        let mut state = projection.state.write().unwrap();
+        state.series.insert(
+            first_id.clone(),
+            test_series(
+                &first_id,
+                Vec::new(),
+                vec![chunk(vec![test_point(1, 10_000_000_000)])],
+            ),
+        );
+        state.series.insert(
+            second_id.clone(),
+            test_series(
+                &second_id,
+                vec![SealedMetricChunk {
+                    key: format!("{second_id}/missing.json"),
+                    start_time_unix_nano: 10_000_000_000,
+                    end_time_unix_nano: 10_000_000_000,
+                    point_count: 1,
+                    encoded_bytes: 1,
+                    materialized_bytes: 1,
+                    sha256: "0".repeat(64),
+                }],
+                Vec::new(),
+            ),
+        );
+        drop(state);
+
+        let mut query = MetricQuery::for_project("project-a");
+        query.limit = 1;
+        let page = projection.query_with_source_point_limit(&query, 1).unwrap();
+        assert!(page.has_more);
+        assert_eq!(page.series.len(), 1);
+        assert_eq!(page.series[0].series_id, first_id);
+    }
+
+    #[test]
+    fn query_rejects_sealed_bytes_before_reading_the_chunk() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(
+                &series_id,
+                vec![SealedMetricChunk {
+                    key: format!("{series_id}/missing.json"),
+                    start_time_unix_nano: 10,
+                    end_time_unix_nano: 10,
+                    point_count: 1,
+                    encoded_bytes: 2_048,
+                    materialized_bytes: 4_096,
+                    sha256: "0".repeat(64),
+                }],
+                Vec::new(),
+            ),
+        );
+        let mut query = MetricQuery::for_project("project-a");
+        query.limit = 1;
+        let error = projection
+            .query_with_source_limits(&query, 1, 1_024)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("would materialize 4096 source bytes; the limit is 1024"));
+        assert!(!error.to_string().contains("missing.json"));
+    }
+
+    #[test]
+    fn query_rejects_a_large_resident_histogram_by_byte_budget() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        let mut point = test_point(1, 10);
+        point.histogram = Some(MetricHistogramV1 {
+            kind: HistogramKind::Explicit,
+            count: 2_049,
+            sum: 2_049.0,
+            explicit_bounds: (0..2_048).map(|value| value as f64).collect(),
+            bucket_counts: vec![1; 2_049],
+            scale: None,
+            zero_count: 0,
+            positive_offset: 0,
+            positive_bucket_counts: Vec::new(),
+            negative_offset: 0,
+            negative_bucket_counts: Vec::new(),
+            min: Some(0.0),
+            max: Some(2_048.0),
+        });
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(&series_id, Vec::new(), vec![chunk(vec![point])]),
+        );
+        let mut query = MetricQuery::for_project("project-a");
+        query.limit = 1;
+        reset_point_memory_measurements();
+        let error = projection
+            .query_with_source_limits(&query, 1, 4_096)
+            .unwrap_err();
+        assert!(error.to_string().contains("would materialize"));
+        assert!(error.to_string().contains("the limit is 4096"));
+        assert_eq!(point_memory_measurements(), 0);
+        assert_eq!(resident_point_materializations(), 0);
+    }
+
+    #[test]
+    fn query_rejects_zero_resident_byte_metadata_without_touching_points() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        let mut series = test_series(&series_id, Vec::new(), vec![chunk(vec![test_point(1, 10)])]);
+        series.chunks[0].materialized_bytes = 0;
+        projection
+            .state
+            .write()
+            .unwrap()
+            .series
+            .insert(series_id, series);
+        reset_point_memory_measurements();
+        let error = projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("resident metric chunk has no trusted size metadata"));
+        assert_eq!(point_memory_measurements(), 0);
+        assert_eq!(resident_point_materializations(), 0);
+    }
+
+    #[test]
+    fn query_rejects_zero_resident_point_metadata_without_touching_points() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        let mut series = test_series(&series_id, Vec::new(), vec![chunk(vec![test_point(1, 10)])]);
+        series.chunks[0].point_count = 0;
+        projection
+            .state
+            .write()
+            .unwrap()
+            .series
+            .insert(series_id, series);
+        reset_point_memory_measurements();
+        let error = projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("resident metric chunk has no trusted point metadata"));
+        assert_eq!(point_memory_measurements(), 0);
+        assert_eq!(resident_point_materializations(), 0);
+    }
+
+    #[test]
+    fn query_rejects_zero_sealed_byte_metadata_before_reading_the_chunk() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(
+                &series_id,
+                vec![SealedMetricChunk {
+                    key: format!("{series_id}/missing.json"),
+                    start_time_unix_nano: 10,
+                    end_time_unix_nano: 10,
+                    point_count: 1,
+                    encoded_bytes: 1,
+                    materialized_bytes: 0,
+                    sha256: "0".repeat(64),
+                }],
+                Vec::new(),
+            ),
+        );
+        let error = projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("sealed metric chunk")
+                && error.to_string().contains("has no byte metadata")
+        );
+        assert!(!error.to_string().contains("missing.json checksum"));
+    }
+
+    #[test]
+    fn query_rejects_source_byte_metadata_overflow() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(
+                &series_id,
+                vec![
+                    SealedMetricChunk {
+                        key: format!("{series_id}/first-missing.json"),
+                        start_time_unix_nano: 10,
+                        end_time_unix_nano: 10,
+                        point_count: 1,
+                        encoded_bytes: 1,
+                        materialized_bytes: usize::MAX,
+                        sha256: "0".repeat(64),
+                    },
+                    SealedMetricChunk {
+                        key: format!("{series_id}/second-missing.json"),
+                        start_time_unix_nano: 11,
+                        end_time_unix_nano: 11,
+                        point_count: 1,
+                        encoded_bytes: 1,
+                        materialized_bytes: 1,
+                        sha256: "0".repeat(64),
+                    },
+                ],
+                Vec::new(),
+            ),
+        );
+        let error = projection
+            .query_with_source_limits(&MetricQuery::for_project("project-a"), 2, usize::MAX)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("metric query source byte budget overflowed"));
+    }
+
+    #[test]
+    fn query_rejects_resident_source_byte_metadata_overflow() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        let mut series = test_series(
+            &series_id,
+            Vec::new(),
+            vec![
+                chunk(vec![test_point(1, 10)]),
+                chunk(vec![test_point(2, 11)]),
+            ],
+        );
+        series.chunks[0].materialized_bytes = usize::MAX;
+        series.chunks[1].materialized_bytes = 1;
+        projection
+            .state
+            .write()
+            .unwrap()
+            .series
+            .insert(series_id, series);
+        reset_point_memory_measurements();
+        let error = projection
+            .query_with_source_limits(&MetricQuery::for_project("project-a"), 2, usize::MAX)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("metric query source byte budget overflowed"));
+        assert_eq!(point_memory_measurements(), 0);
+        assert_eq!(resident_point_materializations(), 0);
+    }
+
+    #[test]
+    fn query_rejects_zero_sealed_point_metadata_before_reading_the_chunk() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(
+                &series_id,
+                vec![SealedMetricChunk {
+                    key: format!("{series_id}/missing.json"),
+                    start_time_unix_nano: 10,
+                    end_time_unix_nano: 10,
+                    point_count: 0,
+                    encoded_bytes: 1,
+                    materialized_bytes: 1,
+                    sha256: "0".repeat(64),
+                }],
+                Vec::new(),
+            ),
+        );
+        let error = projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("sealed metric chunk")
+                && error.to_string().contains("has no point metadata")
+        );
+        assert!(!error.to_string().contains("missing.json checksum"));
+    }
+
+    #[test]
+    fn query_rejects_zero_sealed_encoded_byte_metadata_before_reading_the_chunk() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        projection.state.write().unwrap().series.insert(
+            series_id.clone(),
+            test_series(
+                &series_id,
+                vec![SealedMetricChunk {
+                    key: format!("{series_id}/missing.json"),
+                    start_time_unix_nano: 10,
+                    end_time_unix_nano: 10,
+                    point_count: 1,
+                    encoded_bytes: 0,
+                    materialized_bytes: 1,
+                    sha256: "0".repeat(64),
+                }],
+                Vec::new(),
+            ),
+        );
+        let error = projection
+            .query(&MetricQuery::for_project("project-a"))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("sealed metric chunk")
+                && error.to_string().contains("has no byte metadata")
+        );
+        assert!(!error.to_string().contains("missing.json checksum"));
+    }
+
+    #[test]
+    fn query_rejects_point_metadata_overflow_within_one_series() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let series_id = "a".repeat(64);
+        let mut series = test_series(
+            &series_id,
+            vec![
+                SealedMetricChunk {
+                    key: format!("{series_id}/first-missing.json"),
+                    start_time_unix_nano: 10,
+                    end_time_unix_nano: 10,
+                    point_count: 1,
+                    encoded_bytes: 1,
+                    materialized_bytes: 1,
+                    sha256: "0".repeat(64),
+                },
+                SealedMetricChunk {
+                    key: format!("{series_id}/second-missing.json"),
+                    start_time_unix_nano: 11,
+                    end_time_unix_nano: 11,
+                    point_count: 1,
+                    encoded_bytes: 1,
+                    materialized_bytes: 1,
+                    sha256: "0".repeat(64),
+                },
+            ],
+            Vec::new(),
+        );
+        series.sealed_chunks[0].point_count = usize::MAX;
+        projection
+            .state
+            .write()
+            .unwrap()
+            .series
+            .insert(series_id, series);
+        let error = projection
+            .query_with_source_point_limit(&MetricQuery::for_project("project-a"), usize::MAX)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("metric query source point budget overflowed"));
+    }
+
+    #[test]
+    fn query_rejects_point_metadata_overflow_across_series() {
+        let projection = MetricProjection::with_limits(10, 100).unwrap();
+        let first_id = "a".repeat(64);
+        let second_id = "b".repeat(64);
+        let sealed = |series_id: &str, point_count| SealedMetricChunk {
+            key: format!("{series_id}/missing.json"),
+            start_time_unix_nano: 10,
+            end_time_unix_nano: 10,
+            point_count,
+            encoded_bytes: 1,
+            materialized_bytes: 1,
+            sha256: "0".repeat(64),
+        };
+        let mut state = projection.state.write().unwrap();
+        state.series.insert(
+            first_id.clone(),
+            test_series(&first_id, vec![sealed(&first_id, usize::MAX)], Vec::new()),
+        );
+        state.series.insert(
+            second_id.clone(),
+            test_series(&second_id, vec![sealed(&second_id, 1)], Vec::new()),
+        );
+        drop(state);
+        let mut query = MetricQuery::for_project("project-a");
+        query.limit = 2;
+        let error = projection
+            .query_with_source_point_limit(&query, usize::MAX)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("metric query source point budget overflowed"));
+    }
 }
 // HANDWRITE-END

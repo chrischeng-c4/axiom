@@ -40,6 +40,7 @@ jq --slurpfile cleanup "$cleanup" '
     or $cleanup[0].region != .region
     or $cleanup[0].gke_zone != .gke_zone
     or $cleanup[0].run_id != .run_id
+    or $cleanup[0].candidate != .acceptance.sift.candidate
     or $cleanup[0].verified_at == null
     or $cleanup[0].preserved.artifact_registry != true
     or $cleanup[0].preserved.preexisting_apis != true

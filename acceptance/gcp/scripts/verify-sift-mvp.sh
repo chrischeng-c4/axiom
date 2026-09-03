@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/kubernetes-ownership.sh"
 
 : "${PROJECT_ID:?PROJECT_ID is required}"
 : "${REGION:?REGION is required}"
@@ -15,11 +16,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${SIFT_CLI:?SIFT_CLI is required}"
 : "${SIFT_IMAGE:?SIFT_IMAGE is required}"
 : "${RIG_IMAGE:?RIG_IMAGE is required}"
+: "${ACCEPTANCE_RUNNER_IMAGE:?ACCEPTANCE_RUNNER_IMAGE is required}"
 : "${CANDIDATE_GIT_SHA:?CANDIDATE_GIT_SHA is required}"
 : "${CANDIDATE_SOURCE_SHA256:?CANDIDATE_SOURCE_SHA256 is required}"
 : "${CANDIDATE_CLOUD_BUILD_ID:?CANDIDATE_CLOUD_BUILD_ID is required}"
 : "${CANDIDATE_SOURCE_URI:?CANDIDATE_SOURCE_URI is required}"
 : "${SIFT_NODE_POOL:?SIFT_NODE_POOL is required}"
+: "${ACCEPTANCE_LOCK_ACQUISITION_ID:?ACCEPTANCE_LOCK_ACQUISITION_ID is required}"
 
 LOAD_SECONDS=1800
 ITEMS_PER_SECOND=10000
@@ -61,6 +64,10 @@ done
   echo "RIG_IMAGE must use an immutable digest" >&2
   exit 1
 }
+[[ "$ACCEPTANCE_RUNNER_IMAGE" == *@sha256:* ]] || {
+  echo "ACCEPTANCE_RUNNER_IMAGE must use an immutable digest" >&2
+  exit 1
+}
 [[ "$CANDIDATE_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
   echo "CANDIDATE_SOURCE_SHA256 must be a SHA-256 hex digest" >&2
   exit 1
@@ -71,6 +78,27 @@ done
 }
 [[ "$CANDIDATE_SOURCE_URI" == gs://* ]] || {
   echo "CANDIDATE_SOURCE_URI must be a gs:// object URI" >&2
+  exit 1
+}
+candidate_gate_receipt="$EVIDENCE_DIR/candidate-gate.json"
+[[ -f "$candidate_gate_receipt" && ! -L "$candidate_gate_receipt" ]] || {
+  echo "the fixed candidate gate receipt is missing or unsafe" >&2
+  exit 1
+}
+jq -e \
+  --arg git_sha "$CANDIDATE_GIT_SHA" \
+  --arg source_bundle_sha256 "$CANDIDATE_SOURCE_SHA256" '
+    type == "object"
+    and keys == ["completed_at","entrypoint","git_sha","schema","source_bundle_sha256","status"]
+    and .schema == "axiom.gcp.sift.candidate-gate.v1"
+    and .git_sha == $git_sha
+    and .source_bundle_sha256 == $source_bundle_sha256
+    and .entrypoint == "apps/sift/test.sh --candidate"
+    and (.completed_at | type) == "string"
+    and (.completed_at | length) > 0
+    and .status == "passed"
+  ' "$candidate_gate_receipt" >/dev/null || {
+  echo "the fixed candidate gate receipt does not match this candidate" >&2
   exit 1
 }
 
@@ -90,14 +118,16 @@ verify_pods_on_run_nodes() {
   local namespace="$1"
   local selector="$2"
   local stem="$3"
+  local expected_count="$4"
   local pods="$EVIDENCE_DIR/kubernetes/${stem}-pods.json"
   local nodes="$EVIDENCE_DIR/kubernetes/${stem}-nodes.json"
   kubectl -n "$namespace" get pods -l "$selector" -o json > "$pods"
   kubectl get nodes -l "axiom-run-id=${RUN_ID}" -o json > "$nodes"
   jq -e \
     --arg run_id "$RUN_ID" \
+    --argjson expected_count "$expected_count" \
     --slurpfile nodes "$nodes" '
-    (.items | length) > 0
+    (.items | length) == $expected_count
     and all(.items[]; . as $pod
       | .spec.nodeSelector["axiom-run-id"] == $run_id
       and .spec.nodeName != null
@@ -105,7 +135,7 @@ verify_pods_on_run_nodes() {
         .metadata.name == $pod.spec.nodeName
         and .metadata.labels["axiom-run-id"] == $run_id))
   ' "$pods" >/dev/null \
-    || die "${stem} pods did not run only on this run's Sift nodes"
+    || die "${stem} did not have ${expected_count} pods only on this run's Sift nodes"
 }
 
 restore_archive_iam() {
@@ -554,7 +584,7 @@ verify_sift_image_provenance() {
     "$EVIDENCE_DIR/kubernetes/sift-image-build-info.json" >/dev/null \
     || die "candidate Sift image does not match the candidate Git revision"
   verify_pods_on_run_nodes "$NAMESPACE" \
-    'sift-acceptance-probe=provenance' sift-candidate-provenance
+    'sift-acceptance-probe=provenance' sift-candidate-provenance 1
   kubectl -n "$NAMESPACE" delete "pod/${pod}" --wait=true --timeout=60s >/dev/null
 }
 
@@ -746,7 +776,7 @@ jq -e --arg image "$SIFT_IMAGE" '
 ' "$EVIDENCE_DIR/kubernetes/sift-topology.json" >/dev/null \
   || die "Sift topology, PVC sizes, or immutable image did not match the MVP contract"
 verify_pods_on_run_nodes "$NAMESPACE" \
-  'app.kubernetes.io/name=sift' sift-topology
+  'app.kubernetes.io/name=sift' sift-topology 11
 verify_sift_image_provenance
 
 delegator="sift.${NAMESPACE}.sift.auth-delegator"
@@ -842,7 +872,7 @@ EOF
     and .compression == "gzip"
   ' "$EVIDENCE_DIR/kubernetes/sift-grpc-smoke.json" >/dev/null \
     || die "OTLP/gRPC gzip and partial-success contract failed"
-  verify_pods_on_run_nodes "$NAMESPACE" "job-name=${job}" "${job}"
+  verify_pods_on_run_nodes "$NAMESPACE" "job-name=${job}" "${job}" 1
 }
 
 run_mcp_smoke() {
@@ -1331,6 +1361,28 @@ jq -e '
     "$EVIDENCE_DIR/kubernetes/prometheus-query.json" >/dev/null \
     || die "Prometheus query did not return the newly written series and value"
 
+  auth_curl --get "${sift_url}/prometheus/api/v1/query_range" \
+    --data-urlencode "project=${PROJECT}" \
+    --data-urlencode 'environment=acceptance' \
+    --data-urlencode 'query=sift_acceptance_total{fixture="smoke-remote-write"}' \
+    --data-urlencode "start=$((epoch_seconds - 1))" \
+    --data-urlencode "end=$((epoch_seconds + 2))" \
+    --data-urlencode 'step=1' \
+    > "$EVIDENCE_DIR/kubernetes/prometheus-query-range.json"
+  jq -e --argjson epoch "$epoch_seconds" '
+    .status == "success"
+    and .data.resultType == "matrix"
+    and (.data.result | length) == 1
+    and .data.result[0].metric.__name__ == "sift_acceptance_total"
+    and .data.result[0].metric.fixture == "smoke-remote-write"
+    and .data.result[0].values == [
+      [$epoch, "1"],
+      [$epoch + 1, "1"],
+      [$epoch + 2, "1"]
+    ]
+  ' "$EVIDENCE_DIR/kubernetes/prometheus-query-range.json" >/dev/null \
+    || die "Prometheus query_range did not evaluate and carry the series at every step"
+
 cross_project_status="$(curl --silent --output "$EVIDENCE_DIR/kubernetes/cross-project.json" \
   --write-out '%{http_code}' \
   -X POST "${sift_url}/api/v1/query" \
@@ -1712,7 +1764,7 @@ wait_load_phase() {
     "$EVIDENCE_DIR/load/${phase}/traces/report.json" \
     > "$EVIDENCE_DIR/load/${phase}/summary.json"
   verify_pods_on_run_nodes "$NAMESPACE" \
-    "sift-load-phase=${phase}" "sift-load-${phase}"
+    "sift-load-phase=${phase}" "sift-load-${phase}" 3
 }
 
 echo ">> Sift MVP: persistent async query job and PVC restart"
@@ -2363,7 +2415,9 @@ jq -e --slurpfile archived "$EVIDENCE_DIR/gcs/integrity-after-iam-restore.json" 
 echo ">> Sift MVP: fresh-PVC restore from the committed manifest"
 printf '%s\n' fresh-pvc-restore \
   > "$EVIDENCE_DIR/restore/fresh-pvc-restore"
-kubectl create namespace "$RESTORE_NAMESPACE"
+create_owned_namespace \
+  "$RESTORE_NAMESPACE" "$EVIDENCE_DIR/kubernetes/ownership" \
+  "$PROJECT_ID" "$RUN_ID" "$ACCEPTANCE_LOCK_ACQUISITION_ID"
 cat > "$EVIDENCE_DIR/restore/identity.yaml" <<EOF
 apiVersion: v1
 kind: ServiceAccount
@@ -2483,7 +2537,7 @@ jq -e '
 ' "$EVIDENCE_DIR/restore/topology.json" >/dev/null \
   || die "restore did not use eight fresh bound PVCs"
 verify_pods_on_run_nodes "$RESTORE_NAMESPACE" \
-  'app.kubernetes.io/name=sift' sift-restore-topology
+  'app.kubernetes.io/name=sift' sift-restore-topology 11
 
 RESTORE_PORT=17580
 kubectl -n "$RESTORE_NAMESPACE" port-forward service/sift-restore \
@@ -2663,6 +2717,7 @@ jq -n \
   --arg bucket "$BACKUP_BUCKET" \
   --arg sift_image "$SIFT_IMAGE" \
   --arg rig_image "$RIG_IMAGE" \
+  --arg acceptance_runner_image "$ACCEPTANCE_RUNNER_IMAGE" \
   --arg candidate_git_sha "$CANDIDATE_GIT_SHA" \
   --arg source_bundle_sha256 "$CANDIDATE_SOURCE_SHA256" \
   --arg cloud_build_id "$CANDIDATE_CLOUD_BUILD_ID" \
@@ -2693,6 +2748,7 @@ jq -n \
         candidate:{
           sift_image:$sift_image,
           rig_image:$rig_image,
+          acceptance_runner_image:$acceptance_runner_image,
           git_sha:$candidate_git_sha,
           source_bundle_sha256:$source_bundle_sha256,
           cloud_build_id:$cloud_build_id,
@@ -2714,6 +2770,7 @@ jq -n \
           otlp_grpc:"passed",
           partial_success:"passed",
           remote_write_1:"passed",
+          prometheus_query_range:"passed",
           remote_write_2_rejected_415:"passed",
           mcp_read_only_tools:"passed",
           mcp_host_origin:"passed",

@@ -34,6 +34,9 @@ on:
         default: ""
         type: string
     outputs:
+      git_sha:
+        description: Full Git commit SHA used by every build and publish job.
+        value: ${{ jobs.resolve.outputs.sha }}
       image:
         description: >-
           Pushed dev/test image pinned by digest, e.g.
@@ -51,8 +54,44 @@ permissions:
   contents: read
 
 jobs:
+  resolve:
+    name: resolve immutable source
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Record immutable source commit
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  candidate:
+    name: verify candidate contract
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sift-candidate-gate
+
+      - name: Run the complete Sift candidate gate
+        env:
+          SIFT_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
+        run: bash apps/sift/test.sh --candidate
+
   build:
     name: build (${{ matrix.target }})
+    needs: [resolve, candidate]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -72,7 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -91,6 +130,8 @@ jobs:
           shared-key: sift-test-${{ matrix.target }}
 
       - name: Build sift binary
+        env:
+          SIFT_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
         run: cargo build --release --locked -p sift --bin sift --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
@@ -102,7 +143,7 @@ jobs:
 
   publish:
     name: publish ghcr test image
-    needs: build
+    needs: [resolve, build]
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.digest.outputs.image }}
@@ -111,18 +152,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - name: Resolve commit SHA and image tag
         id: ver
         shell: bash
         run: |
           set -euo pipefail
-          full_sha="$(git rev-parse HEAD)"
+          full_sha="${{ needs.resolve.outputs.sha }}"
+          [[ "$(git rev-parse HEAD)" == "$full_sha" ]]
           git12="${full_sha:0:12}"
           tag="ghcr.io/${{ github.repository_owner }}/sift:sha-${git12}"
-          echo "git12=${git12}" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          {
+            echo "full_sha=${full_sha}"
+            echo "git12=${git12}"
+            echo "tag=${tag}"
+          } >> "$GITHUB_OUTPUT"
 
       # Standard multi-arch-from-prebuilt-binaries pattern: stage each arch's
       # binary at dist/linux/<arch>/sift so Dockerfile.test's TARGETARCH-aware
@@ -175,6 +220,8 @@ jobs:
             echo '```text'
             echo "${image}"
             echo '```'
+            echo
+            echo "Source commit: \`${{ steps.ver.outputs.full_sha }}\`"
             echo
             echo "Internal acceptance use ONLY — never hand this tag to users."
           } >> "$GITHUB_STEP_SUMMARY"
