@@ -32,7 +32,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, MutexGuard, OnceLock};
 
 /// The token the stand-in apiserver issues. The CLI has no other source for
 /// it, so every assertion of the form "this string is absent" is an assertion
@@ -46,6 +46,19 @@ const CALLER: &str = "chris@example.com";
 
 const NAMESPACE: &str = "lumen-prod";
 const CLIENT_SA: &str = "lumen-agent";
+
+/// Each case starts a fake `kubectl port-forward`. `lumen connect` selects its
+/// local port by binding and releasing an ephemeral socket before that fake
+/// forwarder claims it. If two cases run at once, one losing forwarder can
+/// leave its readiness check attached to the other case's upstream instead.
+/// Keep this process-local fixture boundary exclusive so each diagnosis sees
+/// the deployment it created.
+fn connect_test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 // ---------------------------------------------------------------------------
 // A stand-in apiserver
@@ -420,6 +433,7 @@ json.dump({"env": dict(os.environ), "argv": sys.argv[1:], "body": body},
 /// rather than giving it to the child.
 #[test]
 fn connect_mints_for_the_named_account_and_spends_the_token_on_the_childs_behalf() {
+    let _connect_test = connect_test_lock();
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("create fake bin dir");
@@ -616,6 +630,7 @@ fn scan_for(dir: &Path, needle: &str, out: &mut Vec<PathBuf>) {
 /// I?" — and no credential appears in the message.
 #[test]
 fn a_refused_mint_names_the_caller_the_account_and_the_check_to_run() {
+    let _connect_test = connect_test_lock();
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("create fake bin dir");
@@ -905,6 +920,7 @@ impl Fixture {
 /// the server.
 #[test]
 fn connect_verifies_the_service_identity_through_the_forwarded_socket() {
+    let _connect_test = connect_test_lock();
     let fixture = Fixture::new();
     let apiserver = FakeApiserver::start(Grant::Issue {
         service_account: CLIENT_SA,
@@ -1056,6 +1072,7 @@ fn refused_connect(ca_pem: &str, upstream_port: u16) -> String {
 /// the message says which two things to compare.
 #[test]
 fn an_unrelated_ca_is_refused_and_named_as_such() {
+    let _connect_test = connect_test_lock();
     let served = test_ca("the-fleets-ca");
     let (cert, key) = test_leaf(&served, SERVICE_DNS);
     let stranger = test_ca("someone-elses-ca");
@@ -1077,6 +1094,7 @@ fn an_unrelated_ca_is_refused_and_named_as_such() {
 /// every port-forward anyone opens.
 #[test]
 fn a_certificate_for_another_service_is_refused_by_name() {
+    let _connect_test = connect_test_lock();
     let ca = test_ca("the-fleets-ca");
     let (cert, key) = test_leaf(&ca, "other.lumen-prod.svc");
     let upstream = TlsUpstream::start("other.lumen-prod.svc", &cert, &key, &ca.cert.pem());
@@ -1097,6 +1115,7 @@ fn a_certificate_for_another_service_is_refused_by_name() {
 /// rather than as a handshake failure.
 #[test]
 fn a_cleartext_fleet_is_diagnosed_rather_than_reported_as_a_handshake_failure() {
+    let _connect_test = connect_test_lock();
     let ca = test_ca("the-fleets-ca");
     let upstream = RecordingUpstream::start();
     let stderr = refused_connect(&ca.cert.pem(), upstream.port());
@@ -1116,6 +1135,7 @@ fn a_cleartext_fleet_is_diagnosed_rather_than_reported_as_a_handshake_failure() 
 /// turns verification off.
 #[test]
 fn transport_must_be_chosen_and_verification_cannot_be_switched_off() {
+    let _connect_test = connect_test_lock();
     let fixture = Fixture::new();
     let apiserver = FakeApiserver::start(Grant::Issue {
         service_account: CLIENT_SA,
