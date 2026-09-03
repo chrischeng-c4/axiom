@@ -60,7 +60,7 @@ struct Site {
     gate: Gate,
 }
 
-const SITES: [Site; 14] = [
+const SITES: [Site; 15] = [
     Site {
         path: "apps/defer/src/raft.rs",
         implementor: "DeferStateMachine",
@@ -131,6 +131,11 @@ const SITES: [Site; 14] = [
         implementor: "MemoryTestSm",
         gate: Gate::RaftRuntimeTests,
     },
+    Site {
+        path: "libs/raft-runtime/e2e/host_shutdown_deadline.rs",
+        implementor: "BlockingApplySm",
+        gate: Gate::RaftRuntimeTests,
+    },
 ];
 
 type Location = (String, String);
@@ -161,7 +166,8 @@ fn required_gate(path: &str) -> Result<Gate, String> {
         | "libs/raft-runtime/e2e/group_registry.rs"
         | "libs/raft-runtime/e2e/support/cluster.rs"
         | "libs/raft-runtime/e2e/group_membership_isolation.rs"
-        | "libs/raft-runtime/e2e/snapshot_peak_memory.rs" => Ok(Gate::RaftRuntimeTests),
+        | "libs/raft-runtime/e2e/snapshot_peak_memory.rs"
+        | "libs/raft-runtime/e2e/host_shutdown_deadline.rs" => Ok(Gate::RaftRuntimeTests),
         _ => Err(format!("unknown implementor path: {path}")),
     }
 }

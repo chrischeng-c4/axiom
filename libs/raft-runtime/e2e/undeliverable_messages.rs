@@ -29,9 +29,9 @@ use tokio::io::AsyncReadExt;
 #[allow(dead_code)]
 #[path = "support/cluster.rs"]
 mod cluster;
-use cluster::{await_leader, bind, peers_excluding, Node, TestSm};
+use cluster::{await_leader_with_tick, bind, peers_excluding, Node, TestSm};
 
-async fn cluster_with_long_rpc_timeout() -> Vec<Node> {
+async fn cluster_with_long_rpc_timeout() -> (Vec<Node>, Duration) {
     let mut listeners = Vec::new();
     let mut all = Vec::new();
     for id in 0..3 {
@@ -40,6 +40,10 @@ async fn cluster_with_long_rpc_timeout() -> Vec<Node> {
         all.push((id, url));
     }
     let voters: Vec<u64> = (0..3).collect();
+    let cfg = HostConfig {
+        rpc_timeout: Duration::from_secs(30),
+        ..HostConfig::default()
+    };
     let mut nodes = Vec::new();
     for (idx, listener) in listeners.into_iter().enumerate() {
         let id = idx as u64;
@@ -56,10 +60,7 @@ async fn cluster_with_long_rpc_timeout() -> Vec<Node> {
             peers,
             store,
             sm.clone() as Arc<dyn RaftStateMachine>,
-            HostConfig {
-                rpc_timeout: Duration::from_secs(30),
-                ..HostConfig::default()
-            },
+            cfg,
         ));
         let router = host.router();
         let serve = tokio::spawn(async move {
@@ -80,7 +81,7 @@ async fn cluster_with_long_rpc_timeout() -> Vec<Node> {
             _dir: dir,
         });
     }
-    nodes
+    (nodes, cfg.tick)
 }
 
 fn h2c_client() -> reqwest::Client {
@@ -186,8 +187,8 @@ async fn unaddressed_peer_messages_increment_never_addressed_counter() {
 /// any message, so neither terminal-discard counter changes.
 #[tokio::test]
 async fn successful_delivery_and_repeated_status_reads_do_not_increment_discard_counters() {
-    let nodes = cluster_with_long_rpc_timeout().await;
-    let leader = await_leader(&nodes)
+    let (nodes, tick) = cluster_with_long_rpc_timeout().await;
+    let leader = await_leader_with_tick(&nodes, tick)
         .await
         .expect("a three-voter cluster elects a leader");
     let client = h2c_client();
@@ -230,8 +231,8 @@ async fn successful_delivery_and_repeated_status_reads_do_not_increment_discard_
 /// registered.
 #[tokio::test]
 async fn retryable_transport_loss_to_registered_peer_does_not_increment_discard_counters() {
-    let nodes = cluster_with_long_rpc_timeout().await;
-    let leader = await_leader(&nodes)
+    let (nodes, tick) = cluster_with_long_rpc_timeout().await;
+    let leader = await_leader_with_tick(&nodes, tick)
         .await
         .expect("a three-voter cluster elects a leader");
     let client = h2c_client();
@@ -289,8 +290,8 @@ async fn retryable_transport_loss_to_registered_peer_does_not_increment_discard_
 /// the withdrawn-address counter on /raftz.
 #[tokio::test]
 async fn withdrawn_peer_address_during_in_flight_send_increments_withdrawn_counter() {
-    let nodes = cluster_with_long_rpc_timeout().await;
-    let leader = await_leader(&nodes)
+    let (nodes, tick) = cluster_with_long_rpc_timeout().await;
+    let leader = await_leader_with_tick(&nodes, tick)
         .await
         .expect("a three-voter cluster elects a leader");
     let client = h2c_client();

@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.5.0"
+version = "0.6.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -71,6 +71,9 @@ service-auth = { path = "../../libs/service-auth" }
 # Shared k8s-native HTTP service shell: standard probe routes, request tracing,
 # h2c serve wrapper, and SIGTERM drain sequencing.
 service-http = { path = "../../libs/service-http" }
+# One absolute shutdown deadline shared by Lumen's public HTTP drain and its
+# Raft host. The serving binary consumes it directly during SIGINT/SIGTERM.
+server-lifecycle = { path = "../../libs/server-lifecycle" }
 # Shared backup destination/policy/sink/runner contract. Lumen still owns
 # producing a consistent engine snapshot; this lib owns where/how bytes are kept.
 service-backup = { path = "../../libs/service-backup" }
@@ -563,6 +566,11 @@ path = "e2e/rig_stateful_adapter.rs"
 name = "routed_shard_e2e"
 path = "e2e/routed_shard_e2e.rs"
 required-features = ["operator"]
+
+[[test]]
+name = "raft_shutdown_failover"
+path = "e2e/raft_shutdown_failover.rs"
+required-features = ["raft-wal"]
 
 [[test]]
 name = "search_all_e2e"

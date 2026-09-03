@@ -11,11 +11,12 @@ destination without copying tracker state.
 
 ## Near-term outcomes
 
-Milestone #7 (`0.5.0`) delivers only the
-`managed-embedded-data-durability` and
-`deterministic-consensus-conformance` product outcomes. The durability outcome
-resolves [report #4018](https://github.com/chrischeng-c4/axiom/issues/4018).
-Search v2 is outside this release, and its activation remains
+Milestone #8 (`0.6.0`) delivers only the sealed Keyword update correction in
+[report #4164](https://github.com/chrischeng-c4/axiom/issues/4164) and the
+`bounded-raft-shutdown-and-failover` outcome in
+[issue #4069](https://github.com/chrischeng-c4/axiom/issues/4069). Standalone
+gains no new feature in this release. Its existing bind smoke remains a
+regression gate. Search v2 is outside this release, and its activation remains
 `lumen@0.37.0`.
 
 ### Durable write contract
@@ -636,17 +637,6 @@ Search v2 is outside this release, and its activation remains
   mutants prove safety across bounded elections, partitions, restarts,
   compactions, and membership transitions.
 - Tracking: [Milestone #7](https://github.com/chrischeng-c4/axiom/milestone/7).
-
-### Bounded Raft shutdown and failover
-
-- ID: `bounded-raft-shutdown-and-failover`
-- Outcome: Raft shutdown and leader failover complete through explicit bounded
-  recovery behavior.
-- Boundary: The runtime keeps quorum and does not hide unfinished work behind
-  an unbounded background task.
-- Completion evidence: Fault tests prove drain, leadership transfer, timeout,
-  restart, and acknowledged-write behavior under the stated bounds.
-- Tracking: [Milestone #8](https://github.com/chrischeng-c4/axiom/milestone/8).
 
 ### Distributed search routing and merge
 

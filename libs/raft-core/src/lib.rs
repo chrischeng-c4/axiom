@@ -38,9 +38,9 @@ pub type Index = u64;
 // Stateful adopters persist proposals before releasing the node lock; a
 // 200ms election window made ordinary bursts of durable fsyncs look like a
 // failed leader and caused avoidable term churn.
-const ELECTION_MIN: u64 = 50;
+pub const ELECTION_TIMEOUT_FLOOR_TICKS: u64 = 50;
 /// Ticks between leader heartbeats / replication pushes.
-const HEARTBEAT_TIMEOUT: u64 = 3;
+pub const HEARTBEAT_INTERVAL_TICKS: u64 = 3;
 
 /// Discriminator distinguishing client commands from internal configuration entries.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -427,7 +427,7 @@ impl RaftNode {
             votes: HashSet::new(),
             election_elapsed: 0,
             // distinct per node so one voter always times out first.
-            election_timeout: ELECTION_MIN + id,
+            election_timeout: ELECTION_TIMEOUT_FLOOR_TICKS + id,
             heartbeat_elapsed: 0,
             leader_id: None,
             transfer_in_flight: None,
@@ -889,7 +889,7 @@ impl RaftNode {
                     self.transfer_elapsed = 0;
                 }
             }
-            if self.heartbeat_elapsed >= HEARTBEAT_TIMEOUT {
+            if self.heartbeat_elapsed >= HEARTBEAT_INTERVAL_TICKS {
                 self.heartbeat_elapsed = 0;
                 self.broadcast_append();
             }
@@ -1393,3 +1393,55 @@ impl RaftNode {
     }
 }
 // CODEGEN-END
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_derives_election_timeout_from_public_floor_and_node_id() {
+        let membership = auto_membership(3);
+        let id = 7;
+
+        let node = RaftNode::new(id, &membership);
+
+        assert_eq!(node.election_timeout, ELECTION_TIMEOUT_FLOOR_TICKS + id);
+    }
+
+    #[test]
+    fn leader_sends_first_periodic_heartbeat_at_public_interval() {
+        let membership = Membership {
+            voters: vec![1, 2],
+            learners: Vec::new(),
+        };
+        let mut node = RaftNode::new(1, &membership);
+        node.become_leader();
+        assert_eq!(
+            node.take_outgoing().len(),
+            1,
+            "leader sends its initial append"
+        );
+
+        for _ in 0..HEARTBEAT_INTERVAL_TICKS - 1 {
+            node.tick();
+            assert!(
+                node.take_outgoing().is_empty(),
+                "heartbeat must not be early"
+            );
+        }
+
+        node.tick();
+        assert_eq!(
+            node.take_outgoing().len(),
+            1,
+            "heartbeat is due at the interval"
+        );
+    }
+
+    #[test]
+    fn public_timing_constants_are_nonzero_and_ordered() {
+        assert_ne!(ELECTION_TIMEOUT_FLOOR_TICKS, 0);
+        assert_ne!(HEARTBEAT_INTERVAL_TICKS, 0);
+        assert!(HEARTBEAT_INTERVAL_TICKS < ELECTION_TIMEOUT_FLOOR_TICKS);
+    }
+}

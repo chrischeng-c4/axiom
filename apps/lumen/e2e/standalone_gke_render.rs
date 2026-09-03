@@ -179,7 +179,7 @@ fn render_emits_one_durable_in_cluster_instance_and_split_rbac() {
         "data-pool"
     );
     let container = &stateful_set["spec"]["template"]["spec"]["containers"][0];
-    assert_eq!(container["image"], "ghcr.io/chrischeng-c4/lumen:0.5.0");
+    assert_eq!(container["image"], "ghcr.io/chrischeng-c4/lumen:0.6.0");
     assert_eq!(env(&stateful_set, "LUMEN_AUTH")["value"], "in-cluster");
     assert_eq!(env(&stateful_set, "LUMEN_AUTH_NAMESPACE")["value"], "lumen");
     assert!(container["env"]

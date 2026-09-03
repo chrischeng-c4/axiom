@@ -323,6 +323,31 @@ impl HostShutdownReport {
     }
 }
 
+/// Return the absolute cumulative cutoff for each sequential shutdown phase.
+///
+/// The final cutoff is the caller's original usable end. Any duration that
+/// does not divide evenly into quarters remains available to the final phase.
+fn shutdown_phase_cutoffs(
+    deadline: ShutdownDeadline,
+    started_at: tokio::time::Instant,
+) -> [tokio::time::Instant; 4] {
+    let usable_end = deadline.expires_at - deadline.reserve;
+    let usable_interval = usable_end.saturating_duration_since(started_at);
+    let quarter = usable_interval / 4;
+
+    [
+        started_at + quarter,
+        started_at + quarter * 2,
+        started_at + quarter * 3,
+        usable_end,
+    ]
+}
+
+/// Return whether a shutdown phase has reached its cumulative cutoff.
+fn shutdown_phase_cutoff_elapsed(cutoff: tokio::time::Instant) -> bool {
+    tokio::time::Instant::now() >= cutoff
+}
+
 /// Why a leader refused a learner admission request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdmissionRefused {
@@ -990,10 +1015,10 @@ impl RaftHost {
     /// 3. `BackgroundTasks` — abort and await the tick and pump loops
     /// 4. `PeerRpcDrain` — wait for in-flight peer RPCs to finish
     ///
-    /// Every phase is bounded by `deadline.usable_remaining()` read at the start
-    /// of that phase. If usable budget expires, the run stops immediately,
-    /// later phases are neither run nor recorded, and `incomplete_phase` names
-    /// that phase.
+    /// Every phase uses one cumulative absolute cutoff from the usable interval
+    /// captured when shutdown begins. If a cutoff expires, the run stops
+    /// immediately, later phases are neither run nor recorded, and
+    /// `incomplete_phase` names that phase.
     ///
     /// A host performs this shutdown sequence at most once across its whole lifetime.
     /// The first caller executes the phases and receives a report with
@@ -1036,11 +1061,11 @@ impl RaftHost {
         let mut phases = Vec::with_capacity(4);
         let mut handoff = LeadershipHandoff::NotLeader;
         let mut observed_storage_failure = None;
+        let phase_cutoffs = shutdown_phase_cutoffs(deadline, tokio::time::Instant::now());
 
         // Phase 1: Quiesce
         let start = Instant::now();
-        let budget = deadline.usable_remaining();
-        if budget.is_zero() {
+        if shutdown_phase_cutoff_elapsed(phase_cutoffs[0]) {
             phases.push(PhaseRecord {
                 phase: ShutdownPhase::Quiesce,
                 status: PhaseStatus::DeadlineExpired,
@@ -1071,8 +1096,7 @@ impl RaftHost {
 
         // Phase 2: LeadershipHandoff
         let start = Instant::now();
-        let budget = deadline.usable_remaining();
-        if budget.is_zero() {
+        if shutdown_phase_cutoff_elapsed(phase_cutoffs[1]) {
             phases.push(PhaseRecord {
                 phase: ShutdownPhase::LeadershipHandoff,
                 status: PhaseStatus::DeadlineExpired,
@@ -1088,7 +1112,7 @@ impl RaftHost {
                     .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
             };
         }
-        match tokio::time::timeout(budget, self.handoff_leadership()).await {
+        match tokio::time::timeout_at(phase_cutoffs[1], self.handoff_leadership()).await {
             Ok(outcome) => {
                 handoff = outcome;
                 let current_failure = self.shared.latched_failure.lock().unwrap().clone();
@@ -1124,34 +1148,23 @@ impl RaftHost {
 
         // Phase 3: BackgroundTasks
         let start = Instant::now();
-        let budget = deadline.usable_remaining();
-        if budget.is_zero() {
-            phases.push(PhaseRecord {
-                phase: ShutdownPhase::BackgroundTasks,
-                status: PhaseStatus::DeadlineExpired,
-                elapsed: start.elapsed(),
-            });
-            return HostShutdownReport {
-                caller: ShutdownCaller::Executed,
-                phases,
-                handoff,
-                incomplete_phase: Some(ShutdownPhase::BackgroundTasks),
-                peer_listener_close_safe: false,
-                storage_failure: observed_storage_failure
-                    .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
-            };
-        }
-        let tasks = self.tasks.lock().expect("raft task mutex poisoned").take();
-        let timed_out = if let Some((tick, pump)) = tasks {
-            tick.abort();
-            pump.abort();
-            let join_all = async move {
-                let _ = tick.await;
-                let _ = pump.await;
-            };
-            tokio::time::timeout(budget, join_all).await.is_err()
+        let timed_out = if shutdown_phase_cutoff_elapsed(phase_cutoffs[2]) {
+            true
         } else {
-            false
+            let tasks = self.tasks.lock().expect("raft task mutex poisoned").take();
+            if let Some((tick, pump)) = tasks {
+                tick.abort();
+                pump.abort();
+                let join_all = async move {
+                    let _ = tick.await;
+                    let _ = pump.await;
+                };
+                tokio::time::timeout_at(phase_cutoffs[2], join_all)
+                    .await
+                    .is_err()
+            } else {
+                false
+            }
         };
         if timed_out {
             phases.push(PhaseRecord {
@@ -1184,26 +1197,10 @@ impl RaftHost {
 
         // Phase 4: PeerRpcDrain
         let start = Instant::now();
-        let budget = deadline.usable_remaining();
-        if budget.is_zero() {
-            phases.push(PhaseRecord {
-                phase: ShutdownPhase::PeerRpcDrain,
-                status: PhaseStatus::DeadlineExpired,
-                elapsed: start.elapsed(),
-            });
-            return HostShutdownReport {
-                caller: ShutdownCaller::Executed,
-                phases,
-                handoff,
-                incomplete_phase: Some(ShutdownPhase::PeerRpcDrain),
-                peer_listener_close_safe: false,
-                storage_failure: observed_storage_failure
-                    .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
-            };
-        }
-        if tokio::time::timeout(budget, self.shared.rpc_tracker.wait_idle())
-            .await
-            .is_err()
+        if shutdown_phase_cutoff_elapsed(phase_cutoffs[3])
+            || tokio::time::timeout_at(phase_cutoffs[3], self.shared.rpc_tracker.wait_idle())
+                .await
+                .is_err()
         {
             phases.push(PhaseRecord {
                 phase: ShutdownPhase::PeerRpcDrain,
@@ -1873,6 +1870,79 @@ pub(crate) async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_phase_cutoffs_are_cumulative_and_ordered() {
+        let started_at = tokio::time::Instant::now();
+        let deadline = ShutdownDeadline {
+            expires_at: started_at + Duration::from_millis(100),
+            total: Duration::from_millis(100),
+            reserve: Duration::ZERO,
+        };
+
+        let cutoffs = shutdown_phase_cutoffs(deadline, started_at);
+
+        assert_eq!(cutoffs[0], started_at + Duration::from_millis(25));
+        assert_eq!(cutoffs[1], started_at + Duration::from_millis(50));
+        assert_eq!(cutoffs[2], started_at + Duration::from_millis(75));
+        assert_eq!(cutoffs[3], deadline.expires_at);
+        assert!(cutoffs.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    #[test]
+    fn shutdown_phase_cutoffs_handle_zero_and_very_short_usable_intervals() {
+        let started_at = tokio::time::Instant::now();
+        let zero = ShutdownDeadline {
+            expires_at: started_at,
+            total: Duration::ZERO,
+            reserve: Duration::ZERO,
+        };
+        assert_eq!(shutdown_phase_cutoffs(zero, started_at), [started_at; 4]);
+
+        let short = ShutdownDeadline {
+            expires_at: started_at + Duration::from_nanos(3),
+            total: Duration::from_nanos(3),
+            reserve: Duration::ZERO,
+        };
+        assert_eq!(
+            shutdown_phase_cutoffs(short, started_at),
+            [
+                started_at,
+                started_at,
+                started_at,
+                started_at + Duration::from_nanos(3),
+            ]
+        );
+    }
+
+    #[test]
+    fn shutdown_phase_cutoffs_keep_remainder_for_final_cutoff_and_preserve_reserve() {
+        let started_at = tokio::time::Instant::now();
+        let deadline = ShutdownDeadline {
+            expires_at: started_at + Duration::from_nanos(11),
+            total: Duration::from_nanos(11),
+            reserve: Duration::from_nanos(2),
+        };
+
+        let cutoffs = shutdown_phase_cutoffs(deadline, started_at);
+        let usable_end = deadline.expires_at - deadline.reserve;
+
+        assert_eq!(cutoffs[0], started_at + Duration::from_nanos(2));
+        assert_eq!(cutoffs[1], started_at + Duration::from_nanos(4));
+        assert_eq!(cutoffs[2], started_at + Duration::from_nanos(6));
+        assert_eq!(cutoffs[3], usable_end);
+        assert_eq!(
+            deadline.expires_at.duration_since(cutoffs[3]),
+            deadline.reserve
+        );
+    }
+
+    #[test]
+    fn expired_background_cutoff_is_detected_before_absent_tasks_are_skipped() {
+        let cutoff = tokio::time::Instant::now() - Duration::from_millis(1);
+
+        assert!(shutdown_phase_cutoff_elapsed(cutoff));
+    }
 
     #[test]
     fn publish_path_is_the_canonical_peer_write_route() {

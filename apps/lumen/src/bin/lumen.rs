@@ -45,6 +45,10 @@ use lumen::storage::Engine;
 use lumen::wal::{MemWal, SharedWal};
 use lumen::wal_nats::NatsWal;
 
+#[cfg(feature = "raft-wal")]
+#[path = "../shutdown.rs"]
+mod shutdown;
+
 #[path = "lumen/standalone.rs"]
 mod standalone;
 
@@ -3320,6 +3324,77 @@ impl lumen::api::CheckpointSink for SegmentCheckpointSink {
     }
 }
 
+#[cfg(feature = "raft-wal")]
+struct RaftPeerServer {
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<anyhow::Result<()>>,
+}
+
+/// Complete the Raft part of shutdown before changing the peer listener.
+///
+/// The report is logged before either listener action. The caller continues
+/// public HTTP drain until the same absolute deadline expires.
+#[cfg(feature = "raft-wal")]
+async fn shutdown_raft_within(
+    host: Arc<raft_runtime::RaftHost>,
+    peer_server: Option<RaftPeerServer>,
+    deadline: server_lifecycle::ShutdownDeadline,
+) -> Result<()> {
+    use shutdown::{PeerListenerAction, RaftShutdownCoordinator};
+
+    let report = host.shutdown_within(deadline).await;
+    let event = RaftShutdownCoordinator::event(&report, deadline.total.as_millis() as u64);
+    tracing::info!(
+        event = "raft_shutdown",
+        message = "raft_shutdown",
+        shutdown_budget_ms = event.shutdown_budget_ms,
+        proposal_admission = event.proposal_admission,
+        handoff = event.handoff,
+        incomplete_phase = event.incomplete_phase,
+        peer_listener_close_safe = event.peer_listener_close_safe,
+    );
+
+    let shutdown_result = report.clone().into_result();
+    let Some(mut peer_server) = peer_server else {
+        return shutdown_result;
+    };
+    match event.listener_action {
+        PeerListenerAction::CloseAfterReport => {
+            let _ = peer_server.shutdown_tx.send(());
+            match tokio::time::timeout_at(deadline.expires_at, &mut peer_server.task).await {
+                Ok(Ok(Ok(()))) => {
+                    tracing::info!(
+                        event = "raft_peer_listener_closed",
+                        message = "raft_peer_listener_closed",
+                    );
+                    shutdown_result
+                }
+                Ok(Ok(Err(error))) => {
+                    Err(error).context("raft peer listener failed during shutdown")
+                }
+                Ok(Err(error)) => Err(anyhow::anyhow!(error))
+                    .context("raft peer listener task panicked during shutdown"),
+                Err(_) => {
+                    peer_server.task.abort();
+                    tracing::info!(
+                        event = "raft_peer_listener_aborted",
+                        message = "raft_peer_listener_aborted",
+                    );
+                    anyhow::bail!("raft peer listener did not close before shutdown deadline")
+                }
+            }
+        }
+        PeerListenerAction::AbortAfterReport => {
+            peer_server.task.abort();
+            tracing::info!(
+                event = "raft_peer_listener_aborted",
+                message = "raft_peer_listener_aborted",
+            );
+            shutdown_result.context("raft shutdown is incomplete")
+        }
+    }
+}
+
 async fn serve(args: ServeArgs) -> Result<()> {
     init_tracing(
         &args.log_level,
@@ -4064,7 +4139,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 })
                 .await
         });
-        Some((shutdown_tx, task))
+        Some(RaftPeerServer { shutdown_tx, task })
     } else {
         None
     };
@@ -4072,14 +4147,49 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let grace = Duration::from_secs(args.grace_secs);
     let shutdown_engine = engine.clone();
     let shutdown_aof = aof_writer.clone();
+    #[cfg(feature = "raft-wal")]
+    let shutdown_raft_host = raft_host.clone();
+    #[cfg(feature = "raft-wal")]
+    let shutdown_peer_server = peer_server;
+    let shutdown_error = Arc::new(std::sync::Mutex::new(None::<String>));
+    #[cfg(feature = "raft-wal")]
+    let shutdown_error_slot = shutdown_error.clone();
+    // The legacy HTTP adapters begin their drain only after this future
+    // resolves.  Keep that edge separate from the Raft work below: it lets
+    // the public listener drain while Raft consumes the same signal-time
+    // deadline, rather than adding the adapter's default drain timeout after
+    // the deadline has already expired.
+    let (http_shutdown_tx, http_shutdown_rx) = tokio::sync::oneshot::channel();
+    let http_server = match serving_tls {
+        // #3113 R1/R9: the configuration is read per accepted connection, so
+        // a renewed leaf reaches connection N+1 with no rebind and no restart.
+        // `None` from the source refuses the connection — there is deliberately
+        // no branch here that answers it in cleartext instead.
+        Some((tls, _)) => tokio::spawn(service_http::serve_tls(
+            listener,
+            app,
+            service_http::config_source(move || tls.server_config()),
+            async move {
+                let _ = http_shutdown_rx.await;
+            },
+        )),
+        None => tokio::spawn(service_http::serve(listener, app, async move {
+            let _ = http_shutdown_rx.await;
+        })),
+    };
     // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,
     // with the standard SIGTERM drain sequence flipping `/readyz` to 503
     // before the listener closes. The single-replica segment AOF is synced at
     // the *start* of termination, not after the full drain window: the pod's
     // termination grace can equal that window, so a post-drain sync may lose
     // the race with Kubernetes' SIGKILL.
-    let shutdown = service_http::shutdown_with_drain(
-        move || {
+    let shutdown = async move {
+        service_http::wait_shutdown_signal().await;
+        #[cfg(feature = "raft-wal")]
+        if let Some(host) = shutdown_raft_host.as_ref() {
+            host.quiesce_proposals();
+        }
+        {
             shutdown_engine.start_drain();
             if let Some(aof) = shutdown_aof {
                 match aof.lock() {
@@ -4091,29 +4201,40 @@ async fn serve(args: ServeArgs) -> Result<()> {
                     Err(_) => tracing::warn!("local AOF writer poisoned during shutdown"),
                 }
             }
-        },
-        grace,
-    );
-    match serving_tls {
-        // #3113 R1/R9: the configuration is read per accepted connection, so a
-        // renewed leaf reaches connection N+1 with no rebind and no restart.
-        // `None` from the source refuses the connection — there is deliberately
-        // no branch here that answers it in cleartext instead.
-        Some((tls, _)) => {
-            service_http::serve_tls(
-                listener,
-                app,
-                service_http::config_source(move || tls.server_config()),
-                shutdown,
-            )
-            .await;
         }
-        None => service_http::serve(listener, app, shutdown).await,
-    }
-    #[cfg(feature = "raft-wal")]
-    if let Some((shutdown_tx, task)) = peer_server {
-        let _ = shutdown_tx.send(());
-        task.await.context("raft peer listener task panicked")??;
+
+        let deadline = server_lifecycle::ShutdownDeadline::from_now(grace, Duration::ZERO)
+            .expect("zero reserve must fit the Lumen shutdown grace");
+        // Start listener drain now. Raft shutdown below runs in this same
+        // signal-time window. The supervisor cancels the legacy adapter at
+        // this absolute deadline, so its fixed relative timeout cannot extend
+        // the caller-visible grace period.
+        let _ = http_shutdown_tx.send(());
+        #[cfg(feature = "raft-wal")]
+        if let Some(host) = shutdown_raft_host {
+            if let Err(error) = shutdown_raft_within(host, shutdown_peer_server, deadline).await {
+                *shutdown_error_slot
+                    .lock()
+                    .expect("shutdown error slot poisoned") = Some(error.to_string());
+            }
+        }
+        tracing::info!(grace_secs = grace.as_secs(), "draining");
+        tokio::time::sleep(deadline.remaining()).await;
+        tracing::info!("grace expired; shutting down");
+    };
+    shutdown.await;
+    // `service_http::{serve,serve_tls}` are compatibility adapters with a
+    // fixed five-second post-signal drain. Their own drain began above, but
+    // this caller owns the absolute termination deadline. Abort only after
+    // the Raft terminal report and its peer-listener decision have completed.
+    http_server.abort();
+    let _ = http_server.await;
+    if let Some(error) = shutdown_error
+        .lock()
+        .expect("shutdown error slot poisoned")
+        .take()
+    {
+        anyhow::bail!(error);
     }
     // Flush any batched spans before exit (no-op when OTLP was never enabled).
     #[cfg(feature = "otel")]
