@@ -30,3 +30,26 @@ def test_normalise_declared_preserves_repository_root_paths(
 def test_normalise_declared_refuses_absolute_or_parent_paths(token: str) -> None:
     with pytest.raises(maint.MaintError):
         maint._normalise_declared(token, "apps/aw")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "apps/tape/Dockerfile",
+        "apps/tape/Dockerfile.release",
+        "apps/tape/Dockerfile.debug",
+    ],
+)
+def test_chore_path_accepts_dockerfile_variants(path: str) -> None:
+    assert maint._is_chore_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "apps/tape/Dockerfilex",
+        "apps/tape/src/product.py",
+    ],
+)
+def test_chore_path_rejects_dockerfile_near_misses_and_product_files(path: str) -> None:
+    assert not maint._is_chore_path(path)

@@ -473,7 +473,7 @@ def _is_product_src(path: str, owner: str) -> bool:
 
 def _is_chore_path(path: str) -> bool:
     pure = PurePosixPath(path)
-    if pure.name in CHORE_NAMES:
+    if pure.name in CHORE_NAMES or pure.name.startswith("Dockerfile."):
         return True
     if pure.suffix in CONFIG_EXTENSIONS:
         # A source-tree config-shaped fixture is still product source.  The
