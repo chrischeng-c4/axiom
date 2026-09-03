@@ -5,15 +5,24 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+use raft_core::{ELECTION_TIMEOUT_FLOOR_TICKS, HEARTBEAT_INTERVAL_TICKS};
 use raft_runtime::{
-    FsyncPolicy, HostConfig, LeadershipHandoff, Membership, RaftHost, RaftStateMachine,
-    RaftStatus, RaftStore, SnapshotPolicy,
+    FsyncPolicy, HostConfig, LeadershipHandoff, Membership, RaftHost, RaftStateMachine, RaftStatus,
+    RaftStore, SnapshotPolicy,
 };
 
 #[allow(dead_code)]
 #[path = "support/cluster.rs"]
 mod cluster;
-use cluster::{await_leader, bind, cluster, peers_excluding, Node, TestSm};
+use cluster::{
+    await_leader, await_leader_with_tick, bind, cluster, leader_wait_budget, peers_excluding, Node,
+    TestSm,
+};
+
+/// The runtime keeps this delivery allowance stricter than the earliest
+/// spontaneous election window. Raft-core owns the public election and
+/// heartbeat tick constants. This test keeps only its 35-tick delivery policy.
+const HANDOFF_DELIVERY_BUDGET_TICKS: u64 = 35;
 
 fn h2c_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -193,7 +202,7 @@ async fn shutdown_alone_moves_leadership_to_another_live_node_within_delivery_bu
         });
     }
 
-    let leader = await_leader(&nodes)
+    let leader = await_leader_with_tick(&nodes, cfg.tick)
         .await
         .expect("a three-voter cluster elects a leader");
     settle_cluster(&nodes, leader).await;
@@ -207,26 +216,25 @@ async fn shutdown_alone_moves_leadership_to_another_live_node_within_delivery_bu
         .await
         .expect("shutdown must return Ok");
 
-    // In raft-core:
-    // - ELECTION_MIN = 50 ticks (the minimum election timeout floor for any node).
-    // - HEARTBEAT_TIMEOUT = 3 ticks (leader heartbeats every 3 ticks).
-    // When the leader stops heartbeating, followers' election timers were reset at most
-    // HEARTBEAT_TIMEOUT ticks ago. Therefore, the earliest any survivor follower can time out
-    // and start a spontaneous re-election is (ELECTION_MIN - HEARTBEAT_TIMEOUT) = 47 ticks.
+    // In raft-core, the exported election floor and heartbeat interval own the
+    // timing facts. When the leader stops heartbeating, followers' election
+    // timers were reset at most one heartbeat interval ago.
+    // Therefore, the earliest any survivor follower can time out and start a
+    // spontaneous re-election is the checked difference below.
     //
     // A delivered handoff (TimeoutNow) is sent during shutdown() Phase 2 and processed
     // within a few HostConfig::pump intervals (5ms). shutdown() itself has a deadline
     // of 2 * HostConfig::rpc_timeout (400ms).
     //
-    // Measuring arrival against a tick-derived budget (35 ticks) strictly below the
-    // 47-tick election floor ensures that:
+    // Measuring arrival against a tick-derived budget (35 ticks) strictly below
+    // the election floor ensures that:
     // 1. A delivered handoff is accepted even with observation/load delay (Probe A).
     // 2. An undelivered handoff (Probe B) is rejected because survivors will not re-elect
     //    until after the 47-tick floor.
-    const ELECTION_MIN_TICKS: u64 = 50;
-    const HEARTBEAT_TIMEOUT_TICKS: u64 = 3;
-    let election_floor_ticks = ELECTION_MIN_TICKS - HEARTBEAT_TIMEOUT_TICKS;
-    let handoff_budget_ticks = 35u64;
+    let election_floor_ticks = ELECTION_TIMEOUT_FLOOR_TICKS
+        .checked_sub(HEARTBEAT_INTERVAL_TICKS)
+        .expect("raft-core heartbeat interval must remain below its election timeout floor");
+    let handoff_budget_ticks = HANDOFF_DELIVERY_BUDGET_TICKS;
     assert!(handoff_budget_ticks < election_floor_ticks);
     let handoff_budget = cfg.tick * handoff_budget_ticks as u32;
 
@@ -298,4 +306,177 @@ async fn follower_reports_not_leader_and_shutdown_succeeds() {
         .shutdown()
         .await
         .expect("shutdown must return Ok for follower");
+}
+
+/// The fast end of the shared waiter clamps polling to one millisecond while
+/// retaining the full two-election observation window.
+#[test]
+fn leader_wait_budget_uses_fast_tick_and_minimum_poll_interval() {
+    let timing = leader_wait_budget(Duration::from_micros(500), 1);
+
+    assert_eq!(timing.max_election_ticks, 50);
+    assert_eq!(timing.wait_budget, Duration::from_millis(50));
+    assert_eq!(timing.poll_interval, Duration::from_millis(1));
+}
+
+/// The slow end clamps polling at 25ms but does not shorten the tick-derived
+/// budget for a three-voter election.
+#[test]
+fn leader_wait_budget_uses_slow_tick_and_maximum_poll_interval() {
+    let timing = leader_wait_budget(Duration::from_millis(100), 3);
+
+    assert_eq!(timing.max_election_ticks, 52);
+    assert_eq!(timing.wait_budget, Duration::from_millis(10_400));
+    assert_eq!(timing.poll_interval, Duration::from_millis(25));
+}
+
+/// The highest ordinal stretches the maximum election timeout by one tick per
+/// added voter, so a seven-voter caller waits for 56 ticks per observation.
+#[test]
+fn leader_wait_budget_scales_with_node_count() {
+    let timing = leader_wait_budget(Duration::from_millis(10), 7);
+
+    assert_eq!(timing.max_election_ticks, 56);
+    assert_eq!(timing.wait_budget, Duration::from_millis(1_120));
+    assert_eq!(timing.poll_interval, Duration::from_millis(10));
+}
+
+/// No leader must return `None` at the caller's tick-derived deadline rather
+/// than retrying with the retired fixed 400 x 25ms policy.
+#[tokio::test]
+async fn await_leader_with_tick_times_out_when_no_node_can_lead() {
+    let no_nodes: &[Node] = &[];
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(1),
+        await_leader_with_tick(no_nodes, Duration::from_millis(1)),
+    )
+    .await
+    .expect("a 1ms-tick empty cluster must time out near its 100ms budget");
+
+    assert_eq!(outcome, None);
+}
+
+/// #4070 keeps Raft timing facts in raft-core. This source guard remains
+/// executable while that prerequisite is red, so unrelated e2e targets keep
+/// compiling until the public constants exist.
+#[test]
+fn shutdown_handoff_requires_core_timing_exports_and_rejects_local_copies() {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    use syn::visit::Visit;
+    use syn::{Item, UseTree, Visibility};
+
+    assert_eq!(
+        ELECTION_TIMEOUT_FLOOR_TICKS, 50,
+        "raft-runtime's election timing contract must fail when the raft-core floor drifts"
+    );
+    assert_eq!(
+        HEARTBEAT_INTERVAL_TICKS, 3,
+        "raft-runtime's heartbeat timing contract must fail when the raft-core interval drifts"
+    );
+
+    fn public_const_names(file: &syn::File) -> BTreeSet<String> {
+        file.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Const(item_const) if matches!(item_const.vis, Visibility::Public(_)) => {
+                    Some(item_const.ident.to_string())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn local_const_names(file: &syn::File) -> BTreeSet<String> {
+        #[derive(Default)]
+        struct ConstCollector(BTreeSet<String>);
+
+        impl<'ast> Visit<'ast> for ConstCollector {
+            fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
+                self.0.insert(item_const.ident.to_string());
+                syn::visit::visit_item_const(self, item_const);
+            }
+        }
+
+        let mut collector = ConstCollector::default();
+        collector.visit_file(file);
+        collector.0
+    }
+
+    fn collect_raft_core_imports(
+        tree: &UseTree,
+        in_raft_core: bool,
+        imports: &mut BTreeSet<String>,
+    ) {
+        match tree {
+            UseTree::Path(path) => {
+                collect_raft_core_imports(
+                    &path.tree,
+                    in_raft_core || path.ident == "raft_core",
+                    imports,
+                );
+            }
+            UseTree::Group(group) => {
+                for tree in &group.items {
+                    collect_raft_core_imports(tree, in_raft_core, imports);
+                }
+            }
+            UseTree::Name(name) if in_raft_core => {
+                imports.insert(name.ident.to_string());
+            }
+            UseTree::Rename(rename) if in_raft_core => {
+                imports.insert(rename.ident.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    let runtime_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let core_source = std::fs::read_to_string(runtime_dir.join("../raft-core/src/lib.rs"))
+        .expect("raft-core source must remain readable by the runtime timing contract");
+    let core_file = syn::parse_file(&core_source).expect("raft-core source must parse as Rust");
+    let handoff_source = std::fs::read_to_string(runtime_dir.join("e2e/shutdown_handoff.rs"))
+        .expect("the shutdown handoff contract source must remain readable");
+    let handoff_file =
+        syn::parse_file(&handoff_source).expect("the shutdown handoff contract must parse as Rust");
+
+    let required: BTreeSet<String> = [
+        "ELECTION_TIMEOUT_FLOOR_TICKS".to_owned(),
+        "HEARTBEAT_INTERVAL_TICKS".to_owned(),
+    ]
+    .into_iter()
+    .collect();
+    let core_exports = public_const_names(&core_file);
+    let missing_core_exports: Vec<_> = required.difference(&core_exports).cloned().collect();
+
+    let mut core_imports = BTreeSet::new();
+    for item in &handoff_file.items {
+        if let Item::Use(item_use) = item {
+            collect_raft_core_imports(&item_use.tree, false, &mut core_imports);
+        }
+    }
+    let missing_runtime_imports: Vec<_> = required.difference(&core_imports).cloned().collect();
+
+    let forbidden_local_copies: BTreeSet<String> = [
+        "ELECTION_MIN_TICKS".to_owned(),
+        "HEARTBEAT_TIMEOUT_TICKS".to_owned(),
+        "ELECTION_TIMEOUT_FLOOR_TICKS".to_owned(),
+        "HEARTBEAT_INTERVAL_TICKS".to_owned(),
+    ]
+    .into_iter()
+    .collect();
+    let local_copies: Vec<_> = local_const_names(&handoff_file)
+        .intersection(&forbidden_local_copies)
+        .cloned()
+        .collect();
+
+    assert!(
+        missing_core_exports.is_empty()
+            && missing_runtime_imports.is_empty()
+            && local_copies.is_empty(),
+        "timing ownership contract is incomplete:\n  missing raft-core public exports: \
+         {missing_core_exports:?}\n  missing shutdown-handoff imports: \
+         {missing_runtime_imports:?}\n  forbidden local timing copies: {local_copies:?}"
+    );
 }

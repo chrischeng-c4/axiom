@@ -7934,7 +7934,7 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -7984,6 +7984,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_yaml",
+ "server-lifecycle",
  "service-auth",
  "service-backup",
  "service-http",

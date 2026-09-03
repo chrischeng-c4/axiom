@@ -49,6 +49,7 @@ impl CheckpointSink for LocalCheckpointSink {
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    checkpoint_root: std::path::PathBuf,
     server: TestServer,
     engine: Arc<Engine>,
     writer: Arc<WriteCoordinator>,
@@ -81,6 +82,7 @@ fn fixture() -> Fixture {
     let server = TestServer::new(router(state)).expect("test server");
     Fixture {
         _dir: dir,
+        checkpoint_root,
         server,
         engine,
         writer,
@@ -204,6 +206,33 @@ async fn checkpoint(server: &TestServer) {
     let response = server.post("/admin/checkpoint").await;
     response.assert_status_ok();
     assert_eq!(response.json::<Value>()["persisted"], true);
+}
+
+/// Drive a search through the public HTTP route.  The case deliberately does
+/// not inspect a recovered index's private postings: callers only observe the
+/// recovered value through the same search request they used before the
+/// checkpoint.
+async fn http_search(server: &TestServer, query: Value, context: &str) -> Value {
+    let response = server
+        .post(&format!("/collections/{COLLECTION}/search"))
+        .json(&json!({ "query": query, "limit": 500 }))
+        .await;
+    response.assert_status_ok();
+    let body = response.json::<Value>();
+    assert!(
+        body["total"].is_u64(),
+        "{context}: search response must expose a numeric total: {body}"
+    );
+    body
+}
+
+fn hit_ids(body: &Value) -> Vec<&str> {
+    body["hits"]
+        .as_array()
+        .expect("search hits are an array")
+        .iter()
+        .map(|hit| hit["external_id"].as_str().expect("hit external id"))
+        .collect()
 }
 
 fn snapshot(engine: &Arc<Engine>) -> SnapshotV1 {
@@ -616,4 +645,118 @@ async fn indexing_durable_oracle_converges_across_input_layouts() {
     let document_major = run_history(false).await;
     let field_major = run_history(true).await;
     assert_eq!(document_major, field_major);
+}
+
+/// A field that was sealed in an earlier segment generation remains mutable.
+///
+/// This is a public durability contract for #4164. A caller indexes a base
+/// document, persists it with `/admin/checkpoint`, replaces the keyword through
+/// the HTTP index route, and checkpoints again. A new `SegmentRdbStore` then
+/// cold-opens `CURRENT`. Its HTTP search surface must expose only the new
+/// keyword, retain `exists`, and still allow a complete document delete. The
+/// final delete checks that no stale posting from the sealed base can return
+/// after a cold reopen.
+#[tokio::test]
+async fn sealed_keyword_update_survives_checkpoint_and_cold_reopen() {
+    const BASE: &str = "doc-000";
+    const BEFORE: &str = "sealed-base-before";
+    const AFTER: &str = "sealed-base-after";
+
+    let fixture = fixture();
+    create_schema(&fixture.server).await;
+
+    // Use a corpus-sized base so the first checkpoint seals an ordinary
+    // keyword segment rather than testing only an empty or tail-only field.
+    post_index(&fixture.server, corpus_items(false, PREFIX_DOCUMENTS)).await;
+    fixture
+        .server
+        .post(&format!("/collections/{COLLECTION}/index"))
+        .json(&json!({ "items": [{
+            "external_id": BASE,
+            "field": "kw",
+            "value": BEFORE
+        }] }))
+        .await
+        .assert_status_ok();
+    checkpoint(&fixture.server).await;
+
+    // This targets a value that existed in the sealed base generation. The
+    // second checkpoint must materialize its replacement, not resurrect the
+    // old segment posting during a later cold open.
+    fixture
+        .server
+        .post(&format!("/collections/{COLLECTION}/index"))
+        .json(&json!({ "items": [{
+            "external_id": BASE,
+            "field": "kw",
+            "value": AFTER
+        }] }))
+        .await
+        .assert_status_ok();
+    checkpoint(&fixture.server).await;
+
+    // Re-open the active immutable generation through a new store instance.
+    // This rules out the live engine and its in-memory segment handles as the
+    // oracle: only persisted `CURRENT` content reaches this server.
+    let cold_store = SegmentRdbStore::new(&fixture.checkpoint_root)
+        .expect("open checkpoint root for cold recovery");
+    let cold = cold_store
+        .load_current_generation()
+        .expect("load CURRENT after second checkpoint")
+        .expect("second checkpoint created a generation");
+    let cold_server = TestServer::new(router(AppState::open(cold.engine.clone())))
+        .expect("cold recovered HTTP server");
+
+    let new_value = http_search(
+        &cold_server,
+        json!({ "term": { "field": "kw", "value": AFTER } }),
+        "cold reopen new keyword",
+    )
+    .await;
+    assert_eq!(
+        new_value["total"], 1,
+        "cold reopen must retain the replacement keyword for the sealed base"
+    );
+    assert_eq!(hit_ids(&new_value), vec![BASE]);
+
+    let old_value = http_search(
+        &cold_server,
+        json!({ "term": { "field": "kw", "value": BEFORE } }),
+        "cold reopen old keyword",
+    )
+    .await;
+    assert_eq!(
+        old_value["total"], 0,
+        "cold reopen must not resurrect the sealed base keyword that the caller replaced"
+    );
+
+    let exists = http_search(
+        &cold_server,
+        json!({ "exists": { "field": "kw" } }),
+        "cold reopen keyword exists",
+    )
+    .await;
+    assert_eq!(
+        exists["total"], PREFIX_DOCUMENTS as u64,
+        "the updated base must remain present in the keyword exists set"
+    );
+    assert!(
+        hit_ids(&exists).contains(&BASE),
+        "the updated sealed base must satisfy exists after cold reopen"
+    );
+
+    cold_server
+        .delete(&format!("/collections/{COLLECTION}/docs/{BASE}"))
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+    let deleted = http_search(
+        &cold_server,
+        json!({ "term": { "field": "kw", "value": AFTER } }),
+        "delete after cold reopen",
+    )
+    .await;
+    assert_eq!(
+        deleted["total"], 0,
+        "a complete document delete must remove the recovered sealed posting"
+    );
 }

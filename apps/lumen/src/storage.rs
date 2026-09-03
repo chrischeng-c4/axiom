@@ -1118,15 +1118,17 @@ impl KeywordIndex {
     /// is attached — this is exactly `self.forward.get(&id)`
     /// (cloned, since the segment path can only yield an owned `String`). The
     /// segment stores the exact UTF-8 bytes, so a hit equals the live `forward`
-    /// entry; equality / membership compares are identical.
+    /// entry; equality / membership compares are identical. A tombstoned sealed
+    /// id skips its obsolete segment value and falls through to the live forward
+    /// overlay: an update keeps the tombstone but supplies a replacement there,
+    /// while a true delete has no live forward entry and remains absent.
     #[inline]
     fn keyword_at(&self, id: u32) -> Option<String> {
         if let Some(seg) = &self.segment {
             if id < seg.n_docs() {
-                if self.tombstones.contains(id) {
-                    return None;
+                if !self.tombstones.contains(id) {
+                    return seg.keyword_at(id);
                 }
-                return seg.keyword_at(id);
             }
         }
         if let Some(value) = self.dense_forward.get(id as usize).and_then(|v| v.as_ref()) {
@@ -21078,6 +21080,79 @@ mod checkpoint_engine_tests {
         // And direct doc-count parity (base 4 + tail 2 = 6 per collection).
         assert_eq!(reopened.stats("alpha").unwrap().documents_indexed, 6);
         assert_eq!(reopened.stats("beta").unwrap().documents_indexed, 6);
+    }
+
+    /// A keyword replacement of a sealed doc is a live overlay, not a delete.
+    /// The base id stays tombstoned so old postings stay hidden until re-seal,
+    /// while `keyword_at` must fall through to the overlay to persist the new
+    /// value into the next checkpoint.
+    #[test]
+    fn sealed_keyword_update_survives_reseal_and_cold_reopen() {
+        let persisted = Arc::new(Engine::new());
+        seed(&persisted);
+        index_doc(
+            &persisted,
+            "alpha",
+            "d0",
+            1.0,
+            "sealed-before",
+            "red",
+            true,
+            0,
+            &[0.1, 0.2, 0.3, 0.4],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        persisted.flush_to_segments(dir.path(), 4).unwrap();
+
+        // d0 is a sealed base id. Replacing its keyword must preserve the base
+        // tombstone and write the new value into the live forward overlay.
+        index_doc(
+            &persisted,
+            "alpha",
+            "d0",
+            1.0,
+            "updated",
+            "red",
+            true,
+            0,
+            &[0.1, 0.2, 0.3, 0.4],
+        );
+        persisted.delete("alpha", "d1", None).unwrap();
+
+        // A second checkpoint must carry the replacement, and it must not
+        // resurrect a true delete whose base value no longer has live coverage.
+        persisted.flush_to_segments(dir.path(), 6).unwrap();
+
+        let reopened = Arc::new(Engine::new());
+        assert_eq!(reopened.reopen_from_segment_dir(dir.path()).unwrap(), 6);
+
+        let term = |value: &str| {
+            set_of(&run(
+                &reopened,
+                "alpha",
+                QueryNode::Term(TermQuery {
+                    field: "kw".into(),
+                    value: FieldValue::String(value.into()),
+                }),
+                100,
+            ))
+        };
+        assert_eq!(term("updated"), BTreeSet::from(["d0".to_string()]));
+        assert!(
+            term("sealed-before").is_empty(),
+            "old keyword must stay absent"
+        );
+        assert!(term("b").is_empty(), "true delete must not resurrect");
+        assert_eq!(
+            set_of(&run(
+                &reopened,
+                "alpha",
+                QueryNode::Exists(crate::types::ExistsQuery { field: "kw".into() }),
+                100,
+            )),
+            BTreeSet::from(["d0".to_string(), "d2".to_string(), "d3".to_string()]),
+            "the updated document still exists while the true delete is absent"
+        );
     }
 
     // ----- (c) TOMBSTONE GC ACROSS A CHECKPOINT (Phase 2g-A) -----------------

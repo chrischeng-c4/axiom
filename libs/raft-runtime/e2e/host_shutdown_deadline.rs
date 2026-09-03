@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -68,6 +68,183 @@ async fn settle_cluster(nodes: &[Node], leader: usize) {
         }
     }
     tokio::time::sleep(Duration::from_millis(100)).await;
+}
+
+/// A test-only state machine that blocks exactly one apply while the host owns
+/// its Raft-node mutex. This makes `LeadershipHandoff` wait at a real public
+/// host boundary without adding a production shutdown hook.
+struct BlockingApplySm {
+    applied: std::sync::atomic::AtomicU64,
+    gate: Mutex<BlockingApplyGate>,
+    released: Condvar,
+}
+
+#[derive(Default)]
+struct BlockingApplyGate {
+    armed: bool,
+    entered: bool,
+    release: bool,
+}
+
+impl BlockingApplySm {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            applied: std::sync::atomic::AtomicU64::new(0),
+            gate: Mutex::new(BlockingApplyGate::default()),
+            released: Condvar::new(),
+        })
+    }
+
+    fn arm(&self) {
+        let mut gate = self.gate.lock().expect("blocking gate mutex poisoned");
+        gate.armed = true;
+        gate.entered = false;
+        gate.release = false;
+    }
+
+    async fn wait_until_entered(&self) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if self
+                    .gate
+                    .lock()
+                    .expect("blocking gate mutex poisoned")
+                    .entered
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the armed state-machine apply must hold the node mutex");
+    }
+
+    fn release(&self) {
+        let mut gate = self.gate.lock().expect("blocking gate mutex poisoned");
+        gate.release = true;
+        self.released.notify_all();
+    }
+}
+
+impl RaftStateMachine for BlockingApplySm {
+    fn apply(&self, index: u64, _command: &[u8]) -> anyhow::Result<()> {
+        let mut gate = self.gate.lock().expect("blocking gate mutex poisoned");
+        if gate.armed {
+            gate.armed = false;
+            gate.entered = true;
+            while !gate.release {
+                gate = self
+                    .released
+                    .wait(gate)
+                    .expect("blocking gate mutex poisoned");
+            }
+        }
+        drop(gate);
+        self.applied
+            .store(index, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+
+    fn snapshot(&self, _writer: &mut dyn std::io::Write) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn restore(&self, _reader: &mut dyn std::io::Read) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn applied_index(&self) -> u64 {
+        self.applied.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+struct BlockingNode {
+    host: Arc<RaftHost>,
+    sm: Arc<BlockingApplySm>,
+    _serve: tokio::task::JoinHandle<()>,
+    _dir: TempDir,
+}
+
+async fn blocking_cluster(node_count: u64) -> Vec<BlockingNode> {
+    let mut listeners = Vec::new();
+    let mut all = Vec::new();
+    for id in 0..node_count {
+        let (listener, url) = bind().await;
+        listeners.push(listener);
+        all.push((id, url));
+    }
+
+    let config = HostConfig {
+        tick: Duration::from_millis(10),
+        ..HostConfig::default()
+    };
+    let voters: Vec<u64> = (0..node_count).collect();
+    let mut nodes = Vec::new();
+    for (index, listener) in listeners.into_iter().enumerate() {
+        let id = index as u64;
+        let sm = BlockingApplySm::new();
+        let dir = TempDir::new().expect("temporary raft store directory");
+        let store = RaftStore::open(dir.path().to_str().unwrap(), id, FsyncPolicy::Os)
+            .expect("temporary raft store opens");
+        let host = Arc::new(RaftHost::spawn(
+            id,
+            Membership {
+                voters: voters.clone(),
+                learners: vec![],
+            },
+            cluster::peers_excluding(id, &all),
+            store,
+            sm.clone() as Arc<dyn RaftStateMachine>,
+            config,
+        ));
+        let router = host.router();
+        let serve = tokio::spawn(async move {
+            loop {
+                if let Ok((stream, _)) = listener.accept().await {
+                    let router = router.clone();
+                    tokio::spawn(async move {
+                        let _ = transport_h2c::server::serve_connection(stream, router).await;
+                    });
+                }
+            }
+        });
+        nodes.push(BlockingNode {
+            host,
+            sm,
+            _serve: serve,
+            _dir: dir,
+        });
+    }
+    nodes
+}
+
+async fn await_blocking_leader(nodes: &[BlockingNode]) -> usize {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        for (index, node) in nodes.iter().enumerate() {
+            if node.host.is_leader().await {
+                return index;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the blocking test cluster must elect a leader"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+async fn hold_leader_apply(
+    nodes: &[BlockingNode],
+    leader: usize,
+    command: Vec<u8>,
+) -> tokio::task::JoinHandle<anyhow::Result<u64>> {
+    nodes[leader].sm.arm();
+    let host = Arc::clone(&nodes[leader].host);
+    let proposal = tokio::spawn(async move { host.propose(command).await });
+    nodes[leader].sm.wait_until_entered().await;
+    proposal
 }
 
 /// A three-voter cluster's leader shut down under a generous deadline records
@@ -193,6 +370,110 @@ async fn zero_usable_budget_stops_at_first_phase_and_names_it_incomplete() {
         !report.peer_listener_close_safe,
         "peer_listener_close_safe must be false"
     );
+}
+
+/// One shared usable deadline assigns `LeadershipHandoff` its cumulative 50%
+/// cutoff. A prior Quiesce that uses no time cannot donate the final 50% that
+/// belongs to BackgroundTasks and PeerRpcDrain. Expiry names the blocked
+/// phase, and later phases remain absent from the public report.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn leadership_handoff_stops_at_its_cumulative_half_deadline_without_running_later_phases() {
+    const USABLE_BUDGET: Duration = Duration::from_secs(2);
+    const BEFORE_LATER_PHASES: Duration = Duration::from_millis(1_500);
+
+    let nodes = blocking_cluster(3).await;
+    let leader = await_blocking_leader(&nodes).await;
+    let proposal = hold_leader_apply(&nodes, leader, b"block-handoff-phase".to_vec()).await;
+
+    let deadline = ShutdownDeadline::from_now(USABLE_BUDGET, Duration::ZERO)
+        .expect("a non-reserved usable deadline is valid");
+    let started = Instant::now();
+    let report = nodes[leader].host.shutdown_within(deadline).await;
+    let elapsed = started.elapsed();
+
+    nodes[leader].sm.release();
+    proposal.abort();
+    let _ = proposal.await;
+
+    assert_eq!(
+        report.phases.len(),
+        2,
+        "only Quiesce and the expired LeadershipHandoff phase may be recorded"
+    );
+    assert_eq!(report.phases[0].phase, ShutdownPhase::Quiesce);
+    assert_eq!(report.phases[0].status, PhaseStatus::Completed);
+    assert_eq!(report.phases[1].phase, ShutdownPhase::LeadershipHandoff);
+    assert_eq!(report.phases[1].status, PhaseStatus::DeadlineExpired);
+    assert_eq!(
+        report.incomplete_phase,
+        Some(ShutdownPhase::LeadershipHandoff),
+        "the report must name the exact expired phase"
+    );
+    assert!(
+        !report.peer_listener_close_safe,
+        "no later PeerRpcDrain phase may make listener close safe"
+    );
+    assert!(
+        elapsed < BEFORE_LATER_PHASES,
+        "LeadershipHandoff must stop at its cumulative 50% cutoff before later \
+         reserved time; elapsed {elapsed:?} exceeded {BEFORE_LATER_PHASES:?}"
+    );
+}
+
+/// Unused Quiesce time rolls into the following cumulative window. A real
+/// leader-side apply holds LeadershipHandoff for more than the first 25% of
+/// usable time, releases before the 50% cutoff, and permits all later phases.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unused_quiesce_time_rolls_forward_to_complete_a_slow_leadership_handoff() {
+    const USABLE_BUDGET: Duration = Duration::from_secs(2);
+    const FIRST_QUARTER: Duration = Duration::from_millis(500);
+    const HOLD_AFTER_SHUTDOWN_START: Duration = Duration::from_millis(750);
+
+    let nodes = blocking_cluster(3).await;
+    let leader = await_blocking_leader(&nodes).await;
+    let proposal = hold_leader_apply(&nodes, leader, b"roll-forward-handoff-phase".to_vec()).await;
+
+    let host = Arc::clone(&nodes[leader].host);
+    let shutdown = tokio::spawn(async move {
+        host.shutdown_within(
+            ShutdownDeadline::from_now(USABLE_BUDGET, Duration::ZERO)
+                .expect("a non-reserved usable deadline is valid"),
+        )
+        .await
+    });
+
+    // Shutdown can run Quiesce immediately, then waits on the node mutex in
+    // LeadershipHandoff. Keep it blocked past the first 25% but before 50%.
+    tokio::time::sleep(HOLD_AFTER_SHUTDOWN_START).await;
+    nodes[leader].sm.release();
+
+    let report = tokio::time::timeout(Duration::from_secs(2), shutdown)
+        .await
+        .expect("the released handoff completes before the shared deadline")
+        .expect("the shutdown task does not panic");
+    proposal.abort();
+    let _ = proposal.await;
+
+    assert_eq!(
+        report.phases.len(),
+        4,
+        "a handoff released before its 50% cutoff must allow all four phases"
+    );
+    assert_eq!(report.phases[0].status, PhaseStatus::Completed);
+    assert_eq!(report.phases[1].phase, ShutdownPhase::LeadershipHandoff);
+    assert_eq!(report.phases[1].status, PhaseStatus::Completed);
+    assert!(
+        report.phases[1].elapsed > FIRST_QUARTER,
+        "LeadershipHandoff must complete after consuming more than Quiesce's \
+         first-quarter slice, proving unused early time rolls forward; elapsed {:?}",
+        report.phases[1].elapsed
+    );
+    assert_eq!(report.phases[2].phase, ShutdownPhase::BackgroundTasks);
+    assert_eq!(report.phases[2].status, PhaseStatus::Completed);
+    assert_eq!(report.phases[3].phase, ShutdownPhase::PeerRpcDrain);
+    assert_eq!(report.phases[3].status, PhaseStatus::Completed);
+    assert_eq!(report.incomplete_phase, None);
+    assert!(report.peer_listener_close_safe);
 }
 
 /// A host whose store has an injected save failure reports storage_failure carrying the
@@ -387,4 +668,3 @@ async fn tiny_rpc_timeout_legacy_shutdown_returns_err_naming_quiesce() {
         "error message must name Quiesce, got: '{err_msg}'"
     );
 }
-

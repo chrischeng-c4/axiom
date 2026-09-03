@@ -34,9 +34,9 @@ use tokio::io::AsyncReadExt;
 #[allow(dead_code)]
 #[path = "support/cluster.rs"]
 mod cluster;
-use cluster::{await_leader, bind, cluster, peers_excluding, Node, TestSm};
+use cluster::{await_leader, await_leader_with_tick, bind, cluster, peers_excluding, Node, TestSm};
 
-async fn custom_timeout_cluster(n: u64, timeout: Duration) -> Vec<Node> {
+async fn custom_timeout_cluster(n: u64, timeout: Duration) -> (Vec<Node>, Duration) {
     let mut listeners = Vec::new();
     let mut all = Vec::new();
     for id in 0..n {
@@ -45,6 +45,8 @@ async fn custom_timeout_cluster(n: u64, timeout: Duration) -> Vec<Node> {
         all.push((id, url));
     }
     let voters: Vec<u64> = (0..n).collect();
+    let mut cfg = HostConfig::default();
+    cfg.propose_timeout = timeout;
     let mut nodes = Vec::new();
     for (idx, listener) in listeners.into_iter().enumerate() {
         let id = idx as u64;
@@ -52,8 +54,6 @@ async fn custom_timeout_cluster(n: u64, timeout: Duration) -> Vec<Node> {
         let sm = TestSm::new();
         let dir = TempDir::new().unwrap();
         let store = RaftStore::open(dir.path().to_str().unwrap(), id, FsyncPolicy::Os).unwrap();
-        let mut cfg = HostConfig::default();
-        cfg.propose_timeout = timeout;
         let host = Arc::new(RaftHost::spawn(
             id,
             Membership {
@@ -85,7 +85,7 @@ async fn custom_timeout_cluster(n: u64, timeout: Duration) -> Vec<Node> {
             _dir: dir,
         });
     }
-    nodes
+    (nodes, cfg.tick)
 }
 
 async fn publish_response_stub(status: StatusCode, body: serde_json::Value) -> String {
@@ -308,8 +308,8 @@ async fn follower_forwarding_to_live_leader_completes_after_local_apply() {
 /// rejection instead of treating a known pre-append refusal as ambiguous.
 #[tokio::test]
 async fn follower_forwarding_to_quiesced_leader_reports_rejected_before_admission() {
-    let nodes = custom_timeout_cluster(3, Duration::from_millis(300)).await;
-    let leader = await_leader(&nodes)
+    let (nodes, tick) = custom_timeout_cluster(3, Duration::from_millis(300)).await;
+    let leader = await_leader_with_tick(&nodes, tick)
         .await
         .expect("a three-voter cluster elects a leader");
 
@@ -341,8 +341,8 @@ async fn follower_forwarding_to_quiesced_leader_reports_rejected_before_admissio
 /// rejection and a malformed immediate reply.
 #[tokio::test]
 async fn follower_forwarding_transport_timeout_is_ambiguous_with_routing_timeout_reason() {
-    let nodes = custom_timeout_cluster(3, Duration::from_millis(300)).await;
-    let leader = await_leader(&nodes)
+    let (nodes, tick) = custom_timeout_cluster(3, Duration::from_millis(300)).await;
+    let leader = await_leader_with_tick(&nodes, tick)
         .await
         .expect("a three-voter cluster elects a leader");
     let follower = (leader + 1) % 3;
@@ -401,8 +401,8 @@ async fn follower_forwarding_transport_timeout_is_ambiguous_with_routing_timeout
 /// and a string refusal reason. A malformed admission body remains ambiguous.
 #[tokio::test]
 async fn follower_forwarding_malformed_admission_body_remains_ambiguous() {
-    let nodes = custom_timeout_cluster(3, Duration::from_millis(300)).await;
-    let leader = await_leader(&nodes)
+    let (nodes, tick) = custom_timeout_cluster(3, Duration::from_millis(300)).await;
+    let leader = await_leader_with_tick(&nodes, tick)
         .await
         .expect("a three-voter cluster elects a leader");
     let follower = (leader + 1) % 3;

@@ -248,6 +248,7 @@ contract. Each source below states its direct contribution.
   - [`libs/raft-runtime`](../../libs/raft-runtime/README.md) hosts replication,
     snapshots, and the replicated log lifecycle.
 - Gate: `cargo test -p lumen --test api_e2e --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e`
+- Gate: `cargo test -p lumen --test indexing_durable_oracle`
 - Gate: `cargo test -p lumen --test perf_gate_vs_db`
 - Gate: `cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture`
 
@@ -330,16 +331,18 @@ contract. Each source below states its direct contribution.
 ### Scaling and availability
 
 - ID: `scaling-availability`
-- Promise: Move shard ownership through the published reshard workflow and run
+- Promise: Move shard ownership through the published reshard workflow, run
   the declared fixed replica topology without changing visible indexing or
-  query behavior.
+  query behavior, and stop a Raft member within one declared deadline.
 - Sources:
   - [`apps/lumen`](./) defines virtual-bucket routing, shard ownership,
     reshard phases, write fences, checkpoints, and scatter/gather behavior.
+    It also defines process-level shutdown order.
   - [`libs/raft-core`](../../libs/raft-core/README.md) provides consensus,
-    quorum, ordered replication, and leader election.
+    quorum, ordered replication, leader election, and canonical tick timing.
   - [`libs/raft-runtime`](../../libs/raft-runtime/README.md) provides topology,
-    transport, forwarding, snapshots, and log compaction.
+    transport, forwarding, snapshots, log compaction, and four-phase bounded
+    shutdown.
   - [`libs/service-k8s`](../../libs/service-k8s/README.md) provides the workload
     and controller mechanisms that apply declared topology.
   - [`libs/storage-durable`](../../libs/storage-durable/README.md) provides
@@ -347,6 +350,7 @@ contract. Each source below states its direct contribution.
   - `external:kubernetes` runs the declared members and networking contracts.
 - Gate: `cargo test -p lumen --test reshard_admin_e2e --test reshard_driver_e2e --test routed_shard_e2e`
 - Gate: `cargo test -p lumen --test wal_nats_e2e --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
+- Gate: `cargo test -p lumen --features raft-wal --test raft_shutdown_failover`
 - Gate: `apps/lumen/scripts/kind-e2e.sh`
 
 ### Durability and recovery
