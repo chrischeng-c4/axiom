@@ -89,7 +89,7 @@ gate. This area spans the README capabilities `backup-and-seed`,
 - Neighbours: none within the area.
 - Status rows: `local-performance-ceiling`.
 
-## Quotas and scale transition
+## Quotas and scale transition (Milestone #126)
 
 - Problem: nothing bounds a single tenant's topics, subscriptions, or bytes,
   and no run proves a replica-count change under load.
@@ -105,7 +105,7 @@ gate. This area spans the README capabilities `backup-and-seed`,
   and direct install; depends on
   [replication-and-availability.md](replication-and-availability.md)
   § Live replica membership for the transition it proves.
-- Outcome: `quotas-and-scale-transition`. Tracking: not assigned.
+- Outcome: `quotas-and-scale-transition`. Tracking: [Milestone #126](https://github.com/chrischeng-c4/axiom/milestone/126)
 
 ## Non-goals in this area
 

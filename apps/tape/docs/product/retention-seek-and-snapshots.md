@@ -42,7 +42,7 @@ the subscription model was built on, and the seek outcome is where they leave.
   retires them.
 - Status rows: `legacy-replay-and-checkpoint-routes`.
 
-## Seek, snapshot, and retention
+## Seek, snapshot, and retention (Milestone #119)
 
 - Problem: a subscription cannot be moved to a time, an offset, or a saved
   position; age-based retention is unproven; and the journal is reachable
@@ -67,7 +67,7 @@ the subscription model was built on, and the seek outcome is where they leave.
   ack and competing subscribers, because seek moves a subscription's lease
   state, and the acceptance scripts must read back through pull before the
   legacy routes go.
-- Outcome: `seek-snapshot-and-retention`. Tracking: not assigned.
+- Outcome: `seek-snapshot-and-retention`. Tracking: [Milestone #119](https://github.com/chrischeng-c4/axiom/milestone/119)
 
 ## Non-goals in this area
 
