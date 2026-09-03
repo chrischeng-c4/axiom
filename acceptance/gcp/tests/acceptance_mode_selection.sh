@@ -27,7 +27,7 @@ SIFT_PREPARE_SCRIPT="$ACCEPTANCE_ROOT/scripts/prepare-sift-candidate.sh"
 SIFT_CANDIDATE_CLEANUP_SCRIPT="$ACCEPTANCE_ROOT/scripts/cleanup-sift-candidate.sh"
 SIFT_CONTAINED_SCRIPT="$ACCEPTANCE_ROOT/scripts/run-sift-contained.sh"
 SIFT_CONTAINER_BOUNDARY="$ACCEPTANCE_ROOT/scripts/sift-container-boundary.sh"
-SIFT_ACCEPTANCE_RUNNER_IMAGE="$ACCEPTANCE_ROOT/images/Dockerfile.sift-acceptance-runner"
+SIFT_ACCEPTANCE_RUNNER_IMAGE="${SIFT_ACCEPTANCE_RUNNER_IMAGE_OVERRIDE:-$ACCEPTANCE_ROOT/images/Dockerfile.sift-acceptance-runner}"
 PROCESS_TREE_SCRIPT="$ACCEPTANCE_ROOT/scripts/process-tree.sh"
 PROCESS_START_TOKEN_HELPER="$ACCEPTANCE_ROOT/scripts/process-start-token.py"
 RUN_LOG_SCRIPT="$ACCEPTANCE_ROOT/scripts/run-log.sh"
@@ -70,6 +70,35 @@ present_re() { # present_re <label> <anchored-regex> <file>
 
 absent() { # absent <label> <pattern> <file>
   ! uncommented "$2" "$3" || fail "$1 (unexpectedly still live in ${3##*/}: $2)"
+}
+
+dockerfile_env_sets_sift_cli() { # dockerfile_env_sets_sift_cli <file>
+  local result
+  result="$(awk '
+    function inspect() {
+      if (tolower(logical) ~ /^[[:space:]]*env[[:space:]]/ && logical ~ /(^|[^[:alnum:]_])SIFT_CLI([^[:alnum:]_]|$)/) {
+        found = 1
+      }
+      logical = ""
+    }
+    /^[[:space:]]*#/ { next }
+    {
+      current = $0
+      continued = current ~ /\\[[:space:]]*$/
+      sub(/\\[[:space:]]*$/, "", current)
+      logical = logical " " current
+      if (!continued) inspect()
+    }
+    END {
+      if (length(logical) > 0) inspect()
+      print found ? "yes" : "no"
+    }
+  ' "$1")" || fail "could not parse ${1##*/} ENV instructions"
+  case "$result" in
+    yes) return 0 ;;
+    no) return 1 ;;
+    *) fail "unexpected Dockerfile ENV scan result for ${1##*/}: $result" ;;
+  esac
 }
 
 line_of() { # line_of <pattern> <file>
@@ -390,6 +419,21 @@ present "Sift Cloud Build again submits the mutable worktree" \
 present "the contained controller image no longer embeds the candidate Sift CLI" \
   'COPY --from=builder /out/sift /usr/local/bin/sift' \
   "$SIFT_ACCEPTANCE_RUNNER_IMAGE"
+if dockerfile_env_sets_sift_cli "$SIFT_ACCEPTANCE_RUNNER_IMAGE"; then
+  fail "the controller image exposes its embedded CLI as caller input"
+fi
+present "the contained run no longer selects the embedded CLI after candidate validation" \
+  'SIFT_CLI="/usr/local/bin/sift"' "$RUN_SCRIPT"
+input_sift_cli_line="$(line_of 'INPUT_SIFT_CLI="${SIFT_CLI:-}"' "$RUN_SCRIPT")"
+candidate_identity_guard_line="$(line_of \
+  'the candidate identity does not match this contained run' "$RUN_SCRIPT")"
+fixed_sift_cli_line="$(line_of 'SIFT_CLI="/usr/local/bin/sift"' "$RUN_SCRIPT")"
+[[ "$input_sift_cli_line" =~ ^[0-9]+$ \
+  && "$candidate_identity_guard_line" =~ ^[0-9]+$ \
+  && "$fixed_sift_cli_line" =~ ^[0-9]+$ \
+  && "$input_sift_cli_line" -lt "$candidate_identity_guard_line" \
+  && "$candidate_identity_guard_line" -lt "$fixed_sift_cli_line" ]] \
+  || fail "embedded Sift CLI selection must follow caller capture and candidate validation"
 present "Sift GCP acceptance no longer runs the complete fixed candidate gate" \
   'bash "$source_dir/apps/sift/test.sh" --candidate' "$SIFT_PREPARE_SCRIPT"
 present "Sift GCP acceptance does not bind the gate to the extracted source root" \
@@ -1087,6 +1131,37 @@ if [[ "${SIFT_ORACLE_MUTATION_CHILD:-0}" != "1" ]]; then
       fail "the static oracle accepted mutation: $label"
     fi
   }
+
+  dockerfile_mutation_must_fail() {
+    local label="$1"
+    local fixture="$2"
+    if SIFT_ORACLE_MUTATION_CHILD=1 \
+      SIFT_ACCEPTANCE_RUNNER_IMAGE_OVERRIDE="$fixture" \
+      bash "$0" >/dev/null 2>&1; then
+      fail "the static oracle accepted Dockerfile mutation: $label"
+    fi
+  }
+
+  quoted_cli_env="$mutation_dir/quoted-cli-env.Dockerfile"
+  cp "$SIFT_ACCEPTANCE_RUNNER_IMAGE" "$quoted_cli_env"
+  printf '%s\n' 'ENV SIFT_CLI="/usr/local/bin/sift"' >> "$quoted_cli_env"
+  dockerfile_mutation_must_fail "quoted SIFT_CLI ENV" "$quoted_cli_env"
+
+  legacy_cli_env="$mutation_dir/legacy-cli-env.Dockerfile"
+  cp "$SIFT_ACCEPTANCE_RUNNER_IMAGE" "$legacy_cli_env"
+  printf '%s\n' 'ENV SIFT_CLI /usr/local/bin/sift' >> "$legacy_cli_env"
+  dockerfile_mutation_must_fail "legacy SIFT_CLI ENV" "$legacy_cli_env"
+
+  lowercase_cli_env="$mutation_dir/lowercase-cli-env.Dockerfile"
+  cp "$SIFT_ACCEPTANCE_RUNNER_IMAGE" "$lowercase_cli_env"
+  printf '%s\n' 'env SIFT_CLI=/usr/local/bin/sift' >> "$lowercase_cli_env"
+  dockerfile_mutation_must_fail "lowercase SIFT_CLI ENV" "$lowercase_cli_env"
+
+  continued_cli_env="$mutation_dir/continued-cli-env.Dockerfile"
+  cp "$SIFT_ACCEPTANCE_RUNNER_IMAGE" "$continued_cli_env"
+  printf '%s\n' 'ENV HOME=/tmp/sift-acceptance-home \' \
+    '    SIFT_CLI=/usr/local/bin/sift' >> "$continued_cli_env"
+  dockerfile_mutation_must_fail "continued SIFT_CLI ENV" "$continued_cli_env"
 
   quoted_load="$mutation_dir/quoted-load.sh"
   sed 's/^LOAD_SECONDS=1800$/LOAD_SECONDS=1799/' \

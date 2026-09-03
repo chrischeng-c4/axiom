@@ -24,8 +24,7 @@ RUN apt-get update \
 COPY --from=terraform /bin/terraform /usr/local/bin/terraform
 COPY --from=builder /out/sift /usr/local/bin/sift
 COPY . /workspace
-ENV HOME=/tmp/sift-acceptance-home \
-    SIFT_CLI=/usr/local/bin/sift
+ENV HOME=/tmp/sift-acceptance-home
 WORKDIR /workspace
 USER 65532:65532
 ENTRYPOINT ["/bin/bash"]
