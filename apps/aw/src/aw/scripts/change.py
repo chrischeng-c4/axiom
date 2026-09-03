@@ -1056,13 +1056,6 @@ def cmd_close(args) -> int:
             f"#{issue['number']} cannot close: " + "; ".join(lifecycle_errors)
         )
     recorded = workitem.lifecycle_rows(issue.get("body") or "")
-    landed = set(workitem.refs_commits(issue["number"]))
-    absent = [leg for leg in required if recorded[leg][1].strip("`") not in landed]
-    if absent:
-        raise workitem.GhError(
-            f"#{issue['number']} cannot close: lifecycle commit lacks `Refs #{issue['number']}` for "
-            + ", ".join(absent)
-        )
     digest_trailer = {
         "e2e": "E2E-Change-Digest",
         "impl": "Impl-Change-Digest",
@@ -1071,11 +1064,17 @@ def cmd_close(args) -> int:
     for leg in required:
         commit = recorded[leg][1].strip("`")
         digest = recorded[leg][2].strip("`")
-        message = workitem.commit_message(commit)
+        proof = workitem.landing_proof(commit, args.repo)
+        message = proof.message
         lines = message.splitlines()
         if not lines or not lines[0].startswith(f"{leg}("):
             raise workitem.GhError(
                 f"#{issue['number']} cannot close: {commit} is not a {leg}(...) commit"
+            )
+        if f"Refs #{issue['number']}" not in lines:
+            raise workitem.GhError(
+                f"#{issue['number']} cannot close: {commit} lacks a standalone "
+                f"`Refs #{issue['number']}` line"
             )
         expected = f"{digest_trailer[leg]}: {digest}"
         if expected not in lines:
@@ -1083,6 +1082,7 @@ def cmd_close(args) -> int:
                 f"#{issue['number']} cannot close: {leg} lifecycle digest does not match "
                 f"the {digest_trailer[leg]} trailer on {commit}"
             )
+        print(f"landed {leg} {commit} via {proof.route}")
     workitem.run_or_show(["issue", "close", str(args.iid), "--repo", args.repo], args.dry_run)
     if args.dry_run:
         return 0
