@@ -1563,6 +1563,7 @@ if [[ "$source_absent_finalize" == "1" ]]; then
       PERSISTENT_CLUSTER_CHECK_REQUIRED="$([[ -s "$STATE_DIR/persistent-cluster-name.txt" ]] && echo 1 || echo 0)" \
       KUBERNETES_CHECK_REQUIRED="$([[ -f "$STATE_DIR/kube-context-ready.txt" ]] && echo 1 || echo 0)" \
       ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
+      SIFT_CANDIDATE_DIR="$source_absent_candidate_directory" \
       "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" \
       || source_absent_verify_status=$?
   fi
@@ -1600,6 +1601,7 @@ if [[ "$reservation_only_finalize" == "1" ]]; then
       PERSISTENT_CLUSTER_CHECK_REQUIRED="$([[ -s "$STATE_DIR/persistent-cluster-name.txt" ]] && echo 1 || echo 0)" \
       KUBERNETES_CHECK_REQUIRED="$([[ -f "$STATE_DIR/kube-context-ready.txt" ]] && echo 1 || echo 0)" \
       ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
+      SIFT_CANDIDATE_DIR="$source_absent_candidate_directory" \
       SIFT_CANDIDATE_CONTROL_OBJECTS_ALLOWED=1 \
       VERIFY_CLEAN_WRITE_RECEIPT=0 \
       "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" \
@@ -1635,6 +1637,7 @@ if [[ "$reservation_only_finalize" == "1" ]]; then
     PERSISTENT_CLUSTER_CHECK_REQUIRED="$([[ -s "$STATE_DIR/persistent-cluster-name.txt" ]] && echo 1 || echo 0)" \
     KUBERNETES_CHECK_REQUIRED="$([[ -f "$STATE_DIR/kube-context-ready.txt" ]] && echo 1 || echo 0)" \
     ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
+    SIFT_CANDIDATE_DIR="$source_absent_candidate_directory" \
     "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" \
     || reservation_only_verify_status=$?
   if [[ "$reservation_only_verify_status" != "0" ]]; then
@@ -2066,6 +2069,7 @@ else
             PERSISTENT_CLUSTER_CHECK_REQUIRED="$([[ -s "$STATE_DIR/persistent-cluster-name.txt" ]] && echo 1 || echo 0)" \
             KUBERNETES_CHECK_REQUIRED="$([[ -f "$STATE_DIR/kube-context-ready.txt" ]] && echo 1 || echo 0)" \
             ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
+            SIFT_CANDIDATE_DIR="$source_candidate_directory" \
             SIFT_CANDIDATE_CONTROL_OBJECTS_ALLOWED=1 \
             VERIFY_CLEAN_WRITE_RECEIPT=0 \
             "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" \
@@ -2169,6 +2173,7 @@ if [[ "$acceptance_lock_held" == "1" ]] \
     PERSISTENT_CLUSTER_CHECK_REQUIRED="$([[ -s "$STATE_DIR/persistent-cluster-name.txt" ]] && echo 1 || echo 0)" \
     KUBERNETES_CHECK_REQUIRED="$([[ -f "$STATE_DIR/kube-context-ready.txt" ]] && echo 1 || echo 0)" \
     ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
+    SIFT_CANDIDATE_DIR="$SIFT_CANDIDATE_DIR" \
     "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" || verify_clean_status=$?
 else
   acceptance_lock_held=0

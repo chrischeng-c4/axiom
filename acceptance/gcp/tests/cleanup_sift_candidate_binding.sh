@@ -29,6 +29,17 @@ SIFT_CANDIDATE_FIXTURE_OUT="$candidate_dir" \
   bash "$SCRIPT_DIR/sift_candidate_receipt.sh" >/dev/null
 copy_sift_candidate_evidence "$candidate_dir" "$evidence_dir"
 
+# Runtime discovery may refresh a file that has the same name as one copied
+# from the immutable candidate. Cleanup must continue to validate ownership
+# against the separate read-only candidate directory.
+printf '{"runtime_inventory":"refreshed"}\n' \
+  > "$evidence_dir/preexisting-artifact-registry.json"
+if verify_sift_candidate_directory "$evidence_dir"; then
+  echo "test setup did not invalidate the mutable evidence copy" >&2
+  exit 1
+fi
+verify_sift_candidate_directory "$candidate_dir"
+
 project_id="$(jq -er '.project_id' "$candidate_dir/candidate.json")"
 region="$(jq -er '.region' "$candidate_dir/candidate.json")"
 run_id="$(jq -er '.run_id' "$candidate_dir/candidate.json")"

@@ -20,6 +20,8 @@ cleanup_test() {
 }
 trap cleanup_test EXIT INT TERM
 mkdir -p "$candidate_dir" "$fake_bin" "$fake_gcloud_config"
+printf '{}\n' > "$fake_gcloud_config/application_default_credentials.json"
+chmod 0600 "$fake_gcloud_config/application_default_credentials.json"
 
 git_sha="0123456789abcdef0123456789abcdef01234567"
 source_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -374,6 +376,44 @@ grep -F 'the candidate directory must not overlap a writable run directory' \
   exit 1
 }
 
+# Terraform does not discover ADC from CLOUDSDK_CONFIG. The host wrapper must
+# refuse a credential copy without the standard ADC file before it creates a
+# run container.
+missing_adc_config="$test_root/missing-adc-gcloud-source"
+missing_adc_state="$test_root/missing-adc-state"
+missing_adc_evidence="$test_root/missing-adc-evidence"
+missing_adc_containment="$test_root/missing-adc-containment"
+missing_adc_claims="$test_root/missing-adc-claims"
+missing_adc_log="$test_root/missing-adc-docker.log"
+missing_adc_status=0
+mkdir -p "$missing_adc_config"
+: > "$missing_adc_log"
+PATH="$fake_bin:$PATH" \
+SIFT_FAKE_GCLOUD_CONFIG="$missing_adc_config" \
+SIFT_FAKE_DOCKER_LOG="$missing_adc_log" \
+SIFT_FAKE_CONTAINMENT="$missing_adc_containment" \
+SIFT_FAKE_CONTROLLER_IMAGE="$controller_image" \
+SIFT_FAKE_EVIDENCE="$missing_adc_evidence" \
+PROJECT_ID=axiom-test REGION=asia-east1 \
+SIFT_CANDIDATE_DIR="$candidate_dir" \
+STATE_DIR="$missing_adc_state" EVIDENCE_DIR="$missing_adc_evidence" \
+CONTAINMENT_DIR="$missing_adc_containment" \
+ACCEPTANCE_LOCAL_CLAIM_ROOT="$missing_adc_claims" \
+  "$ACCEPTANCE_ROOT/scripts/run-sift-contained.sh" \
+  > "$test_root/missing-adc.stdout" \
+  2> "$test_root/missing-adc.stderr" \
+  || missing_adc_status=$?
+[[ "$missing_adc_status" != "0" ]] || {
+  echo "contained run accepted credentials without an ADC file" >&2
+  exit 1
+}
+grep -F 'gcloud configuration has no safe Application Default Credentials file' \
+  "$test_root/missing-adc.stderr" >/dev/null
+[[ ! -s "$missing_adc_log" ]] || {
+  echo "contained run created a container before rejecting missing ADC" >&2
+  exit 1
+}
+
 # Execute the real contained run entrypoint through its first preflight
 # failure. The evidence directory starts empty. The inner process must copy
 # the candidate, release its local claim, and publish cleanup_armed=false.
@@ -456,6 +496,17 @@ fi
 rg -F -- '--read-only' "$docker_log" >/dev/null
 rg -F -- '--cap-drop=ALL' "$docker_log" >/dev/null
 rg -F -- '--security-opt=no-new-privileges' "$docker_log" >/dev/null
+[[ "$(rg -c -F -- \
+    '--env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json' \
+    "$docker_log")" == "2" ]] || {
+  echo "run and cleanup containers did not receive the fixed ADC path" >&2
+  exit 1
+}
+[[ "$(rg -c -F -- \
+    '--env ACCEPTANCE_ROOT=/workspace/acceptance/gcp' "$docker_log")" == "2" ]] || {
+  echo "run and cleanup containers did not receive the acceptance root" >&2
+  exit 1
+}
 [[ ! -e "$containment_dir/gcloud" && ! -e "$containment_dir/nonce" ]] || {
   echo "the successful wrapper retained its private credential copy" >&2
   exit 1

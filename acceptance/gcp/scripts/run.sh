@@ -636,9 +636,15 @@ for api in "${required_apis[@]}"; do
   fi
   printf '%s\n' "$api" >> "$EVIDENCE_DIR/preexisting-apis.txt"
 done
+artifact_registry_receipt="$EVIDENCE_DIR/preexisting-artifact-registry.json"
+if [[ "$contained_sift" == "1" ]]; then
+  # This name is part of the immutable candidate bundle. Keep the live
+  # inventory separate so later cleanup can still verify that bundle.
+  artifact_registry_receipt="$EVIDENCE_DIR/live-artifact-registry.json"
+fi
 gcloud artifacts repositories describe "$ARTIFACT_REGISTRY_REPOSITORY" \
   --project="$PROJECT_ID" --location="$REGION" --format=json \
-  > "$EVIDENCE_DIR/preexisting-artifact-registry.json"
+  > "$artifact_registry_receipt"
 if [[ "$acceptance_mode" != "lumen-auth" ]]; then
   require_empty_list "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
     --filter="name=${PROJECT_ID}-axo-${RUN_ID}-backup" --format='value(name)'

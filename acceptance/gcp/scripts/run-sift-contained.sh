@@ -202,6 +202,15 @@ else
   cp -R "$gcloud_config_source/." "$gcloud_config/"
   chmod -R go-rwx "$gcloud_config"
 fi
+adc_file="$gcloud_config/application_default_credentials.json"
+[[ -f "$adc_file" && ! -L "$adc_file" ]] || {
+  echo "gcloud configuration has no safe Application Default Credentials file" >&2
+  exit 1
+}
+jq -e 'type == "object"' "$adc_file" >/dev/null || {
+  echo "gcloud Application Default Credentials file is not valid JSON" >&2
+  exit 1
+}
 CLOUDSDK_CONFIG="$gcloud_config" gcloud auth print-access-token >/dev/null || {
   echo "the active gcloud account cannot mint an access token" >&2
   exit 1
@@ -340,6 +349,8 @@ common_args=(
   --mount "type=bind,src=${SIFT_CANDIDATE_DIR},dst=/candidate,readonly"
   --env HOME=/tmp/sift-acceptance-home
   --env CLOUDSDK_CONFIG=/gcloud
+  --env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json
+  --env ACCEPTANCE_ROOT=/workspace/acceptance/gcp
   --env KUBECONFIG=/state/kubeconfig
   --env ACCEPTANCE_APPS=sift
   --env PROJECT_ID="$PROJECT_ID"

@@ -451,7 +451,13 @@ present "Sift GCP acceptance no longer records the candidate gate result" \
 present "Sift verification no longer binds to the candidate gate receipt" \
   'candidate_gate_receipt="$EVIDENCE_DIR/candidate-gate.json"' "$SIFT_VERIFY_SCRIPT"
 present "cleanup evidence no longer binds to the candidate gate receipt" \
-  '--slurpfile gate "$EVIDENCE_DIR/candidate-gate.json"' "$VERIFY_CLEAN_SCRIPT"
+  '--slurpfile gate "$candidate_component_dir/candidate-gate.json"' "$VERIFY_CLEAN_SCRIPT"
+present "cleanup evidence no longer binds to the candidate source receipt" \
+  '--slurpfile source "$candidate_component_dir/candidate-source.json"' "$VERIFY_CLEAN_SCRIPT"
+present "cleanup evidence no longer binds to the candidate build receipt" \
+  '--slurpfile build "$candidate_component_dir/cloud-build-source-binding.json"' "$VERIFY_CLEAN_SCRIPT"
+present "cleanup evidence no longer binds to the candidate image receipt" \
+  '--slurpfile images "$candidate_component_dir/images.json"' "$VERIFY_CLEAN_SCRIPT"
 present "Sift Cloud Build no longer checks the uploaded source bytes" \
   'Cloud Build staged source does not match the candidate archive' "$SIFT_PREPARE_SCRIPT"
 present "Sift Cloud Build receipts are no longer bound to the candidate SHA" \
@@ -585,6 +591,12 @@ candidate_copy_line="$(line_of 'copy_sift_candidate_evidence' "$RUN_SCRIPT")"
   && "$lock_create_line" -lt "$cloud_submit_line" \
   && "$lock_create_line" -lt "$terraform_apply_line" ]] \
   || fail "the Lease intent and cleanup trap must precede acquisition, Cloud Build, and run Terraform"
+present "contained Sift run no longer separates live registry inventory from immutable candidate evidence" \
+  'artifact_registry_receipt="$EVIDENCE_DIR/live-artifact-registry.json"' "$RUN_SCRIPT"
+present "cleanup no longer passes the immutable candidate directory to its verifier" \
+  'SIFT_CANDIDATE_DIR="$source_candidate_directory"' "$CLEANUP_SCRIPT"
+present "final cleanup no longer prefers the immutable candidate directory" \
+  'sift_candidate_verification_dir="$SIFT_CANDIDATE_DIR"' "$VERIFY_CLEAN_SCRIPT"
 prepare_gate_line="$(line_of 'bash "$source_dir/apps/sift/test.sh" --candidate' "$SIFT_PREPARE_SCRIPT")"
 prepare_reservation_line="$(line_of '"$receipts/candidate-reservation.json" "$reservation_uri" reservation || exit 1' "$SIFT_PREPARE_SCRIPT")"
 prepare_intent_line="$(line_of '"$receipts/candidate-submit-intent.json" "$submit_intent_uri" submit-intent' "$SIFT_PREPARE_SCRIPT")"

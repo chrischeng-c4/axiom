@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ACCEPTANCE_ROOT/scripts/source-prefix.sh"
+source "$ACCEPTANCE_ROOT/scripts/sift-candidate.sh"
 FINALIZER="$ACCEPTANCE_ROOT/scripts/finalize-sift-mvp-acceptance.sh"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/sift-mvp-evidence.XXXXXX")"
 cleanup_tmp() {
@@ -231,7 +232,15 @@ printf '%s\n' \
   'case "$*" in' \
   '  *"artifacts docker images describe"*) echo "not found" >&2; exit 1 ;;' \
   '  *"storage ls"*) echo "matched no URLs" >&2; exit 1 ;;' \
-  '  *"builds list"*) printf "[]\\n" ;;' \
+  '  *"builds list"*)' \
+  '    if [[ -n "${SIFT_FINALIZER_CANDIDATE_DIR:-}" ]]; then' \
+  '      build_id="$(jq -er .cloud_build_id "$SIFT_FINALIZER_CANDIDATE_DIR/candidate.json")"' \
+  '      jq -n --arg id "$build_id" '\''[{id:$id,status:"SUCCESS"}]'\''' \
+  '    else' \
+  '      printf "[]\\n"' \
+  '    fi' \
+  '    ;;' \
+  '  *"builds describe"*) cat "${SIFT_FINALIZER_CANDIDATE_DIR:?}/cloud-build-final.json" ;;' \
   '  *) exit 0 ;;' \
   'esac' > "$fake_bin/gcloud"
 chmod +x "$fake_bin/gcloud"
@@ -327,5 +336,59 @@ if PATH="$fake_bin:$PATH" \
   exit 1
 fi
 [[ ! -e "$receipt_dir/cleanup.json" ]]
+
+# A runtime evidence refresh must not become the source for the immutable
+# candidate section in cleanup.json.
+immutable_candidate_dir="$tmp/immutable-candidate"
+mutable_candidate_evidence="$tmp/mutable-candidate-evidence"
+SIFT_CANDIDATE_FIXTURE_OUT="$immutable_candidate_dir" \
+  bash "$SCRIPT_DIR/sift_candidate_receipt.sh" >/dev/null
+copy_sift_candidate_evidence \
+  "$immutable_candidate_dir" "$mutable_candidate_evidence"
+immutable_git_sha="$(jq -er '.git_sha' \
+  "$immutable_candidate_dir/candidate.json")"
+immutable_source_sha="$(jq -er '.source_bundle_sha256' \
+  "$immutable_candidate_dir/candidate.json")"
+jq -n --arg git_sha "$immutable_git_sha" '{git_sha:$git_sha}' \
+  > "$mutable_candidate_evidence/run.json"
+printf '{}\n' > "$mutable_candidate_evidence/sift-mvp-verification.json"
+jq --arg digest "$(printf 'f%.0s' {1..64})" \
+  '.source_bundle_sha256 = $digest' \
+  "$mutable_candidate_evidence/candidate-source.json" \
+  > "$mutable_candidate_evidence/candidate-source.changed.json"
+mv "$mutable_candidate_evidence/candidate-source.changed.json" \
+  "$mutable_candidate_evidence/candidate-source.json"
+if verify_sift_candidate_directory "$mutable_candidate_evidence"; then
+  echo "test setup did not invalidate mutable candidate evidence" >&2
+  exit 1
+fi
+immutable_project="$(jq -er '.project_id' \
+  "$immutable_candidate_dir/candidate.json")"
+immutable_region="$(jq -er '.region' \
+  "$immutable_candidate_dir/candidate.json")"
+immutable_run_id="$(jq -er '.run_id' \
+  "$immutable_candidate_dir/candidate.json")"
+immutable_registry="$(jq -er '.registry' \
+  "$immutable_candidate_dir/candidate.json")"
+immutable_image_tag="$(jq -er '.image_tag' \
+  "$immutable_candidate_dir/candidate.json")"
+immutable_source_prefix="$(jq -er '.source_prefix' \
+  "$immutable_candidate_dir/candidate.json")"
+PATH="$fake_bin:$PATH" \
+  SIFT_FINALIZER_CANDIDATE_DIR="$immutable_candidate_dir" \
+  PROJECT_ID="$immutable_project" REGION="$immutable_region" \
+  GKE_ZONE=asia-east1-a RUN_ID="$immutable_run_id" \
+  REGISTRY="$immutable_registry" IMAGE_TAG="$immutable_image_tag" \
+  GCS_SOURCE_PREFIX="$immutable_source_prefix" \
+  EVIDENCE_DIR="$mutable_candidate_evidence" ACCEPTANCE_APPS=sift \
+  SIFT_CANDIDATE_DIR="$immutable_candidate_dir" \
+  PERSISTENT_CLUSTER_CHECK_REQUIRED=0 KUBERNETES_CHECK_REQUIRED=0 \
+  "$ACCEPTANCE_ROOT/scripts/verify-clean.sh" >/dev/null
+jq -e --arg git_sha "$immutable_git_sha" \
+  --arg source_sha "$immutable_source_sha" '
+    .status == "clean"
+    and .candidate.git_sha == $git_sha
+    and .candidate.source_bundle_sha256 == $source_sha
+  ' "$mutable_candidate_evidence/cleanup.json" >/dev/null
 
 echo "Sift MVP evidence finalization E2E: ok"

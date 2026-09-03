@@ -15,6 +15,7 @@ PERSISTENT_CLUSTER_CHECK_REQUIRED="${PERSISTENT_CLUSTER_CHECK_REQUIRED:-1}"
 KUBERNETES_CHECK_REQUIRED="${KUBERNETES_CHECK_REQUIRED:-1}"
 SIFT_CANDIDATE_CONTROL_OBJECTS_ALLOWED="${SIFT_CANDIDATE_CONTROL_OBJECTS_ALLOWED:-0}"
 VERIFY_CLEAN_WRITE_RECEIPT="${VERIFY_CLEAN_WRITE_RECEIPT:-1}"
+SIFT_CANDIDATE_DIR="${SIFT_CANDIDATE_DIR:-}"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/source-prefix.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/acceptance-lock.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sift-candidate.sh"
@@ -43,6 +44,16 @@ if [[ "$SIFT_CANDIDATE_CONTROL_OBJECTS_ALLOWED" == "1" \
   && "$VERIFY_CLEAN_WRITE_RECEIPT" != "0" ]]; then
   echo "candidate control objects cannot produce a clean receipt" >&2
   exit 1
+fi
+
+sift_candidate_verification_dir=""
+if [[ "$acceptance_mode" == "sift" ]]; then
+  if [[ -n "$SIFT_CANDIDATE_DIR" ]]; then
+    sift_candidate_verification_dir="$SIFT_CANDIDATE_DIR"
+  elif [[ -e "$EVIDENCE_DIR/candidate.json" \
+    || -L "$EVIDENCE_DIR/candidate.json" ]]; then
+    sift_candidate_verification_dir="$EVIDENCE_DIR"
+  fi
 fi
 
 prefix="axo-${RUN_ID}"
@@ -276,15 +287,17 @@ elif ! jq -e '
   jq -r '.[] | "\(.id) \(.status)"' <<<"$run_builds" >&2 || true
   leftovers=1
 fi
-if [[ "$acceptance_mode" == "sift" && -f "$EVIDENCE_DIR/candidate.json" ]]; then
-  if ! verify_sift_candidate_directory "$EVIDENCE_DIR"; then
+if [[ "$acceptance_mode" == "sift" \
+  && -n "$sift_candidate_verification_dir" ]]; then
+  if ! verify_sift_candidate_directory "$sift_candidate_verification_dir"; then
     echo "the final cleanup has no valid Sift candidate receipt" >&2
     leftovers=1
   else
+    immutable_candidate_receipt="$sift_candidate_verification_dir/candidate.json"
     expected_build_id="$(jq -er '.cloud_build_id' \
-      "$EVIDENCE_DIR/candidate.json")"
+      "$immutable_candidate_receipt")"
     candidate_acquisition_id="$(jq -er '.acquisition_id' \
-      "$EVIDENCE_DIR/candidate.json")"
+      "$immutable_candidate_receipt")"
     candidate_build_receipt="$(mktemp \
       "${TMPDIR:-/tmp}/sift-final-candidate-build.XXXXXX")"
     acquisition_builds=""
@@ -313,7 +326,7 @@ if [[ "$acceptance_mode" == "sift" && -f "$EVIDENCE_DIR/candidate.json" ]]; then
         --project="$PROJECT_ID" --region="$REGION" --format=json \
         > "$candidate_build_receipt" \
         || ! verify_sift_candidate_build_receipt \
-          "$EVIDENCE_DIR/candidate.json" "$candidate_build_receipt"; then
+          "$immutable_candidate_receipt" "$candidate_build_receipt"; then
       echo "final Cloud Build resource does not match the immutable Sift candidate" >&2
       leftovers=1
     fi
@@ -349,12 +362,16 @@ cleanup_candidate=null
 if [[ "$acceptance_mode" == "sift" \
   && -f "$EVIDENCE_DIR/sift-mvp-verification.json" \
   && ! -L "$EVIDENCE_DIR/sift-mvp-verification.json" ]]; then
+  candidate_component_dir="$EVIDENCE_DIR"
+  if [[ -n "$sift_candidate_verification_dir" ]]; then
+    candidate_component_dir="$sift_candidate_verification_dir"
+  fi
   for candidate_receipt in \
     "$EVIDENCE_DIR/run.json" \
-    "$EVIDENCE_DIR/candidate-source.json" \
-    "$EVIDENCE_DIR/candidate-gate.json" \
-    "$EVIDENCE_DIR/cloud-build-source-binding.json" \
-    "$EVIDENCE_DIR/images.json"; do
+    "$candidate_component_dir/candidate-source.json" \
+    "$candidate_component_dir/candidate-gate.json" \
+    "$candidate_component_dir/cloud-build-source-binding.json" \
+    "$candidate_component_dir/images.json"; do
     [[ -f "$candidate_receipt" && ! -L "$candidate_receipt" ]] || {
       echo "candidate cleanup receipt input is missing or unsafe: $candidate_receipt" >&2
       exit 1
@@ -362,10 +379,10 @@ if [[ "$acceptance_mode" == "sift" \
   done
   cleanup_candidate="$(jq -n \
     --slurpfile run "$EVIDENCE_DIR/run.json" \
-    --slurpfile source "$EVIDENCE_DIR/candidate-source.json" \
-    --slurpfile gate "$EVIDENCE_DIR/candidate-gate.json" \
-    --slurpfile build "$EVIDENCE_DIR/cloud-build-source-binding.json" \
-    --slurpfile images "$EVIDENCE_DIR/images.json" '
+    --slurpfile source "$candidate_component_dir/candidate-source.json" \
+    --slurpfile gate "$candidate_component_dir/candidate-gate.json" \
+    --slurpfile build "$candidate_component_dir/cloud-build-source-binding.json" \
+    --slurpfile images "$candidate_component_dir/images.json" '
       ($run[0].git_sha) as $git_sha
       | ($source[0].source_bundle_sha256) as $source_sha
       | if ($git_sha | type) != "string" or ($git_sha | test("^[0-9a-f]{40}$") | not)
