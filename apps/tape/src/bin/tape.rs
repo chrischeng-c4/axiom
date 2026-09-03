@@ -856,9 +856,9 @@ fn subscription(args: SubscriptionArgs) -> Result<()> {
 /// Ensure subscriptions from CR-declared topics. Called after journal/raft
 /// is ready but before listener starts. Parses TAPE_PROVISION_TOPICS (compact JSON
 /// array of {name, subscriptions}), ensures each subscription, and logs decisions
-/// (created|already_exists|noted_implicit). In HA mode, proposals route through raft;
-/// all members' ensure attempts converge safely on AlreadyExists tolerance.
-fn ensure_subscriptions(state: &tape::server::AppState) {
+/// (created|already_exists|noted_implicit). Single-node provisioning uses the
+/// durable mutation seam; HA keeps its established direct-memory path.
+async fn ensure_subscriptions(state: &tape::server::AppState) {
     let json_str = match std::env::var("TAPE_PROVISION_TOPICS") {
         Ok(s) => s,
         Err(std::env::VarError::NotPresent) => return, // No provisioning declared
@@ -888,10 +888,52 @@ fn ensure_subscriptions(state: &tape::server::AppState) {
         }
 
         for subscription in &topic.subscriptions {
+            if state.raft().is_none() {
+                match state
+                    .provision_startup_subscription(topic.name.clone(), subscription.clone())
+                    .await
+                {
+                    Ok(tape::raft::TapeOutcome::SubscriptionCreated(Ok(_))) => {
+                        tracing::info!(
+                            topic = %topic.name,
+                            subscription = %subscription,
+                            decision = "created",
+                            "subscription created (cr-provisioned)"
+                        );
+                    }
+                    Ok(tape::raft::TapeOutcome::SubscriptionCreated(Err(
+                        tape::SubscriptionError::AlreadyExists { .. },
+                    ))) => {
+                        tracing::info!(
+                            topic = %topic.name,
+                            subscription = %subscription,
+                            decision = "already_exists",
+                            "subscription already exists (idempotent)"
+                        );
+                    }
+                    Ok(outcome) => {
+                        tracing::warn!(
+                            topic = %topic.name,
+                            subscription = %subscription,
+                            ?outcome,
+                            "subscription ensure returned an unexpected outcome; continuing with other subscriptions"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            topic = %topic.name,
+                            subscription = %subscription,
+                            %error,
+                            "subscription ensure failed; continuing with other subscriptions"
+                        );
+                    }
+                }
+                continue;
+            }
+
             // Attempt to create the subscription using the same path the API uses.
-            // In single-node mode, this is a direct journal mutation; in HA mode,
-            // this would be a raft proposal (but the serve path runs before the listener
-            // starts, so we use the in-process journal directly).
+            // HA provisioning runs before the listener starts, so it keeps its
+            // established in-process journal mutation path.
             let journal_handle = state.journal_handle();
             let mut journal = journal_handle.lock().expect("journal mutex poisoned");
             match journal.create_subscription(&topic.name, subscription) {
@@ -1133,7 +1175,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
 
     // Ensure CR-declared subscriptions after journal/raft is ready but before listener starts.
     // This is idempotent and tolerates AlreadyExists errors, so repeated boots converge safely.
-    ensure_subscriptions(&state);
+    ensure_subscriptions(&state).await;
 
     let app = if peer_transport.is_some() {
         tape::server::router_without_raft_routes_with_admission(state.clone(), admission)

@@ -321,6 +321,35 @@ impl AppState {
 
         result
     }
+
+    /// Apply CR startup subscription provisioning on a single node.
+    ///
+    /// Recovered subscriptions do not need another command. A missing one
+    /// must use the normal single-node mutation path so WAL recovery sees it
+    /// on the next boot. Callers keep HA provisioning on its established path.
+    pub async fn provision_startup_subscription(
+        &self,
+        topic: String,
+        name: String,
+    ) -> std::io::Result<TapeOutcome> {
+        assert!(
+            self.raft().is_none(),
+            "startup subscription seam is single-node only"
+        );
+        let exists = self
+            .journal
+            .lock()
+            .expect("journal mutex poisoned")
+            .subscription(&topic, &name)
+            .is_some();
+        if exists {
+            return Ok(TapeOutcome::SubscriptionCreated(Err(
+                SubscriptionError::AlreadyExists { topic, name },
+            )));
+        }
+        self.apply_mutation(TapeCommand::SubscriptionCreate { topic, name })
+            .await
+    }
 }
 
 /// EIO on both platforms this crate builds for (Linux and macOS), named here
@@ -339,6 +368,10 @@ const EIO: i32 = 5;
 fn is_eio(error: &std::io::Error) -> bool {
     crate::wal::durability_errno(error) == Some(EIO)
 }
+
+#[cfg(test)]
+#[path = "server/tests.rs"]
+mod recovery_tests;
 
 /// #2573: sticky ENOSPC degraded read-only mode. Called by every mutating
 /// handler right after it has authorized the caller, and before it touches the
