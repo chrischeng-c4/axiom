@@ -311,6 +311,12 @@ def assert_release_versions(
     statefulset: str,
     operator_deployment: str,
 ) -> str:
+    perf_target = '''[[test]]
+name = "tape_perf_gate"
+path = "e2e/tape_perf_gate.rs"
+test = false'''
+    if cargo_toml.count('name = "tape_perf_gate"') != 1 or cargo_toml.count(perf_target) != 1:
+        fail("Tape performance target must be opt-in with test = false")
     matches = re.findall(r'^version = "([0-9]+\.[0-9]+\.[0-9]+)"$', cargo_toml, re.MULTILINE)
     if len(matches) != 1:
         fail("Tape Cargo manifest must carry one exact package version")
@@ -842,6 +848,17 @@ def self_test() -> None:
     operator = OPERATOR_DEPLOYMENT.read_text()
     version = assert_release_versions(cargo, dockerfile, statefulset, operator)
     version_mutations = {
+        "perf-target-default-selection": (
+            replace_once(
+                cargo,
+                'path = "e2e/tape_perf_gate.rs"\ntest = false',
+                'path = "e2e/tape_perf_gate.rs"',
+                "perf-target-default-selection",
+            ),
+            dockerfile,
+            statefulset,
+            operator,
+        ),
         "cargo-version-pin": (
             replace_once(
                 cargo,
@@ -970,7 +987,7 @@ def self_test() -> None:
     for path, before in original_hashes.items():
         if sha256(path) != before:
             fail(f"self-test did not restore {path.relative_to(ROOT)} byte for byte")
-    print("release contract self-test passed: positive fixture plus 27 negative mutations")
+    print("release contract self-test passed: positive fixture plus 28 negative mutations")
 
 
 def main() -> None:
