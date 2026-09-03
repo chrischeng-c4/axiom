@@ -36,7 +36,7 @@ follow once subscriptions carry per-message state.
   dead-letter topic, that the lease table survives leader failover, and that
   an oldest-unacked-age metric is exposed. The existing cumulative-cursor
   cases are rewritten against the lease model, not deleted.
-- Tracking: [#3928](https://github.com/chrischeng-c4/axiom/issues/3928)
+- Tracking: [Milestone #117](https://github.com/chrischeng-c4/axiom/milestone/117)
 
 ### Push subscriptions
 
@@ -52,7 +52,7 @@ follow once subscriptions carry per-message state.
   that a 2xx acks the message, that a 5xx redelivers after the configured
   backoff, that a receiver outage leaves the message pullable, and that the
   push token is redacted from logs and metrics.
-- Tracking: Not assigned.
+- Tracking: [Milestone #118](https://github.com/chrischeng-c4/axiom/milestone/118)
 
 ### Seek, snapshot, and retention
 
@@ -71,7 +71,7 @@ follow once subscriptions carry per-message state.
   age with a protected floor, and that every retired route answers 404 while
   the route inventory, the committed OpenAPI snapshot, and the generated
   clients agree.
-- Tracking: Not assigned.
+- Tracking: [Milestone #119](https://github.com/chrischeng-c4/axiom/milestone/119)
 
 ### Ordering keys
 
@@ -86,7 +86,7 @@ follow once subscriptions carry per-message state.
   several publishers, pulls with several competing callers, forces a
   redelivery, and proves per-key order held while unkeyed messages
   interleaved freely.
-- Tracking: Not assigned.
+- Tracking: [Milestone #120](https://github.com/chrischeng-c4/axiom/milestone/120)
 
 ### Attributes and filters
 
@@ -101,7 +101,7 @@ follow once subscriptions carry per-message state.
   pull and push, that a filtered subscription receives only matching messages,
   that a filter change applies to messages published after it, and that the
   filtered-out messages do not appear as lag.
-- Tracking: Not assigned.
+- Tracking: [Milestone #121](https://github.com/chrischeng-c4/axiom/milestone/121)
 
 ### Deterministic failover
 
@@ -116,7 +116,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: Every `raft_cluster` and `raft_failover` case is green
   twenty consecutive times with a single test thread on a loaded host, and no
   case carries a shared deadline constant.
-- Tracking: [#3926](https://github.com/chrischeng-c4/axiom/issues/3926)
+- Tracking: [Milestone #115](https://github.com/chrischeng-c4/axiom/milestone/115)
 
 ### Pub/Sub rebaseline
 
@@ -132,7 +132,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: The route-parity, generated-client, backup-destination,
   and operator render gates pass against the regenerated snapshot and the new
   runbook path, and the deployment handoff page is no longer tracked.
-- Tracking: [#3927](https://github.com/chrischeng-c4/axiom/issues/3927)
+- Tracking: [Milestone #116](https://github.com/chrischeng-c4/axiom/milestone/116)
 
 ## Later outcomes
 
@@ -148,7 +148,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: End-to-end cases prove create, list, and delete of a
   schema, a conforming publish accepted, a non-conforming publish refused
   without an offset, and a revision change applying to later publishes only.
-- Tracking: Not assigned.
+- Tracking: [Milestone #122](https://github.com/chrischeng-c4/axiom/milestone/122)
 
 ### Resource lifecycle parity
 
@@ -162,7 +162,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: End-to-end cases prove each route, that a batch
   reports per-message offsets, that an expired subscription disappears, and
   that a detached subscription stops receiving messages.
-- Tracking: Not assigned.
+- Tracking: [Milestone #123](https://github.com/chrischeng-c4/axiom/milestone/123)
 
 ### Live replica membership
 
@@ -176,7 +176,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: An operator case scales one to three and three to one
   while a publisher keeps appending, and proves no committed message is lost
   and no surviving member restarts.
-- Tracking: Not assigned.
+- Tracking: [Milestone #124](https://github.com/chrischeng-c4/axiom/milestone/124)
 
 ### Multi-shard topology
 
@@ -188,7 +188,7 @@ follow once subscriptions carry per-message state.
   API. Cross-shard transactions are outside this outcome.
 - Completion evidence: An operator case renders and reconciles a two-shard
   instance, and an end-to-end case proves keyed order across a shard split.
-- Tracking: Not assigned.
+- Tracking: [Milestone #125](https://github.com/chrischeng-c4/axiom/milestone/125)
 
 ### Quotas and scale transition
 
@@ -200,7 +200,7 @@ follow once subscriptions carry per-message state.
 - Completion evidence: End-to-end cases prove a quota refusal with the shared
   error envelope, and the GCP acceptance script proves a replica-count
   transition under load with no committed loss.
-- Tracking: Not assigned.
+- Tracking: [Milestone #126](https://github.com/chrischeng-c4/axiom/milestone/126)
 
 ## Non-goals
 

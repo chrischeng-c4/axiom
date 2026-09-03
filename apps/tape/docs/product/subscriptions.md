@@ -31,7 +31,7 @@ checklist; four of the seven H1 outcomes land here.
   `declarative-subscription-provisioning`, `per-topic-authorization`,
   `delivery-metrics`.
 
-## Subscription ack and competing subscribers (#3928)
+## Subscription ack and competing subscribers (Milestone #117)
 
 - Problem: a subscriber cannot acknowledge one message, cannot share a
   subscription across workers, never gets a message back after a crash, and
@@ -56,9 +56,9 @@ checklist; four of the seven H1 outcomes land here.
   subscriptions; depends on
   [replication-and-availability.md](replication-and-availability.md)
   § Deterministic failover for the failover proof.
-- Outcome: `subscription-ack-and-competing-subscribers`. Tracking: [#3928](https://github.com/chrischeng-c4/axiom/issues/3928)
+- Outcome: `subscription-ack-and-competing-subscribers`. Tracking: [Milestone #117](https://github.com/chrischeng-c4/axiom/milestone/117)
 
-## Push subscriptions
+## Push subscriptions (Milestone #118)
 
 - Problem: a subscriber has to poll; tape cannot call it.
 - Who: subscribers exposing an HTTPS endpoint; operators handling the token.
@@ -81,9 +81,9 @@ checklist; four of the seven H1 outcomes land here.
   creates. Confirmed on 2026-08-27: push stays a promise rather than becoming
   a non-goal, because the `streaming-pull` non-goal argues from pull and push
   being the two delivery paths.
-- Outcome: `push-subscriptions`. Tracking: not assigned.
+- Outcome: `push-subscriptions`. Tracking: [Milestone #118](https://github.com/chrischeng-c4/axiom/milestone/118)
 
-## Ordering keys
+## Ordering keys (Milestone #120)
 
 - Problem: `key` is stored and returned but delivery ignores it, so two
   messages for one entity can reach two workers in either order.
@@ -100,9 +100,9 @@ checklist; four of the seven H1 outcomes land here.
   semantics; the publish half is already in
   [topics-and-publishing.md](topics-and-publishing.md) § Durable single
   publish.
-- Outcome: `ordering-keys`. Tracking: not assigned.
+- Outcome: `ordering-keys`. Tracking: [Milestone #120](https://github.com/chrischeng-c4/axiom/milestone/120)
 
-## Attributes and filters
+## Attributes and filters (Milestone #121)
 
 - Problem: a message carries no metadata beyond `key`, and a subscription
   receives every message on its topic whether it wants it or not.
@@ -119,7 +119,7 @@ checklist; four of the seven H1 outcomes land here.
   creation.
 - Neighbours: extends Named pull subscriptions and Push subscriptions on the
   delivery side, Durable single publish on the publish side.
-- Outcome: `attributes-and-filters`. Tracking: not assigned.
+- Outcome: `attributes-and-filters`. Tracking: [Milestone #121](https://github.com/chrischeng-c4/axiom/milestone/121)
 
 ## Non-goals in this area
 

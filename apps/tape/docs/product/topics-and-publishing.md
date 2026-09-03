@@ -28,7 +28,7 @@ delivery, so their sections live in [subscriptions.md](subscriptions.md).
   `ordering-key-on-publish`,
   `storage-full-degraded-mode`.
 
-## Resource lifecycle parity
+## Resource lifecycle parity (Milestone #123)
 
 - Problem: topics cannot be listed or deleted, a publish carries exactly one
   message, and a subscription cannot expire or be detached from its topic.
@@ -48,9 +48,9 @@ delivery, so their sections live in [subscriptions.md](subscriptions.md).
 - Neighbours: extends Durable single publish; the expiration and detach
   halves extend [subscriptions.md](subscriptions.md) § Named pull
   subscriptions.
-- Outcome: `resource-lifecycle-parity`. Tracking: not assigned.
+- Outcome: `resource-lifecycle-parity`. Tracking: [Milestone #123](https://github.com/chrischeng-c4/axiom/milestone/123)
 
-## Schema validation
+## Schema validation (Milestone #122)
 
 - Problem: any JSON value is accepted as `payload`, so a subscriber cannot
   rely on the shape of what it pulls, and a malformed publish is durable
@@ -66,7 +66,7 @@ delivery, so their sections live in [subscriptions.md](subscriptions.md).
 - Open: the wire encoding of an Avro or Protobuf payload (binary versus JSON
   encoding); whether a topic can change its bound schema in place.
 - Neighbours: narrows what Durable single publish accepts as `payload`.
-- Outcome: `schema-validation`. Tracking: not assigned.
+- Outcome: `schema-validation`. Tracking: [Milestone #122](https://github.com/chrischeng-c4/axiom/milestone/122)
 
 ## Non-goals in this area
 
