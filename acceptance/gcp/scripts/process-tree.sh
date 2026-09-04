@@ -438,6 +438,29 @@ append_process_group_members() {
   }
 }
 
+# A process can exit after the snapshot records it and before the exact-token
+# check reads it. That race is safe to retry because every failed attempt keeps
+# the last complete record unchanged. A fixed retry bound still fails closed
+# when the kernel snapshot or identity checks remain unavailable.
+append_process_group_members_with_retry() {
+  local group_id="$1"
+  local excluded_pid_one="$2"
+  local excluded_pid_two="$3"
+  local output="$4"
+  local exclusion_record="${5:-}"
+  local attempts="${6:-3}"
+  local attempt
+  [[ "$attempts" =~ ^[1-9][0-9]*$ && "$attempts" -le 10 ]] || return 1
+  for ((attempt = 1; attempt <= attempts; attempt += 1)); do
+    if append_process_group_members \
+        "$group_id" "$excluded_pid_one" "$excluded_pid_two" "$output" \
+        "$exclusion_record"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 merge_process_records() {
   local output="$1"
   local new_records="$2"

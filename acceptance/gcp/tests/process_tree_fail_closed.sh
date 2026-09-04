@@ -85,6 +85,62 @@ after="$(openssl dgst -sha256 "$records" | awk '{print $NF}')"
   exit 1
 }
 
+# A live cloud run creates many short-lived gcloud, kubectl, and Terraform
+# processes. One process can exit between the kernel snapshot and its identity
+# check. Retry that transient race without weakening the persistent
+# fail-closed path.
+retry_bin="$test_root/retry-bin"
+retry_records="$test_root/retry-records.txt"
+retry_counter="$test_root/retry-counter.txt"
+persistent_counter="$test_root/persistent-counter.txt"
+mkdir -p "$retry_bin"
+cat > "$retry_bin/process-snapshot" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--snapshot" ]]; then
+  count=0
+  [[ ! -f "${SIFT_SNAPSHOT_COUNTER:?}" ]] \
+    || count="$(<"$SIFT_SNAPSHOT_COUNTER")"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$SIFT_SNAPSHOT_COUNTER"
+  if (( count <= SIFT_SNAPSHOT_FAILURES )); then
+    exit 17
+  fi
+fi
+exec "${SIFT_REAL_PROCESS_HELPER:?}" "$@"
+EOF
+chmod +x "$retry_bin/process-snapshot"
+if ! (
+  export PROCESS_SNAPSHOT_HELPER="$retry_bin/process-snapshot"
+  export SIFT_REAL_PROCESS_HELPER="$real_process_helper"
+  export SIFT_SNAPSHOT_COUNTER="$retry_counter"
+  export SIFT_SNAPSHOT_FAILURES=1
+  append_process_group_members_with_retry \
+    "$$" "$$" "" "$retry_records" "" 3
+); then
+  echo "a transient process snapshot failure stopped the acceptance run" >&2
+  exit 1
+fi
+[[ "$(<"$retry_counter")" == "2" ]] || {
+  echo "the process snapshot retry did not recover on the second scan" >&2
+  exit 1
+}
+
+if (
+  export PROCESS_SNAPSHOT_HELPER="$retry_bin/process-snapshot"
+  export SIFT_REAL_PROCESS_HELPER="$real_process_helper"
+  export SIFT_SNAPSHOT_COUNTER="$persistent_counter"
+  export SIFT_SNAPSHOT_FAILURES=3
+  append_process_group_members_with_retry \
+    "$$" "$$" "" "$retry_records" "" 3
+); then
+  echo "persistent process snapshot failures did not fail closed" >&2
+  exit 1
+fi
+[[ "$(<"$persistent_counter")" == "3" ]] || {
+  echo "the process snapshot retry exceeded its fixed attempt bound" >&2
+  exit 1
+}
+
 # A partial sort or failed final rename must not replace the last complete
 # exact-generation record. These commands run inside a conditional caller, so
 # each write step must report its own failure.

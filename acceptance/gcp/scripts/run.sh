@@ -823,9 +823,9 @@ run_main_pid="$$"
   watchdog_self="$(wait_for_process_id_file "$watchdog_pid_file" "$run_main_pid")" \
     || exit 0
   waited=0
-  if ! append_process_group_members \
+  if ! append_process_group_members_with_retry \
       "$run_process_group" "$run_main_pid" "$watchdog_self" "$watchdog_descendants" \
-      "$run_log_process_record"; then
+      "$run_log_process_record" 5; then
     report_process_scan_failure \
       "$process_scan_failure" "process-group enumeration failed in watchdog" \
       "$run_main_pid" "$run_owner_start_token" || true
@@ -843,9 +843,9 @@ run_main_pid="$$"
   while (( waited < MAX_CLOUD_SECONDS )); do
     sleep 10
     waited=$((waited + 10))
-    if ! append_process_group_members \
+    if ! append_process_group_members_with_retry \
         "$run_process_group" "$run_main_pid" "$watchdog_self" "$watchdog_descendants" \
-        "$run_log_process_record"; then
+        "$run_log_process_record" 5; then
       report_process_scan_failure \
         "$process_scan_failure" "process-group enumeration failed in watchdog" \
         "$run_main_pid" "$run_owner_start_token" || true
@@ -865,9 +865,9 @@ run_main_pid="$$"
   done
   signal_recorded_processes "$watchdog_descendants" TERM
   sleep 10
-  if ! append_process_group_members \
+  if ! append_process_group_members_with_retry \
       "$run_process_group" "$run_main_pid" "$watchdog_self" "$watchdog_descendants" \
-      "$run_log_process_record"; then
+      "$run_log_process_record" 5; then
     report_process_scan_failure \
       "$process_scan_failure" "process-group enumeration failed in watchdog" \
       "$run_main_pid" "$run_owner_start_token" || true
