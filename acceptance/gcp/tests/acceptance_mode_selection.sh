@@ -762,6 +762,14 @@ present "the Sift verifier no longer requires all eleven restored role pods" \
   "'app.kubernetes.io/name=sift' sift-restore-topology 11" "$SIFT_VERIFY_SCRIPT"
 absent "the gRPC probe escaped to the shared acceptance pool" \
   'cloud.google.com/gke-nodepool: acceptance-pool' "$SIFT_VERIFY_SCRIPT"
+absent "the rendered Sift CR can coerce a numeric-looking run ID" \
+  'axiom-run-id: ${RUN_ID}' "$RENDER_SCRIPT"
+absent "a Sift verification manifest can coerce a numeric-looking run ID" \
+  'axiom-run-id: ${RUN_ID}' "$SIFT_VERIFY_SCRIPT"
+present "the rendered Sift CR quotes its run ID" \
+  'axiom-run-id: "${RUN_ID}"' "$RENDER_SCRIPT"
+present "Sift verification manifests quote their run IDs" \
+  'axiom-run-id: "${RUN_ID}"' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier lost GCS outage testing" 'archive-iam-disabled' "$SIFT_VERIFY_SCRIPT"
 present "the Sift verifier does not timestamp the real GCS outage" \
   'archive_outage_started_at=' "$SIFT_VERIFY_SCRIPT"

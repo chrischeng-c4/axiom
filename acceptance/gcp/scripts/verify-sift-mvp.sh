@@ -821,7 +821,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     axiom-owner: gcp-operator-acceptance
-    axiom-run-id: ${RUN_ID}
+    axiom-run-id: "${RUN_ID}"
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
@@ -829,13 +829,13 @@ spec:
     metadata:
       labels:
         axiom-owner: gcp-operator-acceptance
-        axiom-run-id: ${RUN_ID}
+        axiom-run-id: "${RUN_ID}"
     spec:
       serviceAccountName: sift-rig
       automountServiceAccountToken: false
       restartPolicy: Never
       nodeSelector:
-        axiom-run-id: ${RUN_ID}
+        axiom-run-id: "${RUN_ID}"
       containers:
         - name: sift
           image: ${SIFT_IMAGE}
@@ -1629,7 +1629,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     axiom-owner: gcp-operator-acceptance
-    axiom-run-id: ${RUN_ID}
+    axiom-run-id: "${RUN_ID}"
     sift-load-phase: ${phase}
 spec:
   suspend: true
@@ -1639,14 +1639,14 @@ spec:
     metadata:
       labels:
         axiom-owner: gcp-operator-acceptance
-        axiom-run-id: ${RUN_ID}
+        axiom-run-id: "${RUN_ID}"
         sift-load-phase: ${phase}
     spec:
       serviceAccountName: sift-rig
       automountServiceAccountToken: false
       restartPolicy: Never
       nodeSelector:
-        axiom-run-id: ${RUN_ID}
+        axiom-run-id: "${RUN_ID}"
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -2491,7 +2491,7 @@ spec:
     maxConcurrentRequests: 32
   placement:
     nodeSelector:
-      axiom-run-id: ${RUN_ID}
+      axiom-run-id: "${RUN_ID}"
   gcpProjectId: ${PROJECT_ID}
   gkeClusterName: ${GKE_CLUSTER_NAME}
   gkeLocation: ${GKE_ZONE}

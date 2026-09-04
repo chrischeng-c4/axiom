@@ -339,7 +339,7 @@ $(if [[ "$ACCEPTANCE_APPS" == "sift" ]]; then cat <<PATCH
         path: /spec/placement
         value:
           nodeSelector:
-            axiom-run-id: ${RUN_ID}
+            axiom-run-id: "${RUN_ID}"
 PATCH
 fi)
 EOF

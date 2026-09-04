@@ -166,9 +166,10 @@ if grep -q 'lumen-backup' "$scratch_dir/lumen-auth/manifests/lumen/instance.bund
 fi
 
 # --- Mode 3: standalone Sift MVP ---
+sift_numeric_run_id="0903171714"
 (
   export ACCEPTANCE_APPS="sift"
-  export RUN_ID="matrix-test"
+  export RUN_ID="$sift_numeric_run_id"
   export MANIFEST_DIR="$scratch_dir/sift/manifests"
   export GKE_CLUSTER_NAME="matrix-cluster"
   export GKE_ZONE="asia-east1-a"
@@ -182,6 +183,18 @@ fi
 ) || fail "rendering failed for mode 'sift'"
 
 check_app_subtree "sift" "sift" "$scratch_dir/sift/manifests" "sift sift-system"
+
+sift_cr_json="$(
+  kubectl patch --local --type=merge \
+    -f "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+    -p '{}' -o json \
+    | jq -c 'select(.kind == "Sift")'
+)" || fail "could not parse the standalone Sift manifest as Kubernetes JSON"
+jq -e --arg run_id "$sift_numeric_run_id" '
+  .spec.placement.nodeSelector["axiom-run-id"] == $run_id
+  and (.spec.placement.nodeSelector["axiom-run-id"] | type) == "string"
+' <<<"$sift_cr_json" >/dev/null \
+  || fail "standalone Sift coerced a numeric-looking run ID into a YAML number"
 
 grep -q 'storeSize: 50Gi' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
   || fail "standalone Sift did not render its 50Gi store volume"
