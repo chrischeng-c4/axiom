@@ -39,3 +39,6 @@ pub mod validate;
 pub mod venv;
 pub mod version;
 pub mod workspace;
+
+#[cfg(test)]
+mod tests;

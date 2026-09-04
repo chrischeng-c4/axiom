@@ -307,7 +307,7 @@ pub(crate) fn find_index_wheel(req: &PackageRequirement, index: &Path) -> Result
     )
 }
 
-fn candidate_versions(pkg_dir: &Path, specifiers: &[String]) -> Result<Vec<String>> {
+pub(crate) fn candidate_versions(pkg_dir: &Path, specifiers: &[String]) -> Result<Vec<String>> {
     let mut versions = fs::read_dir(pkg_dir)
         .with_context(|| format!("read package index {}", pkg_dir.display()))?
         .filter_map(|entry| {

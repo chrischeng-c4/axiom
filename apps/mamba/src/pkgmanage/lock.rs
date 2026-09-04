@@ -30,6 +30,7 @@ use crate::pkgmanage::add::{
     append_lock_source_fields, atomic_write, dep_name, source_meta_from_manifest, ManifestState,
     SourceMeta,
 };
+use crate::pkgmanage::pkgmgr::pip_install::is_extra_marker;
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -51,41 +52,34 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     let state = ManifestState::parse(&manifest_src)?;
 
     let offline = sub.get_flag("offline");
-    let provider_resolved = resolve_manifest_provider_deps(&state)?;
     let registry_deps = registry_dependency_strings(&state);
-    let mut resolved = if registry_deps.is_empty() {
-        Vec::new()
+    let body = if let Some(idx) = resolve_index_dir(sub) {
+        resolve_and_render_via_index(&state, &idx)?
+    } else if registry_deps.is_empty() {
+        let mut resolved = resolve_manifest_provider_deps(&state)?;
+        resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
+        render_lockfile(&state.dependencies, &resolved)
+    } else if offline {
+        bail!(
+            "no frozen index configured and --offline set (pass --index DIR \
+             or set {FROZEN_INDEX_ENV})"
+        );
     } else {
-        match resolve_index_dir(sub) {
-            Some(idx) => {
-                let direct: Vec<Pin> = registry_deps
-                    .iter()
-                    .map(|d| Pin::parse(d))
-                    .collect::<Result<Vec<_>>>()?;
-                resolve_transitive(&direct, &idx)?
+        match resolve_index_url(sub) {
+            Some(index_url) => {
+                let mut resolved = resolve_via_pypi(&registry_deps, &index_url)?;
+                resolved.extend(resolve_manifest_provider_deps(&state)?);
+                resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
+                render_lockfile(&state.dependencies, &resolved)
             }
-            None => {
-                if offline {
-                    bail!(
-                        "no frozen index configured and --offline set (pass --index DIR \
-                         or set {FROZEN_INDEX_ENV})"
-                    );
-                }
-                match resolve_index_url(sub) {
-                    Some(index_url) => resolve_via_pypi(&registry_deps, &index_url)?,
-                    None => bail!(
-                        "no package source configured for `mamba lock`; pass --index DIR, \
-                         set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
-                    ),
-                }
-            }
+            None => bail!(
+                "no package source configured for `mamba lock`; pass --index DIR, \
+                 set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
+            ),
         }
     };
-    resolved.extend(provider_resolved);
-    resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
 
     let lock_path = project_dir.join(LOCKFILE_FILE);
-    let body = render_lockfile(&state.dependencies, &resolved);
     if sub.get_flag("check") {
         let existing = fs::read_to_string(&lock_path)
             .with_context(|| format!("read {}", lock_path.display()))?;
@@ -360,34 +354,73 @@ fn resolve_manifest_provider_deps(state: &ManifestState) -> Result<Vec<Resolved>
     Ok(out)
 }
 
+/// Resolve `state`'s registry dependencies against a frozen local index and
+/// render the same `mamba.lock` body `mamba lock --index` would write for
+/// this manifest, so `mamba add --index` and `mamba lock --index` agree byte
+/// for byte on the same project (frozen decision, #4206).
+pub(crate) fn resolve_and_render_via_index(state: &ManifestState, index: &Path) -> Result<String> {
+    let provider_resolved = resolve_manifest_provider_deps(state)?;
+    let registry_deps = registry_dependency_strings(state);
+    let mut resolved = if registry_deps.is_empty() {
+        Vec::new()
+    } else {
+        let direct: Vec<Pin> = registry_deps
+            .iter()
+            .map(|d| Pin::parse(d))
+            .collect::<Result<Vec<_>>>()?;
+        resolve_transitive(&direct, index)?
+    };
+    resolved.extend(provider_resolved);
+    resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
+    Ok(render_lockfile(&state.dependencies, &resolved))
+}
+
 fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
     let direct_keys: BTreeSet<String> = direct.iter().map(|p| p.key()).collect();
     let mut seen: BTreeMap<String, Resolved> = BTreeMap::new();
-    let mut queue: VecDeque<Pin> = VecDeque::new();
-    for p in direct {
-        queue.push_back(p.clone());
-    }
-    while let Some(pin) = queue.pop_front() {
+    let mut queue: VecDeque<String> = direct.iter().map(|p| p.key()).collect();
+    while let Some(raw) = queue.pop_front() {
+        let (pin, meta) = load_metadata(&raw, index)?;
         let key = pin.key();
         if seen.contains_key(&key) {
             continue;
         }
-        let meta = load_metadata(&pin, index)?;
-        let requires: Vec<String> = meta.iter().map(|p| p.key()).collect();
         let is_direct = direct_keys.contains(&key);
+        let filtered_requires: Vec<String> = meta
+            .requires
+            .iter()
+            .filter(|r| !is_extra_marker(r))
+            .cloned()
+            .collect();
+        let mut requires_keys = Vec::with_capacity(filtered_requires.len());
+        for req in &filtered_requires {
+            let (dep_pin, _) = load_metadata(req, index)?;
+            requires_keys.push(dep_pin.key());
+        }
+        let source = if meta.path.is_empty() {
+            SourceMeta::Default
+        } else {
+            SourceMeta::Index {
+                path: meta.path.clone(),
+            }
+        };
         seen.insert(
             key,
             Resolved {
                 pin: pin.clone(),
                 direct: is_direct,
-                requires: requires.clone(),
-                sha256: None,
+                requires: requires_keys,
+                sha256: if meta.sha256.is_empty() {
+                    None
+                } else {
+                    Some(meta.sha256.clone())
+                },
                 url: None,
-                source: SourceMeta::Default,
+                source,
             },
         );
-        for r in meta {
-            queue.push_back(r);
+        for req in filtered_requires {
+            queue.push_back(req);
         }
     }
     let mut out: Vec<Resolved> = seen.into_values().collect();
@@ -395,38 +428,135 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
     Ok(out)
 }
 
-fn load_metadata(pin: &Pin, index: &Path) -> Result<Vec<Pin>> {
-    let pkg_dir = index.join(normalize_name(&pin.name));
-    let ver_dir = pkg_dir.join(&pin.version);
-    if !ver_dir.exists() {
+/// Metadata read from `<INDEX>/<name>/<version>/metadata.toml` (or, when a
+/// key is absent — the legacy fixture shape `apps/mamba/tests/pkgmgr/fixtures.rs`
+/// still writes — derived from the version directory's one wheel).
+pub(crate) struct IndexMetadata {
+    pub(crate) sha256: String,
+    pub(crate) path: String,
+    pub(crate) requires: Vec<String>,
+}
+
+/// Resolve a requirement (`name`, `name>=1`, `name==1.0`, `name>=1,<3`)
+/// against a frozen index: select the highest version directory that
+/// satisfies every specifier (PEP 440 comparison, no backtracking, via
+/// `pip_install::candidate_versions`, the same selection `pip install`
+/// already does against a frozen index), then read that version's metadata.
+pub(crate) fn load_metadata(requirement: &str, index: &Path) -> Result<(Pin, IndexMetadata)> {
+    use crate::pkgmanage::pkgmgr::pip_install::candidate_versions;
+    use crate::pkgmanage::pkgmgr::requirements_parse::{parse_one_line, RequirementLine};
+
+    let req = match parse_one_line(requirement) {
+        Ok(RequirementLine::Package(p)) => p,
+        _ => bail!("malformed dependency requirement `{requirement}`"),
+    };
+    let pkg_dir = index.join(normalize_name(&req.name));
+    if !pkg_dir.exists() {
         bail!(
-            "no candidate for `{name}=={version}` in index {index} (resolver failure)",
-            name = pin.name,
-            version = pin.version,
-            index = index.display()
+            "no candidate for `{}` matching {:?} in index {} (resolver failure)",
+            req.name,
+            req.specifiers,
+            index.display()
         );
     }
+    let versions = candidate_versions(&pkg_dir, &req.specifiers)?;
+    let version = versions.into_iter().next().with_context(|| {
+        format!(
+            "no candidate for `{}` matching {:?} in index {}",
+            req.name,
+            req.specifiers,
+            index.display()
+        )
+    })?;
+    let ver_dir = pkg_dir.join(&version);
     let meta_path = ver_dir.join("metadata.toml");
-    if !meta_path.exists() {
-        return Ok(vec![]);
+    let mut sha256 = String::new();
+    let mut wheel_path: Option<PathBuf> = None;
+    let mut requires: Vec<String> = Vec::new();
+    if meta_path.exists() {
+        let raw = fs::read_to_string(&meta_path)
+            .with_context(|| format!("read {}", meta_path.display()))?;
+        let doc: toml::Value = raw
+            .parse()
+            .with_context(|| format!("parse {}", meta_path.display()))?;
+        sha256 = doc
+            .get("sha256")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if let Some(fname) = doc.get("filename").and_then(|v| v.as_str()) {
+            let candidate = ver_dir.join(fname);
+            if candidate.is_file() {
+                wheel_path = Some(candidate);
+            }
+        }
+        requires = doc
+            .get("requires")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
     }
-    let raw =
-        fs::read_to_string(&meta_path).with_context(|| format!("read {}", meta_path.display()))?;
-    let doc: toml::Value = raw
-        .parse()
-        .with_context(|| format!("parse {}", meta_path.display()))?;
-    let reqs = doc
-        .get("requires")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    reqs.into_iter()
-        .map(|s| Pin::parse(&s))
-        .collect::<Result<Vec<_>>>()
+    if wheel_path.is_none() || sha256.is_empty() {
+        if let Some(found) = find_single_wheel(&ver_dir)? {
+            if sha256.is_empty() {
+                sha256 = sha256_of_file(&found)?;
+            }
+            if wheel_path.is_none() {
+                wheel_path = Some(found);
+            }
+        }
+    }
+    let path = match wheel_path {
+        Some(p) => absolutize(&p)?.to_string_lossy().into_owned(),
+        None => String::new(),
+    };
+    let pin = Pin {
+        name: req.name,
+        version,
+    };
+    Ok((pin, IndexMetadata {
+        sha256,
+        path,
+        requires,
+    }))
+}
+
+/// The one `.whl` file staged in a version directory, if any — the fallback
+/// source of `sha256`/`path` for a `metadata.toml` written before those keys
+/// existed (`apps/mamba/tests/pkgmgr/fixtures.rs`).
+fn find_single_wheel(ver_dir: &Path) -> Result<Option<PathBuf>> {
+    if !ver_dir.is_dir() {
+        return Ok(None);
+    }
+    let mut wheels: Vec<PathBuf> = fs::read_dir(ver_dir)
+        .with_context(|| format!("read {}", ver_dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("whl"))
+        .collect();
+    wheels.sort();
+    Ok(wheels.into_iter().next())
+}
+
+fn sha256_of_file(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn absolutize(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()
+            .context("read current directory")?
+            .join(path))
+    }
 }
 
 fn render_lockfile(direct_deps: &[String], resolved: &[Resolved]) -> String {

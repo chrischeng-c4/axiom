@@ -40,6 +40,7 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
         );
     }
 
+    let mut index_used: Option<PathBuf> = None;
     let resolved = if let Some(provider) = sub.get_one::<String>("provider") {
         resolve_with_provider(spec_raw, provider)?
     } else if looks_like_wheel_path(spec_raw) {
@@ -49,6 +50,9 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
         let index_dir = resolve_index_dir(sub);
         let offline = sub.get_flag("offline");
         let index_url = resolve_index_url(sub);
+        if let Some(idx) = &index_dir {
+            index_used = Some(idx.clone());
+        }
         resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?
     };
 
@@ -65,13 +69,20 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
                 },
             );
         }
-        SourceMeta::Default | SourceMeta::DirectFile { .. } => {
+        SourceMeta::Default | SourceMeta::DirectFile { .. } | SourceMeta::Index { .. } => {
             state.remove_source(&resolved.name);
         }
     }
     let new_manifest = state.render();
 
-    let new_lockfile = render_lockfile_for_manifest_with_resolved(&state, &resolved)?;
+    // A local-index add renders the same transitive closure `mamba lock`
+    // would, through the same resolver and writer, so the two commands agree
+    // byte for byte. Every other source keeps the single-package renderer.
+    let new_lockfile = if let Some(idx) = &index_used {
+        crate::pkgmanage::lock::resolve_and_render_via_index(&state, idx)?
+    } else {
+        render_lockfile_for_manifest_with_resolved(&state, &resolved)?
+    };
 
     let lock_path = project_dir.join(LOCKFILE_FILE);
     atomic_write(&manifest_path, new_manifest.as_bytes())?;
@@ -139,6 +150,13 @@ pub(crate) enum SourceMeta {
         provides: Vec<String>,
         compatibility: String,
         maturity: String,
+    },
+    /// Resolved against a frozen local `mamba index build` output. Carries
+    /// the absolute path to the staged wheel; `lockfile/mod.rs` maps
+    /// `source_kind = "index"` to no source ref, exactly as `Default` does
+    /// today (frozen decision).
+    Index {
+        path: String,
     },
 }
 
@@ -243,12 +261,28 @@ fn resolve_with_local_index(spec: &DepSpec, idx: &Path) -> Result<ResolvedDep> {
         }
         None => pick_latest_version(&pkg_dir)?,
     };
+    // Read the digest and staged path through the same reader `mamba lock`
+    // uses, so a single-package `add` and the transitive-closure render both
+    // agree on what the frozen index says about this exact pin.
+    let requirement = format!("{}=={}", spec.name, version);
+    let (pin, meta) = crate::pkgmanage::lock::load_metadata(&requirement, idx)?;
+    let source = if meta.path.is_empty() {
+        SourceMeta::Default
+    } else {
+        SourceMeta::Index {
+            path: meta.path.clone(),
+        }
+    };
     Ok(ResolvedDep {
-        name: spec.name.clone(),
-        version,
-        sha256: None,
+        name: pin.name,
+        version: pin.version,
+        sha256: if meta.sha256.is_empty() {
+            None
+        } else {
+            Some(meta.sha256)
+        },
         url: None,
-        source: SourceMeta::Default,
+        source,
     })
 }
 
@@ -799,6 +833,12 @@ fn render_lockfile_for_manifest_with_resolved(
                 },
             );
         }
+        SourceMeta::Index { path } => {
+            sources.insert(
+                just_added.name.clone(),
+                SourceMeta::Index { path: path.clone() },
+            );
+        }
     }
     Ok(render_lockfile_with_known_hashes(
         &state.dependencies,
@@ -895,7 +935,7 @@ pub(crate) fn render_lockfile_with_known_hashes(
                     &SourceMeta::DirectFile { path: path.clone() },
                 );
             }
-            Some(SourceMeta::MambaProvider { .. }) => {
+            Some(SourceMeta::MambaProvider { .. }) | Some(SourceMeta::Index { .. }) => {
                 append_lock_source_fields(&mut out, name, version, "", sources.get(name).unwrap());
             }
             Some(SourceMeta::Default) | None => {
@@ -931,6 +971,11 @@ pub(crate) fn append_lock_source_fields(
                 "source = \"direct-file://{}\"\n",
                 escape_toml_string(path)
             ));
+        }
+        SourceMeta::Index { path } => {
+            out.push_str("url = \"\"\n");
+            out.push_str("source_kind = \"index\"\n");
+            out.push_str(&format!("path = \"{}\"\n", escape_toml_string(path)));
         }
         SourceMeta::MambaProvider {
             provider,
