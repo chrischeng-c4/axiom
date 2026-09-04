@@ -5,6 +5,9 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Mamba - Force-typed Python compiler with native code generation"
+# Every test target is declared below. Auto-discovery is off so that the
+# manifest is the inventory: a file nobody declared does not run.
+autotests = false
 
 [features]
 default = []
@@ -353,4 +356,9 @@ harness = false
 [[test]]
 name = "cpython_ported_integration"
 path = "tests/cpython_ported_integration.rs"
+
+# e2e — black-box cases driving the built binary; one file per case.
+[[test]]
+name = "pkgmgr_lock_frozen_transitive"
+path = "e2e/pkgmgr_lock_frozen_transitive.rs"
 
