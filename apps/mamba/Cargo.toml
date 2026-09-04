@@ -373,3 +373,7 @@ path = "e2e/pkgmgr_sync_prune.rs"
 [[test]]
 name = "pkgmgr_index_url_simple"
 path = "e2e/pkgmgr_index_url_simple.rs"
+
+[[test]]
+name = "pkgmgr_run_file_venv"
+path = "e2e/pkgmgr_run_file_venv.rs"
