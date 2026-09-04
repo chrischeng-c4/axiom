@@ -276,3 +276,247 @@ mod sync_pip_run_real_install {
         assert_eq!(got, expected);
     }
 }
+
+// Colocated unit tests for #4208: `mamba sync` must uninstall distributions
+// the lock no longer pins, and `mamba sync --check` must report them as
+// extraneous instead of calling the environment synchronized.
+//
+// These cover the rule that is observable only inside the implementation --
+// enumerating a venv's own `*.dist-info` directories and comparing each
+// `(normalized name, version)` against `mamba.lock`, and pruning exactly
+// what a distribution's own RECORD (plus the bytecode cache `import`
+// derives from it) owns -- as opposed to
+// `apps/mamba/e2e/pkgmgr_sync_prune.rs`, which judges the externally
+// observable `sync` / `sync --check` / `run` shape end to end.
+mod sync_prune {
+    use std::path::Path;
+
+    use crate::pkgmanage::pkgmgr::installer::Installer;
+    use crate::pkgmanage::sync::{plan_extraneous, plan_install, prune_distribution, LockedPkg};
+
+    fn locked_pkg(name: &str, version: &str) -> LockedPkg {
+        LockedPkg {
+            name: name.to_string(),
+            version: version.to_string(),
+            url: String::new(),
+            sha256: String::new(),
+            source_kind: "index".to_string(),
+            path: String::new(),
+            provider: String::new(),
+            provides: Vec::new(),
+            compatibility: String::new(),
+            maturity: String::new(),
+        }
+    }
+
+    fn write_dist_info(site: &Path, dist: &str, version: &str) {
+        let dir = site.join(format!("{dist}-{version}.dist-info"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("RECORD"), "").unwrap();
+    }
+
+    #[test]
+    fn plan_extraneous_names_the_dist_info_the_lock_no_longer_pins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(&site).unwrap();
+        write_dist_info(&site, "a", "1.0");
+        write_dist_info(&site, "b", "1.0");
+
+        let packages = vec![locked_pkg("a", "1.0")];
+        let extraneous = plan_extraneous(&packages, &site);
+
+        assert_eq!(extraneous, vec![("b".to_string(), "1.0".to_string())]);
+        let report = extraneous
+            .iter()
+            .map(|(n, v)| format!("{n}=={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert_eq!(report, "b==1.0");
+    }
+
+    #[test]
+    fn plan_extraneous_and_plan_install_are_both_empty_when_synchronized() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(&site).unwrap();
+        write_dist_info(&site, "a", "1.0");
+
+        let packages = vec![locked_pkg("a", "1.0")];
+        assert!(plan_extraneous(&packages, &site).is_empty());
+        assert!(plan_install(&packages, Some(&site)).is_empty());
+    }
+
+    #[test]
+    fn plan_extraneous_ignores_a_provider_directory_without_dist_info() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(site.join("mamba_provider_pkg")).unwrap();
+        std::fs::write(site.join("mamba_provider_pkg").join("INSTALLER"), "mamba\n").unwrap();
+
+        let extraneous = plan_extraneous(&[], &site);
+        assert!(
+            extraneous.is_empty(),
+            "a provider directory without dist-info must not be reported: {extraneous:?}"
+        );
+    }
+
+    #[test]
+    fn sync_uninstalls_the_extraneous_distribution_and_leaves_the_kept_one_intact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(&site).unwrap();
+
+        // `a` stays locked and installed.
+        std::fs::create_dir_all(site.join("a-1.0.dist-info")).unwrap();
+        std::fs::write(
+            site.join("a-1.0.dist-info").join("RECORD"),
+            "a/__init__.py,,\na-1.0.dist-info/RECORD,,\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(site.join("a")).unwrap();
+        std::fs::write(site.join("a").join("__init__.py"), "answer = 1\n").unwrap();
+
+        // `b` is installed but the lock no longer pins it.
+        std::fs::create_dir_all(site.join("b-1.0.dist-info")).unwrap();
+        std::fs::write(
+            site.join("b-1.0.dist-info").join("RECORD"),
+            "b/__init__.py,,\nb-1.0.dist-info/RECORD,,\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(site.join("b")).unwrap();
+        std::fs::write(site.join("b").join("__init__.py"), "answer = 2\n").unwrap();
+
+        let packages = vec![locked_pkg("a", "1.0")];
+        let extraneous = plan_extraneous(&packages, &site);
+        assert_eq!(extraneous, vec![("b".to_string(), "1.0".to_string())]);
+
+        let installer = Installer::new();
+        for (name, _version) in &extraneous {
+            installer.uninstall(name, &site).expect("uninstall b");
+        }
+
+        assert!(!site.join("b-1.0.dist-info").exists());
+        assert!(!site.join("b").exists());
+        assert!(site.join("a-1.0.dist-info").is_dir());
+        assert!(site.join("a").join("__init__.py").is_file());
+    }
+
+    #[test]
+    fn prune_removes_the_bytecode_cache_and_the_emptied_package_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(site.join("b")).unwrap();
+        std::fs::write(site.join("b").join("__init__.py"), "answer = 2\n").unwrap();
+        std::fs::create_dir_all(site.join("b").join("__pycache__")).unwrap();
+        std::fs::write(
+            site.join("b")
+                .join("__pycache__")
+                .join("__init__.cpython-312.pyc"),
+            b"\0asm\0\0\0\0",
+        )
+        .unwrap();
+
+        let dist_info = site.join("b-1.0.dist-info");
+        std::fs::create_dir_all(&dist_info).unwrap();
+        std::fs::write(dist_info.join("METADATA"), "Name: b\nVersion: 1.0\n").unwrap();
+        std::fs::write(
+            dist_info.join("RECORD"),
+            "b/__init__.py,,\n\
+             b-1.0.dist-info/METADATA,,\n\
+             b-1.0.dist-info/RECORD,,\n",
+        )
+        .unwrap();
+
+        let installer = Installer::new();
+        prune_distribution(&installer, &site, "b").expect("prune b");
+
+        assert!(!site.join("b").exists(), "b/ must be gone after pruning");
+        assert!(
+            !site.join("b-1.0.dist-info").exists(),
+            "b-1.0.dist-info must be gone after pruning"
+        );
+    }
+
+    #[test]
+    fn prune_keeps_a_namespace_portion_owned_by_a_surviving_distribution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(site.join("ns")).unwrap();
+        std::fs::write(site.join("ns").join("one.py"), "one = 1\n").unwrap();
+        std::fs::write(site.join("ns").join("two.py"), "two = 2\n").unwrap();
+        std::fs::create_dir_all(site.join("ns").join("__pycache__")).unwrap();
+        std::fs::write(
+            site.join("ns")
+                .join("__pycache__")
+                .join("one.cpython-312.pyc"),
+            b"\0asm\0\0\0\0",
+        )
+        .unwrap();
+        std::fs::write(
+            site.join("ns")
+                .join("__pycache__")
+                .join("two.cpython-312.pyc"),
+            b"\0asm\0\0\0\0",
+        )
+        .unwrap();
+
+        let one_dist_info = site.join("one-1.0.dist-info");
+        std::fs::create_dir_all(&one_dist_info).unwrap();
+        std::fs::write(one_dist_info.join("METADATA"), "Name: one\nVersion: 1.0\n").unwrap();
+        std::fs::write(
+            one_dist_info.join("RECORD"),
+            "ns/one.py,,\n\
+             one-1.0.dist-info/METADATA,,\n\
+             one-1.0.dist-info/RECORD,,\n",
+        )
+        .unwrap();
+
+        let two_dist_info = site.join("two-1.0.dist-info");
+        std::fs::create_dir_all(&two_dist_info).unwrap();
+        std::fs::write(two_dist_info.join("METADATA"), "Name: two\nVersion: 1.0\n").unwrap();
+        std::fs::write(
+            two_dist_info.join("RECORD"),
+            "ns/two.py,,\n\
+             two-1.0.dist-info/METADATA,,\n\
+             two-1.0.dist-info/RECORD,,\n",
+        )
+        .unwrap();
+
+        let installer = Installer::new();
+        prune_distribution(&installer, &site, "one").expect("prune one");
+
+        assert!(
+            !site.join("ns").join("one.py").exists(),
+            "ns/one.py must be gone after pruning `one`"
+        );
+        assert!(
+            !site
+                .join("ns")
+                .join("__pycache__")
+                .join("one.cpython-312.pyc")
+                .exists(),
+            "ns/__pycache__/one.cpython-312.pyc must be gone after pruning `one`"
+        );
+        assert!(
+            !site.join("one-1.0.dist-info").exists(),
+            "one-1.0.dist-info must be gone after pruning `one`"
+        );
+
+        assert!(
+            site.join("ns").join("two.py").is_file(),
+            "ns/two.py belongs to the surviving distribution `two` and must survive"
+        );
+        assert!(
+            site.join("ns")
+                .join("__pycache__")
+                .join("two.cpython-312.pyc")
+                .is_file(),
+            "ns/__pycache__/two.cpython-312.pyc belongs to `two` and must survive"
+        );
+        assert!(
+            site.join("ns").is_dir(),
+            "ns/ is still owned by the surviving distribution `two` and must survive"
+        );
+    }
+}

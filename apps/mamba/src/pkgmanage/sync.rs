@@ -138,22 +138,38 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
         .exists()
         .then(|| resolve_site_packages(&venv_dir));
     let plan = plan_install(&packages, probe_site.as_deref());
+    let extraneous: Vec<(String, String)> = probe_site
+        .as_deref()
+        .map(|site| plan_extraneous(&packages, site))
+        .unwrap_or_default();
     if sub.get_flag("check") {
         if !venv_dir.join("pyvenv.cfg").exists() {
             bail!("environment is not synchronized with mamba.lock; missing .venv/pyvenv.cfg");
         }
-        if !plan.is_empty() {
-            let missing = plan
-                .iter()
-                .map(|p| format!("{}=={}", p.name, p.version))
-                .collect::<Vec<_>>()
-                .join(", ");
-            bail!("environment is not synchronized with mamba.lock; pending packages: {missing}");
+        if !plan.is_empty() || !extraneous.is_empty() {
+            let mut message = String::from("environment is not synchronized with mamba.lock");
+            if !plan.is_empty() {
+                let missing = plan
+                    .iter()
+                    .map(|p| format!("{}=={}", p.name, p.version))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                message.push_str(&format!("; pending packages: {missing}"));
+            }
+            if !extraneous.is_empty() {
+                let extra = extraneous
+                    .iter()
+                    .map(|(name, version)| format!("{name}=={version}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                message.push_str(&format!("; extraneous packages: {extra}"));
+            }
+            bail!(message);
         }
         println!("environment is synchronized with mamba.lock");
         return Ok(());
     }
-    if plan.is_empty() && venv_dir.join("pyvenv.cfg").exists() {
+    if plan.is_empty() && extraneous.is_empty() && venv_dir.join("pyvenv.cfg").exists() {
         eprintln!("no_op: environment already in sync with mamba.lock");
         return Ok(());
     }
@@ -181,6 +197,15 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
     let layout = layout_from_pyvenv_cfg(&venv_dir)
         .map_err(|e| anyhow::anyhow!("resolve venv layout at {}: {e}", venv_dir.display()))?;
     let installer = Installer::new();
+
+    // Prune every distribution the lock no longer pins before installing the
+    // pending set — a package whose installed version differs from its pin
+    // is both extraneous (old version) and pending (new version), and must
+    // be removed before the new version is placed.
+    for (name, _version) in &extraneous {
+        prune_distribution(&installer, &site, name)?;
+    }
+
     for pkg in &plan {
         if pkg.source_kind == "mamba_provider" {
             materialize_mamba_provider(&site, pkg)?;
@@ -488,12 +513,151 @@ fn derive_filename(url: &str, name: &str, version: &str) -> String {
 /// Filter `packages` down to those not yet installed at `site`. `site` is
 /// `None` when the venv doesn't exist yet (nothing can be installed there
 /// yet), which trivially makes every package pending.
-fn plan_install(packages: &[LockedPkg], site: Option<&Path>) -> Vec<LockedPkg> {
+pub(crate) fn plan_install(packages: &[LockedPkg], site: Option<&Path>) -> Vec<LockedPkg> {
     packages
         .iter()
         .filter(|p| !site.is_some_and(|site| is_installed(site, p)))
         .cloned()
         .collect()
+}
+
+/// Enumerate distributions installed at `site` whose `(normalized name,
+/// version)` matches no entry in `packages` -- the set `mamba sync` must
+/// uninstall to converge on `mamba.lock`. Only `*.dist-info` directories are
+/// considered: a provider directory written by `materialize_mamba_provider`
+/// carries no dist-info and so is never reported or pruned. Sorted by name
+/// so the `--check` report is stable.
+pub(crate) fn plan_extraneous(packages: &[LockedPkg], site: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(site) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let s = file_name.to_string_lossy();
+        let Some(stem) = s.strip_suffix(".dist-info") else {
+            continue;
+        };
+        let Some((dist, version)) = stem.rsplit_once('-') else {
+            continue;
+        };
+        let normalized = normalize_dist_name(dist);
+        let still_locked = packages
+            .iter()
+            .any(|p| normalize_dist_name(&p.name) == normalized && p.version == version);
+        if !still_locked {
+            out.push((dist.to_string(), version.to_string()));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Locate `name`'s own `*.dist-info` directory at `site`, the same
+/// normalized-name match `Installer::uninstall` itself uses.
+fn find_dist_info_dir(site: &Path, name: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(site).ok()?;
+    let target = normalize_dist_name(name);
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let s = file_name.to_string_lossy();
+        let Some(stem) = s.strip_suffix(".dist-info") else {
+            continue;
+        };
+        let Some((dist, _ver)) = stem.rsplit_once('-') else {
+            continue;
+        };
+        if normalize_dist_name(dist) == target {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
+/// Remove `name`'s installed distribution from `site`, bounded to exactly
+/// what its own dist-info owns: the files `Installer::uninstall` removes per
+/// RECORD, plus the `.pyc` bytecode cache `import` derives from each
+/// RECORD-listed `.py` file, plus any directory left empty by that removal.
+/// Never a wholesale directory delete -- a namespace portion shared with a
+/// surviving distribution (`ns/two.py` still locked while `ns/one.py`'s
+/// distribution is pruned) must keep the survivor's files in place.
+///
+/// pip's own uninstall algorithm is the model: RECORD names the files a
+/// distribution owns, never the derived bytecode cache next to them, so a
+/// distribution is not "gone" from the interpreter's point of view until
+/// that cache is cleared too -- otherwise a package directory a RECORD-listed
+/// `.py` shared with nothing else survives as an importable implicit
+/// namespace package with no source, and `import` succeeds instead of
+/// raising `ModuleNotFoundError`.
+pub(crate) fn prune_distribution(installer: &Installer, site: &Path, name: &str) -> Result<()> {
+    // Read the dist-info's own RECORD *before* `Installer::uninstall` deletes
+    // it, collecting the `.py` entries: `(parent dir under site, stem)`.
+    let py_entries: Vec<(PathBuf, String)> = find_dist_info_dir(site, name)
+        .and_then(|dist_info| {
+            let dist_info_name = dist_info.file_name()?.to_string_lossy().into_owned();
+            let record_path = dist_info.join("RECORD");
+            let record_text = fs::read_to_string(&record_path).ok()?;
+            let entries = crate::pkgmanage::pkgmgr::installer::record::parse(&record_text).ok()?;
+            Some(
+                entries
+                    .into_iter()
+                    .filter(|e| !e.path.starts_with(&format!("{dist_info_name}/")))
+                    .filter_map(|e| {
+                        let rel = e.path.strip_suffix(".py")?;
+                        let (dir, stem) = rel.rsplit_once('/').unwrap_or(("", rel));
+                        Some((site.join(dir), stem.to_string()))
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+
+    installer
+        .uninstall(name, site)
+        .map_err(|e| anyhow::anyhow!("uninstall {name}: {e}"))?;
+
+    // Remove the bytecode cache `import` derived from each RECORD-listed
+    // `.py` -- `<stem>.cpython-3XY.pyc`, `<stem>.cpython-3XY.opt-1.pyc`,
+    // `<stem>.cpython-3XY.opt-2.pyc` -- then walk from that file's own
+    // directory up towards `site` (exclusive), best-effort removing each
+    // level while it is empty. `fs::remove_dir` refuses on a non-empty
+    // directory, which is exactly the boundary a shared namespace portion
+    // needs: it stops the walk at the first level another distribution's
+    // files still occupy.
+    let mut swept_dirs: Vec<PathBuf> = Vec::new();
+    for (dir, stem) in &py_entries {
+        let pycache = dir.join("__pycache__");
+        if let Ok(entries) = fs::read_dir(&pycache) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let s = file_name.to_string_lossy();
+                if s.starts_with(stem.as_str())
+                    && s.starts_with(&format!("{stem}."))
+                    && s.ends_with(".pyc")
+                {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+        let _ = fs::remove_dir(&pycache);
+        if !swept_dirs.contains(dir) {
+            swept_dirs.push(dir.clone());
+        }
+    }
+    for dir in swept_dirs {
+        let mut cursor = dir.as_path();
+        while cursor != site && cursor.starts_with(site) {
+            if fs::remove_dir(cursor).is_err() {
+                break;
+            }
+            let Some(parent) = cursor.parent() else {
+                break;
+            };
+            cursor = parent;
+        }
+    }
+
+    Ok(())
 }
 
 fn is_installed(site: &Path, pkg: &LockedPkg) -> bool {
