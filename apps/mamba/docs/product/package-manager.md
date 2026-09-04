@@ -32,7 +32,7 @@ nothing reaches PyPI implicitly.
   `interpreter-management`, `build-and-version`, `tooling-and-cache`,
   `sources-and-credentials`.
 
-## uv workflow parity
+## uv workflow parity (Milestone #130)
 
 - Problem: a Python developer who reaches for mamba as a `uv` replacement
   hits a different `run`: inside a project `mamba run <file>` compiles the
@@ -62,7 +62,7 @@ nothing reaches PyPI implicitly.
   `environment-and-run` STATUS row to Supported;
   [runtime.md](runtime.md) § CPython runtime replacement starts after this
   outcome and does not touch the package manager's contract.
-- Outcome: `uv-workflow-parity`. Tracking: Not assigned.
+- Outcome: `uv-workflow-parity`. Tracking: [Milestone #130](https://github.com/chrischeng-c4/axiom/milestone/130).
 
 ## Non-goals in this area
 

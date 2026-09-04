@@ -30,7 +30,7 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
   documented `uv` behaviour; `cargo test -p mamba --test pkgmgr` stays green;
   and `mamba run <file>` inside a project observably executes on the `.venv`
   interpreter with no mamba runtime present.
-- Tracking: Not assigned.
+- Tracking: [Milestone #130](https://github.com/chrischeng-c4/axiom/milestone/130).
 
 ### mambalibs CPython wheels
 
