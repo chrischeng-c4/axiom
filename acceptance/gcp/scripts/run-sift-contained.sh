@@ -41,7 +41,7 @@ require() {
     exit 1
   }
 }
-for command in cp docker find gcloud grep id jq mktemp openssl python3 rm tee tr wc; do
+for command in docker find gcloud grep id jq mktemp openssl python3 rm tar tee tr wc; do
   require "$command"
 done
 verify_sift_candidate_directory "$SIFT_CANDIDATE_DIR" || {
@@ -189,17 +189,31 @@ else
     echo "could not locate a safe gcloud configuration directory" >&2
     exit 1
   }
-  if find "$gcloud_config_source" -type l -print -quit | grep -q .; then
+  # The Cloud SDK can install a private Python runtime below `virtenv`. That
+  # runtime is executable code, is not needed by the controller image, and can
+  # contain symlinks. Exclude the whole top-level runtime. Continue to reject
+  # every symlink or special file in the configuration that we do copy.
+  if find "$gcloud_config_source" \
+      -path "$gcloud_config_source/virtenv" -prune -o \
+      -type l -print -quit | grep -q .; then
     echo "gcloud configuration contains a symlink; refusing to copy credentials" >&2
     exit 1
   fi
-  if find "$gcloud_config_source" ! -type f ! -type d -print -quit | grep -q .; then
+  if find "$gcloud_config_source" \
+      -path "$gcloud_config_source/virtenv" -prune -o \
+      ! -type f ! -type d -print -quit | grep -q .; then
     echo "gcloud configuration contains a special file; refusing to copy credentials" >&2
     exit 1
   fi
   mkdir -p "$gcloud_config" "$nonce_dir"
   chmod 0700 "$gcloud_config" "$nonce_dir"
-  cp -R "$gcloud_config_source/." "$gcloud_config/"
+  tar -C "$gcloud_config_source" --exclude='./virtenv' -cf - . \
+    | tar -C "$gcloud_config" -xf -
+  if find "$gcloud_config" -type l -print -quit | grep -q . \
+      || find "$gcloud_config" ! -type f ! -type d -print -quit | grep -q .; then
+    echo "private gcloud configuration contains an unsafe copied entry" >&2
+    exit 1
+  fi
   chmod -R go-rwx "$gcloud_config"
 fi
 adc_file="$gcloud_config/application_default_credentials.json"

@@ -27,6 +27,13 @@ resource "google_container_node_pool" "sift_mvp" {
     auto_upgrade = true
   }
 
+  # Provider 6.50 waits up to 30 minutes for one delete attempt. Cleanup
+  # retries Terraform three times. Bound each attempt so one stale GKE
+  # operation cannot consume most of the 90-minute acceptance window.
+  timeouts {
+    delete = "10m"
+  }
+
   node_config {
     machine_type = "e2-standard-4"
     # Keep node boot disks out of SSD_TOTAL_GB. The Sift data PVCs use the

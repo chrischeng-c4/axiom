@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/kubernetes-ownership.sh"
+source "$SCRIPT_DIR/sift-evidence-secrets.sh"
 
 : "${PROJECT_ID:?PROJECT_ID is required}"
 : "${REGION:?REGION is required}"
@@ -161,6 +162,9 @@ stop_forwards() {
 cleanup_local() {
   restore_archive_iam
   stop_forwards
+  sift_remove_ephemeral_evidence_secrets "$EVIDENCE_DIR" || {
+    echo "could not remove the ephemeral Sift acceptance token" >&2
+  }
   if [[ -n "$wrong_peer_dir" && -d "$wrong_peer_dir" ]]; then
     find "$wrong_peer_dir" -type f -delete
     find "$wrong_peer_dir" -depth -type d -empty -delete
@@ -1369,18 +1373,9 @@ jq -e '
     --data-urlencode "end=$((epoch_seconds + 2))" \
     --data-urlencode 'step=1' \
     > "$EVIDENCE_DIR/kubernetes/prometheus-query-range.json"
-  jq -e --argjson epoch "$epoch_seconds" '
-    .status == "success"
-    and .data.resultType == "matrix"
-    and (.data.result | length) == 1
-    and .data.result[0].metric.__name__ == "sift_acceptance_total"
-    and .data.result[0].metric.fixture == "smoke-remote-write"
-    and .data.result[0].values == [
-      [$epoch, "1"],
-      [$epoch + 1, "1"],
-      [$epoch + 2, "1"]
-    ]
-  ' "$EVIDENCE_DIR/kubernetes/prometheus-query-range.json" >/dev/null \
+  jq -e --argjson epoch "$epoch_seconds" \
+    -f "$SCRIPT_DIR/sift-prometheus-range-smoke.jq" \
+    "$EVIDENCE_DIR/kubernetes/prometheus-query-range.json" >/dev/null \
     || die "Prometheus query_range did not evaluate and carry the series at every step"
 
 cross_project_status="$(curl --silent --output "$EVIDENCE_DIR/kubernetes/cross-project.json" \

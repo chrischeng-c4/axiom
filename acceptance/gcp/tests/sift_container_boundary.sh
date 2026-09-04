@@ -22,6 +22,8 @@ trap cleanup_test EXIT INT TERM
 mkdir -p "$candidate_dir" "$fake_bin" "$fake_gcloud_config"
 printf '{}\n' > "$fake_gcloud_config/application_default_credentials.json"
 chmod 0600 "$fake_gcloud_config/application_default_credentials.json"
+mkdir -p "$fake_gcloud_config/virtenv/bin"
+ln -s /usr/bin/true "$fake_gcloud_config/virtenv/bin/python"
 
 git_sha="0123456789abcdef0123456789abcdef01234567"
 source_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -184,6 +186,8 @@ if [[ "${1:-}" == "info" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "auth" && "${2:-}" == "print-access-token" ]]; then
+  [[ ! -e "${CLOUDSDK_CONFIG:?}/virtenv" \
+    && ! -L "${CLOUDSDK_CONFIG}/virtenv" ]] || exit 9
   printf 'test-token\n'
   exit 0
 fi
@@ -411,6 +415,44 @@ grep -F 'gcloud configuration has no safe Application Default Credentials file' 
   "$test_root/missing-adc.stderr" >/dev/null
 [[ ! -s "$missing_adc_log" ]] || {
   echo "contained run created a container before rejecting missing ADC" >&2
+  exit 1
+}
+
+# Only the Cloud SDK's top-level private runtime is excluded. A symlink in any
+# copied configuration path must still fail closed before Docker starts.
+unsafe_config="$test_root/unsafe-gcloud-source"
+unsafe_state="$test_root/unsafe-state"
+unsafe_evidence="$test_root/unsafe-evidence"
+unsafe_containment="$test_root/unsafe-containment"
+unsafe_claims="$test_root/unsafe-claims"
+unsafe_log="$test_root/unsafe-docker.log"
+unsafe_status=0
+mkdir -p "$unsafe_config"
+printf '{}\n' > "$unsafe_config/application_default_credentials.json"
+ln -s /usr/bin/true "$unsafe_config/credential-link"
+: > "$unsafe_log"
+PATH="$fake_bin:$PATH" \
+SIFT_FAKE_GCLOUD_CONFIG="$unsafe_config" \
+SIFT_FAKE_DOCKER_LOG="$unsafe_log" \
+SIFT_FAKE_CONTAINMENT="$unsafe_containment" \
+SIFT_FAKE_CONTROLLER_IMAGE="$controller_image" \
+SIFT_FAKE_EVIDENCE="$unsafe_evidence" \
+PROJECT_ID=axiom-test REGION=asia-east1 \
+SIFT_CANDIDATE_DIR="$candidate_dir" \
+STATE_DIR="$unsafe_state" EVIDENCE_DIR="$unsafe_evidence" \
+CONTAINMENT_DIR="$unsafe_containment" \
+ACCEPTANCE_LOCAL_CLAIM_ROOT="$unsafe_claims" \
+  "$ACCEPTANCE_ROOT/scripts/run-sift-contained.sh" \
+  > "$test_root/unsafe.stdout" 2> "$test_root/unsafe.stderr" \
+  || unsafe_status=$?
+[[ "$unsafe_status" != "0" ]] || {
+  echo "contained run accepted a symlink outside the excluded runtime" >&2
+  exit 1
+}
+grep -F 'gcloud configuration contains a symlink; refusing to copy credentials' \
+  "$test_root/unsafe.stderr" >/dev/null
+[[ ! -s "$unsafe_log" ]] || {
+  echo "contained run created a container before rejecting an unsafe symlink" >&2
   exit 1
 }
 

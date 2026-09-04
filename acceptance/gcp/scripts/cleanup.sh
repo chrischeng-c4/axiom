@@ -22,6 +22,7 @@ source "$ACCEPTANCE_ROOT/scripts/acceptance-lock.sh"
 source "$ACCEPTANCE_ROOT/scripts/process-tree.sh"
 source "$ACCEPTANCE_ROOT/scripts/sift-candidate.sh"
 source "$ACCEPTANCE_ROOT/scripts/sift-container-boundary.sh"
+source "$ACCEPTANCE_ROOT/scripts/sift-evidence-secrets.sh"
 source "$ACCEPTANCE_ROOT/scripts/kubernetes-ownership.sh"
 ACCEPTANCE_RUN_OWNER_HANDOFF_NONCE="${ACCEPTANCE_RUN_OWNER_HANDOFF_NONCE:-}"
 AXIOM_GCP_ACCEPTANCE_CONTAINER_ROLE="${AXIOM_GCP_ACCEPTANCE_CONTAINER_ROLE:-}"
@@ -384,6 +385,10 @@ record_cleanup_failure() {
   cleanup_failures=$((cleanup_failures + 1))
   echo "cleanup failure: $*" >&2
 }
+
+if ! sift_remove_ephemeral_evidence_secrets "$EVIDENCE_DIR"; then
+  record_cleanup_failure "could not remove ephemeral Sift acceptance credentials"
+fi
 
 capture_failure_evidence() {
   kubectl get deployment,statefulset,cronjob,job,pod,pvc -A -o json \
