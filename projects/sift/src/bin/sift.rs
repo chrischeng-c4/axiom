@@ -300,7 +300,7 @@ enum K8sCollectorCommand {
 struct K8sCollectorRenderArgs {
     #[arg(long, default_value = "sift-system")]
     namespace: String,
-    #[arg(long, default_value = "ghcr.io/chrischeng-c4/axiom/sift:0.1.1")]
+    #[arg(long, default_value = sift::deploy::DEFAULT_OPERATOR_IMAGE)]
     image: String,
     #[arg(long)]
     out: Option<PathBuf>,

@@ -5,13 +5,13 @@
 #   - dev/test: ghcr.io/<owner>/sift:sha-<git12>   (this workflow)  — never
 #     user-facing, consumed only by acceptance harnesses that pin an
 #     immutable `@sha256:` digest.
-#   - release:  sift tarballs via sift-release.yml (unchanged); sift has no
-#     existing GHCR release-image job to preserve/conflict with.
+#   - release:  sift-release-candidate.yml builds the digest-pinned candidate
+#     image and tarballs; sift-release.yml promotes them (see build-release).
 #
-# Build mechanics mirror sift-release.yml's `build` job exactly, restricted
+# Build mechanics mirror sift-release-candidate.yml's `build` job exactly, restricted
 # to the two Linux musl legs: same rustup/musl-tools setup, same
 # Swatinem/rust-cache pattern (distinct `sift-test-<target>` keys), same
-# `cargo build --release --locked -p sift --bin sift` (sift-release.yml
+# `cargo build --release --locked -p sift --bin sift` (sift-release-candidate.yml
 # passes no --features flag, so neither does this workflow).
 name: sift-test-image
 
@@ -81,7 +81,7 @@ jobs:
       - name: Install musl toolchain
         # Both legs build native (same CPU arch as the runner), so
         # `musl-tools`' `musl-gcc` is sufficient — no cross linker needed,
-        # same as the musl legs in sift-release.yml.
+        # same as the musl legs in sift-release-candidate.yml.
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
