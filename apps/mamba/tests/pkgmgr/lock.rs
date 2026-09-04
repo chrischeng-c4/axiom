@@ -27,54 +27,18 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn mamba")
 }
 
-fn normalize_pep503(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut prev_sep = false;
-    for c in name.chars() {
-        let is_sep = c == '-' || c == '_' || c == '.';
-        if is_sep {
-            if !prev_sep && !out.is_empty() {
-                out.push('-');
-            }
-            prev_sep = true;
-        } else {
-            out.push(c.to_ascii_lowercase());
-            prev_sep = false;
-        }
-    }
-    if out.ends_with('-') {
-        out.pop();
-    }
-    out
-}
-
-fn stake_pkg(index: &Path, name: &str, version: &str, requires: &[&str]) {
-    let pkg_dir = index.join(normalize_pep503(name));
-    let ver_dir = pkg_dir.join(version);
-    std::fs::create_dir_all(&ver_dir).unwrap();
-    let meta = if requires.is_empty() {
-        "requires = []\n".to_string()
-    } else {
-        let arr = requires
-            .iter()
-            .map(|r| format!("\"{r}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("requires = [{arr}]\n")
-    };
-    std::fs::write(ver_dir.join("metadata.toml"), meta).unwrap();
-}
+use crate::fixtures::fixture_pkg;
 
 fn build_index() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     // frozen_demo_pkg 0.1.0 -> frozen_demo_transitive 0.2.0
-    stake_pkg(
+    fixture_pkg(
         dir.path(),
         "frozen_demo_pkg",
         "0.1.0",
         &["frozen_demo_transitive==0.2.0"],
     );
-    stake_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
+    fixture_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
     dir
 }
 
@@ -148,9 +112,13 @@ fn lock_does_not_create_venv_or_site_packages() {
     );
 
     assert!(!proj.join(".venv").exists(), "lock must not create .venv");
+    let probe = run(
+        &proj,
+        &["run", "--", "python3", "-c", "import frozen_demo_pkg"],
+    );
     assert!(
-        !proj.join("site-packages").exists(),
-        "lock must not create site-packages"
+        !probe.status.success(),
+        "lock alone must not materialize an importable environment"
     );
 }
 

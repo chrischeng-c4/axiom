@@ -13,6 +13,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::fixtures;
+
 fn mamba_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
 }
@@ -45,6 +47,18 @@ fn run_sync(workdir: &Path) -> std::process::Output {
         .current_dir(workdir)
         .output()
         .expect("spawn mamba sync")
+}
+
+/// `mamba run -- python3 -c <code>` — the allowed behaviour observation
+/// for a synced environment's import surface.
+fn run_python(workdir: &Path, code: &str) -> std::process::Output {
+    Command::new(mamba_bin())
+        .args(["run", "--", "python3", "-c", code])
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
+        .current_dir(workdir)
+        .output()
+        .expect("spawn mamba run -- python3")
 }
 
 /// PEP 503 normalize used by `mamba add` when keying the index dir.
@@ -348,17 +362,22 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
         "sync must consume direct-file lock offline; stderr: {}",
         String::from_utf8_lossy(&synced.stderr)
     );
-    let init = std::fs::read_to_string(
-        tmp.path()
-            .join(".venv/site-packages/frozen_local_wheel/__init__.py"),
-    )
-    .unwrap();
+    let probe = run_python(
+        tmp.path(),
+        "import frozen_local_wheel as m; \
+         print(m.__mamba_source_kind__); \
+         print(m.__mamba_source_path__)",
+    );
     assert!(
-        init.contains("__mamba_source_kind__ = \"direct_file\"")
-            && init.contains(
-                "__mamba_source_path__ = \"wheels/frozen_local_wheel-0.1.0-py3-none-any.whl\""
-            ),
-        "sync stub must preserve direct source metadata: {init}"
+        probe.status.success(),
+        "import probe must succeed after sync; stderr: {}",
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&probe.stdout);
+    assert!(
+        stdout.contains("direct_file")
+            && stdout.contains("wheels/frozen_local_wheel-0.1.0-py3-none-any.whl"),
+        "sync stub must preserve direct source metadata: {stdout}"
     );
 }
 
@@ -723,37 +742,25 @@ fn add_mamba_provider_relocks_offline_and_sync_installs_import_alias() {
         "provider sync must succeed; stderr: {}",
         String::from_utf8_lossy(&synced.stderr)
     );
-    let site = tmp.path().join(".venv/site-packages");
-    let httpx_init = site.join("httpx/__init__.py");
-    let body = std::fs::read_to_string(&httpx_init).unwrap();
-    assert!(
-        body.contains("__mamba_provider_distribution__ = \"mamba-httpx-compat\"")
-            && body.contains("class Response"),
-        "httpx import alias must be a pure-Python provider file: {body}"
+    let probe = run_python(
+        tmp.path(),
+        "import httpx; \
+         print(httpx.__mamba_provider_distribution__); \
+         print(hasattr(httpx, 'Response'))",
     );
-    assert!(
-        site.join("mamba_httpx_compat-0.1.0.dist-info/METADATA")
-            .exists(),
-        "provider install must include distribution metadata"
-    );
-
-    let probe = Command::new("python3")
-        .arg("-c")
-        .arg("import httpx; print(httpx.__mamba_provider_distribution__)")
-        .env("PYTHONPATH", &site)
-        .env_remove("PYTHONHOME")
-        .current_dir(tmp.path())
-        .output()
-        .expect("spawn python3 import probe");
     assert!(
         probe.status.success(),
         "python import probe must resolve provider alias; stdout: {} stderr: {}",
         String::from_utf8_lossy(&probe.stdout),
         String::from_utf8_lossy(&probe.stderr)
     );
+    let stdout = String::from_utf8_lossy(&probe.stdout);
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next(), Some("mamba-httpx-compat"));
     assert_eq!(
-        String::from_utf8_lossy(&probe.stdout).trim(),
-        "mamba-httpx-compat"
+        lines.next(),
+        Some("True"),
+        "httpx import alias must be a pure-Python provider carrying Response: {stdout}"
     );
 }
 
@@ -761,19 +768,29 @@ fn add_mamba_provider_relocks_offline_and_sync_installs_import_alias() {
 fn add_mamba_provider_sync_refuses_existing_import_package() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
+
+    // Materialize a real, non-provider `httpx` import package through the
+    // product's own install path (no hand-staged file) so the provider
+    // alias added next collides with it.
+    let real_index = tempfile::tempdir().unwrap();
+    fixtures::fixture_pkg(real_index.path(), "httpx", "1.0.0", &[]);
+    assert!(run_add(
+        tmp.path(),
+        &[
+            "httpx==1.0.0",
+            "--index",
+            real_index.path().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
+    assert!(run_sync(tmp.path()).status.success());
+
     assert!(
         run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"])
             .status
             .success()
     );
-
-    let existing_httpx = tmp.path().join(".venv/site-packages/httpx");
-    std::fs::create_dir_all(&existing_httpx).unwrap();
-    std::fs::write(
-        existing_httpx.join("__init__.py"),
-        "# upstream placeholder\n",
-    )
-    .unwrap();
 
     let out = run_sync(tmp.path());
     assert!(
@@ -785,9 +802,19 @@ fn add_mamba_provider_sync_refuses_existing_import_package() {
         stderr.contains("overwrite existing import package") && stderr.contains("httpx"),
         "diagnostic must name import-alias collision: {stderr:?}"
     );
+
+    let probe = run_python(
+        tmp.path(),
+        "import httpx; print(getattr(httpx, '__mamba_provider_distribution__', 'NONE'))",
+    );
+    assert!(
+        probe.status.success(),
+        "original httpx import must still resolve after refused sync; stderr: {}",
+        String::from_utf8_lossy(&probe.stderr)
+    );
     assert_eq!(
-        std::fs::read_to_string(existing_httpx.join("__init__.py")).unwrap(),
-        "# upstream placeholder\n",
-        "failed provider sync must preserve existing import package"
+        String::from_utf8_lossy(&probe.stdout).trim(),
+        "NONE",
+        "failed provider sync must preserve the existing (non-provider) import package"
     );
 }

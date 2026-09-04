@@ -25,52 +25,32 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn mamba")
 }
 
-fn normalize_pep503(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut prev_sep = false;
-    for c in name.chars() {
-        let is_sep = c == '-' || c == '_' || c == '.';
-        if is_sep {
-            if !prev_sep && !out.is_empty() {
-                out.push('-');
-            }
-            prev_sep = true;
-        } else {
-            out.push(c.to_ascii_lowercase());
-            prev_sep = false;
-        }
-    }
-    if out.ends_with('-') {
-        out.pop();
-    }
-    out
-}
+use crate::fixtures::fixture_pkg;
 
-fn stake_pkg(index: &Path, name: &str, version: &str, requires: &[&str]) {
-    let ver_dir = index.join(normalize_pep503(name)).join(version);
-    std::fs::create_dir_all(&ver_dir).unwrap();
-    let meta = if requires.is_empty() {
-        "requires = []\n".to_string()
-    } else {
-        let arr = requires
-            .iter()
-            .map(|r| format!("\"{r}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("requires = [{arr}]\n")
-    };
-    std::fs::write(ver_dir.join("metadata.toml"), meta).unwrap();
+/// `mamba run -- python3 -c "import <module>"` must exit 0 — the
+/// behaviour observation that replaces reading stub markers directly.
+fn assert_import_succeeds(proj: &Path, module: &str) {
+    let out = run(
+        proj,
+        &["run", "--", "python3", "-c", &format!("import {module}")],
+    );
+    assert!(
+        out.status.success(),
+        "`import {module}` must succeed after sync; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn build_index() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
-    stake_pkg(
+    fixture_pkg(
         dir.path(),
         "frozen_demo_pkg",
         "0.1.0",
         &["frozen_demo_transitive==0.2.0"],
     );
-    stake_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
+    fixture_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
     dir
 }
 
@@ -113,15 +93,8 @@ fn sync_first_run_creates_env_and_installs_locked_deps() {
         venv.join("pyvenv.cfg").exists(),
         "pyvenv.cfg must be written"
     );
-    let site = venv.join("site-packages");
     for pkg in ["frozen_demo_pkg", "frozen_demo_transitive"] {
-        let dir = site.join(pkg);
-        assert!(
-            dir.join("__init__.py").exists(),
-            "{pkg} __init__.py missing"
-        );
-        assert!(dir.join("INSTALLER").exists(), "{pkg} INSTALLER missing");
-        assert!(dir.join("VERSION").exists(), "{pkg} VERSION missing");
+        assert_import_succeeds(&proj, pkg);
     }
 }
 
@@ -135,8 +108,17 @@ fn sync_second_run_is_a_clean_noop() {
 
     assert!(run(&proj, &["sync"]).status.success());
     let lock_a = std::fs::read(proj.join("mamba.lock")).unwrap();
-    let init_a =
-        std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
+    let probe_a = run(
+        &proj,
+        &[
+            "run",
+            "--",
+            "python3",
+            "-c",
+            "import frozen_demo_pkg; print(frozen_demo_pkg.__version__)",
+        ],
+    );
+    assert!(probe_a.status.success(), "import probe after first sync");
 
     let out = run(&proj, &["sync"]);
     assert!(out.status.success(), "second sync must succeed");
@@ -150,10 +132,22 @@ fn sync_second_run_is_a_clean_noop() {
     );
 
     let lock_b = std::fs::read(proj.join("mamba.lock")).unwrap();
-    let init_b =
-        std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
+    let probe_b = run(
+        &proj,
+        &[
+            "run",
+            "--",
+            "python3",
+            "-c",
+            "import frozen_demo_pkg; print(frozen_demo_pkg.__version__)",
+        ],
+    );
+    assert!(probe_b.status.success(), "import probe after no-op sync");
     assert_eq!(lock_a, lock_b, "lockfile byte-identical across syncs");
-    assert_eq!(init_a, init_b, "package init.py untouched on no-op");
+    assert_eq!(
+        probe_a.stdout, probe_b.stdout,
+        "package import output untouched on no-op"
+    );
 }
 
 #[test]
@@ -205,13 +199,10 @@ fn sync_import_probe_holds_after_both_runs() {
     setup_locked_project(&proj, index.path());
 
     assert!(run(&proj, &["sync"]).status.success());
-    let probe = proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py");
-    assert!(probe.exists(), "import probe present after first sync");
-    let body = std::fs::read_to_string(&probe).unwrap();
-    assert!(body.contains("__mamba_pkg__"), "stub marks itself: {body}");
+    assert_import_succeeds(&proj, "frozen_demo_pkg");
 
     assert!(run(&proj, &["sync"]).status.success());
-    assert!(probe.exists(), "import probe present after second sync");
+    assert_import_succeeds(&proj, "frozen_demo_pkg");
 }
 
 #[test]
@@ -574,11 +565,13 @@ fn sync_fails_on_sha256_mismatch() {
         stderr.contains("hash mismatch") || stderr.contains("HashMismatch"),
         "stderr must say hash mismatch: {stderr:?}"
     );
+    let probe = run(
+        &proj,
+        &["run", "--", "python3", "-c", "import tick15_sync_bad"],
+    );
     assert!(
-        !proj
-            .join(".venv/site-packages/tick15_sync_bad/__init__.py")
-            .exists(),
-        "stub must NOT be created when verification fails"
+        !probe.status.success(),
+        "package must NOT be importable when verification fails"
     );
 }
 
