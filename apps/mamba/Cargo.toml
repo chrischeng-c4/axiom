@@ -369,3 +369,7 @@ path = "e2e/pkgmgr_sync_real_install.rs"
 [[test]]
 name = "pkgmgr_sync_prune"
 path = "e2e/pkgmgr_sync_prune.rs"
+
+[[test]]
+name = "pkgmgr_index_url_simple"
+path = "e2e/pkgmgr_index_url_simple.rs"
