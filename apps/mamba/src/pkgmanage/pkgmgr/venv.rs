@@ -440,6 +440,41 @@ pub fn remove_venv(root: &Path) -> Result<String, IndexError> {
     Ok("removed".to_string())
 }
 
+/// Derive a venv's own `VenvLayout` from its `pyvenv.cfg` — the
+/// interpreter version the venv itself reports, never a guess. Used by
+/// `sync`, `run`, and `pip` so every consumer resolves the same real
+/// (`lib/pythonX.Y/site-packages` on POSIX, `Lib/site-packages` on
+/// Windows) layout instead of a flat `<venv>/site-packages` directory.
+pub fn layout_from_pyvenv_cfg(venv_dir: &Path) -> Result<VenvLayout, IndexError> {
+    let cfg_path = venv_dir.join("pyvenv.cfg");
+    let cfg_body = std::fs::read_to_string(&cfg_path).map_err(|e| IndexError::ParseError {
+        url: cfg_path.display().to_string(),
+        detail: format!("reading pyvenv.cfg: {e}"),
+    })?;
+    let kvs = parse_pyvenv_cfg(&cfg_body)?;
+    let version_str = kvs
+        .iter()
+        .find(|(k, _)| k == "version")
+        .map(|(_, v)| v.clone())
+        .ok_or_else(|| IndexError::ParseError {
+            url: cfg_path.display().to_string(),
+            detail: "pyvenv.cfg has no `version` key".to_string(),
+        })?;
+    let version = parse_python_version(&version_str).ok_or_else(|| IndexError::ParseError {
+        url: cfg_path.display().to_string(),
+        detail: format!("pyvenv.cfg names an unparseable Python version {version_str:?}"),
+    })?;
+    Ok(VenvLayout::for_current_platform(venv_dir, &version))
+}
+
+fn parse_python_version(s: &str) -> Option<PythonVersion> {
+    let mut parts = s.trim().split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next()?.parse().ok()?;
+    let patch: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    Some(PythonVersion::new(major, minor, patch))
+}
+
 /// Best-effort lookup of `python3` on `PATH`. Used by tests that
 /// soft-skip when no Python is available.
 pub fn first_python_on_path() -> Option<PathBuf> {

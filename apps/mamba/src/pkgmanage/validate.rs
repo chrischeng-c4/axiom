@@ -420,9 +420,33 @@ fn setup_locked_project(bin: &Path, project: &Path, index: &Path) -> Option<Fami
     None
 }
 
+/// Stage a real, importable wheel for `normalized_name`/`version` beside a
+/// `metadata.toml` naming `requires` — #4207's real `Installer::install`
+/// path needs a real wheel archive on disk (a metadata-only fixture fails
+/// with "malformed wheel ... invalid Zip archive" once `sync` stops
+/// stubbing installs). Built through the product's own `WheelBuilder`, the
+/// same recipe `apps/mamba/tests/pkgmgr/fixtures.rs::fixture_pkg` uses.
 fn stake_pkg(index: &Path, normalized_name: &str, version: &str, requires: &[&str]) {
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
+    };
+
     let ver_dir = index.join(normalized_name).join(version);
     std::fs::create_dir_all(&ver_dir).unwrap();
+
+    let filename = compose_filename(normalized_name, version, "py3", "none", "any");
+    let mut wheel_meta = WheelMetadata::new("mamba-pkgmgr-validate");
+    wheel_meta.tags.push("py3-none-any".into());
+    let mut core_meta = CoreMetadata::new(normalized_name, version);
+    core_meta.requires_dist = requires.iter().map(|r| r.to_string()).collect();
+    let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+    let module = normalized_name.replace(['-', '.'], "_").to_ascii_lowercase();
+    builder.add_file(
+        format!("{module}/__init__.py"),
+        format!("__mamba_fixture__ = {normalized_name:?}\n__version__ = {version:?}\n"),
+    );
+    builder.build_to_dir(&ver_dir).unwrap();
+
     let meta = if requires.is_empty() {
         "requires = []\n".to_string()
     } else {

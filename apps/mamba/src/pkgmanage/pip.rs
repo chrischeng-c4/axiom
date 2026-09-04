@@ -172,7 +172,16 @@ fn site_packages_path(sub: &ArgMatches) -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
     let cwd = std::env::current_dir().context("read current directory")?;
-    Ok(cwd.join(".venv").join("site-packages"))
+    Ok(resolve_default_site_packages(&cwd))
+}
+
+/// Default site-packages for `mamba pip` when `--site-packages` is not
+/// given: the venv's own `VenvLayout` derived from its own `pyvenv.cfg`,
+/// never the flat `<cwd>/.venv/site-packages` directory. Falls back to that
+/// flat path only when `.venv/pyvenv.cfg` doesn't exist yet or can't be
+/// parsed, so a `pip list` before any venv exists still gets a stable path.
+pub(crate) fn resolve_default_site_packages(cwd: &Path) -> PathBuf {
+    crate::pkgmanage::sync::resolve_site_packages(&cwd.join(".venv"))
 }
 
 fn install_options(sub: &ArgMatches) -> Result<InstallOptions> {

@@ -1,13 +1,16 @@
-// `mamba run` package-manager preflight — closes #2684.
+// `mamba run` package-manager preflight — closes #2684; #4207 drops the
+// `PYTHONPATH` injection this module used to own.
 //
 // Acceptance (tests/governance/gates/pkgmgr/run/manifest.toml, schema gate
 // pkgmgr_run_fixture_2684.rs):
 //
 //   - Running before sync fails with "environment is not synced".
-//   - Running after sync proceeds, with `.venv/site-packages` injected
-//     into the import path.
-//   - No global PATH or user shell env mutation: we set PYTHONPATH on
-//     the current process only.
+//   - Running after sync proceeds: the venv's own `bin` (or `Scripts`)
+//     directory goes first on the child's `PATH`, so the venv's own
+//     interpreter resolves its own site-packages through `site`, the
+//     way every other Python tool does — never through `PYTHONPATH`.
+//   - No global PATH or user shell env mutation: env changes are scoped
+//     to the spawned child (`mamba run -- <cmd>`).
 //   - Offline against the frozen local index (sync owns that).
 //
 // Hook shape: callers invoke `preflight(project_dir)` BEFORE handing
@@ -18,30 +21,32 @@ use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::pkgmanage::sync::parse_locked_packages;
+use crate::pkgmanage::sync::{parse_locked_packages, resolve_site_packages};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const VENV_DIR: &str = ".venv";
-const SITE_PACKAGES: &str = "site-packages";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Mode {
     /// No mamba.toml here — caller should run the file with legacy
     /// semantics (no env contract).
     Legacy,
-    /// mamba.toml present; venv is in sync with the lockfile and
-    /// PYTHONPATH has been pointed at `.venv/site-packages`.
+    /// mamba.toml present; venv is in sync with the lockfile. The
+    /// venv's own `bin` (or `Scripts`) directory goes first on the
+    /// child's `PATH` so its own interpreter resolves its own
+    /// site-packages through `site`, never `PYTHONPATH`.
     Project { site_packages: PathBuf },
     /// mamba.toml present, lockfile has zero packages, so no env
-    /// is required. Caller runs the file with no PYTHONPATH override.
+    /// is required.
     EmptyLock,
 }
 
-/// Project-aware preflight for `mamba run`. Returns the execution
-/// mode and, as a side effect, sets `PYTHONPATH` for the current
-/// process when the project demands it. Bails when the project has
-/// a non-empty lockfile but the env has not been synced.
+/// Project-aware preflight for `mamba run`. Returns the execution mode.
+/// Bails when the project has a non-empty lockfile but the venv has not
+/// been synced (no `pyvenv.cfg` yet). Sets no environment variable —
+/// `configure_command_environment` scopes every change to the spawned
+/// child.
 pub fn preflight(project_dir: &Path) -> Result<Mode> {
     let manifest = project_dir.join(MANIFEST_FILE);
     if !manifest.exists() {
@@ -60,36 +65,27 @@ pub fn preflight(project_dir: &Path) -> Result<Mode> {
         return Ok(Mode::EmptyLock);
     }
 
-    let site = project_dir.join(VENV_DIR).join(SITE_PACKAGES);
-    if !site.exists() {
+    let venv_dir = project_dir.join(VENV_DIR);
+    if !venv_dir.join("pyvenv.cfg").exists() {
         bail!(
             "environment is not synced — run `mamba sync` to install \
              {n} locked package(s) into {venv}",
             n = packages.len(),
-            venv = project_dir.join(VENV_DIR).display()
+            venv = venv_dir.display()
         );
     }
 
-    // Inject the project's site-packages at the front of PYTHONPATH
-    // for the lifetime of the current process. No global PATH /
-    // user shell env mutation.
-    if let Some(joined) = joined_path_front("PYTHONPATH", [site.clone()]) {
-        // SAFETY: env mutation is process-local; documented and
-        // observed by the compiler session that follows.
-        unsafe {
-            std::env::set_var("PYTHONPATH", joined);
-        }
-    }
     Ok(Mode::Project {
-        site_packages: site,
+        site_packages: resolve_site_packages(&venv_dir),
     })
 }
 
 /// Apply the project environment to a subprocess for `mamba run -- <cmd>`.
-/// This never mutates the user's shell. Executables from `.venv/bin` (or
-/// `.venv/Scripts`) win over host PATH when a synced venv exists, and
-/// site-packages remains importable for host Python fallbacks.
-pub fn configure_command_environment(command: &mut Command, project_dir: &Path, mode: &Mode) {
+/// This never mutates the user's shell and never sets `PYTHONPATH`.
+/// Executables from `.venv/bin` (or `.venv/Scripts`) win over host PATH
+/// when a synced venv exists, so the venv's own interpreter resolves its
+/// own site-packages the way every other Python tool does.
+pub fn configure_command_environment(command: &mut Command, project_dir: &Path, _mode: &Mode) {
     let venv = project_dir.join(VENV_DIR);
     if venv.join("pyvenv.cfg").exists() {
         command.env("VIRTUAL_ENV", &venv);
@@ -98,19 +94,6 @@ pub fn configure_command_environment(command: &mut Command, project_dir: &Path, 
             .filter(|path| path.is_dir());
         if let Some(joined) = joined_path_front("PATH", bin_dirs) {
             command.env("PATH", joined);
-        }
-    }
-
-    let site = match mode {
-        Mode::Project { site_packages } => Some(site_packages.clone()),
-        Mode::Legacy | Mode::EmptyLock => {
-            let candidate = venv.join(SITE_PACKAGES);
-            candidate.exists().then_some(candidate)
-        }
-    };
-    if let Some(site) = site {
-        if let Some(joined) = joined_path_front("PYTHONPATH", [site]) {
-            command.env("PYTHONPATH", joined);
         }
     }
 }
