@@ -36,7 +36,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Dict, List, NoReturn, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, NoReturn, Optional, Sequence, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -414,6 +414,45 @@ def run_command(cmd: Sequence[str], *, label: str, expect_ok: bool, must_print: 
 # --- static checks: candidate and promotion workflows -----------------------
 
 
+TRIPLE = re.compile(r"^[a-z0-9_]+-(?:unknown|apple|pc)-[a-z]+(?:-[a-z0-9]+)?$")
+
+
+def referenced_targets(app: App, text: str) -> Set[str]:
+    """Rust triples named by `<app>-candidate-<triple>-${{ github.run_id }}` artifact references."""
+    names = re.findall(rf"{re.escape(app.name)}-candidate-([A-Za-z0-9_-]+?)-\$\{{\{{ github\.run_id \}}\}}", text)
+    return {name for name in names if TRIPLE.match(name)}
+
+
+def check_candidate_targets(app: App, text: str) -> None:
+    """Every target-bearing surface of the candidate workflow names exactly the
+    apps.sh target set: the build matrix, each job that downloads per-target
+    archives, and each `for target in` loop. A matrix trimmed without its
+    download steps passes YAML and this checker's job-set test, then fails only
+    at run time with "Artifact not found" (keep run 33903311302)."""
+    label = f"{app.name} candidate"
+    expected = set(app.targets)
+    matrix = set(re.findall(r"^\s*- \{ target: ([A-Za-z0-9_-]+),", text, re.MULTILINE))
+    if matrix != expected:
+        fail(f"{label}: build matrix targets {sorted(matrix)} differ from apps.sh {sorted(expected)}")
+    for job in ("manifest", "verify-candidate", "result"):
+        seen = referenced_targets(app, job_block(text, job))
+        if seen and seen != expected:
+            fail(f"{label}: job {job} downloads targets {sorted(seen)}, apps.sh says {sorted(expected)}")
+    loops = re.findall(r"for target in ([A-Za-z0-9_ -]+); do", text)
+    if not loops:
+        fail(f"{label}: no `for target in ...; do` loop binds the archives into the manifest")
+    for loop in loops:
+        if set(loop.split()) != expected:
+            fail(f"{label}: loop targets {loop.split()} differ from apps.sh {sorted(expected)}")
+
+
+def drop_matrix_row(app: App, text: str, label: str) -> str:
+    pattern = rf"^\s*- \{{ target: {re.escape(app.targets[0])},[^\n]*\n"
+    if not re.search(pattern, text, re.MULTILINE):
+        fail(f"{label}: control could not find the {app.targets[0]} matrix row")
+    return re.sub(pattern, "", text, count=1, flags=re.MULTILINE)
+
+
 def check_candidate(app: App, text: str) -> None:
     label = f"{app.name} candidate"
     if workflow_triggers(text) != ["workflow_dispatch"]:
@@ -454,6 +493,7 @@ def check_candidate(app: App, text: str) -> None:
             pattern = rf'(?:"{re.escape(job)}"|{re.escape(job)}):"\$\{{\{{ needs\.{re.escape(job)}\.result \}}\}}"'
         if not re.search(pattern, result):
             fail(f"{label}: the final manifest must bind job {job} to its own result")
+    check_candidate_targets(app, text)
 
 
 def check_promotion(app: App, text: str) -> None:
@@ -882,6 +922,9 @@ def candidate_controls(app: App, text: str) -> List[Tuple[str, Callable[[], str]
         (f"{label}: build result binding faked", lambda: replace_all(text, 'build:"${{ needs.build.result }}"', 'build:"success"', label)),
         (f"{label}: main-only guard dropped", lambda: replace_all(text, "refs/heads/main", "refs/heads/release", label)),
         (f"{label}: extra trigger added", lambda: replace_once(text, "on:\n  workflow_dispatch:\n", "on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n", label)),
+        (f"{label}: stale target archive still downloaded", lambda: replace_all(text, f"{app.name}-candidate-{app.targets[-1]}-", f"{app.name}-candidate-x86_64-unknown-freebsd-", label)),
+        (f"{label}: manifest loop drops a target", lambda: replace_all(text, f"for target in {' '.join(app.targets)}; do", f"for target in {' '.join(app.targets[:-1])}; do", label)),
+        (f"{label}: build matrix row dropped", lambda: drop_matrix_row(app, text, label)),
     ]
 
 
