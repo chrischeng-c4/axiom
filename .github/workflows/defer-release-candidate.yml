@@ -338,18 +338,6 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: defer-candidate-aarch64-apple-darwin-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-x86_64-unknown-linux-gnu-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-aarch64-unknown-linux-gnu-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
           name: defer-candidate-x86_64-unknown-linux-musl-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -367,7 +355,7 @@ jobs:
           cd candidate
           sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
           artifacts='[]'
-          for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
             archive="defer-${target}.tar.gz"
             sidecar="${archive}.sha256"
             [[ -f "$archive" && -f "$sidecar" ]] || { echo "missing archive pair: $target" >&2; exit 1; }
@@ -407,18 +395,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-aarch64-apple-darwin-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-x86_64-unknown-linux-gnu-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-aarch64-unknown-linux-gnu-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: defer-candidate-x86_64-unknown-linux-musl-${{ github.run_id }}-${{ github.run_attempt }}
@@ -467,18 +443,6 @@ jobs:
         with:
           ref: ${{ needs.identity.outputs.commit }}
           fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-aarch64-apple-darwin-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-x86_64-unknown-linux-gnu-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: defer-candidate-aarch64-unknown-linux-gnu-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: defer-candidate-x86_64-unknown-linux-musl-${{ github.run_id }}-${{ github.run_attempt }}
