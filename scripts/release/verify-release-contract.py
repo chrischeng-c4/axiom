@@ -167,7 +167,7 @@ APPS: Dict[str, App] = {
         functional=(),
     ),
     # onboarded flips to True in the PR that lands the app's two workflows.
-    "sift": shared_app("sift", "projects/sift", FIVE_TARGETS, "gcp", SIFT_FIELDS, onboarded=False),
+    "sift": shared_app("sift", "projects/sift", FIVE_TARGETS, "gcp", SIFT_FIELDS, onboarded=True),
     "keep": shared_app("keep", "apps/keep", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=False),
     "relay": shared_app("relay", "apps/relay", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=False),
     "defer": shared_app("defer", "apps/defer", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=False),
@@ -498,7 +498,7 @@ def check_app(app: App) -> None:
 
 def check_not_onboarded(app: App) -> None:
     # Only the candidate workflow proves onboarding: a `<app>-release.yml` may
-    # still be the retired tag-first route (sift) until its rewrite lands.
+    # predate onboarding (sift kept the retired tag-first route until its rewrite).
     path = app.candidate_workflow
     if path.exists():
         fail(f"{path.relative_to(ROOT)} exists but {app.name} is still marked onboarded=False here")

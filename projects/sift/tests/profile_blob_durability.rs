@@ -115,6 +115,16 @@ fn verifier() -> Arc<SiftVerifier> {
     }))
 }
 
+/// A profile timestamp inside the default 30-day profile retention window, so
+/// the query below keeps returning the record regardless of the calendar date
+/// (a fixed 2026-07-14 stamp expired from the projection on 2026-08-13).
+fn recent_profile_time_unix_nano() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after the Unix epoch");
+    (now - std::time::Duration::from_secs(60)).as_nanos() as u64
+}
+
 async fn json_body(response: axum::response::Response) -> serde_json::Value {
     let bytes = to_bytes(response.into_body(), 4 * 1024 * 1024)
         .await
@@ -199,7 +209,7 @@ async fn otlp_protobuf_profile_payload_and_query_are_project_scoped() {
         resource_profiles: vec![TestResourceProfiles {
             scope_profiles: vec![TestScopeProfiles {
                 profiles: vec![TestProfile {
-                    time_unix_nano: 1_783_987_200_000_000_000,
+                    time_unix_nano: recent_profile_time_unix_nano(),
                     duration_nano: 1_000_000,
                     profile_id: vec![0x44; 16],
                     original_payload_format: "pprof".into(),

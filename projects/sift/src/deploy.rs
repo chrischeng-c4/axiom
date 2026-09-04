@@ -3,7 +3,11 @@
 
 use anyhow::{bail, Result};
 
-pub const DEFAULT_OPERATOR_IMAGE: &str = "ghcr.io/chrischeng-c4/axiom/sift:0.1.1";
+/// The published Sift image at this crate version: the tag that
+/// `build.sh release` pins into every `k8s/**` manifest, so the operator and
+/// collector renderers can substitute it byte-for-byte.
+pub const DEFAULT_OPERATOR_IMAGE: &str =
+    concat!("ghcr.io/chrischeng-c4/sift:", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DockerfileVariant {
@@ -64,7 +68,7 @@ pub fn collector_yaml(namespace: &str, image: &str) -> Result<String> {
     Ok(
         strip_ownership_markers(include_str!("../k8s/collector/daemonset.yaml"))
             .replace("REPLACE_NAMESPACE", namespace)
-            .replace("ghcr.io/chrischeng-c4/axiom/sift:0.1.1", image),
+            .replace(DEFAULT_OPERATOR_IMAGE, image),
     )
 }
 

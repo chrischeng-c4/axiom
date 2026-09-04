@@ -30,15 +30,16 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(dockerfile.contains("COPY --chown=65532:65532"));
     assert!(dockerfile.contains("next:"));
 
+    let release_tag = format!("sift@{}", env!("CARGO_PKG_VERSION"));
     let release_dockerfile = sift(&[
         "dockerfile",
         "render",
         "--variant",
         "release",
         "--version",
-        "sift@0.1.1",
+        release_tag.as_str(),
     ]);
-    assert!(release_dockerfile.contains("SIFT_VERSION=0.1.1"));
+    assert!(release_dockerfile.contains(&format!("SIFT_VERSION={}", env!("CARGO_PKG_VERSION"))));
     assert!(release_dockerfile.contains("ARG TARGETARCH=amd64"));
     assert!(release_dockerfile.contains("x86_64-unknown-linux-musl"));
     assert!(release_dockerfile.contains("aarch64-unknown-linux-musl"));
@@ -71,7 +72,7 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(instance.contains("kind: Sift"));
     assert!(instance.contains("replicasPerShard: 1"));
     assert!(instance.contains("auth: \"off\""));
-    assert!(instance.contains("sift:0.1.1"));
+    assert!(instance.contains(&format!("sift:{}", env!("CARGO_PKG_VERSION"))));
 
     let collector = sift(&[
         "k8s",
