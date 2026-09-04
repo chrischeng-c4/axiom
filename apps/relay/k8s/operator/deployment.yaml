@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
-          image: relay:0.4.7
+          image: relay:0.4.13
           imagePullPolicy: IfNotPresent
           command: ["relay", "k8s", "operator", "run"]
           env:

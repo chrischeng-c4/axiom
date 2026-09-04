@@ -60,6 +60,18 @@ host_target() {
   esac
 }
 
+# The archive this host can execute: its own triple when the app ships it,
+# otherwise (Linux only) the static musl sibling, which runs on any Linux
+# regardless of the host libc. Apps that ship only musl archives still get
+# their binary run here instead of a skipped check.
+host_archive_target() {
+  local host musl
+  host="$(host_target)"
+  if targets | grep -qx "$host"; then printf '%s\n' "$host"; return 0; fi
+  musl="${host%-gnu}-musl"
+  if [[ "$host" == *-unknown-linux-gnu ]] && targets | grep -qx "$musl"; then printf '%s\n' "$musl"; return 0; fi
+  return 1
+}
 expected_jobs_json() {
   release_app_candidate_jobs "$APP" | jq -Rn '[inputs | select(length > 0)] | map({key: ., value: "success"}) | from_entries'
 }
@@ -138,11 +150,10 @@ verify_release_assets_against_receipt() {
     jq -en --slurpfile candidate "$receipt_dir/spdx-${target}.json" --slurpfile release "$release_dir/spdx-${target}.json" '$candidate[0] == $release[0]' >/dev/null || fail "published SPDX bytes differ from candidate: $target"
   done
   verify_public_gke_receipt "$release_dir"
-  host="$(host_target)"
-  if ! targets | grep -qx "$host"; then
-    printf 'note: %s ships no %s archive; host binary check skipped on this verifier host\n' "$APP" "$host" >&2
+  host="$(host_archive_target)" || {
+    printf 'note: %s ships no archive this verifier host (%s) can run; host binary check skipped\n' "$APP" "$(host_target)" >&2
     return 0
-  fi
+  }
   private_home="$(mktemp -d)"; unpack="$(mktemp -d)"
   trap 'rm -rf "${private_home:-}" "${unpack:-}"' RETURN
   tar -xzf "$release_dir/${APP}-${host}.tar.gz" -C "$unpack"

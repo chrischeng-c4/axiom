@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
-          image: keep:latest
+          image: keep:0.4.13
           imagePullPolicy: IfNotPresent
           command: ["keep", "k8s", "operator", "run"]
           env:

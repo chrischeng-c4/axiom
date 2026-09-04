@@ -27,7 +27,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: relay
-          image: relay:0.4.7
+          image: relay:0.4.13
           imagePullPolicy: IfNotPresent
           command: ["relay"]
           ports:

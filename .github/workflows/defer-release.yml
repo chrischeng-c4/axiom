@@ -1,39 +1,39 @@
-name: sift-release
+name: defer-release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact Sift semver without the sift@ prefix.
+        description: Exact Defer semver without the defer@ prefix.
         required: true
         type: string
       candidate_run_id:
-        description: Exact successful sift-release-candidate run ID.
+        description: Exact successful defer-release-candidate run ID.
         required: true
         type: string
       candidate_run_attempt:
-        description: Exact successful sift-release-candidate run attempt.
+        description: Exact successful defer-release-candidate run attempt.
         required: true
         type: string
       gke_receipt_b64:
-        description: Base64 of the sanitized sift-gke-receipt.json bytes.
+        description: Base64 of the sanitized defer-gke-receipt.json bytes.
         required: true
         type: string
       gke_receipt_sha256:
-        description: Lowercase SHA-256 of the sanitized sift-gke-receipt.json bytes.
+        description: Lowercase SHA-256 of the sanitized defer-gke-receipt.json bytes.
         required: true
         type: string
       gke_receipt_sidecar_b64:
-        description: Base64 of the exact sift-gke-receipt.json.sha256 sidecar bytes.
+        description: Base64 of the exact defer-gke-receipt.json.sha256 sidecar bytes.
         required: true
         type: string
       gke_receipt_sidecar_sha256:
-        description: Lowercase SHA-256 of the exact sift-gke-receipt.json.sha256 sidecar bytes.
+        description: Lowercase SHA-256 of the exact defer-gke-receipt.json.sha256 sidecar bytes.
         required: true
         type: string
 
 concurrency:
-  group: sift-release-promotion-${{ inputs.version }}
+  group: defer-release-promotion-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -66,8 +66,8 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo "promotion is workflow_dispatch only" >&2; exit 1; }
           [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version input" >&2; exit 1; }
-          [[ "$GITHUB_REF" == "refs/tags/sift@${{ inputs.version }}" ]] || { echo "promotion must dispatch the exact annotated release tag" >&2; exit 1; }
-          [[ "$GITHUB_WORKFLOW_REF" == "${GITHUB_REPOSITORY}/.github/workflows/sift-release.yml@${GITHUB_REF}" ]] || { echo "promotion workflow identity mismatch" >&2; exit 1; }
+          [[ "$GITHUB_REF" == "refs/tags/defer@${{ inputs.version }}" ]] || { echo "promotion must dispatch the exact annotated release tag" >&2; exit 1; }
+          [[ "$GITHUB_WORKFLOW_REF" == "${GITHUB_REPOSITORY}/.github/workflows/defer-release.yml@${GITHUB_REF}" ]] || { echo "promotion workflow identity mismatch" >&2; exit 1; }
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.1.3
@@ -96,11 +96,11 @@ jobs:
             actual="$(sha256sum "$output" | awk '{print $1}')"
             [[ "$actual" == "$expected" ]] || { echo "receipt input SHA-256 does not bind decoded bytes" >&2; exit 1; }
           }
-          decode_exact "$GKE_RECEIPT_B64" "$GKE_RECEIPT_SHA256" gke-receipt/sift-gke-receipt.json
-          decode_exact "$GKE_RECEIPT_SIDECAR_B64" "$GKE_RECEIPT_SIDECAR_SHA256" gke-receipt/sift-gke-receipt.json.sha256
+          decode_exact "$GKE_RECEIPT_B64" "$GKE_RECEIPT_SHA256" gke-receipt/defer-gke-receipt.json
+          decode_exact "$GKE_RECEIPT_SIDECAR_B64" "$GKE_RECEIPT_SIDECAR_SHA256" gke-receipt/defer-gke-receipt.json.sha256
           {
-            echo "receipt=$PWD/gke-receipt/sift-gke-receipt.json"
-            echo "sidecar=$PWD/gke-receipt/sift-gke-receipt.json.sha256"
+            echo "receipt=$PWD/gke-receipt/defer-gke-receipt.json"
+            echo "sidecar=$PWD/gke-receipt/defer-gke-receipt.json.sha256"
           } >> "$GITHUB_OUTPUT"
       - name: Verify tag ruleset, candidate receipt, and supply chain
         env:
@@ -108,9 +108,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/release/verify-release-artifacts.sh --app sift \
+          scripts/release/verify-release-artifacts.sh --app defer \
             --repo chrischeng-c4/axiom \
-            --tag "sift@${{ inputs.version }}" \
+            --tag "defer@${{ inputs.version }}" \
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --candidate-run-attempt "${{ inputs.candidate_run_attempt }}" \
@@ -184,11 +184,11 @@ jobs:
             actual="$(sha256sum "$output" | awk '{print $1}')"
             [[ "$actual" == "$expected" ]] || { echo "receipt input SHA-256 does not bind decoded bytes" >&2; exit 1; }
           }
-          decode_exact "$GKE_RECEIPT_B64" "$GKE_RECEIPT_SHA256" gke-receipt/sift-gke-receipt.json
-          decode_exact "$GKE_RECEIPT_SIDECAR_B64" "$GKE_RECEIPT_SIDECAR_SHA256" gke-receipt/sift-gke-receipt.json.sha256
+          decode_exact "$GKE_RECEIPT_B64" "$GKE_RECEIPT_SHA256" gke-receipt/defer-gke-receipt.json
+          decode_exact "$GKE_RECEIPT_SIDECAR_B64" "$GKE_RECEIPT_SIDECAR_SHA256" gke-receipt/defer-gke-receipt.json.sha256
           {
-            echo "receipt=$PWD/gke-receipt/sift-gke-receipt.json"
-            echo "sidecar=$PWD/gke-receipt/sift-gke-receipt.json.sha256"
+            echo "receipt=$PWD/gke-receipt/defer-gke-receipt.json"
+            echo "sidecar=$PWD/gke-receipt/defer-gke-receipt.json.sha256"
           } >> "$GITHUB_OUTPUT"
       - name: Re-query exact candidate immediately before stable writes
         env:
@@ -196,9 +196,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/release/verify-release-artifacts.sh --app sift \
+          scripts/release/verify-release-artifacts.sh --app defer \
             --repo chrischeng-c4/axiom \
-            --tag "sift@${{ inputs.version }}" \
+            --tag "defer@${{ inputs.version }}" \
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --candidate-run-attempt "${{ inputs.candidate_run_attempt }}" \
@@ -222,7 +222,7 @@ jobs:
         run: |
           set -euo pipefail
           query="query(\$owner:String!, \$name:String!, \$tag:String!) { repository(owner:\$owner, name:\$name) { release(tagName:\$tag) { id } } }"
-          json="$(gh api graphql -f query="$query" -f owner="$GITHUB_REPOSITORY_OWNER" -f name="${GITHUB_REPOSITORY#*/}" -f tag="sift@${{ inputs.version }}")"
+          json="$(gh api graphql -f query="$query" -f owner="$GITHUB_REPOSITORY_OWNER" -f name="${GITHUB_REPOSITORY#*/}" -f tag="defer@${{ inputs.version }}")"
           if [[ "$(jq -r '.data.repository.release | if . == null then "absent" else "present" end' <<<"$json")" == present ]]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
       - name: Verify existing public release without moving latest
         if: steps.existing_release.outputs.exists == 'true'
@@ -231,9 +231,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/release/verify-release-artifacts.sh --app sift \
+          scripts/release/verify-release-artifacts.sh --app defer \
             --repo chrischeng-c4/axiom \
-            --tag "sift@${{ inputs.version }}" \
+            --tag "defer@${{ inputs.version }}" \
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --candidate-run-attempt "${{ inputs.candidate_run_attempt }}" \
@@ -248,7 +248,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh run download "${{ inputs.candidate_run_id }}" --repo "$GITHUB_REPOSITORY" --name "sift-release-candidate-${{ inputs.candidate_run_id }}-${{ needs.verify-inputs.outputs.candidate_attempt }}" --dir candidate
+          gh run download "${{ inputs.candidate_run_id }}" --repo "$GITHUB_REPOSITORY" --name "defer-release-candidate-${{ inputs.candidate_run_id }}-${{ needs.verify-inputs.outputs.candidate_attempt }}" --dir candidate
           [[ -f candidate/final-candidate-manifest.json && -f candidate/final-candidate-manifest.json.sha256 ]] || { echo "candidate receipt bytes are incomplete" >&2; exit 1; }
       - name: Promote exact root digest to semver and safe latest
         if: steps.existing_release.outputs.exists == 'false'
@@ -257,7 +257,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image_repo=ghcr.io/chrischeng-c4/sift
+          image_repo=ghcr.io/chrischeng-c4/defer
           root_digest="${{ needs.verify-inputs.outputs.root_digest }}"
           version="${{ inputs.version }}"
           root_ref="${image_repo}@${root_digest}"
@@ -292,8 +292,8 @@ jobs:
             latest_matches_newer=false
             latest_matches_older=false
             while IFS= read -r tag; do
-              next="${tag#sift@}"
-              [[ "$tag" =~ ^sift@[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              next="${tag#defer@}"
+              [[ "$tag" =~ ^defer@[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
               if [[ "$(printf '%s\n%s\n' "$version" "$next" | sort -V | tail -n1)" == "$next" && "$next" != "$version" ]]; then
                 newer_published=true
                 digest="$(digest_or_absent "${image_repo}:${next}")"
@@ -333,7 +333,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<EOF
-          # sift@${{ inputs.version }}
+          # defer@${{ inputs.version }}
 
           - Source commit: $GITHUB_SHA
           - Pull request: ${{ needs.verify-inputs.outputs.pr_url }}
@@ -346,11 +346,10 @@ jobs:
           - GKE receipt sidecar SHA-256: ${{ needs.verify-inputs.outputs.gke_receipt_sidecar_sha256 }}
           - Release path: landed main -> immutable candidate -> digest-pinned GKE acceptance -> protected annotated tag -> no-rebuild promotion.
           - Compatibility: no HTTP, CLI, wire format, on-disk format, or Kubernetes manifest shape changed in this release.
-          - Install: curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/sift@${{ inputs.version }}/projects/sift/install.sh | sh (the tarballs above, verified by their .sha256 sidecars)
-          - Image: ghcr.io/chrischeng-c4/sift:${{ inputs.version }} is the root index digest above; latest moves only when this is the newest semver.
+          - Image: ghcr.io/chrischeng-c4/defer:${{ inputs.version }} is the root index digest above; latest moves only when this is the newest semver.
           EOF
-          gh release create "sift@${{ inputs.version }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "sift@${{ inputs.version }}" --notes-file release-notes.md \
-            candidate/sift-*.tar.gz candidate/sift-*.tar.gz.sha256 candidate/spdx-amd64.json candidate/spdx-arm64.json gke-receipt/sift-gke-receipt.json gke-receipt/sift-gke-receipt.json.sha256
+          gh release create "defer@${{ inputs.version }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "defer@${{ inputs.version }}" --notes-file release-notes.md \
+            candidate/defer-*.tar.gz candidate/defer-*.tar.gz.sha256 candidate/spdx-amd64.json candidate/spdx-arm64.json gke-receipt/defer-gke-receipt.json gke-receipt/defer-gke-receipt.json.sha256
       - name: Publicly verify immutable tag, release bytes, and promoted image
         if: steps.existing_release.outputs.exists == 'false'
         env:
@@ -358,9 +357,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/release/verify-release-artifacts.sh --app sift \
+          scripts/release/verify-release-artifacts.sh --app defer \
             --repo chrischeng-c4/axiom \
-            --tag "sift@${{ inputs.version }}" \
+            --tag "defer@${{ inputs.version }}" \
             --commit "$GITHUB_SHA" \
             --candidate-run-id "${{ inputs.candidate_run_id }}" \
             --candidate-run-attempt "${{ inputs.candidate_run_attempt }}" \

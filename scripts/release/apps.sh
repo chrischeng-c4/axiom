@@ -41,7 +41,7 @@ release_app_targets() {
     lumen|tape|sift)
       printf '%s\n' aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl ;;
     keep|relay|defer)
-      printf '%s\n' x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu ;;
+      printf '%s\n' x86_64-unknown-linux-musl aarch64-unknown-linux-musl ;;
   esac
 }
 # Which harness produces the GKE receipt (build-release steps 5 and 6).
