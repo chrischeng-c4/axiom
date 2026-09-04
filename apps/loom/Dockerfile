@@ -13,7 +13,7 @@
 # stand up the whole data plane for e2e. Match the host toolchain (1.92): the
 # resolved lockfile pulls deps that require the edition2024 Cargo feature.
 FROM rust:1.92-slim-bookworm AS builder
-# release (default; CI / GKE) or debug (/build:debug — unoptimized, matches
+# release (default; CI / GKE) or debug (build-debug — unoptimized, matches
 # `cargo build` on the host). Only these two values work: the binaries are
 # copied out of target/<profile>/.
 ARG CARGO_PROFILE=release
@@ -26,7 +26,7 @@ COPY --chown=root:root . .
 # out in the same RUN. Add `--features operator` to also bake in the k8s
 # operator/CRD paths for an operator-role image. relay ships one binary,
 # `relay` (its `relay-server` bin went away in #1239); copying the old name
-# failed every build of this image until /build:debug ran it on 2026-09-02.
+# failed every build of this image until build-debug ran it on 2026-09-02.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \

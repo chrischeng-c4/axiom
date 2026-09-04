@@ -30,8 +30,8 @@ the case that needs a stated reason.
 |---|---|---|
 | a commit, a rebase onto main, a push, or "land this" | `git-commit`, `git-rebase`, `git-push`, `git-land` | `git add -A && git commit`, `git rebase`, `git push --force` typed here |
 | a pull request, or its merge | `gh-create-pr`, `gh-merge-pr` | `gh pr create` / `gh pr merge` typed here |
-| a debug or release run of keep, defer, relay, or loom | `build-debug <app>`, `build-release <app>` | `cargo build`, `docker build`, `kind load`, `gh workflow run` |
-| a lumen release | `lumen-build-release` | tagging or publishing by hand |
+| a debug run of keep, defer, relay, or loom | `build-debug <app>` | `cargo build`, `docker build`, `kind load` |
+| a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release <app>` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
 | a project's META-docs, its release Milestone, or a Milestone's issue set | `aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`, `aw-grill-milestone-to-issue`, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside a grill |
 | a queue head's e2e contract | `aw-e2e-for`, run by `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main session |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, run by `<p>-dev` | writing `apps/<p>/src/**` in the main session |
@@ -42,11 +42,11 @@ the case that needs a stated reason.
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
 
-**Skills.** Nineteen, each a directory `.claude/skills/<name>/` with a
+**Skills.** Eighteen, each a directory `.claude/skills/<name>/` with a
 byte-identical twin at `.agents/skills/<name>/`: the nine `aw-*` lifecycle
 skills under `## Skills` plus `git-commit`, `git-rebase`, `git-push`,
 `git-land`, `gh-create-pr`, `gh-merge-pr`, `build-debug`, `build-release`,
-`lumen-build-release`, `ui-ux-pro-max`. A skill's name is its directory
+`ui-ux-pro-max`. A skill's name is its directory
 name — no leading slash, no colon form. Invoke one through the Skill tool by
 that name — the human types it, or the session invokes it when the human
 asked for its outcome in prose — never by re-typing the commands underneath
@@ -155,12 +155,16 @@ already runs), and the execution skills read `#<iid>` as one typed issue and
 only `milestone:<number>` or an exact `<project>@<version>` title as a
 Milestone. Each `SKILL.md` carries the rest.
 
-`build-debug <app>` and `build-release <app>` stand outside AW: debug runs
+`build-debug <app>` and `build-release <app>` stand outside AW. Debug runs
 the acceptance harness against a working-tree image on the kind cluster
-`axiom-build-debug`, release dispatches the paid `gke-acceptance` workflow
-from a clean pushed tree. Both cover keep, defer, relay, and loom, hand lumen
-to `lumen-build-release`, and refuse anything else rather than fall back to
-`cargo build`.
+`axiom-build-debug` for keep, defer, relay, and loom. Release is the
+candidate-first chain for lumen, tape, sift, keep, relay, and defer:
+`build.sh release` → `git-land` → `<app>-release-candidate` → candidate
+verifier → digest-pinned GKE gate and receipt → one annotated
+`<app>@<version>` tag at the landed sha → `<app>-release` promotion →
+public verifier, driven by `scripts/release/*.sh`; loom keeps the
+acceptance-only `gke-acceptance` dispatch. Both refuse anything else rather
+than fall back to `cargo build`.
 
 ## Authority Order
 

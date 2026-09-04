@@ -20,7 +20,7 @@
 name: gke-acceptance
 # gh run list exposes no workflow_dispatch inputs, so the app list rides on
 # the run title — scripts/build/release.sh reads it back from there.
-run-name: gke-acceptance ${{ inputs.apps }} @ ${{ inputs.ref || github.ref_name }}
+run-name: gke-acceptance ${{ inputs.apps }} @ ${{ inputs.ref || github.ref_name }}${{ inputs.image != '' && format(' image={0}', inputs.image) || '' }}
 
 on:
   workflow_dispatch:
@@ -36,6 +36,16 @@ on:
         description: >-
           Git ref (branch, tag, or commit SHA) to build and test. Leave
           empty to use the dispatching ref.
+        required: false
+        default: ""
+        type: string
+      image:
+        description: >-
+          Digest-pinned prebuilt image to deploy instead of building a
+          test image: ghcr.io/<owner>/<app>@sha256:<64 hex>. When set,
+          apps must name exactly that one app and its build job is
+          skipped. build-release <app> passes the release candidate's
+          root digest here.
         required: false
         default: ""
         type: string
@@ -57,7 +67,7 @@ permissions:
 
 jobs:
   build-keep:
-    if: contains(inputs.apps, 'keep')
+    if: contains(inputs.apps, 'keep') && inputs.image == ''
     uses: ./.github/workflows/keep-test-image.yml
     permissions:
       packages: write
@@ -66,7 +76,7 @@ jobs:
       ref: ${{ inputs.ref }}
 
   build-defer:
-    if: contains(inputs.apps, 'defer')
+    if: contains(inputs.apps, 'defer') && inputs.image == ''
     uses: ./.github/workflows/defer-test-image.yml
     permissions:
       packages: write
@@ -75,7 +85,7 @@ jobs:
       ref: ${{ inputs.ref }}
 
   build-relay:
-    if: contains(inputs.apps, 'relay')
+    if: contains(inputs.apps, 'relay') && inputs.image == ''
     uses: ./.github/workflows/relay-test-image.yml
     permissions:
       packages: write
@@ -84,7 +94,7 @@ jobs:
       ref: ${{ inputs.ref }}
 
   build-loom:
-    if: contains(inputs.apps, 'loom')
+    if: contains(inputs.apps, 'loom') && inputs.image == ''
     uses: ./.github/workflows/loom-test-image.yml
     permissions:
       packages: write
@@ -113,14 +123,37 @@ jobs:
       RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
       # A deselected app's build job is skipped and its output is empty;
       # run.sh only requires <APP>_IMAGE for apps actually listed in APPS.
-      KEEP_IMAGE: ${{ needs.build-keep.outputs.image }}
-      DEFER_IMAGE: ${{ needs.build-defer.outputs.image }}
-      RELAY_IMAGE: ${{ needs.build-relay.outputs.image }}
-      LOOM_IMAGE: ${{ needs.build-loom.outputs.image }}
+      KEEP_IMAGE: ${{ contains(inputs.apps, 'keep') && inputs.image || needs.build-keep.outputs.image }}
+      DEFER_IMAGE: ${{ contains(inputs.apps, 'defer') && inputs.image || needs.build-defer.outputs.image }}
+      RELAY_IMAGE: ${{ contains(inputs.apps, 'relay') && inputs.image || needs.build-relay.outputs.image }}
+      LOOM_IMAGE: ${{ contains(inputs.apps, 'loom') && inputs.image || needs.build-loom.outputs.image }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+
+      # A prebuilt image bypasses the build jobs, so its shape is proven here
+      # before any cluster time is spent: exactly one app, that app's own
+      # GHCR repository under this owner, digest-pinned. build-release <app>
+      # feeds the release candidate's root digest through this input.
+      - name: Verify prebuilt image input
+        if: inputs.image != ''
+        env:
+          APPS: ${{ inputs.apps }}
+          IMAGE: ${{ inputs.image }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          read -r -a apps <<<"$APPS"
+          [ "${#apps[@]}" -eq 1 ] || { echo "refused: image input needs exactly one app, got '$APPS'" >&2; exit 1; }
+          app=${apps[0]}
+          case " keep defer relay loom " in
+            *" $app "*) ;;
+            *) echo "refused: unknown app '$app'" >&2; exit 1 ;;
+          esac
+          pattern="^ghcr\.io/${OWNER}/${app}@sha256:[0-9a-f]{64}$"
+          [[ "$IMAGE" =~ $pattern ]] || { echo "refused: image must be ghcr.io/${OWNER}/${app}@sha256:<64 hex>, got '$IMAGE'" >&2; exit 1; }
+          echo "prebuilt image accepted for ${app}: ${IMAGE}"
 
       # runner.temp is not available in job-level env, so the evidence dir
       # lands in GITHUB_ENV here for the harness and the upload step alike.

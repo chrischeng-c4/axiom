@@ -86,7 +86,7 @@ PROJECT_ID=<PROJECT_ID> KEEP_IMAGE=ghcr.io/<owner>/keep:sha-<git12>@sha256:... A
 `<APP>_IMAGE` is required per selected app and should be digest-pinned.
 `PARK=0` leaves the pool awake (e.g. the acceptance/gcp harness runs next).
 
-## Local kind run (/build:debug)
+## Local kind run (build-debug)
 
 `scripts/run-app.sh` and `verify/` are cluster-agnostic (KUBECONFIG, kubectl,
 kustomize, port-forward, and an image the nodes can pull), so the same

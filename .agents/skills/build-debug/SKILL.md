@@ -1,14 +1,14 @@
 ---
-name: build:debug
+name: build-debug
 description: "Build one app's image from the working tree (cargo debug profile), load it into a local kind cluster, and run the GKE acceptance harness's deploy → verify → teardown against it. Use when the user asks to debug-build, kind-test, or locally verify keep, defer, relay, or loom."
 user-invocable: true
 ---
 
-# /build:debug
+# build-debug
 
 Prove the working tree deploys and survives on a cluster before it reaches
 GitHub: local image, local kind, and the same `run-app.sh` + `verify/`
-contract that `/build:release` runs on GKE. The mechanics live in
+contract that `build-release` runs on GKE. The mechanics live in
 `scripts/build/debug.sh`; your job is to route the app, run the script, and
 relay what it measured.
 
@@ -19,7 +19,7 @@ relay what it measured.
   | Project | Route |
   |---|---|
   | `keep`, `defer`, `relay`, `loom` | `scripts/build/debug.sh <app>` |
-  | `lumen` | not this skill — say so and stop; lumen's cluster runs are `/lumen:build:release`'s contract |
+  | `lumen` | not this skill — say so and stop; lumen's cluster runs are `build-release`'s contract |
   | anything else | the script exits 2 with `refused: debug route not wired for <app> (covered: keep defer relay loom)`; relay that line and stop — never fall back to `cargo build`, and never wire a route yourself |
 
 - The script runs the working tree as it is: a dirty tree is allowed and the

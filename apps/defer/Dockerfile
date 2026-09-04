@@ -1,6 +1,6 @@
 # HANDWRITE-BEGIN gap="missing-generator:deployment:defer-image" tracker="#766" reason="Source-build image fixture rendered by defer dockerfile render."
 FROM rust:1-bookworm AS build
-# release (default; CI / GKE) or debug (/build:debug). Only these two values
+# release (default; CI / GKE) or debug (build-debug). Only these two values
 # work: the binary is copied out of target/<profile>/.
 ARG CARGO_PROFILE=release
 WORKDIR /src

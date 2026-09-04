@@ -11,17 +11,17 @@ const EXPECTED_DIRECT_FEATURES: &[&str] = &[
     "self-update",
 ];
 const RELEASE_SKILL_SHA256: &str =
-    "8abe9d7e25ccc5c001cd0b51621b1817172889f57301d5a3db72475b4546a65b";
+    "eaf7e96c088ca15700bbff100ebed4829b92535fc19e2fa1952c36bf93374243";
 
 fn validate_release_skill_order(content: &str) -> Result<(), String> {
     let markers = [
-        "2. Run `git:land`",
-        "3. Dispatch `lumen-release-candidate`",
-        "Wait for the final v3 receipt.",
+        "2. Run `git-land`",
+        "3. Dispatch `<app>-release-candidate`",
+        "Wait for the final candidate manifest.",
         "4. Independently run the candidate verifier in full mode.",
-        "5. The controller creates one annotated `lumen@<version>` tag",
-        "6. If the normal promotion has not run, dispatch `lumen-release`",
-        "7. Run the public verifier.",
+        "7. The controller creates one annotated `<app>@<version>` tag",
+        "8. Dispatch `<app>-release`",
+        "9. Run the public verifier.",
     ];
     let mut previous = 0;
     for marker in markers {
@@ -651,22 +651,22 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
     let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let repo_root = base_dir.parent().unwrap().parent().unwrap();
     let agents =
-        std::fs::read_to_string(repo_root.join(".agents/skills/lumen-build-release/SKILL.md"))
+        std::fs::read_to_string(repo_root.join(".agents/skills/build-release/SKILL.md"))
             .expect("read .agents release skill");
     let claude =
-        std::fs::read_to_string(repo_root.join(".claude/skills/lumen-build-release/SKILL.md"))
+        std::fs::read_to_string(repo_root.join(".claude/skills/build-release/SKILL.md"))
             .expect("read .claude release skill");
 
     validate_release_skill_pair(&agents, &claude)
         .expect("release skill entrypoints must be identical and candidate-first");
 
     let escaped_agents = agents.replace(
-        "3. Dispatch `lumen-release-candidate`",
-        "g\\it tag -m release lumen@<version>; g\\it push --tags\n3. Dispatch `lumen-release-candidate`",
+        "3. Dispatch `<app>-release-candidate`",
+        "g\\it tag -m release lumen@<version>; g\\it push --tags\n3. Dispatch `<app>-release-candidate`",
     );
     let escaped_claude = claude.replace(
-        "3. Dispatch `lumen-release-candidate`",
-        "g\\it tag -m release lumen@<version>; g\\it push --tags\n3. Dispatch `lumen-release-candidate`",
+        "3. Dispatch `<app>-release-candidate`",
+        "g\\it tag -m release lumen@<version>; g\\it push --tags\n3. Dispatch `<app>-release-candidate`",
     );
     assert_ne!(
         escaped_agents, agents,
@@ -682,8 +682,8 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
     );
 
     let drift = agents.replace(
-        "Publish one verified Lumen release",
-        "Publish a different verified Lumen release",
+        "Publish one verified release",
+        "Publish a different verified release",
     );
     assert_ne!(drift, agents, "skill drift fixture must change bytes");
     assert!(
@@ -693,7 +693,7 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
 
     let candidate_verifier_step =
         "4. Independently run the candidate verifier in full mode. Stop on any mismatch.\n";
-    let tag_step = "5. The controller creates one annotated `lumen@<version>` tag at the exact\n";
+    let tag_step = "7. The controller creates one annotated `<app>@<version>` tag at the exact\n";
     let tag_first = agents
         .replace(candidate_verifier_step, "")
         .replace(tag_step, &format!("{tag_step}{candidate_verifier_step}"));
@@ -706,10 +706,10 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
         "tag-first fixture must fail the release-order oracle"
     );
 
-    let receipt = "Wait for the final v3 receipt.";
+    let receipt = "Wait for the final candidate manifest.";
     let receipt_after_tag = agents.replace(receipt, "").replace(
-        "5. The controller creates one annotated `lumen@<version>` tag",
-        &format!("5. The controller creates one annotated `lumen@<version>` tag\n{receipt}"),
+        "7. The controller creates one annotated `<app>@<version>` tag",
+        &format!("7. The controller creates one annotated `<app>@<version>` tag\n{receipt}"),
     );
     assert_ne!(
         receipt_after_tag, agents,
@@ -721,8 +721,8 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
     );
 
     let raw_git_before_candidate = agents.replace(
-        "3. Dispatch `lumen-release-candidate`",
-        "git tag -m release lumen@<version>; git push --tags\n3. Dispatch `lumen-release-candidate`",
+        "3. Dispatch `<app>-release-candidate`",
+        "git tag -m release lumen@<version>; git push --tags\n3. Dispatch `<app>-release-candidate`",
     );
     assert_ne!(
         raw_git_before_candidate, agents,
@@ -734,8 +734,8 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
     );
 
     let raw_git_with_global_options = agents.replace(
-        "3. Dispatch `lumen-release-candidate`",
-        "git -C . tag -m release lumen@<version>; git -C . push --tags\n3. Dispatch `lumen-release-candidate`",
+        "3. Dispatch `<app>-release-candidate`",
+        "git -C . tag -m release lumen@<version>; git -C . push --tags\n3. Dispatch `<app>-release-candidate`",
     );
     assert_ne!(
         raw_git_with_global_options, agents,
@@ -747,11 +747,11 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
     );
 
     let raw_git_with_c_and_continuation = agents.replace(
-        "3. Dispatch `lumen-release-candidate`",
+        "3. Dispatch `<app>-release-candidate`",
         concat!(
             "git \\\n",
             "-C . \\\n",
-            "tag -m release lumen@<version>\n3. Dispatch `lumen-release-candidate`"
+            "tag -m release lumen@<version>\n3. Dispatch `<app>-release-candidate`"
         ),
     );
     assert_ne!(
@@ -764,11 +764,11 @@ fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
     );
 
     let raw_git_with_git_dir_and_continuation = agents.replace(
-        "3. Dispatch `lumen-release-candidate`",
+        "3. Dispatch `<app>-release-candidate`",
         concat!(
             "git \\\n",
             "--git-dir=.git \\\n",
-            "push --tags\n3. Dispatch `lumen-release-candidate`"
+            "push --tags\n3. Dispatch `<app>-release-candidate`"
         ),
     );
     assert_ne!(

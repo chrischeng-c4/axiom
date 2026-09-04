@@ -57,11 +57,10 @@ they wrap.
 
 ### Reach for a skill before typing the commands it wraps
 
-Nineteen skills live under `.agents/skills/`, each byte-identical to its
-`.claude/skills/` twin: the nine `aw-*` lifecycle skills and ten standalone
+Eighteen skills live under `.agents/skills/`, each byte-identical to its
+`.claude/skills/` twin: the nine `aw-*` lifecycle skills and nine standalone
 ones — `git-commit`, `git-rebase`, `git-push`, `git-land`, `gh-create-pr`,
-`gh-merge-pr`, `build-debug`, `build-release`, `lumen-build-release`,
-`ui-ux-pro-max`. A skill's name is its directory name — no leading slash, no
+`gh-merge-pr`, `build-debug`, `build-release`, `ui-ux-pro-max`. A skill's name is its directory name — no leading slash, no
 colon form. A skill is a `SKILL.md` you open and follow; the enforcement is
 the script it hands you to — `scripts/git/*.sh`, `scripts/gh/*.sh`,
 `scripts/build/*.sh`, the `aw` phase scripts — whose `refused:` exits are the
@@ -71,8 +70,8 @@ gate. Re-typing those commands yourself keeps the work and drops the refusal.
 |---|---|---|
 | a commit, a rebase onto main, a push, or "land this" | `git-commit`, `git-rebase`, `git-push`, `git-land` | `git add -A && git commit`, `git rebase`, `git push --force` typed yourself |
 | a pull request, or its merge | `gh-create-pr`, `gh-merge-pr` | `gh pr create` / `gh pr merge` typed yourself |
-| a debug or release run of keep, defer, relay, or loom | `build-debug`, `build-release` | `cargo build`, `docker build`, `kind load`, `gh workflow run` |
-| a lumen release | `lumen-build-release` | tagging or publishing by hand |
+| a debug run of keep, defer, relay, or loom | `build-debug` | `cargo build`, `docker build`, `kind load` |
+| a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
 | a project's META-docs, its release Milestone, or a Milestone's issue set | `aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`, `aw-grill-milestone-to-issue` — they interview the human, so they run in the main thread | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or `aw milestone` / `aw change` outside a grill |
 | a queue head's e2e contract | `aw-e2e-for`, through `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main thread |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, through `<p>-dev` | writing `apps/<p>/src/**` in the main thread |
