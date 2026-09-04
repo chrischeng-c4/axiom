@@ -1844,12 +1844,13 @@ summary drift from it", not "run a projector".
 ## Project build and release contract
 
 Every project `build.sh` must use the same two-mode contract. The per-project
-`<project>-build-{debug,release}` skill wrappers are deleted (2026-09-02;
-only `/lumen-build-release` survives, and it is Lumen's own candidate-receipt
-release workflow, not this contract). A plain compile is
-`cargo build -p <crate>` directly; `/build:debug` and `/build:release` are
-cluster runs (local kind, GKE) for keep/defer/relay/loom and not this contract
-either. The versioned debug/release modes below run the project's own
+`<project>-build-{debug,release}` skill wrappers are deleted (2026-09-02), and
+`lumen-build-release` folded into `build-release` (2026-09-04):
+`build-release <app>` is the candidate-first release chain for lumen, tape,
+sift, keep, relay, and defer, and its first step is the release mode below. A
+plain compile is `cargo build -p <crate>` directly; `build-debug` is a local
+kind cluster run for keep/defer/relay/loom and not this contract. The
+versioned debug/release modes below run the project's own
 `apps/<name>/build.sh` from the repository root.
 
 ### Debug builds
@@ -1870,36 +1871,41 @@ Debug builds are local install checkpoints:
 
 ### Release builds
 
-Release builds are not complete until the GitHub Release is visible. The
-required chain is:
+Release builds are not complete until the GitHub Release is visible, and the
+tag is never the first artifact. The required chain is `build-release
+<project>`, whose steps are:
 
 1. **release-prep**: run the project `build.sh release` from the repository
-   root. The script checks local and remote tag collisions for
+   root. A legacy script checks local and remote tag collisions for
    `<project>@<version>`, advances the version with the same base-64 carry rule
    when needed, runs the Cargo release build, installs the local release binary,
    commits version files as `release(<project>): <project>@X.Y.Z`, and prints
-   `RELEASE_TAG=<project>@X.Y.Z`. It must not create or push the tag.
-2. **land**: run `git:land` as-is so the release commit lands on `main`. Do not
+   `RELEASE_TAG=<project>@X.Y.Z`. A lumen-shaped script (lumen, tape, and every
+   app listed in `scripts/release/apps.sh`) reads the version from
+   `Cargo.toml`, syncs the Kubernetes image pins, and builds without bumping or
+   committing; the version bump is an ordinary commit. Neither may create or
+   push the tag.
+2. **land**: run `git-land` as-is so the release commit lands on `main`. Do not
    tag before this step; rebases and squash merges can orphan a pre-land tag.
-3. **tag + push**: tag the landed `HEAD` and push the tag:
+3. **candidate**: `scripts/release/candidate.sh <project> <version> <sha>`
+   dispatches `<project>-release-candidate.yml` from the landed `main` sha,
+   watches it, and downloads the immutable candidate bundle (archives, digest
+   pinned image, signature, provenance, SBOM attestations, final manifest).
+4. **verify**: the project's `verify-release-candidate.sh --mode full` re-proves
+   the bundle independently of the workflow's own verdict.
+5. **GKE gate**: the candidate image `ghcr.io/chrischeng-c4/<project>@<digest>`
+   is deployed and verified on GKE by the project's harness, and the evidence
+   is bound into `<project>-gke-receipt.json` plus its `.sha256` sidecar.
+6. **promote**: `scripts/release/promote.sh` creates the one annotated
+   `<project>@X.Y.Z` tag at the candidate's exact commit, dispatches
+   `<project>-release.yml` at that tag with the receipt, and watches it; the
+   promotion retags the same digest as semver and `latest` and publishes the
+   GitHub Release from the candidate bytes, never rebuilding.
+7. **public verification**: `verify-release-artifacts.sh --mode public` must
+   pass before the release is reported complete or the tracker is closed.
 
-   ```bash
-   git tag -a <project>@X.Y.Z -m "Release <project>@X.Y.Z"
-   git push origin <project>@X.Y.Z
-   ```
-
-4. **monitor**: run the release monitor and do not report success until it
-   completes:
-
-   ```bash
-   scripts/project-build-monitor-release.sh <project> <project>@X.Y.Z
-   ```
-
-   The monitor watches `.github/workflows/<project>-release.yml` for that tag
-   when the workflow exists, fails if the Actions run fails, then verifies
-   `gh release view <project>@X.Y.Z` before printing the GitHub Release URL. If
-   a project has no release workflow yet, the monitor still polls the GitHub
-   Release directly and fails if it never appears.
+`scripts/project-build-monitor-release.sh` remains for projects still on a
+tag-triggered `<project>-release.yml`; it is not part of the chain above.
 
 The release identity is always:
 

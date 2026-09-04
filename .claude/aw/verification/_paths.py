@@ -113,7 +113,7 @@ def skill_invocation(skill: str) -> str:
 # verifies a scope's lifecycle evidence and reruns the full project gates,
 # and `review` audits one project. A `build` skill sat beside them for part
 # of that day and left the same way: a kind or GKE run is not lifecycle
-# work, so it became the standalone `/build:debug` and `/build:release`
+# work, so it became the standalone `build-debug` and `build-release`
 # (`scripts/build/`), outside this namespace and this checker.
 #
 # The technical-design step is gone the same way. `grill-change-to-td` and

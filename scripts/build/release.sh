@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# /build:release for keep / defer / relay / loom: dispatch the
-# gke-acceptance workflow for one app at the pushed HEAD, watch it to a
-# terminal state, download the evidence bundle, and report whether the node
-# pool was parked. The workflow owns build → terraform + kustomize deploy →
+# GKE acceptance leg of build-release for keep / defer / relay / loom:
+# dispatch the gke-acceptance workflow for one app at the pushed HEAD, watch
+# it to a terminal state, download the evidence bundle, and report whether
+# the node pool was parked. With --image the workflow deploys that
+# digest-pinned prebuilt image instead of building one: the release
+# candidate's root digest for keep / relay / defer (build-release step 5);
+# loom has no candidate and stays acceptance-only. The workflow owns build → terraform + kustomize deploy →
 # e2e verify → park; this script only drives it through gh and reads back.
 #
-# usage: scripts/build/release.sh <app> [--rerun] [--out <dir>]
+# usage: scripts/build/release.sh <app> [--image <ref>] [--rerun] [--out <dir>]
 #   app      one of: keep defer relay loom
+#   --image  ghcr.io/<owner>/<app>@sha256:<64 hex>; skips the app's build job
 #   --rerun  dispatch even when this sha+app already has a successful run
 #   --out    evidence download directory
 #            (default ${TMPDIR:-/tmp}/gke-acceptance-<run-id>)
 # exit: 0 run concluded success AND the park step concluded success;
 #   1 run red, or park step not success (evidence downloaded when the run
 #   produced any); 2 refused — uncovered app, dirty tree, unpushed HEAD,
-#   workflow not on the default branch, duplicate run without --rerun.
+#   workflow not on the default branch, duplicate run without --rerun,
+#   malformed --image.
 # The watch takes 15-40 minutes; run it in the background from a session.
 set -euo pipefail
 GIT=(git -c core.fsmonitor=false)
@@ -22,9 +27,10 @@ COVERED="keep defer relay loom"
 ACCEPTANCE_JOB='deploy + verify on GKE'
 PARK_STEP='Park node pool (belt and suspenders)'
 
-app='' rerun=false out=''
+app='' rerun=false out='' image=''
 while [ $# -gt 0 ]; do
   case "$1" in
+    --image) image=${2:?--image needs a digest reference}; shift 2 ;;
     --rerun) rerun=true; shift ;;
     --out) out=${2:?--out needs a directory}; shift 2 ;;
     -*) echo "refused: unknown flag $1" >&2; exit 2 ;;
@@ -39,6 +45,10 @@ case " $COVERED " in
   *) echo "refused: release route not wired for $app (covered: $COVERED)" >&2; exit 2 ;;
 esac
 command -v jq >/dev/null || { echo "refused: jq is required" >&2; exit 2; }
+[ -z "$image" ] || [[ "$image" =~ ^ghcr\.io/[^/]+/${app}@sha256:[0-9a-f]{64}$ ]] || {
+  echo "refused: --image must be ghcr.io/<owner>/$app@sha256:<64 hex>, got $image" >&2
+  exit 2
+}
 
 dirty=$("${GIT[@]}" status --porcelain)
 [ -z "$dirty" ] || {
@@ -63,14 +73,18 @@ gh workflow view "$WORKFLOW" --yaml >/dev/null 2>&1 || {
 }
 
 # gh run list does not expose workflow_dispatch inputs; the workflow's
-# run-name carries the app list, so displayTitle is the only place to tell
-# a keep run from a loom run at the same sha.
+# run-name carries the app list (and the prebuilt image, when one was
+# given), so displayTitle is the only place to tell a keep run from a loom
+# run — or a candidate-image run from a test-image run — at the same sha.
 prior_json=$(gh run list --workflow "$WORKFLOW" -L 50 \
   --json databaseId,headSha,event,conclusion,displayTitle,url)
 if [ "$rerun" = false ]; then
-  dup=$(jq -r --arg sha "$sha" --arg app " $app " \
+  dup=$(jq -r --arg sha "$sha" --arg app " $app " --arg image "$image" \
     '[.[] | select(.headSha == $sha and .conclusion == "success"
-                   and (.displayTitle | contains($app)))] | .[0].url // empty' \
+                   and (.displayTitle | contains($app))
+                   and (if $image == "" then (.displayTitle | contains(" image=") | not)
+                        else (.displayTitle | endswith(" image=" + $image)) end))]
+     | .[0].url // empty' \
     <<<"$prior_json")
   [ -z "$dup" ] || {
     echo "refused: $sha already has a successful $app run: $dup — pass --rerun and name what changed" >&2
@@ -81,7 +95,7 @@ before_ids=$(jq -c --arg sha "$sha" \
   '[.[] | select(.headSha == $sha and .event == "workflow_dispatch") | .databaseId]' \
   <<<"$prior_json")
 
-gh workflow run "$WORKFLOW" --ref "$branch" -f apps="$app" -f ref="$sha"
+gh workflow run "$WORKFLOW" --ref "$branch" -f apps="$app" -f ref="$sha" -f image="$image"
 
 # gh workflow run prints no run id; the new run is the one for this sha
 # that was not in the list before dispatch.

@@ -6,7 +6,7 @@ set -euo pipefail
 # go with it, so nothing bills after the run.
 #
 # Nothing here (or under verify/) is GKE-specific: it needs KUBECONFIG,
-# kubectl, kustomize, and an image the nodes can pull, so /build:debug reuses
+# kubectl, kustomize, and an image the nodes can pull, so build-debug reuses
 # it unchanged on a local kind cluster (scripts/build/debug.sh).
 #
 # usage: IMAGE=ghcr.io/<owner>/<app>@sha256:... EVIDENCE_DIR=... run-app.sh <app>

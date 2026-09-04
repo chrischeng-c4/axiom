@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Debug route of /build:debug for keep / defer / relay / loom: build the app's
+# Debug route of build-debug for keep / defer / relay / loom: build the app's
 # image locally from the working tree (cargo debug profile), load it into a
 # persistent kind cluster, and run the same deploy -> verify -> evidence ->
 # teardown harness that the gke-acceptance workflow runs on GKE

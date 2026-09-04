@@ -1473,7 +1473,7 @@ fn dx_llm_composes_library_owned_provider_content() {
         ".github/workflows/lumen-release-0.4.29-public-verify.yml",
         "apps/lumen/scripts/verify-release-artifacts.sh",
         "apps/lumen/e2e/release_promotion.rs",
-        ".agents/skills/lumen-build-release/SKILL.md",
+        ".agents/skills/build-release/SKILL.md",
     ] {
         assert!(
             release_value["task"]["reads"]

@@ -10,7 +10,7 @@
 #   docker build --build-arg CARGO_PROFILE=debug -f apps/keep/Dockerfile -t keep:debug .
 
 FROM rust:1.92-slim-bookworm AS builder
-# release (default; CI / GKE) or debug (/build:debug — unoptimized, matches
+# release (default; CI / GKE) or debug (build-debug — unoptimized, matches
 # `cargo build` on the host). Only these two values work: the binary is
 # copied out of target/<profile>/.
 ARG CARGO_PROFILE=release
