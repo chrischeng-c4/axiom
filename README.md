@@ -100,7 +100,7 @@ an installer yet are marked _coming soon_.
 | [sift](projects/sift/README.md) | `sift` | _coming soon_ |
 | [relay](apps/relay/README.md) | `relay` | _coming soon_ |
 | [rig](apps/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/rig/install.sh \| sh` |
-| [tape](apps/tape/README.md) | `tape` | _coming soon_ |
+| [tape](apps/tape/README.md) | `tape` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/tape/install.sh \| sh` |
 | [vat](apps/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/vat/install.sh \| sh` |
 
 ## Runtime Evidence Loop
