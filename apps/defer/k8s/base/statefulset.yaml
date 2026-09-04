@@ -27,7 +27,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: defer
-          image: defer:0.4.7
+          image: defer:0.4.13
           imagePullPolicy: IfNotPresent
           command: ["defer", "serve"]
           ports:

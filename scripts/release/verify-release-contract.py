@@ -34,7 +34,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Dict, List, NoReturn, Optional, Sequence, Tuple
 
@@ -65,7 +65,7 @@ FIVE_TARGETS = (
     "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-musl",
 )
-TWO_TARGETS = ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
+TWO_TARGETS = ("x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl")
 HARNESS_FIELDS = ("readyz", "round_trip", "durability")
 SIFT_FIELDS = (
     "operator_reconcile_1x1",
@@ -168,9 +168,9 @@ APPS: Dict[str, App] = {
     ),
     # onboarded flips to True in the PR that lands the app's two workflows.
     "sift": shared_app("sift", "projects/sift", FIVE_TARGETS, "gcp", SIFT_FIELDS, onboarded=True),
-    "keep": shared_app("keep", "apps/keep", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=False),
-    "relay": shared_app("relay", "apps/relay", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=False),
-    "defer": shared_app("defer", "apps/defer", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=False),
+    "keep": shared_app("keep", "apps/keep", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=True),
+    "relay": shared_app("relay", "apps/relay", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=True),
+    "defer": shared_app("defer", "apps/defer", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=True),
 }
 FIXTURE_APPS = ("keep", "sift")  # one per receipt backend
 FIXTURE_VERSION = {"keep": "0.4.13", "sift": "0.1.2"}
@@ -477,8 +477,15 @@ def check_promotion(app: App, text: str) -> None:
     ):
         if required not in text:
             fail(f"{label}: required fragment absent: {required!r}")
-    if app.shared_scripts and f"--app {app.name}" not in text:
-        fail(f"{label}: the shared artifact verifier must be told --app {app.name}")
+    if app.shared_scripts:
+        if f"--app {app.name}" not in text:
+            fail(f"{label}: the shared artifact verifier must be told --app {app.name}")
+        # The shared public verifier refuses release notes without exactly one
+        # RELEASE_COMPATIBILITY_LINE; catch that here, before a promotion run.
+        compatibility = bash_variable("RELEASE_COMPATIBILITY_LINE")
+        notes = [line for line in text.splitlines() if line.strip() == compatibility]
+        if len(notes) != 1:
+            fail(f"{label}: release notes must carry apps.sh RELEASE_COMPATIBILITY_LINE exactly once, got {len(notes)}")
     if app.takes_attempt and "--candidate-run-attempt" not in text:
         fail(f"{label}: the artifact verifier must receive the candidate run attempt")
     creates = [line.strip() for line in text.splitlines() if "docker buildx imagetools create" in line]
@@ -578,6 +585,17 @@ def bash_predicate(function: str, app: str) -> bool:
     if proc.returncode not in (0, 1):
         fail(f"apps.sh {function} {app}: exit {proc.returncode}: {proc.stderr.strip()}")
     return proc.returncode == 0
+
+
+def bash_variable(name: str) -> str:
+    proc = subprocess.run(
+        ["bash", "-c", 'source "$1"; printf "%s" "${!2}"', "_", str(APPS_SH), name],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        fail(f"apps.sh does not define {name}: exit {proc.returncode}: {proc.stderr.strip()}")
+    return proc.stdout
 
 
 def load_receipt_maker():
@@ -879,7 +897,7 @@ def promotion_controls(app: App, text: str) -> List[Tuple[str, Callable[[], str]
                 return "".join(lines)
         fail(f"{label}: no retag line to mutate")
 
-    return [
+    controls: List[Tuple[str, Callable[[], str]]] = [
         (f"{label}: tag push trigger added", lambda: replace_once(text, "on:\n  workflow_dispatch:\n", f"on:\n  push:\n    tags: ['{app.name}@*']\n  workflow_dispatch:\n", label)),
         (f"{label}: candidate run id input dropped", lambda: replace_once(text, "      candidate_run_id:\n", "      candidate_run:\n", label)),
         (f"{label}: publish job renamed", lambda: replace_once(text, "\n  publish-release:\n", "\n  publish:\n", label)),
@@ -889,6 +907,10 @@ def promotion_controls(app: App, text: str) -> List[Tuple[str, Callable[[], str]
         (f"{label}: public verification dropped", lambda: replace_all(text, "--mode public", "--mode candidate", label)),
         (f"{label}: tag ref guard dropped", lambda: replace_all(text, tag_ref, "refs/heads/main", label)),
     ]
+    if app.shared_scripts:
+        compatibility = bash_variable("RELEASE_COMPATIBILITY_LINE")
+        controls.append((f"{label}: compatibility line reworded", lambda: replace_once(text, compatibility, "- Compatibility: unchanged.", label)))
+    return controls
 
 
 def gke_controls(text: str) -> List[Tuple[str, Callable[[], str]]]:
@@ -942,7 +964,7 @@ def self_test() -> str:
     for label, mutate in gke_controls(gke_text):
         expect_static_failure(label, lambda mutate=mutate: check_gke_acceptance(mutate()))
         negatives += 1
-    expect_static_failure("table: a non-onboarded app is checked as onboarded", lambda: check_app(APPS["keep"]))
+    expect_static_failure("table: a non-onboarded app is checked as onboarded", lambda: check_app(replace(APPS["keep"], onboarded=False)))
     negatives += 1
 
     fixture_names = []

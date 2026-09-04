@@ -50,7 +50,7 @@ FIVE_TARGETS = (
     "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-musl",
 )
-TWO_TARGETS = ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
+TWO_TARGETS = ("x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl")
 
 # Mirrors scripts/release/apps.sh; verify-release-contract.py cross-checks the two.
 APPS: Dict[str, Dict[str, Any]] = {

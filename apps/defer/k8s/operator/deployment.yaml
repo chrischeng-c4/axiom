@@ -15,7 +15,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: operator
-          image: defer:0.4.7
+          image: defer:0.4.13
           command: ["defer", "k8s", "operator", "run"]
           env:
             - name: POD_NAME

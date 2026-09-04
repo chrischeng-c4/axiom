@@ -46,6 +46,18 @@ host_target() {
   esac
 }
 
+# The archive this host can execute: its own triple when the app ships it,
+# otherwise (Linux only) the static musl sibling, which runs on any Linux
+# regardless of the host libc. Apps that ship only musl archives still get
+# their binary run here instead of a skipped check.
+host_archive_target() {
+  local host musl
+  host="$(host_target)"
+  if target_list | grep -qx "$host"; then printf '%s\n' "$host"; return 0; fi
+  musl="${host%-gnu}-musl"
+  if [[ "$host" == *-unknown-linux-gnu ]] && target_list | grep -qx "$musl"; then printf '%s\n' "$musl"; return 0; fi
+  return 1
+}
 require_regular_file() { [[ -f "$1" && ! -L "$1" ]] || fail "required regular file is absent: $1"; }
 
 verify_archive() {
@@ -113,11 +125,10 @@ verify_local_artifacts() {
     [[ "$(sha256_file "$ARTIFACTS_DIR/spdx-${sbom}.json")" == "$sbom_sha" ]] || fail "SBOM checksum mismatch: ${sbom}"
     jq -e '.spdxVersion == "SPDX-2.3"' "$ARTIFACTS_DIR/spdx-${sbom}.json" >/dev/null || fail "invalid SPDX 2.3 SBOM: ${sbom}"
   done
-  target="$(host_target)"
-  if ! target_list | grep -qx "$target"; then
-    printf 'note: %s ships no %s archive; host binary check skipped on this verifier host\n' "$APP" "$target" >&2
+  target="$(host_archive_target)" || {
+    printf 'note: %s ships no archive this verifier host (%s) can run; host binary check skipped\n' "$APP" "$(host_target)" >&2
     return 0
-  fi
+  }
   archive="$(jq -er --arg target "$target" '.artifacts[] | select(.target == $target) | .archive' "$MANIFEST")"
   private_home="$(mktemp -d)"
   unpack_dir="$(mktemp -d)"
