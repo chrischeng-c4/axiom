@@ -2,6 +2,11 @@
 name = "mamba"
 cap_path = "apps/mamba/CAPABILITIES.md"
 
+[impl]
+build = "cargo test --locked -p mamba --lib --no-run"
+test = "cargo test --locked -p mamba --lib -- --skip driver:: --skip runtime::"
+harness = "cargo"
+
 # AW-EC-BEGIN
 [aw.ec.generated]
 version = 1
