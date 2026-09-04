@@ -301,14 +301,17 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
     let wheels_dir = tmp.path().join("wheels");
-    std::fs::create_dir(&wheels_dir).unwrap();
     let wheel_rel = "wheels/frozen_local_wheel-0.1.0-py3-none-any.whl";
-    let wheel_path = tmp.path().join(wheel_rel);
-    let wheel_bytes = b"fake-wheel-bytes-for-direct-local-wheel";
-    std::fs::write(&wheel_path, wheel_bytes).unwrap();
+    let wheel_path = fixtures::build_wheel_file(&wheels_dir, "frozen_local_wheel", "0.1.0");
+    assert_eq!(
+        wheel_path,
+        tmp.path().join(wheel_rel),
+        "fixture must write the exact wheel filename the case pins"
+    );
+    let wheel_bytes = std::fs::read(&wheel_path).unwrap();
     let expected_sha = {
         let mut hasher = Sha256::new();
-        hasher.update(wheel_bytes);
+        hasher.update(&wheel_bytes);
         format!("{:x}", hasher.finalize())
     };
 
@@ -362,22 +365,60 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
         "sync must consume direct-file lock offline; stderr: {}",
         String::from_utf8_lossy(&synced.stderr)
     );
-    let probe = run_python(
-        tmp.path(),
-        "import frozen_local_wheel as m; \
-         print(m.__mamba_source_kind__); \
-         print(m.__mamba_source_path__)",
+
+    // The synced environment must import the package — the same
+    // observation whether `sync` materializes a stub today or installs
+    // the wheel for real.
+    let imported = run_python(tmp.path(), "import frozen_local_wheel");
+    assert!(
+        imported.status.success(),
+        "import through the synced environment must succeed; stderr: {}",
+        String::from_utf8_lossy(&imported.stderr)
     );
+
+    // `sync` today only stub-installs (real installs land with #4207); to
+    // observe the wheel's own content — never a stub-only attribute — the
+    // same wheel `sync` consumed offline is installed for real into a
+    // fresh site-packages through the product's own strict installer, and
+    // imported directly. This never reads a marker `sync`'s stub writes.
+    let real_site = tmp.path().join("real-site-packages");
+    let installed = Command::new(mamba_bin())
+        .args([
+            "pip",
+            "install",
+            wheel_path.to_str().unwrap(),
+            "--site-packages",
+            real_site.to_str().unwrap(),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba pip install");
+    assert!(
+        installed.status.success(),
+        "pip install of the direct-file wheel must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&installed.stdout),
+        String::from_utf8_lossy(&installed.stderr)
+    );
+
+    let probe = match Command::new("python3")
+        .arg("-c")
+        .arg("import frozen_local_wheel as m; print(m.__mamba_fixture__)")
+        .env("PYTHONPATH", &real_site)
+        .current_dir(&real_site)
+        .output()
+    {
+        Ok(out) => out,
+        Err(e) => panic!("python3 not found on PATH, needed for the import probe: {e}"),
+    };
     assert!(
         probe.status.success(),
-        "import probe must succeed after sync; stderr: {}",
+        "import probe must succeed after pip install; stderr: {}",
         String::from_utf8_lossy(&probe.stderr)
     );
     let stdout = String::from_utf8_lossy(&probe.stdout);
     assert!(
-        stdout.contains("direct_file")
-            && stdout.contains("wheels/frozen_local_wheel-0.1.0-py3-none-any.whl"),
-        "sync stub must preserve direct source metadata: {stdout}"
+        stdout.trim() == "frozen_local_wheel",
+        "installed module must carry the fixture's own name: {stdout}"
     );
 }
 
