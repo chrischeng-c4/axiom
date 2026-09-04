@@ -95,6 +95,7 @@ impl SiftApiClient {
         let mut url = self.endpoint.join("api/v1/traces/")?;
         url.path_segments_mut()
             .map_err(|_| anyhow::anyhow!("Sift endpoint cannot contain path segments"))?
+            .pop_if_empty()
             .push(trace_id);
         let mut query = vec![("project", project.to_string())];
         if let Some(cursor) = min_cursor {
