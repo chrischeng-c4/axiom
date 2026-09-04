@@ -1,8 +1,10 @@
-// `mamba run` package-manager preflight — closes #2684; #4207 drops the
-// `PYTHONPATH` injection this module used to own.
+// `mamba run` package-manager preflight and interpreter routing — closes
+// #2684; #4207 drops the `PYTHONPATH` injection this module used to own;
+// #4210 makes a file's default route the resolved interpreter instead of
+// the Mamba compiler.
 //
 // Acceptance (tests/governance/gates/pkgmgr/run/manifest.toml, schema gate
-// pkgmgr_run_fixture_2684.rs):
+// pkgmgr_run_fixture_2684.rs; apps/mamba/e2e/pkgmgr_run_file_venv.rs):
 //
 //   - Running before sync fails with "environment is not synced".
 //   - Running after sync proceeds: the venv's own `bin` (or `Scripts`)
@@ -10,12 +12,19 @@
 //     interpreter resolves its own site-packages through `site`, the
 //     way every other Python tool does — never through `PYTHONPATH`.
 //   - No global PATH or user shell env mutation: env changes are scoped
-//     to the spawned child (`mamba run -- <cmd>`).
+//     to the spawned child (`mamba run -- <cmd>` or `mamba run <file>`).
 //   - Offline against the frozen local index (sync owns that).
+//   - `mamba run <file>` executes the file on the interpreter
+//     `resolve_run_interpreter` selects for the current `Mode`, never the
+//     compiler, unless `--compile` was passed or `<file>` is the `-` stdin
+//     sentinel (the compiler's own routes, decided by `routes_to_compiler`
+//     in `main.rs`, not re-derived here).
 //
-// Hook shape: callers invoke `preflight(project_dir)` BEFORE handing
-// the file off to the compiler. Legacy `mamba run <file>` outside a
-// mamba project is untouched (returns `Mode::Legacy`).
+// Hook shape: callers invoke `preflight(project_dir)` BEFORE handing the
+// file off to an interpreter or the compiler, then pass the resulting
+// `Mode` to `resolve_run_interpreter` to pick the child to spawn. Legacy
+// `mamba run <file>` outside a mamba project is untouched (`preflight`
+// returns `Mode::Legacy`, and `resolve_run_interpreter` walks `PATH`).
 
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
@@ -96,6 +105,87 @@ pub fn configure_command_environment(command: &mut Command, project_dir: &Path, 
             command.env("PATH", joined);
         }
     }
+}
+
+/// Whether `mamba run <file>` should hand `<file>` to the Mamba compiler
+/// instead of the interpreter `resolve_run_interpreter` selects: the
+/// explicit `--compile` opt-in, or the `-` stdin sentinel, which the
+/// compiler still owns because there is no file on disk to hand to a
+/// spawned interpreter.
+pub fn routes_to_compiler(compile_flag: bool, file: &str) -> bool {
+    compile_flag || file == "-"
+}
+
+/// The interpreter path a synced project's own venv lays down —
+/// `<project>/.venv/bin/python` on POSIX, `<project>/.venv/Scripts/python.exe`
+/// on Windows. Returned un-resolved (never `canonicalize`d): the caller
+/// spawns this launch path directly, the way every other Python tool does.
+pub fn venv_python_path(project_dir: &Path) -> PathBuf {
+    let venv = project_dir.join(VENV_DIR);
+    if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    }
+}
+
+/// Select the interpreter `mamba run <file>` should spawn for the given
+/// preflight `Mode`. Never re-derives project state (no second
+/// `mamba.toml`/lockfile read) — `mode` already carries every decision this
+/// needs, which is what lets the negative control that pins `Mode::Legacy`
+/// unconditionally prove this function actually reads it.
+///
+///   - `Mode::Project { .. }`: the project's own venv interpreter.
+///   - `Mode::EmptyLock`: the venv interpreter when a venv exists (a project
+///     with no locked packages may still have run `mamba venv` by hand),
+///     otherwise the `PATH` interpreter.
+///   - `Mode::Legacy`: the `PATH` interpreter only, `python3` before
+///     `python`, ignoring any `.venv` that happens to sit in `project_dir`.
+///
+/// `path_value` is the raw `PATH` environment value to search — a parameter,
+/// not a direct `std::env::var_os` read, so callers can pass a fixture PATH
+/// under test.
+pub fn resolve_run_interpreter(
+    project_dir: &Path,
+    mode: &Mode,
+    path_value: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf> {
+    match mode {
+        Mode::Project { .. } => Ok(venv_python_path(project_dir)),
+        Mode::EmptyLock => {
+            let venv = project_dir.join(VENV_DIR);
+            if venv.join("pyvenv.cfg").exists() {
+                Ok(venv_python_path(project_dir))
+            } else {
+                resolve_path_interpreter(path_value)
+            }
+        }
+        Mode::Legacy => resolve_path_interpreter(path_value),
+    }
+}
+
+/// Walk `path_value` (a `PATH`-shaped environment value) for the first
+/// `python3`, falling back to `python` in the same directory before moving
+/// on to the next — so a directory carrying both never yields `python` over
+/// `python3`. Bails naming both candidate names when neither resolves
+/// anywhere on `path_value`.
+pub fn resolve_path_interpreter(path_value: Option<&std::ffi::OsStr>) -> Result<PathBuf> {
+    if let Some(path) = path_value {
+        for dir in std::env::split_paths(path) {
+            for name in ["python3", "python"] {
+                let candidate = dir.join(name);
+                #[cfg(windows)]
+                let candidate = candidate.with_extension("exe");
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+            }
+        }
+    }
+    bail!(
+        "no `python3` or `python` found on PATH; `mamba run` needs one of \
+         them to execute a file outside a synced project"
+    );
 }
 
 fn joined_path_front<I>(key: &str, front: I) -> Option<std::ffi::OsString>

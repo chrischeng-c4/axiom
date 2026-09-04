@@ -78,6 +78,19 @@ fn cli() -> Command {
                 .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from mamba.toml"))
                 .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml"))
                 .arg(
+                    Arg::new("compile")
+                        .long("compile")
+                        .action(ArgAction::SetTrue)
+                        .help("Hand the file to the Mamba compiler instead of the resolved interpreter"),
+                )
+                .arg(
+                    Arg::new("script-args")
+                        .value_name("ARGS")
+                        .help("Arguments passed through to the script")
+                        .num_args(0..)
+                        .allow_hyphen_values(true),
+                )
+                .arg(
                     Arg::new("command")
                         .value_name("COMMAND")
                         .help("Command and arguments to run inside the synced project environment; use after --")
@@ -1134,6 +1147,12 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
         ),
     };
 
+    let script_args: Vec<String> = sub
+        .get_many::<String>("script-args")
+        .map(|vals| vals.cloned().collect())
+        .unwrap_or_default();
+    let compile_flag = sub.get_flag("compile");
+
     // Resolve a relative `file` (and the `-` stdin sentinel is left as-is)
     // against the CURRENT cwd before any scratch-CWD chdir below — config
     // discovery above already needed the original cwd, so scratch entry is
@@ -1141,6 +1160,14 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
     let file = std::fs::canonicalize(&file)
         .map(|p| p.display().to_string())
         .unwrap_or(file);
+
+    // Default route: the project's own interpreter (or the PATH interpreter
+    // outside a project) runs the file directly. `--compile` and the `-`
+    // stdin sentinel are the only ways to reach the Mamba compiler.
+    if !mamba::pkgmanage::run::routes_to_compiler(compile_flag, &file) {
+        return cmd_run_interpreter_mode(&file, &script_args, &cwd_for_preflight, &preflight_mode);
+    }
+
     maybe_enter_scratch_cwd();
 
     let config = CompilerConfig {
@@ -1184,6 +1211,41 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Default route for `mamba run <file>`: spawn the resolved interpreter
+/// (the project's own `.venv` interpreter, or the `PATH` interpreter
+/// outside a project) with the file and its trailing arguments, stdio
+/// inherited, and propagate the child's exit code unchanged.
+fn cmd_run_interpreter_mode(
+    file: &str,
+    script_args: &[String],
+    project_dir: &std::path::Path,
+    preflight_mode: &mamba::pkgmanage::run::Mode,
+) -> Result<()> {
+    let interpreter = match mamba::pkgmanage::run::resolve_run_interpreter(
+        project_dir,
+        preflight_mode,
+        std::env::var_os("PATH").as_deref(),
+    ) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut command = std::process::Command::new(&interpreter);
+    command.arg(file).args(script_args).current_dir(project_dir);
+    mamba::pkgmanage::run::configure_command_environment(&mut command, project_dir, preflight_mode);
+
+    let status = command
+        .status()
+        .with_context(|| format!("run `{file}` with {}", interpreter.display()))?;
+    if let Some(code) = status.code() {
+        std::process::exit(code);
+    }
+    std::process::exit(1);
 }
 
 fn cmd_run_command_mode(

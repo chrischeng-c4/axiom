@@ -588,3 +588,137 @@ mod index_url_simple {
         assert_eq!(client.index_url, "http://h:1");
     }
 }
+
+// Colocated unit tests for #4210: `mamba run <file>` executes on the
+// project's own `.venv` interpreter by default, falling back to the `PATH`
+// interpreter outside a synced project, with `--compile` as the explicit
+// opt-in back to the Mamba compiler.
+//
+// These cover the rules observable only inside the implementation --
+// interpreter selection per `Mode`, `PATH` resolution order, and the
+// compiler/interpreter route decision -- as opposed to
+// `apps/mamba/e2e/pkgmgr_run_file_venv.rs`, which judges the externally
+// observable end-to-end `run` shape through the real built binary.
+mod run_file {
+    use std::path::{Path, PathBuf};
+
+    use crate::pkgmanage::run::{
+        resolve_path_interpreter, resolve_run_interpreter, routes_to_compiler, venv_python_path,
+        Mode,
+    };
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn write_executable(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        make_executable(&path);
+        path
+    }
+
+    #[test]
+    fn project_mode_selects_the_venv_interpreter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mode = Mode::Project {
+            site_packages: tmp.path().join(".venv/lib/site-packages"),
+        };
+        let interpreter = resolve_run_interpreter(tmp.path(), &mode, None).unwrap();
+        assert_eq!(interpreter, venv_python_path(tmp.path()));
+        #[cfg(not(windows))]
+        assert_eq!(interpreter, tmp.path().join(".venv/bin/python"));
+        #[cfg(windows)]
+        assert_eq!(interpreter, tmp.path().join(".venv/Scripts/python.exe"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_lock_with_pyvenv_cfg_selects_the_venv_interpreter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let venv = tmp.path().join(".venv");
+        std::fs::create_dir_all(&venv).unwrap();
+        std::fs::write(venv.join("pyvenv.cfg"), "").unwrap();
+
+        let interpreter =
+            resolve_run_interpreter(tmp.path(), &Mode::EmptyLock, None).unwrap();
+        assert_eq!(interpreter, venv_python_path(tmp.path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_lock_without_pyvenv_cfg_falls_through_to_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let python3 = write_executable(&bin, "python3");
+        let path_value = std::ffi::OsString::from(bin.to_str().unwrap());
+
+        // No `.venv` at all in this project directory.
+        let interpreter =
+            resolve_run_interpreter(tmp.path(), &Mode::EmptyLock, Some(&path_value)).unwrap();
+        assert_eq!(interpreter, python3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_mode_ignores_an_existing_venv_and_resolves_from_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let venv_bin = tmp.path().join(".venv").join("bin");
+        std::fs::create_dir_all(&venv_bin).unwrap();
+        write_executable(&venv_bin, "python");
+        std::fs::write(tmp.path().join(".venv").join("pyvenv.cfg"), "").unwrap();
+
+        let path_dir = tmp.path().join("path-bin");
+        std::fs::create_dir_all(&path_dir).unwrap();
+        let path_python3 = write_executable(&path_dir, "python3");
+        let path_value = std::ffi::OsString::from(path_dir.to_str().unwrap());
+
+        let interpreter =
+            resolve_run_interpreter(tmp.path(), &Mode::Legacy, Some(&path_value)).unwrap();
+        assert_eq!(interpreter, path_python3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_resolution_prefers_python3_over_python() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_executable(tmp.path(), "python");
+        let python3 = write_executable(tmp.path(), "python3");
+        let path_value = std::ffi::OsString::from(tmp.path().to_str().unwrap());
+
+        let resolved = resolve_path_interpreter(Some(&path_value)).unwrap();
+        assert_eq!(resolved, python3);
+    }
+
+    #[test]
+    fn path_resolution_with_no_candidate_names_both_python3_and_python() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path_value = std::ffi::OsString::from(tmp.path().to_str().unwrap());
+
+        let err = resolve_path_interpreter(Some(&path_value)).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("python3"), "{msg}");
+        assert!(msg.contains("python"), "{msg}");
+    }
+
+    #[test]
+    fn compile_flag_routes_to_the_compiler() {
+        assert!(routes_to_compiler(true, "main.py"));
+    }
+
+    #[test]
+    fn stdin_sentinel_routes_to_the_compiler() {
+        assert!(routes_to_compiler(false, "-"));
+    }
+
+    #[test]
+    fn plain_file_routes_to_the_interpreter() {
+        assert!(!routes_to_compiler(false, "main.py"));
+    }
+}
