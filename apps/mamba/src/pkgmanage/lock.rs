@@ -100,10 +100,10 @@ fn resolve_index_url(sub: &ArgMatches) -> Option<String> {
 }
 
 fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
+    use crate::pkgmanage::pkgmgr::http::index_client_for_url;
     use crate::pkgmanage::pkgmgr::markers::{evaluate as eval_marker, MarkerEnv};
     use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
     use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Resolver};
-    use crate::pkgmanage::pkgmgr::IndexClient;
 
     let roots: Vec<crate::pkgmanage::pkgmgr::resolver::Requirement> = deps
         .iter()
@@ -113,14 +113,14 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
     let root_names: BTreeSet<String> = roots.iter().map(|r| r.name.clone()).collect();
 
     let cache_dir = pypi_cache_dir();
-    let client = IndexClient {
-        index_url: index_url.trim_end_matches('/').to_string(),
-        cache_dir: cache_dir.to_string_lossy().into_owned(),
-        max_concurrent: 8,
-        timeout_secs: 30,
-        retry_max: 3,
-        auth_header: crate::pkgmanage::auth::authorization_for_url(index_url)?,
-    };
+    let client = index_client_for_url(
+        index_url,
+        cache_dir.to_string_lossy().into_owned(),
+        8,
+        30,
+        3,
+        crate::pkgmanage::auth::authorization_for_url(index_url)?,
+    );
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

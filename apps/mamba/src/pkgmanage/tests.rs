@@ -520,3 +520,71 @@ mod sync_prune {
         );
     }
 }
+
+// Colocated unit tests for #4209: `--index-url` must accept the PEP 503
+// `.../simple` URL a `uv` user already has in their fingers, not only the
+// registry base URL `mamba` builds its own paths from.
+//
+// These cover the normalisation rule itself -- trim trailing slashes, strip
+// at most one trailing `/simple`, never touch anything else -- as opposed to
+// `apps/mamba/e2e/pkgmgr_index_url_simple.rs`, which judges the externally
+// observable `mamba add`/`mamba.lock` behavior end to end.
+mod index_url_simple {
+    use crate::pkgmanage::pkgmgr::http::{index_client_for_url, normalize_index_url};
+
+    #[test]
+    fn normalize_index_url_strips_one_trailing_simple() {
+        assert_eq!(normalize_index_url("http://h:1/simple"), "http://h:1");
+    }
+
+    #[test]
+    fn normalize_index_url_strips_trailing_slash_then_simple() {
+        assert_eq!(normalize_index_url("http://h:1/simple/"), "http://h:1");
+        assert_eq!(normalize_index_url("http://h:1/simple//"), "http://h:1");
+    }
+
+    #[test]
+    fn normalize_index_url_keeps_a_bare_base_and_drops_only_its_trailing_slash() {
+        assert_eq!(normalize_index_url("http://h:1/"), "http://h:1");
+        assert_eq!(normalize_index_url("http://h:1"), "http://h:1");
+    }
+
+    #[test]
+    fn normalize_index_url_strips_at_most_one_simple() {
+        assert_eq!(
+            normalize_index_url("http://h:1/simple/simple"),
+            "http://h:1/simple"
+        );
+    }
+
+    #[test]
+    fn normalize_index_url_is_case_sensitive_and_never_rewrites_the_host_or_path() {
+        assert_eq!(normalize_index_url("http://h:1/Simple"), "http://h:1/Simple");
+        assert_eq!(
+            normalize_index_url("https://pypi.org/simple"),
+            "https://pypi.org"
+        );
+        assert_eq!(
+            normalize_index_url("http://h:1/mirror/simple"),
+            "http://h:1/mirror"
+        );
+    }
+
+    /// `add.rs::resolve_with_pypi` and `lock.rs::resolve_via_pypi` both build
+    /// their `IndexClient` through `index_client_for_url` rather than a
+    /// struct literal, so both entry points -- and `$MAMBA_INDEX_URL`, which
+    /// flows through the same `resolve_index_url` into these sites -- get the
+    /// same normalisation for free.
+    #[test]
+    fn both_pypi_entry_points_construct_the_client_through_the_normaliser() {
+        let client = index_client_for_url(
+            "http://h:1/simple/",
+            String::new(),
+            8,
+            30,
+            3,
+            None,
+        );
+        assert_eq!(client.index_url, "http://h:1");
+    }
+}

@@ -171,7 +171,7 @@ fn cli() -> Command {
                 .arg(Arg::new("spec").required(true).help("Dependency spec or local wheel path, e.g. foo==1.2.3 or ./wheels/foo-1.2.3-py3-none-any.whl (bare names require --index or explicit --index-url)"))
                 .arg(Arg::new("provider").long("provider").value_name("PROVIDER").help("Explicit first-party provider for mamba-owned replacement packages, e.g. --provider mamba mamba-httpx-compat"))
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
-                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
+                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL or its /simple URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require pinned version or local index")),
         )
         .subcommand(
@@ -183,7 +183,7 @@ fn cli() -> Command {
             Command::new("lock")
                 .about("Regenerate mamba.lock from mamba.toml; resolves transitive deps via a frozen index or explicit registry URL")
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
-                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
+                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL or its /simple URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index"))
                 .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if mamba.lock is missing or out of date without writing it")),
         )

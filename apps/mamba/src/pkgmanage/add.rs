@@ -287,17 +287,18 @@ fn resolve_with_local_index(spec: &DepSpec, idx: &Path) -> Result<ResolvedDep> {
 }
 
 fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
-    use crate::pkgmanage::pkgmgr::{IndexClient, IndexError};
+    use crate::pkgmanage::pkgmgr::http::index_client_for_url;
+    use crate::pkgmanage::pkgmgr::IndexError;
 
     let cache_dir = pypi_cache_dir();
-    let client = IndexClient {
-        index_url: index_url.trim_end_matches('/').to_string(),
-        cache_dir: cache_dir.to_string_lossy().into_owned(),
-        max_concurrent: 8,
-        timeout_secs: 30,
-        retry_max: 3,
-        auth_header: crate::pkgmanage::auth::authorization_for_url(index_url)?,
-    };
+    let client = index_client_for_url(
+        index_url,
+        cache_dir.to_string_lossy().into_owned(),
+        8,
+        30,
+        3,
+        crate::pkgmanage::auth::authorization_for_url(index_url)?,
+    );
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
