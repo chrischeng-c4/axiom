@@ -365,3 +365,7 @@ path = "e2e/pkgmgr_lock_frozen_transitive.rs"
 [[test]]
 name = "pkgmgr_sync_real_install"
 path = "e2e/pkgmgr_sync_real_install.rs"
+
+[[test]]
+name = "pkgmgr_sync_prune"
+path = "e2e/pkgmgr_sync_prune.rs"
