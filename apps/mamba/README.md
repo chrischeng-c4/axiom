@@ -4,6 +4,13 @@
 
 Force-typed Python compiler. Lexes Python source with `logos`, lowers through HIR/MIR, and emits native machine code via Cranelift JIT/AOT. Not a transpiler, not an interpreter — produces real binaries.
 
+Delivery order since 2026-09-03: the `uv`-shaped package manager ships first,
+as a drop-in for the common `uv` workflow that needs no mamba runtime; the
+CPython runtime replacement (tiers T1 to T7 under
+[Runtime replacement order](#runtime-replacement-order)) comes second.
+[STATUS.md](STATUS.md) records what the package manager supports today and
+[ROADMAP.md](ROADMAP.md) orders the two outcomes.
+
 For implementation map, see [llms.txt](llms.txt).
 
 Canonical supporting docs:
@@ -11,18 +18,40 @@ Canonical supporting docs:
 - Validation coverage evidence: [validation/evidence/coverage/README.md](validation/evidence/coverage/README.md)
 - Native runtime integration: [docs/integration/native-runtime-integration.md](docs/integration/native-runtime-integration.md)
 - Archived autonomous notes: [docs/notes/archive/autonomous-loop-scratchpad.md](docs/notes/archive/autonomous-loop-scratchpad.md)
+- Product requirements: [docs/product/README.md](docs/product/README.md)
 
-## Capabilities
+## Primary workflow
 
-A promise with no gate under it is not claimed.
+The package-manager path, on the CPython already on `PATH`. Every flag below
+is the one `mamba <verb> --help` prints.
 
-Each capability states its promise and names the gate that verifies it. A
-promise with no gate line under it is not claimed — and most of the tier
-promises below are exactly that today: planned, with the gate still to be
-written. Measured state lives in
-[Capability status — the four axes](#capability-status--the-four-axes-measured);
-those are Type/Behavior/Perf/Safety and are a different cut from the C1-C4
-axes here.
+1. Build the binary from the repository root with `cargo build -p mamba`; the
+   steps below run `./target/debug/mamba` as `mamba`.
+2. Scaffold a project and enter it: `mamba init demo` writes `mamba.toml`,
+   `.python-version`, `.gitignore`, `README.md`, and `src/__init__.py`; then
+   `cd demo`.
+3. Create the environment: `mamba venv` seeds `.venv` from the first `python`
+   on `PATH`; pass `--python <PYTHON>` to choose another interpreter.
+4. Add a dependency and lock it: `mamba add ./wheels/foo-1.2.3-py3-none-any.whl`
+   takes a local wheel, and `mamba add --index <DIR> foo` resolves a bare name
+   from an index built by `mamba index build --out <DIR> <WHEEL_OR_DIR>...`;
+   both update `mamba.toml` and `mamba.lock`.
+5. Converge the environment: `mamba sync` installs `mamba.lock` into `.venv`
+   and is a no-op when run again; `mamba sync --check` fails without writing
+   when the two differ.
+6. Run inside the environment: `mamba run -- python -c 'import sys; print(sys.executable)'`
+   prints the `.venv` interpreter. `mamba run <file.py>` compiles the file
+   with mamba today; the ROADMAP outcome
+   [uv-workflow-parity](ROADMAP.md#uv-workflow-parity) makes the `.venv`
+   interpreter the default there.
+
+## Runtime replacement order
+
+The compiler and runtime work, ordered T1 to T7. This order is the ROADMAP
+outcome [cpython-runtime-replacement](ROADMAP.md#cpython-runtime-replacement)
+and starts after `uv-workflow-parity`. Each tier's exit gate is still to be
+written, so no tier below is claimed; the capabilities that are claimed, with
+their gates, are under [Capabilities](#capabilities).
 
 ### Roadmap tiers
 
@@ -122,127 +151,6 @@ proven.
 
 - Source: `apps/mamba/src/runtime/stdlib/vendor_lib.rs`, `apps/mamba/vendor`
 - Exit gates: 7a #2104, 7b #2116 — **not written**
-
-
-### C1. Py3.12 functional parity
-
-Run real Python 3.12 programs without semantic divergence across language core,
-PEP syntax/semantics, builtins and stdlib, plus selected third-party libraries.
-CPython `Lib/test` and typeshed are the authoritative denominators; declared
-force-typing divergences must be explicit rather than hidden as ordinary
-behavior failures.
-
-- Root WI: #702
-- Gates: `cargo test -p mamba --test conformance_cpython_lib_test`;
-  `--test conformance_contract`; `--test conformance_real_world`;
-  `--test conformance_runtime_shutdown`; `apps/mamba/tests/PRODUCTION-GATE.md`
-- Surfaces: `mamba build|check|run|test|test-batch|pytest|surface-report`
-
-The CPython oracle gate itself remains open — the tier exit gates above are
-what would close it.
-
-
-### C2. Less CPU time AND less memory than CPython
-
-Performance is a committed capability: for the same program, mamba targets
-strictly less CPU time **and** strictly less peak RSS than CPython 3.12. The v1
-bar is staged, not one-shot: at least 1.5x where force typing pays, no worse
-than roughly 0.8x on CPython-tuned C hot paths, and both CPU and RSS measured
-externally before claiming progress.
-
-- Root WI: #707
-- Gates: `cargo test -p mamba --release --test perf_pin` 
-  `cargo bench -p mamba --bench mamba_bench`;
-  `apps/mamba/benches/3p/cross_runtime.rs`;
-  `apps/mamba/tests/harness/cpython/config/perf/pins`
-- Surfaces: `mamba bench --compare cpython|--fixtures|--check`
-
-Measured state is bimodal — see
-[Performance data](#performance-data--measured-mamba-vs-cpython-312). The ratio
-gates remain open.
-
-
-### C3. mambalibs end-to-end
-
-A statically linked set of Rust-native libraries exposed as importable Python
-modules inside mamba. Each kit registers via `MambaModule` plus the `linkme`
-distributed slice and is force-linked into the final mamba binary, with
-import/callable coverage for native kits instead of a separate ABI or dynamic
-plugin layer.
-
-- Root WI: #714
-- Gates: `cargo test -p mamba --test mambalibs`;
-  `cargo test -p mambalibs-http --test client_http2_test` (httpkit HTTP/2, #526,
-  the one verified child)
-- Source: `apps/mamba/mambalibs`,
-  `apps/mamba/src/pkgmanage/builder/force_link.rs`
-
-
-### C4. Package manager — uv-like
-
-**Verified.** A built-in package manager for project scaffold, dependency
-add/remove, lockfile generation, sync/install, cache, and validation workflows —
-`uv`-style ergonomics over the mamba runtime, with `mamba.toml` and
-`mamba.lock` as the agent-readable project contract.
-
-- Root WI: #459 (parity #519, `mamba run` command mode #525)
-- Gates: `cargo test -p mamba --test pkgmgr`;
-  `cargo test -p mamba --test schema_gates --test pkgmgr` 
-  `./target/debug/mamba pkgmgr-validate --json`
-- Source: `apps/mamba/src/pkgmanage`, `apps/mamba/tests/pkgmgr`
-
-`mamba init/auth/index/add/remove/lock/export/tree/version/package/publish/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache`
-plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
-local wheel paths, explicit registry URL tests, lockfile export to
-requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
-bumping, and pip-compatible requirements compile plus installed-environment
-install/sync/uninstall/list/freeze/show/tree/check inspection.
-
-`mamba audit` checks `mamba.lock` against an offline advisory database, and
-`mamba lock --check` / `mamba sync --check` provide CI-friendly drift gates
-without mutating lockfiles or environments. `mamba package build` emits
-deterministic pure-Python wheel and sdist artifacts from PEP 621
-`pyproject.toml` projects, and `mamba publish` / `mamba package publish` upload
-PyPI legacy multipart payloads with `.pypirc`/CLI credential precedence,
-CA-bundle support, JSON summaries, and `--dry-run` validation without leaking
-tokens. `mamba venv` exposes create/remove safety around PEP 405 environments,
-and `mamba cache` reports exact size/category info plus dry-run, age, size, and
-package-targeted pruning. `mamba python` exposes local interpreter list/find,
-`.python-version` pinning, managed Python directory resolution, local-source
-registration, standalone archive download/install via explicit URL or
-python-build-standalone release-tag composition, sha256 verification,
-uninstall, and shell PATH setup for managed launchers. `mamba workspace
-list/dir/metadata` inspects uv-compatible `[tool.uv.workspace]` membership,
-member paths, root paths, and exclusion patterns. `mamba index build`
-materializes a frozen local index from wheel files or directories for `mamba
-add --index` / `mamba lock --index`. `mamba shell path/init` emits managed PATH
-snippets for mamba tool bin directories, and `mamba
-generate-shell-completion` emits clap-derived bash/zsh/fish/powershell/elvish
-completion scripts from the live command tree. `mamba auth
-dir/login/token/logout` manages plaintext package-index credentials under an
-overrideable credentials directory, and stored credentials feed explicit-index
-metadata requests, resolver requests, and locked artifact downloads. `mamba
-tool run/install/upgrade/list/uninstall/dir/update-shell` wraps the
-tool-install workflow behind a uv-style `tool` command family.
-
-The validation profile requires twenty-one offline workflow families and keeps
-live network coverage opt-in and report-only. `mamba add` / `mamba lock` do not
-treat public PyPI as an implicit default source; callers must provide a frozen
-local index, a direct local wheel file, or an explicit registry URL.
-First-party pure-Python replacement packages use an explicit provider path:
-`mamba add --provider mamba mamba-httpx-compat` records the mamba-owned
-distribution name, preserves `provides`/compatibility metadata in `mamba.lock`,
-and `mamba sync` installs real pure-Python files into `.venv` so the provided
-import alias (for example `import httpx`) resolves without confusing the
-package with the upstream PyPI distribution. This provider path is separate
-from C3 `mambalibs`, which are Rust/native runtime modules. `mamba run
-<file.py|file.tp>` remains the mamba runtime/compiler path, while `mamba run --
-<cmd> [args...]` runs arbitrary commands inside the synced project environment
-with `.venv` executables and site-packages preferred before host fallbacks.
-
-No known release-blocking command-family gaps remain under #519; follow-up
-parity work is tracked as focused hardening or live-network fixtures.
-
 
 ## Test Completeness — what we tested, against what authority
 
@@ -1021,3 +929,104 @@ Open work is tracked exclusively in GitHub issues (`gh issue list --repo
 chrischeng-c4/axiom --label app:mamba --state open`); the tracker is the source
 of truth. The label is `app:mamba` even though the source is under `projects/`,
 which is why deriving it from the directory finds nothing.
+
+## Contract discovery
+
+| Need | Source of truth |
+|---|---|
+| Every command and its flags | `mamba --help` and `mamba <verb> --help`; the command surface is declared in [src/main.rs](src/main.rs) |
+| Package-manager behaviour | [src/pkgmanage/](src/pkgmanage/), one module per verb; `run.rs` owns the `run` preflight |
+| Package-manager cases | [tests/pkgmgr/runner.rs](tests/pkgmgr/runner.rs), one module per verb, declared as the `pkgmgr` `[[test]]` target in [Cargo.toml](Cargo.toml) |
+| What the package manager supports today | [STATUS.md](STATUS.md) |
+| What changes next, in order | [ROADMAP.md](ROADMAP.md) |
+| The product promises behind both | [docs/product/README.md](docs/product/README.md) |
+| Agent-facing driving notes, offline | `mamba llm` |
+
+## Capabilities
+
+A promise with no gate under it is not claimed. Each capability names the
+executable gates that verify it; every gate is a `[[test]]` target declared in
+[Cargo.toml](Cargo.toml) and runs unfiltered. The first three capabilities are
+the runtime side, whose tier order is under
+[Runtime replacement order](#runtime-replacement-order) and whose ROADMAP
+outcome is `cpython-runtime-replacement`. The fourth is the package manager,
+whose rows are in [STATUS.md](STATUS.md) and whose next outcome is
+`uv-workflow-parity`.
+
+### Capability index
+
+| Capability | ID | User promise | Sources |
+|---|---|---|---|
+| Py3.12 functional parity | `cpython-312-parity` | Compile a CPython 3.12 program and get the same observable result, under a stated force-typing divergence policy. | `apps/mamba` |
+| Less CPU and memory than CPython | `cpu-and-memory-under-cpython` | Run the compiled program with less CPU time and less memory than CPython 3.12 on the pinned fixtures. | `apps/mamba` |
+| mambalibs end-to-end | `mambalibs-end-to-end` | Replace C-backed stdlib and third-party modules with native mamba implementations that pass their own end-to-end cases. | `apps/mamba` |
+| uv-style package manager | `uv-style-package-manager` | Drive a project's dependencies, environment, and interpreter with `uv`-shaped verbs, offline, on the CPython already installed. | `apps/mamba`, `libs/cli-std` |
+
+### Py3.12 functional parity
+
+- ID: `cpython-312-parity`
+- Promise: A CPython 3.12 program compiled by mamba gives the same observable
+  result as under CPython, except where the force-typing divergence policy
+  under Test Completeness says otherwise; the conformance corpus, the CPython
+  `Lib/test` port, the real-world programs, and the runtime-shutdown cases are
+  the measure.
+- Sources:
+  - [`apps/mamba`](./) owns the lexer, HIR/MIR lowering, Cranelift codegen,
+    runtime, and the conformance harness under `tests/`.
+- Gate: `cargo test -p mamba --test conformance_contract`
+- Gate: `cargo test -p mamba --test conformance_cpython_lib_test`
+- Gate: `cargo test -p mamba --test conformance_runtime_shutdown`
+- Gate: `cargo test -p mamba --test conformance_real_world`
+
+### Less CPU and memory than CPython
+
+- ID: `cpu-and-memory-under-cpython`
+- Promise: On the pinned perf fixtures the compiled program uses less CPU time
+  and less memory than CPython 3.12, measured by the release-profile perf pin;
+  the bench suite under Performance data is the exploratory measurement, not
+  the gate.
+- Sources:
+  - [`apps/mamba`](./) owns the perf fixtures, the perf pin harness, and the
+    runtime whose CPU time and memory are measured.
+- Gate: `cargo test -p mamba --release --test perf_pin`
+
+### mambalibs end-to-end
+
+- ID: `mambalibs-end-to-end`
+- Promise: Each mambalibs module under `mambalibs/` replaces a C-backed stdlib
+  or third-party module with a native implementation and passes its own
+  end-to-end cases, including the HTTP/2 client.
+- Sources:
+  - [`apps/mamba`](./) owns the `mambalibs/` workspace members and the
+    `mambalibs` end-to-end target that drives them.
+- Gate: `cargo test -p mamba --test mambalibs`
+- Gate: `cargo test -p mambalibs-http --test client_http2_test`
+
+### uv-style package manager
+
+- ID: `uv-style-package-manager`
+- Promise: `init`, `add`, `remove`, `lock`, `sync`, `run`, `venv`, `python`,
+  `tool`, `version`, `tree`, `export`, `package`, `publish --dry-run`,
+  `index`, `auth`, `audit`, `pip`, `shell`, `cache`, and `hash` drive a
+  project offline from a frozen local index, a local wheel path, or an
+  explicit registry URL, on the CPython already on `PATH`; the six
+  [STATUS.md](STATUS.md) rows record the supported scope and the one limit,
+  and `mamba pkgmgr-validate --json` replays the same workflow families from
+  a built binary.
+- Sources:
+  - [`apps/mamba`](./) owns every verb under `src/pkgmanage/` and the
+    `pkgmgr` cases under `tests/pkgmgr/`.
+  - [`libs/cli-std`](../../libs/cli-std/README.md) supplies the standard
+    command set and shell-completion conventions the binary exposes.
+- Gate: `cargo test -p mamba --test pkgmgr`
+- Gate: `cargo test -p mamba --test schema_gates`
+
+## Supporting documents
+
+| Document | Use it for |
+|---|---|
+| [STATUS.md](STATUS.md) | The package manager's support matrix, one row per workflow, each with its gate. |
+| [ROADMAP.md](ROADMAP.md) | The two outcomes in delivery order and the three non-goals. |
+| [docs/product/README.md](docs/product/README.md) | The product promises each outcome and STATUS row comes from. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Build discipline, the test layout, and the verification rules for a change. |
+| [llms.txt](llms.txt) | The implementation map for agents. |
