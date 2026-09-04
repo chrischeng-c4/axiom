@@ -15,7 +15,9 @@
 //! the generic envelope + builder, never the domain classification, which
 //! stays in the service's own `From<DomainError>` impl.
 
-use axum::http::{header, HeaderValue, StatusCode};
+use std::time::Duration;
+
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -59,6 +61,37 @@ pub struct DetailedErrorEnvelope {
     pub current_cursor: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<u64>,
+}
+
+/// Return the bounded client's requested delay for one detailed retryable
+/// response.
+///
+/// A caller must not replay a request from a basic error body, a client error
+/// other than `429`, or conflicting header and body metadata. The service
+/// still decides whether replaying that request is safe and how many attempts
+/// it permits.
+pub fn retry_delay_from_detailed_error(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Option<Duration> {
+    if status != StatusCode::TOO_MANY_REQUESTS && !status.is_server_error() {
+        return None;
+    }
+    let details: DetailedErrorEnvelope = serde_json::from_slice(body).ok()?;
+    if !details.retryable {
+        return None;
+    }
+    let header_seconds = match headers.get(header::RETRY_AFTER) {
+        Some(value) => Some(value.to_str().ok()?.parse::<u64>().ok()?),
+        None => None,
+    };
+    let seconds = match (header_seconds, details.retry_after_seconds) {
+        (Some(header), Some(body)) if header == body => header,
+        (None, None) => 0,
+        _ => return None,
+    };
+    Some(Duration::from_secs(seconds))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

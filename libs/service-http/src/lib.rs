@@ -114,7 +114,10 @@ pub use content_decode::{
     decode_request_body, ContentDecodeError, ContentDecodeErrorKind, ContentDecodeLimitError,
     ContentDecodeLimits,
 };
-pub use error::{ApiErr, DetailedErrorEnvelope, ErrorEnvelope, ProjectionMetadata};
+pub use error::{
+    retry_delay_from_detailed_error, ApiErr, DetailedErrorEnvelope, ErrorEnvelope,
+    ProjectionMetadata,
+};
 #[cfg(feature = "otlp")]
 pub use logging::extract_trace_context;
 pub use logging::{

@@ -4,6 +4,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use service_http::{ApiErr, ProjectionMetadata};
+use std::time::Duration;
 
 #[tokio::test]
 async fn existing_basic_error_wire_stays_exact() {
@@ -66,5 +67,45 @@ async fn detailed_non_retryable_error_has_no_retry_header() {
             "message": "denied",
             "retryable": false
         })
+    );
+}
+
+#[tokio::test]
+async fn retry_delay_requires_a_retryable_server_error_and_matching_metadata() {
+    let response = ApiErr::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "retention_checkpoint_pending",
+        "retry after the checkpoint is ready",
+    )
+    .with_retry_after_seconds(3)
+    .into_response();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(
+        service_http::retry_delay_from_detailed_error(status, &headers, &body),
+        Some(Duration::from_secs(3))
+    );
+
+    let mut mismatched_headers = headers.clone();
+    mismatched_headers.insert(header::RETRY_AFTER, "4".parse().unwrap());
+    assert_eq!(
+        service_http::retry_delay_from_detailed_error(status, &mismatched_headers, &body),
+        None,
+        "a client must not guess when Retry-After and the JSON body disagree"
+    );
+
+    let mut missing_headers = mismatched_headers;
+    missing_headers.remove(header::RETRY_AFTER);
+    assert_eq!(
+        service_http::retry_delay_from_detailed_error(status, &missing_headers, &body),
+        None,
+        "a declared retry delay must use both wire fields"
+    );
+    assert_eq!(
+        service_http::retry_delay_from_detailed_error(StatusCode::BAD_REQUEST, &headers, &body,),
+        None,
+        "a client must not replay ordinary client errors"
     );
 }
