@@ -64,7 +64,7 @@ and `render_fleet.py --check` refuses a hand-edited file.
 
 | Agent | Model / effort | Owns | Never |
 |---|---|---|---|
-| `<p>-e2e-dev` | opus / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
+| `<p>-e2e-dev` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
 | `<p>-dev` | sonnet / `medium` | source plus colocated unit tests, verified by running them; for apps it runs `aw-impl-for`, impl and maint legs | `e2e/` |
 | `aw-dev` | sonnet / `medium` | one bounded change to the `apps/aw` CLI, verified with pytest through `uv` | protocol or lifecycle redesign |
 | `gke-operator` | sonnet / `medium` | launching and watching a paid GKE acceptance run; reports raw observations | acceptance, tracker, source |

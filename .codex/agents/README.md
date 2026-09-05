@@ -33,8 +33,9 @@ A hard case may still be raised at dispatch time — by editing nothing and
 overriding `model` in the spawn call — but phase ownership does not move
 with the model.
 
-Every role fixes `model = "gpt-5.6-terra"`. The Claude fleet's opus/sonnet
-tier split maps onto the pinned effort split (`max` vs `medium`) instead.
+Every role fixes `model = "gpt-5.6-terra"`. The Claude per-project fleet is
+sonnet throughout; its tiers differ by pinned effort (`max` vs `medium`),
+and that effort split is what this projection carries.
 Two Claude frontmatter fields have no Codex TOML equivalent and are not
 projected: `tools` (Codex has no per-tool allowlist; the `## Never` sections
 carry the same boundaries as prose) and `skills` (the bodies name the

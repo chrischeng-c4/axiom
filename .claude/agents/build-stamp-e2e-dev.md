@@ -1,7 +1,7 @@
 ---
 name: build-stamp-e2e-dev
 description: Authors and runs the build-stamp e2e contract — behavior, performance, and security facets — as black-box cases written to fail before the implementation exists. Never writes src.
-model: opus
+model: sonnet
 model_tier: e2e-dev
 effort: max
 tools: Read, Edit, Write, Bash, Grep, Glob
