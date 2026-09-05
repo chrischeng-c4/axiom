@@ -236,7 +236,7 @@ def run_oracle(rel: str, python_bin: str, timeout: int) -> dict[str, Any]:
 
 
 def run_mamba(rel: str, mamba_bin: str, timeout: int, *, measured: bool) -> dict[str, Any]:
-    argv = [mamba_bin, "run", str(fixture_path(rel))]
+    argv = [mamba_bin, "run", "--compile", str(fixture_path(rel))]
     return run_measured(argv, timeout) if measured else run_plain(argv, timeout)
 
 

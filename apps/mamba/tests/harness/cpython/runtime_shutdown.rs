@@ -37,7 +37,7 @@ fn assert_fixture_exits_successfully(rel: &str) {
     );
 
     let output = Command::new(mamba_bin())
-        .arg("run")
+        .arg("run").arg("--compile")
         .arg(&fixture)
         .output()
         .unwrap_or_else(|err| panic!("failed to execute mamba for {rel}: {err}"));

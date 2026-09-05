@@ -407,7 +407,7 @@ def main() -> int:
     print(f"== startup (hello) == samples={args.samples}")
     hello_fixture = FIXTURES_DIR / "hello.py"
     startup: dict[str, dict] = {}
-    startup["mamba"] = measure_startup_ttfb([str(mamba_bin), "run", str(hello_fixture)], args.samples)
+    startup["mamba"] = measure_startup_ttfb([str(mamba_bin), "run", "--compile", str(hello_fixture)], args.samples)
     record_row(HELLO_SHAPE, "mamba", startup["mamba"])
     print(f"  mamba   ttfb={startup['mamba']['ttfb_ms']}ms cpu={fmt_ms(startup['mamba']['cpu_time_ns'])}ms "
           f"rss={fmt_mb(startup['mamba']['peak_rss_bytes'])}MB checksum={startup['mamba']['checksum']}")
@@ -429,7 +429,7 @@ def main() -> int:
         fixture = FIXTURES_DIR / f"{shape}.py"
         results: dict[str, dict] = {}
 
-        results["mamba"] = measure_shape([str(mamba_bin), "run", str(fixture)], args.samples)
+        results["mamba"] = measure_shape([str(mamba_bin), "run", "--compile", str(fixture)], args.samples)
         record_row(shape, "mamba", results["mamba"])
         print(f"  mamba   cpu={fmt_ms(results['mamba']['cpu_time_ns'])}ms "
               f"rss={fmt_mb(results['mamba']['peak_rss_bytes'])}MB checksum={results['mamba']['checksum']}")

@@ -186,7 +186,7 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     } else {
         measure_n("python3", &[fixture_str], samples, timeout)
     };
-    let mb = measure_n(mamba_bin_str, &["run", fixture_str], samples, timeout);
+    let mb = measure_n(mamba_bin_str, &["run", "--compile", fixture_str], samples, timeout);
 
     let mode = if samples <= 1 {
         "single-shot".to_string()

@@ -326,7 +326,7 @@ fn evaluate_pin(rel_path: String, pin: Pin, toml_path: &Path) -> PinReport {
             )
         }
     };
-    let mb = measure_n(mamba_bin_str, &["run", fixture_str.as_str()], samples, timeout);
+    let mb = measure_n(mamba_bin_str, &["run", "--compile", fixture_str.as_str()], samples, timeout);
 
     grade(rel_path, &pin, cpy, mb)
 }

@@ -47,7 +47,7 @@ def fixture_for(golden: Path) -> tuple[Path | None, str]:
 
 
 def run(side: str, fixture: Path, mamba_bin: str) -> str | None:
-    argv = ["python3.12", str(fixture)] if side == "cpython" else [mamba_bin, "run", str(fixture)]
+    argv = ["python3.12", str(fixture)] if side == "cpython" else [mamba_bin, "run", "--compile", str(fixture)]
     rc, out, _err = harness_lib.run_fixture(argv, 20)
     return None if rc is None else out
 

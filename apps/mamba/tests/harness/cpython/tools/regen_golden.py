@@ -99,7 +99,7 @@ def main():
                 updated += 1
 
             if mamba_bin:
-                mb_out = _run([mamba_bin, "run"], py_file)
+                mb_out = _run([mamba_bin, "run", "--compile"], py_file)
                 if _write_if_changed(mamba_gold, mb_out):
                     updated += 1
             else:
