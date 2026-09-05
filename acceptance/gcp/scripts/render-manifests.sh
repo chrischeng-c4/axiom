@@ -30,6 +30,16 @@ case "$ACCEPTANCE_APPS" in
       mkdir -p "$MANIFEST_DIR/sift/operator" "$MANIFEST_DIR/sift/instance" "$MANIFEST_DIR/sift/collector"
     fi
     ;;
+  "sift")
+    : "${SIFT_CLI:?SIFT_CLI is required for sift mode}"
+    : "${SIFT_IMAGE:?SIFT_IMAGE digest reference is required for sift mode}"
+    : "${RIG_IMAGE:?RIG_IMAGE digest reference is required for sift mode}"
+    [[ -x "$SIFT_CLI" ]] || {
+      echo "deployment CLI is not executable: $SIFT_CLI" >&2
+      exit 1
+    }
+    mkdir -p "$MANIFEST_DIR/sift/operator" "$MANIFEST_DIR/sift/instance"
+    ;;
   "tape")
     : "${TAPE_CLI:?TAPE_CLI is required for tape mode}"
     : "${TAPE_IMAGE:?TAPE_IMAGE digest reference is required for tape mode}"
@@ -42,7 +52,7 @@ case "$ACCEPTANCE_APPS" in
       "$MANIFEST_DIR/tape/instance"
     ;;
   *)
-    echo "ACCEPTANCE_APPS must be 'lumen sift', 'lumen auth', or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be 'lumen sift', 'lumen auth', 'sift', or 'tape'" >&2
     exit 1
     ;;
 esac
@@ -57,14 +67,17 @@ if [[ "$ACCEPTANCE_APPS" == "lumen sift" || "$ACCEPTANCE_APPS" == "lumen auth" ]
 
 fi
 
-if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" || "$ACCEPTANCE_APPS" == "sift" ]]; then
   "$SIFT_CLI" k8s crd render --out "$MANIFEST_DIR/sift/crd.yaml"
   "$SIFT_CLI" k8s operator render --namespace sift-system \
     --out "$MANIFEST_DIR/sift/operator/operator.yaml"
   "$SIFT_CLI" k8s instance render --profile dev \
     --out "$MANIFEST_DIR/sift/instance/sift.yaml"
-  "$SIFT_CLI" k8s collector render --namespace sift --image "$SIFT_IMAGE" \
-    --out "$MANIFEST_DIR/sift/collector/collector.yaml"
+  if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+    mkdir -p "$MANIFEST_DIR/sift/collector"
+    "$SIFT_CLI" k8s collector render --namespace sift --image "$SIFT_IMAGE" \
+      --out "$MANIFEST_DIR/sift/collector/collector.yaml"
+  fi
 fi
 
 # Render Tape manifests for tape mode
@@ -167,7 +180,26 @@ kubectl kustomize "$MANIFEST_DIR/lumen/instance" > "$MANIFEST_DIR/lumen/instance
 
 fi
 
-if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" || "$ACCEPTANCE_APPS" == "sift" ]]; then
+  : "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
+  : "${BACKUP_GSA_EMAIL:?BACKUP_GSA_EMAIL is required}"
+  peer_dir="$MANIFEST_DIR/sift/peer-pki"
+  mkdir -p "$peer_dir"
+  cat > "$peer_dir/leaf.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName=DNS:*.sift-store-headless.sift.svc.cluster.local,DNS:*.sift-control-headless.sift.svc.cluster.local,DNS:sift-store.sift.svc.cluster.local,DNS:sift-control.sift.svc.cluster.local,DNS:*.sift-restore-store-headless.sift-restore.svc.cluster.local,DNS:*.sift-restore-control-headless.sift-restore.svc.cluster.local,DNS:sift-restore-store.sift-restore.svc.cluster.local,DNS:sift-restore-control.sift-restore.svc.cluster.local
+EOF
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+    -subj "/CN=Sift MVP peer CA ${RUN_ID}" \
+    -keyout "$peer_dir/ca.key" -out "$peer_dir/ca.crt" >/dev/null 2>&1
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=sift-peer" \
+    -keyout "$peer_dir/tls.key" -out "$peer_dir/tls.csr" >/dev/null 2>&1
+  openssl x509 -req -days 2 -sha256 -in "$peer_dir/tls.csr" \
+    -CA "$peer_dir/ca.crt" -CAkey "$peer_dir/ca.key" -CAcreateserial \
+    -extfile "$peer_dir/leaf.ext" -out "$peer_dir/tls.crt" >/dev/null 2>&1
+
 cat > "$MANIFEST_DIR/sift/operator/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -194,11 +226,63 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: sift-backup
+  name: sift-store
   namespace: sift
   annotations:
     iam.gke.io/gcp-service-account: ${BACKUP_GSA_EMAIL}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sift-rig
+  namespace: sift
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sift-rig-project
+  namespace: sift
+rules:
+  - apiGroups: ["sift.axiom.dev"]
+    resources: ["projects"]
+    resourceNames: ["sift-mvp", "sift-mvp-alt"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sift-rig-project
+  namespace: sift
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sift-rig-project
+subjects:
+  - kind: ServiceAccount
+    name: sift-rig
+    namespace: sift
 EOF
+
+printf '%s\n' '---' >> "$MANIFEST_DIR/sift/instance/identity.yaml"
+kubectl create secret generic sift-peer-tls --namespace sift \
+  --from-file=tls.crt="$peer_dir/tls.crt" \
+  --from-file=tls.key="$peer_dir/tls.key" \
+  --from-file=ca.crt="$peer_dir/ca.crt" \
+  --dry-run=client -o yaml >> "$MANIFEST_DIR/sift/instance/identity.yaml"
+
+if [[ "$ACCEPTANCE_APPS" == "sift" ]]; then
+  sift_store_size=50Gi
+  sift_control_size=5Gi
+  sift_gateway_size=2Gi
+  sift_query_size=2Gi
+  sift_auth=kubernetes
+else
+  sift_store_size=1Gi
+  sift_control_size=1Gi
+  sift_gateway_size=1Gi
+  sift_query_size=1Gi
+  sift_auth=off
+fi
 
 cat > "$MANIFEST_DIR/sift/instance/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -220,19 +304,50 @@ patches:
         path: /spec/image
         value: ${SIFT_IMAGE}
       - op: replace
-        path: /spec/dataSize
-        value: 1Gi
+        path: /spec/peerTlsSecret
+        value: sift-peer-tls
+      - op: replace
+        path: /spec/auth
+        value: ${sift_auth}
+      - op: replace
+        path: /spec/storage/storeSize
+        value: ${sift_store_size}
+      - op: replace
+        path: /spec/storage/controlSize
+        value: ${sift_control_size}
+      - op: replace
+        path: /spec/storage/gatewaySize
+        value: ${sift_gateway_size}
+      - op: replace
+        path: /spec/storage/querySize
+        value: ${sift_query_size}
       - op: add
-        path: /spec/backup
+        path: /spec/archive
         value:
-          schedule: "*/5 * * * *"
           destination: gs://${BACKUP_BUCKET}/sift/${RUN_ID}
-          retentionSecs: 3600
+      - op: replace
+        path: /spec/gcpProjectId
+        value: ${PROJECT_ID}
+      - op: replace
+        path: /spec/gkeClusterName
+        value: ${GKE_CLUSTER_NAME}
+      - op: replace
+        path: /spec/gkeLocation
+        value: ${GKE_ZONE}
+$(if [[ "$ACCEPTANCE_APPS" == "sift" ]]; then cat <<PATCH
+      - op: add
+        path: /spec/placement
+        value:
+          nodeSelector:
+            axiom-run-id: "${RUN_ID}"
+PATCH
+fi)
 EOF
 
-  kubectl kustomize "$MANIFEST_DIR/sift/operator" > "$MANIFEST_DIR/sift/operator.bundle.yaml"
+kubectl kustomize "$MANIFEST_DIR/sift/operator" > "$MANIFEST_DIR/sift/operator.bundle.yaml"
 kubectl kustomize "$MANIFEST_DIR/sift/instance" > "$MANIFEST_DIR/sift/instance.bundle.yaml"
 
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
 cat > "$MANIFEST_DIR/sift/collector/config.yaml" <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -266,6 +381,7 @@ resources:
 EOF
 
 kubectl kustomize "$MANIFEST_DIR/sift/collector" > "$MANIFEST_DIR/sift/collector.bundle.yaml"
+fi
 fi
 
 # Tape-specific kustomization for tape mode

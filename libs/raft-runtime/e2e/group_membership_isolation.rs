@@ -182,7 +182,9 @@ async fn a_resting_group_keeps_its_own_committed_set_when_a_joint_group_joins_th
     let (task, client, url) = serve(&registry).await;
 
     let before = statuses(&client, &url).await;
-    let b0 = before.get("beta").expect("beta reports before alpha exists");
+    let b0 = before
+        .get("beta")
+        .expect("beta reports before alpha exists");
     assert_eq!(before.len(), 1, "only beta is hosted yet");
     assert_eq!(b0.committed_voters, voters(&[0]));
     assert_eq!(b0.incoming_voters, None);
@@ -349,11 +351,7 @@ async fn the_multi_group_status_endpoint_gives_each_group_its_own_sets() {
 
     assert_eq!(
         status.keys().cloned().collect::<Vec<_>>(),
-        vec![
-            "alpha".to_string(),
-            "beta".to_string(),
-            "gamma".to_string()
-        ]
+        vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()]
     );
 
     let a = &status["alpha"];

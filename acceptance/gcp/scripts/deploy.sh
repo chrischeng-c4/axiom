@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/kubernetes-ownership.sh"
+
 : "${MANIFEST_DIR:?MANIFEST_DIR is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 
@@ -12,7 +15,7 @@ case "$app" in
     cr_resource="lumen/lumen"
     operator_namespace="lumen-system"
     operator_deployment="lumen-operator"
-    statefulset="lumen"
+    statefulsets=(lumen)
     ;;
   sift)
     crd="sifts.sift.axiom.dev"
@@ -20,7 +23,7 @@ case "$app" in
     cr_resource="sift/sift"
     operator_namespace="sift-system"
     operator_deployment="sift-operator"
-    statefulset="sift"
+    statefulsets=(sift-store sift-control)
     ;;
   tape)
     crd="tapes.tape.dev"
@@ -28,7 +31,7 @@ case "$app" in
     cr_resource="tape/tape"
     operator_namespace="tape-system"
     operator_deployment="tape-operator"
-    statefulset="tape"
+    statefulsets=(tape)
     ;;
   *)
     echo "unknown app '$app'; expected lumen, sift, or tape" >&2
@@ -37,6 +40,17 @@ case "$app" in
 esac
 
 mkdir -p "$EVIDENCE_DIR/kubernetes"
+
+if [[ "$app" == "sift" ]]; then
+  : "${PROJECT_ID:?PROJECT_ID is required for Sift ownership receipts}"
+  : "${RUN_ID:?RUN_ID is required for Sift ownership receipts}"
+  : "${ACCEPTANCE_LOCK_ACQUISITION_ID:?ACCEPTANCE_LOCK_ACQUISITION_ID is required for Sift ownership receipts}"
+  kubectl get customresourcedefinition fqdnnetworkpolicies.networking.gke.io \
+    >/dev/null 2>&1 || {
+      echo "Sift requires GKE Dataplane V2 with FQDN Network Policy enabled; missing fqdnnetworkpolicies.networking.gke.io" >&2
+      exit 1
+    }
+fi
 
 wait_ready_cr() {
   local expected_generation observed_generation phase
@@ -70,7 +84,21 @@ wait_crd_established() {
   return 1
 }
 
-kubectl apply -f "$MANIFEST_DIR/$app/crd.yaml"
+if [[ "$app" == "sift" ]]; then
+  ownership_root="$EVIDENCE_DIR/kubernetes/ownership"
+  create_owned_namespace \
+    "$operator_namespace" "$ownership_root" "$PROJECT_ID" "$RUN_ID" \
+    "$ACCEPTANCE_LOCK_ACQUISITION_ID"
+  create_owned_namespace \
+    "$cr_namespace" "$ownership_root" "$PROJECT_ID" "$RUN_ID" \
+    "$ACCEPTANCE_LOCK_ACQUISITION_ID"
+  create_owned_kubernetes_resource \
+    customresourcedefinition "$crd" "$MANIFEST_DIR/$app/crd.yaml" \
+    "$ownership_root" "$PROJECT_ID" "$RUN_ID" \
+    "$ACCEPTANCE_LOCK_ACQUISITION_ID"
+else
+  kubectl apply -f "$MANIFEST_DIR/$app/crd.yaml"
+fi
 # Not `kubectl wait --for=condition=Established`: between the apply returning
 # and the apiextensions controller first writing status, `.status.conditions`
 # does not exist, and `kubectl wait` treats an absent field as an error
@@ -83,7 +111,9 @@ kubectl apply -f "$MANIFEST_DIR/$app/operator.bundle.yaml"
 kubectl wait -n "$operator_namespace" --for=condition=Available "deployment/$operator_deployment" --timeout=600s
 kubectl apply -f "$MANIFEST_DIR/$app/instance.bundle.yaml"
 wait_ready_cr
-kubectl -n "$cr_namespace" rollout status "statefulset/$statefulset" --timeout=600s
+for statefulset in "${statefulsets[@]}"; do
+  kubectl -n "$cr_namespace" rollout status "statefulset/$statefulset" --timeout=600s
+done
 
 kubectl get "$crd" -A -o json > "$EVIDENCE_DIR/kubernetes/${app}-crs.json"
 kubectl get deployment,statefulset,cronjob,pod,pvc,serviceaccount -A -o json \

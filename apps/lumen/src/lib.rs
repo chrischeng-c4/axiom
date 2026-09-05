@@ -107,4 +107,8 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
+
+/// Product-neutral text-index contracts used by Lumen and other products.
+/// Lumen keeps its existing public collection API and storage engine.
+pub use index_text as text_index;
 // CODEGEN-END

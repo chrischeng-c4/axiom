@@ -31,34 +31,6 @@ variable "cluster_name" {
   default     = "axiom-operator-acceptance"
 }
 
-variable "node_machine_type" {
-  description = "Smallest general-purpose Standard GKE machine shape used by this disposable acceptance run."
-  type        = string
-  default     = "e2-standard-2"
-}
-
-variable "node_min_count" {
-  description = "Minimum node count for the disposable Standard GKE pool."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.node_min_count >= 1
-    error_message = "node_min_count must keep at least one node available."
-  }
-}
-
-variable "node_max_count" {
-  description = "Maximum node count for the disposable Standard GKE pool."
-  type        = number
-  default     = 2
-
-  validation {
-    condition     = var.node_max_count >= var.node_min_count && var.node_max_count <= 2
-    error_message = "node_max_count must be between node_min_count and 2 to keep the acceptance run bounded."
-  }
-}
-
 variable "run_id" {
   description = "Lowercase run tag used to isolate every disposable resource."
   type        = string
@@ -81,12 +53,12 @@ variable "image_tag" {
 }
 
 variable "acceptance_apps" {
-  description = "Acceptance app scope: 'lumen-sift', 'lumen-auth', or 'tape'."
+  description = "Acceptance app scope: 'lumen-sift', 'lumen-auth', 'sift', or 'tape'."
   type        = string
   default     = "lumen-sift"
 
   validation {
-    condition     = contains(["lumen-sift", "lumen-auth", "tape"], var.acceptance_apps)
-    error_message = "acceptance_apps must be 'lumen-sift', 'lumen-auth', or 'tape'."
+    condition     = contains(["lumen-sift", "lumen-auth", "sift", "tape"], var.acceptance_apps)
+    error_message = "acceptance_apps must be 'lumen-sift', 'lumen-auth', 'sift', or 'tape'."
   }
 }

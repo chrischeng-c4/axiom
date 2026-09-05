@@ -57,7 +57,7 @@ jobs:
           [[ "$WORKFLOW_REF" == "${GITHUB_REPOSITORY}/.github/workflows/sift-release-candidate.yml@refs/heads/main" ]] || { echo "candidate workflow ref mismatch" >&2; exit 1; }
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "candidate is not landed on main" >&2; exit 1; }
-          cargo_version="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' projects/sift/Cargo.toml | head -n1)"
+          cargo_version="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' apps/sift/Cargo.toml | head -n1)"
           [[ "$cargo_version" == "$REQUESTED_VERSION" ]] || { echo "Cargo version mismatch" >&2; exit 1; }
           set +e
           git ls-remote --exit-code --tags origin "refs/tags/sift@${cargo_version}" >/dev/null 2>&1
@@ -149,7 +149,7 @@ jobs:
           name="sift-${{ matrix.target }}"
           mkdir -p "pkg/${name}" out
           cp "target/${{ matrix.target }}/release/sift" "pkg/${name}/sift"
-          cp projects/sift/README.md "pkg/${name}/README.md"
+          cp apps/sift/README.md "pkg/${name}/README.md"
           tar -C pkg -czf "out/${name}.tar.gz" "$name"
           (
             cd out
@@ -265,7 +265,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          file: projects/sift/Dockerfile.release
+          file: apps/sift/Dockerfile.release
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false

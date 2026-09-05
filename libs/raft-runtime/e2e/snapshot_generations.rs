@@ -11,7 +11,7 @@ fn find_artifact(dir_path: &std::path::Path) -> Option<PathBuf> {
         for entry in entries.flatten() {
             let p = entry.path();
             if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".artifact") {
+                if name.contains("-snap-") && name.ends_with(".artifact") {
                     return Some(p);
                 }
             }
@@ -26,7 +26,7 @@ fn count_artifacts(dir_path: &std::path::Path) -> usize {
         for entry in entries.flatten() {
             let p = entry.path();
             if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".artifact") {
+                if name.contains("-snap-") && name.ends_with(".artifact") {
                     count += 1;
                 }
             }

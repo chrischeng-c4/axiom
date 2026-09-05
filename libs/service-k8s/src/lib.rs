@@ -44,8 +44,8 @@ pub use lifecycle::{LifecyclePolicy, LifecyclePolicyError, ProbeTiming, Terminat
 pub use metrics::ControllerMetrics;
 #[cfg(feature = "controller")]
 pub use service::{
-    ClusterSpec, Condition, ConditionFact, ConditionStatus, ManagedService, ReadinessTarget,
-    ReadyFacts, ResourceSpec,
+    ClusterScopedChild, ClusterSpec, Condition, ConditionFact, ConditionStatus, ManagedService,
+    ReadinessTarget, ReadyFacts, ResourceSpec,
 };
 pub use stateful::{
     plan_replica_layer, plan_shard_split, ObservedShardUsage, ObservedUtilization,

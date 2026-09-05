@@ -91,14 +91,17 @@
 pub mod admission;
 pub mod body_limit;
 pub mod config;
+pub mod content_decode;
 pub mod error;
 pub mod logging;
 pub mod metrics;
 pub mod probes;
 pub mod readiness;
+pub mod reverse_proxy;
 pub mod server_timing;
 pub mod signal;
 pub mod transport;
+pub mod weighted_admission;
 
 pub use admission::{
     admission_middleware, AdmissionConfig, AdmissionConfigError, AdmissionController,
@@ -107,7 +110,14 @@ pub use admission::{
 };
 pub use body_limit::{body_limit_layer, BodyLimitLayer, BodyLimitService};
 pub use config::{HttpConfig, LogFormat, ServiceIdentity};
-pub use error::{ApiErr, ErrorEnvelope};
+pub use content_decode::{
+    decode_request_body, ContentDecodeError, ContentDecodeErrorKind, ContentDecodeLimitError,
+    ContentDecodeLimits,
+};
+pub use error::{
+    retry_delay_from_detailed_error, ApiErr, DetailedErrorEnvelope, ErrorEnvelope,
+    ProjectionMetadata,
+};
 #[cfg(feature = "otlp")]
 pub use logging::extract_trace_context;
 pub use logging::{
@@ -119,9 +129,12 @@ pub use probes::{
     standard_probe_routes_canonical_json,
 };
 pub use readiness::ReadinessHook;
+pub use reverse_proxy::{
+    reverse_proxy_router, ReverseProxyPolicy, ReverseProxySelectionError,
+};
 /// Re-exported so a service can build a [`serve_tls`] configuration source
 /// without depending on `server-http` directly (#3113 R1).
-pub use server_http::{config_source, ServerConfigSource};
+pub use server_http::{config_source, HttpServerOptions, ServerConfigSource};
 pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt};
 pub use service_observability::LifecycleMetrics;
 pub use signal::{
@@ -129,4 +142,8 @@ pub use signal::{
     LifecycleShutdownTrigger,
 };
 pub use transport::{serve, serve_tls, serve_with_lifecycle, trace_layer, PropagatingMakeSpan};
+pub use weighted_admission::{
+    ConcurrencyLease, WeightedAdmission, WeightedAdmissionConfig, WeightedAdmissionConfigError,
+    WeightedAdmissionError,
+};
 // CODEGEN-END

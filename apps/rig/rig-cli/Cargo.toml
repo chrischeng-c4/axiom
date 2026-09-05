@@ -19,3 +19,10 @@ rig = { path = ".." }
 clap = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 anyhow.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "load_report_metrics"
+path = "e2e/load_report_metrics.rs"

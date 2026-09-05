@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -21,6 +21,8 @@ use axum::{Json, Router};
 use base64::Engine;
 use md5::{Digest, Md5};
 use serde_json::{json, Value};
+
+const MAX_OBJECT_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Clone)]
 struct Object {
@@ -68,6 +70,7 @@ pub async fn serve(host_port: &str) -> Result<()> {
             "/upload/storage/v1/b/{bucket}/o",
             post(upload_object).put(resumable_put),
         )
+        .layer(DefaultBodyLimit::max(MAX_OBJECT_UPLOAD_BYTES))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(host_port)

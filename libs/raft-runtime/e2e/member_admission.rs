@@ -143,10 +143,7 @@ async fn a_running_host_admits_a_new_learner_observed_on_the_new_node_itself() {
     let new_node_status = poll_status_until(
         &client,
         &new_node.url,
-        |s| {
-            s.membership_phase == MembershipPhase::Stable
-                && s.learners.contains(&new_node_id)
-        },
+        |s| s.membership_phase == MembershipPhase::Stable && s.learners.contains(&new_node_id),
         Duration::from_secs(5),
         "newly admitted node reports itself as learner in its own /raftz",
     )
@@ -162,10 +159,7 @@ async fn a_running_host_admits_a_new_learner_observed_on_the_new_node_itself() {
     let bystander_status = poll_status_until(
         &client,
         &nodes[bystander].url,
-        |s| {
-            s.membership_phase == MembershipPhase::Stable
-                && s.learners.contains(&new_node_id)
-        },
+        |s| s.membership_phase == MembershipPhase::Stable && s.learners.contains(&new_node_id),
         Duration::from_secs(5),
         "bystander node reports new node as learner",
     )

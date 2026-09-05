@@ -1,11 +1,12 @@
 // CODEGEN-BEGIN
-//! Shared `build.rs` stamping: git short-sha, built-at epoch, and target
+//! Shared `build.rs` stamping: immutable or local git sha, built-at epoch, and target
 //! triple as `cargo:rustc-env=<PREFIX>_*` directives.
 //!
 //! Consuming crates call [`stamp`] with their env-var prefix (e.g. `"LUMEN"`)
-//! from their `build.rs`'s `fn main()`. Every stamp is best-effort: outside a
-//! git checkout (e.g. a source tarball) the sha falls back to `"unknown"`,
-//! and downstream `env!`/`option_env!` consumers degrade the same way.
+//! from their `build.rs`'s `fn main()`. An exact `<PREFIX>_SOURCE_REVISION`
+//! carries a full Git SHA into archive builds. Without it, every stamp remains
+//! best-effort: outside a git checkout the sha falls back to `"unknown"`, and
+//! downstream `env!`/`option_env!` consumers degrade the same way.
 //! Nothing here fails the build.
 
 use std::path::Path;
@@ -26,7 +27,11 @@ pub fn stamp(prefix: &str) {
         println!("{hint}");
     }
 
-    let git_sha = short_sha().unwrap_or_else(|| "unknown".to_string());
+    let source_revision_variable = format!("{prefix}_SOURCE_REVISION");
+    println!("cargo:rerun-if-env-changed={source_revision_variable}");
+    let git_sha = explicit_source_revision(&source_revision_variable)
+        .or_else(short_sha)
+        .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env={prefix}_GIT_SHA={git_sha}");
 
     let built_at = built_at_now();
@@ -34,6 +39,18 @@ pub fn stamp(prefix: &str) {
 
     let target = target_from_env();
     println!("cargo:rustc-env={prefix}_TARGET={target}");
+}
+
+/// Read a caller-supplied immutable Git revision for archive and image builds.
+/// Local builds keep the existing best-effort short-SHA fallback.
+fn explicit_source_revision(variable: &str) -> Option<String> {
+    decode_source_revision(std::env::var(variable).ok())
+}
+
+fn decode_source_revision(value: Option<String>) -> Option<String> {
+    let value = value?;
+    (value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
 }
 
 /// Cargo's `cargo:rerun-if-changed=<head_path>` directive, only when that
@@ -47,11 +64,32 @@ fn git_head_rerun_hint(head_path: &Path) -> Option<String> {
 /// Best-effort short SHA of HEAD. Returns `None` outside a git workspace (or
 /// when the `git` binary itself is absent).
 fn short_sha() -> Option<String> {
-    let out = Command::new("git")
+    short_sha_in(Path::new("."))
+}
+
+fn short_sha_in(working_directory: &Path) -> Option<String> {
+    let out = git_command_in(working_directory)
         .args(["rev-parse", "--short=8", "HEAD"])
         .output()
         .ok()?;
     decode_short_sha(out.status.success(), &out.stdout)
+}
+
+fn git_command_in(working_directory: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(working_directory);
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    ] {
+        command.env_remove(variable);
+    }
+    command
 }
 
 /// Pure decode of a `git rev-parse` invocation's outcome, split out from
@@ -111,10 +149,60 @@ mod tests {
     }
 
     #[test]
-    fn short_sha_resolves_inside_this_git_workspace() {
-        // Integration-style sanity check: this crate lives inside a git
-        // checkout, so the real (non-mocked) code path should resolve.
-        assert!(short_sha().is_some());
+    fn explicit_source_revision_accepts_and_normalizes_a_full_git_sha() {
+        assert_eq!(
+            decode_source_revision(Some("0123456789ABCDEF0123456789ABCDEF01234567".into())),
+            Some("0123456789abcdef0123456789abcdef01234567".into())
+        );
+    }
+
+    #[test]
+    fn explicit_source_revision_rejects_short_or_non_hex_values() {
+        assert_eq!(decode_source_revision(Some("deadbeef".into())), None);
+        assert_eq!(
+            decode_source_revision(Some("0123456789abcdef0123456789abcdef0123456z".into())),
+            None
+        );
+        assert_eq!(decode_source_revision(Some(String::new())), None);
+    }
+
+    #[test]
+    fn short_sha_resolves_inside_an_isolated_git_workspace() {
+        let repository = tempfile::tempdir().unwrap();
+        let init = git_command_in(repository.path())
+            .args(["init", "--quiet"])
+            .status()
+            .unwrap();
+        assert!(init.success());
+
+        let commit = git_command_in(repository.path())
+            .args([
+                "-c",
+                "user.name=build-stamp-test",
+                "-c",
+                "user.email=build-stamp-test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--message=initial",
+            ])
+            .status()
+            .unwrap();
+        assert!(commit.success());
+
+        let full_sha = git_command_in(repository.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(full_sha.status.success());
+        let full_sha = String::from_utf8(full_sha.stdout).unwrap();
+        let expected = &full_sha.trim()[..8];
+        let sha = short_sha_in(repository.path()).unwrap();
+        assert_eq!(sha, expected);
     }
 
     #[test]

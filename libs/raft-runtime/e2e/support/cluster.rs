@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -47,17 +47,39 @@ pub fn leader_wait_budget(tick: Duration, node_count: usize) -> LeaderWaitBudget
 
 pub struct TestSm {
     pub applied: AtomicU64,
+    pub fail_restore: AtomicBool,
+    pub restore_attempts: AtomicU64,
+    pub snapshot_capable: AtomicBool,
+    pub snapshot_capability_calls: AtomicU64,
+    pub drop_capability_after_first_probe: AtomicBool,
 }
 
 impl TestSm {
     pub fn new() -> Arc<Self> {
         Arc::new(TestSm {
             applied: AtomicU64::new(0),
+            fail_restore: AtomicBool::new(false),
+            restore_attempts: AtomicU64::new(0),
+            snapshot_capable: AtomicBool::new(true),
+            snapshot_capability_calls: AtomicU64::new(0),
+            drop_capability_after_first_probe: AtomicBool::new(false),
         })
     }
 }
 
 impl RaftStateMachine for TestSm {
+    fn snapshot_capability(&self) -> Option<&'static str> {
+        let call = self
+            .snapshot_capability_calls
+            .fetch_add(1, Ordering::AcqRel);
+        let disappeared = self
+            .drop_capability_after_first_probe
+            .load(Ordering::Acquire)
+            && call > 0;
+        (self.snapshot_capable.load(Ordering::Acquire) && !disappeared)
+            .then_some("test-snapshot-v1")
+    }
+
     fn apply(&self, index: Index, _command: &[u8]) -> anyhow::Result<()> {
         self.applied.store(index, Ordering::Release);
         Ok(())
@@ -65,7 +87,20 @@ impl RaftStateMachine for TestSm {
     fn snapshot(&self, _writer: &mut dyn std::io::Write) -> anyhow::Result<()> {
         Ok(())
     }
+    fn snapshot_at(&self, _index: Index, _writer: &mut dyn std::io::Write) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn validate_snapshot(&self, _reader: &mut dyn std::io::Read) -> anyhow::Result<()> {
+        self.restore_attempts.fetch_add(1, Ordering::Relaxed);
+        if self.fail_restore.load(Ordering::Acquire) {
+            anyhow::bail!("injected snapshot validation failure");
+        }
+        Ok(())
+    }
     fn restore(&self, _reader: &mut dyn std::io::Read) -> anyhow::Result<()> {
+        if self.fail_restore.load(Ordering::Acquire) {
+            anyhow::bail!("injected snapshot restore failure");
+        }
         Ok(())
     }
     fn applied_index(&self) -> Index {

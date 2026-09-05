@@ -59,7 +59,8 @@ struct HttpWorker {
 
 impl OpWorker for HttpWorker {
     fn execute(&mut self) -> Result<(), String> {
-        match http::execute_with_agent(&self.agent, &self.request, &self.vars) {
+        let vars = self.vars.next_operation();
+        match http::execute_with_agent(&self.agent, &self.request, &vars) {
             Ok(o) if o.violation.is_none() => Ok(()),
             Ok(o) => Err(o
                 .violation
@@ -121,6 +122,8 @@ mod tests {
             request: HttpRequest {
                 method: "GET".into(),
                 url: format!("http://{addr}/healthz"),
+                headers: Default::default(),
+                bearer_token_file: None,
                 body: None,
                 expect: HttpExpect::default(),
             },

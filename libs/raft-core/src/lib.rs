@@ -85,6 +85,19 @@ pub struct PersistedState {
     pub conf: Option<ConfState>,
 }
 
+/// Borrowed durable state used by runtimes that must persist a large log
+/// without cloning it on every heartbeat or proposal.
+pub struct PersistedStateRef<'a> {
+    pub term: Term,
+    pub voted_for: Option<NodeId>,
+    pub log: &'a [RaftEntry],
+    pub commit_index: Index,
+    pub snapshot_index: Index,
+    pub snapshot_term: Term,
+    pub snapshot: &'a [u8],
+    pub conf: Option<&'a ConfState>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Follower,
@@ -138,6 +151,11 @@ pub struct InstallSnapshotReq {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InstallSnapshotResp {
     pub term: Term,
+    /// True only when this voter accepted the requested snapshot identity, or
+    /// already holds a snapshot that supersedes it. Older peers omit this
+    /// field and therefore fail closed.
+    #[serde(default)]
+    pub accepted: bool,
     /// The snapshot index the follower now holds.
     pub snapshot_index: Index,
 }
@@ -358,6 +376,7 @@ pub struct RaftNode {
     voted_for: Option<NodeId>,
     /// In-memory log; `log[0]` has index `snapshot_index + 1`.
     log: Vec<RaftEntry>,
+    resident_log_bytes: usize,
     commit_index: Index,
     last_applied: Index,
 
@@ -415,6 +434,7 @@ impl RaftNode {
             current_term: 0,
             voted_for: None,
             log: Vec::new(),
+            resident_log_bytes: 0,
             commit_index: 0,
             last_applied: 0,
             snapshot_index: 0,
@@ -451,6 +471,7 @@ impl RaftNode {
         node.current_term = state.term;
         node.voted_for = state.voted_for;
         node.log = state.log;
+        node.resident_log_bytes = node.log.iter().map(|entry| entry.command.len()).sum();
         node.snapshot_index = state.snapshot_index;
         node.snapshot_term = state.snapshot_term;
         node.snapshot = state.snapshot;
@@ -476,6 +497,21 @@ impl RaftNode {
             snapshot_term: self.snapshot_term,
             snapshot: self.snapshot.clone(),
             conf: Some(self.conf_state.clone()),
+        }
+    }
+
+    /// Borrow the durable hard state without copying the resident log or
+    /// snapshot bytes.
+    pub fn persisted_ref(&self) -> PersistedStateRef<'_> {
+        PersistedStateRef {
+            term: self.current_term,
+            voted_for: self.voted_for,
+            log: &self.log,
+            commit_index: self.commit_index,
+            snapshot_index: self.snapshot_index,
+            snapshot_term: self.snapshot_term,
+            snapshot: &self.snapshot,
+            conf: Some(&self.conf_state),
         }
     }
 
@@ -758,6 +794,23 @@ impl RaftNode {
     pub fn snapshot_index(&self) -> Index {
         self.snapshot_index
     }
+
+    /// Command payload bytes retained in the resident Raft log.
+    pub fn resident_log_bytes(&self) -> usize {
+        self.resident_log_bytes
+    }
+
+    /// Return the term stored at `index` when that prefix is still known.
+    ///
+    /// Snapshot coordinators use this before they send a prospective snapshot
+    /// to peers. `None` means the requested index is outside this node's known
+    /// prefix.
+    pub fn term_at_index(&self, index: Index) -> Option<Term> {
+        if index == 0 || index > self.last_index() {
+            return None;
+        }
+        Some(self.term_at(index))
+    }
     /// Number of resident log entries (post-compaction).
     pub fn log_len(&self) -> usize {
         self.log.len()
@@ -857,6 +910,39 @@ impl RaftNode {
         self.installed_snapshot.take()
     }
 
+    /// Reject an incoming snapshot after the consumer could not restore its
+    /// state-machine bytes.
+    ///
+    /// The higher term and leader identity still take effect, but the local
+    /// snapshot index and resident log stay unchanged. The response advertises
+    /// the old index so the leader retries instead of treating this voter as
+    /// caught up.
+    pub fn reject_install_snapshot(&mut self, req: InstallSnapshotReq) {
+        if req.term < self.current_term {
+            let (term, snapshot_index) = (self.current_term, self.snapshot_index);
+            self.send(
+                req.leader,
+                RaftMsg::InstallSnapshotResp(InstallSnapshotResp {
+                    term,
+                    accepted: false,
+                    snapshot_index,
+                }),
+            );
+            return;
+        }
+        self.step_down(req.term);
+        self.leader_id = Some(req.leader);
+        let (term, snapshot_index) = (self.current_term, self.snapshot_index);
+        self.send(
+            req.leader,
+            RaftMsg::InstallSnapshotResp(InstallSnapshotResp {
+                term,
+                accepted: false,
+                snapshot_index,
+            }),
+        );
+    }
+
     /// Compact the log up through `up_to` (must be applied): the consumer has
     /// snapshotted its state machine to `snapshot` bytes, so entries `<= up_to`
     /// can be dropped. The snapshot is what a leader later ships to a follower
@@ -867,7 +953,13 @@ impl RaftNode {
         }
         let term = self.term_at(up_to);
         let drop = (up_to - self.snapshot_index) as usize;
-        self.log.drain(0..drop.min(self.log.len()));
+        let drop = drop.min(self.log.len());
+        let removed = self.log[..drop]
+            .iter()
+            .map(|entry| entry.command.len())
+            .sum::<usize>();
+        self.log.drain(0..drop);
+        self.resident_log_bytes = self.resident_log_bytes.saturating_sub(removed);
         self.snapshot_index = up_to;
         self.snapshot_term = term;
         self.snapshot = snapshot;
@@ -1058,6 +1150,7 @@ impl RaftNode {
             return None;
         }
         let index = self.last_index() + 1;
+        self.resident_log_bytes = self.resident_log_bytes.saturating_add(command.len());
         self.log.push(RaftEntry {
             term: self.current_term,
             index,
@@ -1076,10 +1169,12 @@ impl RaftNode {
             return None;
         }
         let index = self.last_index() + 1;
+        let command = conf.encode();
+        self.resident_log_bytes = self.resident_log_bytes.saturating_add(command.len());
         self.log.push(RaftEntry {
             term: self.current_term,
             index,
-            command: conf.encode(),
+            command,
             kind: EntryKind::Config,
         });
         self.broadcast_append();
@@ -1199,10 +1294,18 @@ impl RaftNode {
             let pos = (e.index - self.snapshot_index - 1) as usize;
             if pos < self.log.len() {
                 if self.log[pos].term != e.term {
+                    let removed = self.log[pos..]
+                        .iter()
+                        .map(|entry| entry.command.len())
+                        .sum::<usize>();
                     self.log.truncate(pos);
+                    self.resident_log_bytes = self.resident_log_bytes.saturating_sub(removed);
+                    self.resident_log_bytes =
+                        self.resident_log_bytes.saturating_add(e.command.len());
                     self.log.push(e.clone());
                 }
             } else {
+                self.resident_log_bytes = self.resident_log_bytes.saturating_add(e.command.len());
                 self.log.push(e.clone());
             }
         }
@@ -1268,6 +1371,7 @@ impl RaftNode {
                 req.leader,
                 RaftMsg::InstallSnapshotResp(InstallSnapshotResp {
                     term,
+                    accepted: false,
                     snapshot_index: si,
                 }),
             );
@@ -1275,10 +1379,29 @@ impl RaftNode {
         }
         self.step_down(req.term);
         self.leader_id = Some(req.leader);
-        if req.snapshot_index > self.snapshot_index {
-            // Install: drop the resident log (the follower was behind), adopt the
-            // snapshot point, and surface the bytes for the consumer to load.
-            self.log.clear();
+        let accepted = if req.snapshot_index < self.snapshot_index {
+            // A later state-machine snapshot supersedes this request.
+            true
+        } else if req.snapshot_index == self.snapshot_index {
+            // Raft indexes are immutable identities. A retry is idempotent
+            // only when its term and bytes are exactly the same.
+            req.snapshot_term == self.snapshot_term && req.data == self.snapshot
+        } else {
+            // Keep a matching suffix when this follower was already at or
+            // beyond the prospective snapshot point. This lets a leader first
+            // prove that every voter accepted a checkpoint and only then drop
+            // its own prefix, without deleting later entries on a caught-up
+            // follower.
+            let retained_suffix = if req.snapshot_index <= self.last_index()
+                && self.term_at(req.snapshot_index) == req.snapshot_term
+            {
+                let first = (req.snapshot_index - self.snapshot_index) as usize;
+                self.log[first.min(self.log.len())..].to_vec()
+            } else {
+                Vec::new()
+            };
+            self.log = retained_suffix;
+            self.resident_log_bytes = self.log.iter().map(|entry| entry.command.len()).sum();
             self.snapshot_index = req.snapshot_index;
             self.snapshot_term = req.snapshot_term;
             self.snapshot = req.data.clone();
@@ -1286,13 +1409,16 @@ impl RaftNode {
             if self.commit_index < req.snapshot_index {
                 self.commit_index = req.snapshot_index;
             }
+            self.commit_index = self.commit_index.min(self.last_index());
             self.last_applied = req.snapshot_index;
-        }
+            true
+        };
         let (term, si) = (self.current_term, self.snapshot_index);
         self.send(
             req.leader,
             RaftMsg::InstallSnapshotResp(InstallSnapshotResp {
                 term,
+                accepted,
                 snapshot_index: si,
             }),
         );
@@ -1304,6 +1430,9 @@ impl RaftNode {
             return;
         }
         if self.role != Role::Leader || resp.term != self.current_term {
+            return;
+        }
+        if !resp.accepted {
             return;
         }
         let m = resp.snapshot_index;

@@ -33,154 +33,27 @@ use std::borrow::Cow;
 use crate::types::Analyzer;
 
 /// Default n-gram window (inclusive on both sides).
-pub const DEFAULT_NGRAM_MIN: usize = 2;
-pub const DEFAULT_NGRAM_MAX: usize = 3;
+pub const DEFAULT_NGRAM_MIN: usize = index_text::DEFAULT_NGRAM_MIN;
+pub const DEFAULT_NGRAM_MAX: usize = index_text::DEFAULT_NGRAM_MAX;
 
 /// Tokenize `text` with the chosen `analyzer`.
 pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
-    match analyzer {
-        Analyzer::WhitespaceLower => {
-            let mut out = Vec::new();
-            for_whitespace_lower(text, |tok| out.push(tok));
-            out
-        }
-        Analyzer::Jieba => jieba(text),
-        Analyzer::Ngram => ngram(text, DEFAULT_NGRAM_MIN, DEFAULT_NGRAM_MAX),
-    }
-}
-
-pub(crate) fn for_whitespace_lower(text: &str, mut emit: impl FnMut(String)) -> u32 {
-    for_whitespace_lower_cow(text, |tok| emit(tok.into_owned()))
+    index_text::tokenize(text, shared_analyzer(analyzer))
 }
 
 pub(crate) fn for_whitespace_lower_cow<'a>(
-    mut text: &'a str,
+    text: &'a str,
     mut emit: impl FnMut(Cow<'a, str>),
 ) -> u32 {
-    let mut emitted = 0u32;
-    while !text.is_empty() {
-        let trimmed_start = text.trim_start();
-        if trimmed_start.is_empty() {
-            break;
-        }
-        let skipped = text.len() - trimmed_start.len();
-        text = &text[skipped..];
-        let end = text.find(char::is_whitespace).unwrap_or(text.len());
-        let raw = &text[..end];
-        text = &text[end..];
-        let token = raw.trim_matches(|c: char| !c.is_alphanumeric());
-        if token.is_empty() {
-            continue;
-        }
-        emitted += 1;
-        if token
-            .as_bytes()
-            .iter()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        {
-            emit(Cow::Borrowed(token));
-        } else {
-            emit(Cow::Owned(token.to_lowercase()));
-        }
-    }
-    emitted
+    index_text::for_whitespace_lower_cow(text, |token| emit(token))
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#1975" reason="logic section in tokenize.rs is hand-written pending codegen support">
-#[cfg(feature = "jieba")]
-fn jieba(text: &str) -> Vec<String> {
-    use std::sync::OnceLock;
-    static JIEBA: OnceLock<jieba_rs::Jieba> = OnceLock::new();
-    let j = JIEBA.get_or_init(jieba_rs::Jieba::new);
-    j.cut(text, false)
-        .into_iter()
-        .map(|t| t.to_lowercase())
-        .filter(|t| !t.trim().is_empty())
-        .collect()
-}
-
-#[cfg(not(feature = "jieba"))]
-fn jieba(text: &str) -> Vec<String> {
-    // No-feature fallback: CJK-bigram tokenizer.
-    // Split input into maximal runs of CJK characters vs non-CJK characters.
-    // CJK runs emit overlapping 2-char bigrams (or a single unigram for length-1 runs).
-    // Non-CJK runs are tokenized via the existing for_whitespace_lower path.
-    // Output preserves scan order (CJK and non-CJK tokens interleaved as they appear).
-
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return vec![];
+fn shared_analyzer(analyzer: Analyzer) -> index_text::Analyzer {
+    match analyzer {
+        Analyzer::WhitespaceLower => index_text::Analyzer::WhitespaceLower,
+        Analyzer::Jieba => index_text::Analyzer::Jieba,
+        Analyzer::Ngram => index_text::Analyzer::Ngram,
     }
-
-    let mut tokens = Vec::new();
-    let chars: Vec<char> = trimmed.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let c = chars[i];
-        let is_cjk = is_cjk_char(c);
-
-        // Consume a maximal run of same type (CJK or non-CJK)
-        let run_start = i;
-        while i < chars.len() && is_cjk_char(chars[i]) == is_cjk {
-            i += 1;
-        }
-
-        let run: String = chars[run_start..i].iter().collect();
-
-        if is_cjk {
-            // CJK run: emit overlapping bigrams (or unigram for length 1)
-            let run_chars: Vec<char> = run.chars().collect();
-            if run_chars.len() == 1 {
-                tokens.push(run_chars[0].to_string());
-            } else {
-                for j in 0..run_chars.len() - 1 {
-                    let bigram: String = run_chars[j..j + 2].iter().collect();
-                    tokens.push(bigram);
-                }
-            }
-        } else {
-            // Non-CJK run: tokenize via existing for_whitespace_lower path
-            for_whitespace_lower(&run, |tok| tokens.push(tok));
-        }
-    }
-
-    tokens
-}
-
-/// Check if a Unicode character is in a CJK range.
-/// Covers Han (CJK Unified Ideographs + Ext A), Hiragana, Katakana, Hangul syllables.
-fn is_cjk_char(c: char) -> bool {
-    let code = c as u32;
-    // Han: U+4E00..U+9FFF (CJK Unified Ideographs)
-    (code >= 0x4E00 && code <= 0x9FFF)
-        // Han extension A: U+3400..U+4DBF
-        || (code >= 0x3400 && code <= 0x4DBF)
-        // Hiragana: U+3040..U+309F
-        || (code >= 0x3040 && code <= 0x309F)
-        // Katakana: U+30A0..U+30FF
-        || (code >= 0x30A0 && code <= 0x30FF)
-        // Hangul syllables: U+AC00..U+D7A3
-        || (code >= 0xAC00 && code <= 0xD7A3)
-}
-// </HANDWRITE>
-
-fn ngram(text: &str, min: usize, max: usize) -> Vec<String> {
-    let chars: Vec<char> = text
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .flat_map(|c| c.to_lowercase())
-        .collect();
-    let mut out = Vec::new();
-    for window in min..=max {
-        if chars.len() < window {
-            continue;
-        }
-        for start in 0..=chars.len() - window {
-            out.push(chars[start..start + window].iter().collect());
-        }
-    }
-    out
 }
 
 #[cfg(test)]

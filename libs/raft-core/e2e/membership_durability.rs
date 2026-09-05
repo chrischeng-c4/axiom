@@ -4,9 +4,7 @@
 //! carries, and a restart recovers — so a node comes back as the member its
 //! group last agreed it was, not as the member its caller happened to name.
 
-use raft_core::{
-    auto_membership, ConfState, EntryKind, Membership, PersistedState, RaftNode,
-};
+use raft_core::{auto_membership, ConfState, EntryKind, Membership, PersistedState, RaftNode};
 
 fn sole_voter() -> Membership {
     Membership {
@@ -101,7 +99,11 @@ fn the_bootstrap_argument_is_used_only_when_the_store_carries_no_configuration()
         0,
         "a bootstrap configuration must start at the lowest generation, or the first agreed one cannot supersede it"
     );
-    assert_eq!(node.current_term(), 2, "the rest of the hard state still recovers");
+    assert_eq!(
+        node.current_term(),
+        2,
+        "the rest of the hard state still recovers"
+    );
 }
 
 /// A generation that is stored but never compared is a field, not a guard.

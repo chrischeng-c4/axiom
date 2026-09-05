@@ -67,8 +67,13 @@ fn measurement_2_migrate_legacy_store_with_snapshot_artifact() {
             .save(&PersistedState {
                 term: 2,
                 voted_for: Some(1),
-                log: vec![],
-                commit_index: 3,
+                log: vec![RaftEntry {
+                    term: 2,
+                    index: 4,
+                    command: b"after-snapshot".to_vec(),
+                    kind: EntryKind::Command,
+                }],
+                commit_index: 4,
                 snapshot_index: 3,
                 snapshot_term: 2,
                 snapshot: snap_payload.clone(),
@@ -79,6 +84,13 @@ fn measurement_2_migrate_legacy_store_with_snapshot_artifact() {
 
     assert!(dir.path().join("raft-7.state").exists());
     assert!(dir.path().join("raft-7-snap-3-2.artifact").exists());
+    assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("raft-7-log-") && name.ends_with(".artifact"))
+    }));
 
     let store = RaftStore::migrate_legacy_to_group(
         dir.path().to_str().unwrap(),
@@ -91,11 +103,23 @@ fn measurement_2_migrate_legacy_store_with_snapshot_artifact() {
     assert!(store.path().ends_with("raft-7-616c706861.state"));
     assert!(!dir.path().join("raft-7.state").exists());
     assert!(!dir.path().join("raft-7-snap-3-2.artifact").exists());
+    assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("raft-7-log-") && name.ends_with(".artifact"))
+    }));
     assert!(dir.path().join("raft-7-616c706861.state").exists());
     assert!(dir
         .path()
         .join("raft-7-616c706861-snap-3-2.artifact")
         .exists());
+    assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+        entry.unwrap().file_name().to_str().is_some_and(|name| {
+            name.starts_with("raft-7-616c706861-log-") && name.ends_with(".artifact")
+        })
+    }));
 
     let state = store
         .load()
@@ -103,10 +127,12 @@ fn measurement_2_migrate_legacy_store_with_snapshot_artifact() {
         .expect("migrated store should load snapshot state");
     assert_eq!(state.term, 2);
     assert_eq!(state.voted_for, Some(1));
-    assert_eq!(state.commit_index, 3);
+    assert_eq!(state.commit_index, 4);
     assert_eq!(state.snapshot_index, 3);
     assert_eq!(state.snapshot_term, 2);
     assert_eq!(state.snapshot, snap_payload);
+    assert_eq!(state.log.len(), 1);
+    assert_eq!(state.log[0].command, b"after-snapshot");
 }
 
 #[test]
@@ -252,4 +278,90 @@ fn measurement_6_legacy_open_and_other_node_named_open_succeed() {
     )
     .unwrap();
     assert_eq!(store8.load().unwrap(), None);
+}
+
+fn write_v4_legacy_store(dir: &TempDir) -> PersistedState {
+    let state = PersistedState {
+        term: 5,
+        voted_for: Some(7),
+        log: vec![RaftEntry {
+            term: 5,
+            index: 9,
+            command: b"migration-retry".to_vec(),
+            kind: EntryKind::Command,
+        }],
+        commit_index: 9,
+        snapshot_index: 8,
+        snapshot_term: 5,
+        snapshot: b"migration-snapshot".to_vec(),
+        conf: None,
+    };
+    RaftStore::open(dir.path().to_str().unwrap(), 7, FsyncPolicy::Os)
+        .unwrap()
+        .save(&state)
+        .unwrap();
+    state
+}
+
+fn copy_v4_artifacts_to_target(dir: &TempDir) {
+    for entry in std::fs::read_dir(dir.path()).unwrap() {
+        let source = entry.unwrap().path();
+        let name = source.file_name().unwrap().to_str().unwrap();
+        if (name.starts_with("raft-7-snap-") || name.starts_with("raft-7-log-"))
+            && name.ends_with(".artifact")
+        {
+            let target = dir
+                .path()
+                .join(name.replacen("raft-7-", "raft-7-616c706861-", 1));
+            std::fs::copy(source, target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn measurement_7_migration_retries_after_artifacts_were_copied() {
+    let dir = TempDir::new().unwrap();
+    let expected = write_v4_legacy_store(&dir);
+    copy_v4_artifacts_to_target(&dir);
+
+    let store = RaftStore::migrate_legacy_to_group(
+        dir.path().to_str().unwrap(),
+        7,
+        GroupId("alpha".to_string()),
+        FsyncPolicy::Os,
+    )
+    .unwrap();
+
+    assert_eq!(store.load().unwrap(), Some(expected));
+    assert!(!dir.path().join("raft-7.state").exists());
+}
+
+#[test]
+fn measurement_8_migration_retries_after_target_hard_state_was_published() {
+    let dir = TempDir::new().unwrap();
+    let expected = write_v4_legacy_store(&dir);
+    copy_v4_artifacts_to_target(&dir);
+    std::fs::copy(
+        dir.path().join("raft-7.state"),
+        dir.path().join("raft-7-616c706861.state"),
+    )
+    .unwrap();
+
+    let store = RaftStore::migrate_legacy_to_group(
+        dir.path().to_str().unwrap(),
+        7,
+        GroupId("alpha".to_string()),
+        FsyncPolicy::Os,
+    )
+    .unwrap();
+
+    assert_eq!(store.load().unwrap(), Some(expected));
+    assert!(!dir.path().join("raft-7.state").exists());
+    assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("raft-7-snap-") || name.starts_with("raft-7-log-"))
+    }));
 }

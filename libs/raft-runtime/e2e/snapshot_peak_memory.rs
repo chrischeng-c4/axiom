@@ -160,7 +160,8 @@ fn restore_round_trips_exact_index() {
     sm.populate(SMALL_ENTRIES);
 
     let mut captured_bytes = Vec::new();
-    sm.snapshot(&mut captured_bytes).expect("snapshot must succeed");
+    sm.snapshot(&mut captured_bytes)
+        .expect("snapshot must succeed");
 
     let restored_sm = MemoryTestSm::new();
     let mut reader = std::io::Cursor::new(&captured_bytes);

@@ -167,7 +167,7 @@ APPS: Dict[str, App] = {
         functional=(),
     ),
     # onboarded flips to True in the PR that lands the app's two workflows.
-    "sift": shared_app("sift", "projects/sift", FIVE_TARGETS, "gcp", SIFT_FIELDS, onboarded=True),
+    "sift": shared_app("sift", "apps/sift", FIVE_TARGETS, "gcp", SIFT_FIELDS, onboarded=True),
     "keep": shared_app("keep", "apps/keep", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=True),
     "relay": shared_app("relay", "apps/relay", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=True),
     "defer": shared_app("defer", "apps/defer", TWO_TARGETS, "gke-acceptance", HARNESS_FIELDS, onboarded=True),

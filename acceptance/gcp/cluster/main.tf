@@ -57,13 +57,15 @@ resource "google_project_iam_member" "node_image_pull" {
 }
 
 resource "google_container_cluster" "acceptance" {
-  project                  = var.project_id
-  name                     = var.cluster_name
-  location                 = var.gke_zone
-  remove_default_node_pool = true
-  initial_node_count       = 1
-  deletion_protection      = false
-  networking_mode          = "VPC_NATIVE"
+  project                    = var.project_id
+  name                       = var.cluster_name
+  location                   = var.gke_zone
+  remove_default_node_pool   = true
+  initial_node_count         = 1
+  deletion_protection        = false
+  networking_mode            = "VPC_NATIVE"
+  datapath_provider          = "ADVANCED_DATAPATH"
+  enable_fqdn_network_policy = true
 
   release_channel {
     channel = "REGULAR"

@@ -69,6 +69,18 @@ name = "snapshot_peak_memory"
 path = "e2e/snapshot_peak_memory.rs"
 
 [[test]]
+name = "snapshot_at_index"
+path = "e2e/snapshot_at_index.rs"
+
+[[test]]
+name = "snapshot_install_safety"
+path = "e2e/snapshot_install_safety.rs"
+
+[[test]]
+name = "resident_log_admission"
+path = "e2e/resident_log_admission.rs"
+
+[[test]]
 name = "membership_changes"
 path = "e2e/membership_changes.rs"
 
@@ -112,6 +124,10 @@ path = "e2e/adversarial_recovery.rs"
 name = "publish_preflight"
 path = "e2e/publish_preflight.rs"
 
+[[test]]
+name = "replica_host_builder"
+path = "e2e/replica_host_builder.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 server-lifecycle = { path = "../server-lifecycle" }
@@ -126,6 +142,7 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
+crc32fast = "1"
 tokio = { workspace = true }
 tracing = { workspace = true }
 rustls = "0.23"

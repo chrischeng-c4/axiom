@@ -60,7 +60,7 @@ struct Site {
     gate: Gate,
 }
 
-const SITES: [Site; 15] = [
+const SITES: [Site; 16] = [
     Site {
         path: "apps/defer/src/raft.rs",
         implementor: "DeferStateMachine",
@@ -92,7 +92,7 @@ const SITES: [Site; 15] = [
         gate: Gate::Tape,
     },
     Site {
-        path: "projects/sift/src/durability.rs",
+        path: "apps/sift/src/durability.rs",
         implementor: "SiftStateMachine",
         gate: Gate::Sift,
     },
@@ -136,6 +136,11 @@ const SITES: [Site; 15] = [
         implementor: "BlockingApplySm",
         gate: Gate::RaftRuntimeTests,
     },
+    Site {
+        path: "libs/raft-runtime/e2e/snapshot_at_index.rs",
+        implementor: "IndexedSnapshotStateMachine",
+        gate: Gate::RaftRuntimeTests,
+    },
 ];
 
 type Location = (String, String);
@@ -159,7 +164,7 @@ fn required_gate(path: &str) -> Result<Gate, String> {
         "apps/lumen/src/raft_sm.rs" => Ok(Gate::LumenRaftWal),
         "apps/relay/src/raft.rs" => Ok(Gate::Relay),
         "apps/tape/src/raft.rs" => Ok(Gate::Tape),
-        "projects/sift/src/durability.rs" => Ok(Gate::Sift),
+        "apps/sift/src/durability.rs" => Ok(Gate::Sift),
         "libs/raft-runtime/src/lib.rs"
         | "libs/raft-runtime/src/conformance.rs"
         | "libs/raft-runtime/e2e/adversarial_recovery.rs"
@@ -167,7 +172,8 @@ fn required_gate(path: &str) -> Result<Gate, String> {
         | "libs/raft-runtime/e2e/support/cluster.rs"
         | "libs/raft-runtime/e2e/group_membership_isolation.rs"
         | "libs/raft-runtime/e2e/snapshot_peak_memory.rs"
-        | "libs/raft-runtime/e2e/host_shutdown_deadline.rs" => Ok(Gate::RaftRuntimeTests),
+        | "libs/raft-runtime/e2e/host_shutdown_deadline.rs"
+        | "libs/raft-runtime/e2e/snapshot_at_index.rs" => Ok(Gate::RaftRuntimeTests),
         _ => Err(format!("unknown implementor path: {path}")),
     }
 }

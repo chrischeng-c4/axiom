@@ -11,13 +11,15 @@ case "$app" in
     lease="lumen-operator"
     app_namespace="lumen"
     statefulset="lumen"
+    desired_replicas=1
     ;;
   sift)
     operator_namespace="sift-system"
     service_account="sift-operator"
     lease="sift-operator"
     app_namespace="sift"
-    statefulset="sift"
+    statefulset="sift-store"
+    desired_replicas=3
     ;;
   tape)
     # Lease name = ManagedService::MANAGER in apps/tape/src/operator/reconcile.rs.
@@ -26,6 +28,7 @@ case "$app" in
     lease="tape-operator"
     app_namespace="tape"
     statefulset="tape"
+    desired_replicas=1
     ;;
   *)
     echo "unknown app '$app'; expected lumen, sift, or tape" >&2
@@ -199,29 +202,55 @@ require_metrics_endpoints_cover_replicas() {
   return 1
 }
 
-wait_statefulset_one() {
-  local desired ready
+wait_statefulset_desired() {
+  local name="${1:-$statefulset}"
+  local expected="${2:-$desired_replicas}"
+  local after_generation="${3:-0}" expected_uid="${4:-}"
+  local snapshot
   local deadline=$((SECONDS + 240))
   while (( SECONDS < deadline )); do
-    desired="$(kubectl -n "$app_namespace" get "statefulset/$statefulset" \
-      -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
-    ready="$(kubectl -n "$app_namespace" get "statefulset/$statefulset" \
-      -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
-    if [[ "$desired" == "1" && "$ready" == "1" ]]; then
+    snapshot="$(kubectl -n "$app_namespace" get "statefulset/$name" -o json 2>/dev/null || true)"
+    printf '%s\n' "$snapshot" > "$EVIDENCE_DIR/kubernetes/${app}-${name}-reconcile-last.json"
+    if jq -e --argjson expected "$expected" --argjson after "$after_generation" \
+        --arg uid "$expected_uid" '
+        .spec.replicas == $expected and .status.readyReplicas == $expected
+        and (.metadata.generation > $after)
+        and (.status.observedGeneration >= .metadata.generation)
+        and ($uid == "" or .metadata.uid == $uid)
+      ' <<<"$snapshot" >/dev/null 2>&1; then
       return 0
     fi
     sleep 3
   done
-  echo "operator did not restore $app_namespace/statefulset/$statefulset to desired=ready=1" >&2
-  kubectl -n "$app_namespace" get "statefulset/$statefulset" -o yaml >&2 || true
+  echo "operator did not restore $app_namespace/statefulset/$name to desired=ready=$expected" >&2
+  kubectl -n "$app_namespace" get "statefulset/$name" -o yaml >&2 || true
   return 1
 }
 
+drift_sequence=0
 tamper_and_require_reconcile() {
+  local receipt generation uid
+  drift_sequence=$((drift_sequence + 1))
+  receipt="$EVIDENCE_DIR/kubernetes/${app}-drift-${drift_sequence}-patch.json"
+  # The PATCH response proves the write. A later GET may already see a correct
+  # reconcile and must not be required to observe the transient zero replicas.
   kubectl -n "$app_namespace" patch "statefulset/$statefulset" --type=merge \
-    --patch '{"spec":{"replicas":0}}'
-  test "$(kubectl -n "$app_namespace" get "statefulset/$statefulset" -o jsonpath='{.spec.replicas}')" = "0"
-  wait_statefulset_one
+    --patch '{"spec":{"replicas":0}}' -o json > "$receipt"
+  jq -e --arg name "$statefulset" --arg namespace "$app_namespace" '
+    .metadata.name == $name and .metadata.namespace == $namespace
+    and .spec.replicas == 0
+    and (.metadata.generation | type == "number" and . > 0 and floor == .)
+    and (.metadata.uid | type == "string" and length > 0)
+  ' "$receipt" >/dev/null || {
+    echo "the patch response did not prove $app_namespace/$statefulset drift; see $receipt" >&2
+    return 1
+  }
+  generation="$(jq -r '.metadata.generation' "$receipt")"
+  uid="$(jq -r '.metadata.uid' "$receipt")"
+  wait_statefulset_desired "$statefulset" "$desired_replicas" "$generation" "$uid"
+  if [[ "$app" == "sift" ]]; then
+    wait_statefulset_desired sift-control 3
+  fi
 }
 
 assert_can_i get leases.coordination.k8s.io "$operator_namespace"

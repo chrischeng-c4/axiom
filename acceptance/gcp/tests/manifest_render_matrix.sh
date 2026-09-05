@@ -165,7 +165,51 @@ if grep -q 'lumen-backup' "$scratch_dir/lumen-auth/manifests/lumen/instance.bund
   fail "mode 'lumen auth' unexpectedly rendered lumen-backup ServiceAccount"
 fi
 
-# --- Mode 3: tape ---
+# --- Mode 3: standalone Sift MVP ---
+sift_numeric_run_id="0903171714"
+(
+  export ACCEPTANCE_APPS="sift"
+  export RUN_ID="$sift_numeric_run_id"
+  export MANIFEST_DIR="$scratch_dir/sift/manifests"
+  export GKE_CLUSTER_NAME="matrix-cluster"
+  export GKE_ZONE="asia-east1-a"
+  export PROJECT_ID="matrix-project"
+  export SIFT_CLI="$SIFT_CLI"
+  export SIFT_IMAGE="example-registry/sift@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  export RIG_IMAGE="example-registry/rig@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  export BACKUP_BUCKET="matrix-backup-bucket"
+  export BACKUP_GSA_EMAIL="matrix-backup@example.com"
+  "$RENDER_SCRIPT"
+) || fail "rendering failed for mode 'sift'"
+
+check_app_subtree "sift" "sift" "$scratch_dir/sift/manifests" "sift sift-system"
+
+sift_cr_json="$(
+  kubectl patch --local --type=merge \
+    -f "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+    -p '{}' -o json \
+    | jq -c 'select(.kind == "Sift")'
+)" || fail "could not parse the standalone Sift manifest as Kubernetes JSON"
+jq -e --arg run_id "$sift_numeric_run_id" '
+  .spec.placement.nodeSelector["axiom-run-id"] == $run_id
+  and (.spec.placement.nodeSelector["axiom-run-id"] | type) == "string"
+' <<<"$sift_cr_json" >/dev/null \
+  || fail "standalone Sift coerced a numeric-looking run ID into a YAML number"
+
+grep -q 'storeSize: 50Gi' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+  || fail "standalone Sift did not render its 50Gi store volume"
+grep -q 'peerTlsSecret: sift-peer-tls' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+  || fail "standalone Sift did not bind the generated peer TLS Secret"
+if grep -q 'REPLACE_ME__SIFT_PEER_TLS_SECRET' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml"; then
+  fail "standalone Sift left the peer TLS placeholder in the applied bundle"
+fi
+grep -q 'name: sift-rig' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml" \
+  || fail "standalone Sift did not render its isolated Rig service account"
+if grep -q 'system:auth-delegator' "$scratch_dir/sift/manifests/sift/instance.bundle.yaml"; then
+  fail "standalone Sift masks operator-managed auth delegation with a static ClusterRoleBinding"
+fi
+
+# --- Mode 4: tape ---
 (
   export ACCEPTANCE_APPS="tape"
   export RUN_ID="matrix-test"

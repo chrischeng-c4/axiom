@@ -135,6 +135,34 @@ async fn cloud_storage_emulator_roundtrips() {
         .unwrap();
     assert_eq!(multi.text().await.unwrap(), "{\"k\":1}");
 
+    // Axum defaults to a 2 MiB buffered-body limit. The emulator must accept
+    // production-sized Sift segments, so verify that a larger object survives
+    // a byte-identical media upload and download.
+    let large_name = "segments/large.framed";
+    let large_body = vec![0x5a; 3 * 1024 * 1024];
+    client
+        .post(format!(
+            "{base}/upload/storage/v1/b/{bucket}/o?uploadType=media&name={}",
+            enc(large_name)
+        ))
+        .header("Content-Type", "application/octet-stream")
+        .body(large_body.clone())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let large = client
+        .get(format!(
+            "{base}/storage/v1/b/{bucket}/o/{}?alt=media",
+            enc(large_name)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(large.status().is_success());
+    assert_eq!(large.bytes().await.unwrap().as_ref(), large_body.as_slice());
+
     // --- list with prefix ---
     let list: Value = client
         .get(format!("{base}/storage/v1/b/{bucket}/o?prefix=dir/"))

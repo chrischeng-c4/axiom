@@ -46,9 +46,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use raft_core::{
-    ConfState, DemotionRefused, Membership, NodeId, RaftNode, RemovalRefused, Role,
-};
+use raft_core::{ConfState, DemotionRefused, Membership, NodeId, RaftNode, RemovalRefused, Role};
 
 fn voters(ids: &[NodeId]) -> Membership {
     Membership {
@@ -282,9 +280,7 @@ fn a_demotion_that_would_leave_no_voters_is_refused() {
 
     assert_eq!(
         bus.nodes.get_mut(&leader).unwrap().demote_voter(last_voter),
-        Err(DemotionRefused::WouldEmptyVoterSet {
-            target: last_voter
-        }),
+        Err(DemotionRefused::WouldEmptyVoterSet { target: last_voter }),
         "demoting the only voter leaves a group that can never elect and can \
          never repair itself, and the tolerance guard permits it because zero \
          failures tolerated before is not fewer than zero after",
@@ -327,10 +323,11 @@ fn a_removal_that_would_leave_no_voters_is_refused() {
     bus.adopt_leader_out_of_the_voter_set(leader, &[last_voter]);
 
     assert_eq!(
-        bus.nodes.get_mut(&leader).unwrap().remove_member(last_voter),
-        Err(RemovalRefused::WouldEmptyVoterSet {
-            target: last_voter
-        }),
+        bus.nodes
+            .get_mut(&leader)
+            .unwrap()
+            .remove_member(last_voter),
+        Err(RemovalRefused::WouldEmptyVoterSet { target: last_voter }),
         "removing the only voter empties the voter set by the same path a \
          refused demotion is stopped from taking",
     );

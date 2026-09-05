@@ -1,9 +1,11 @@
 # Source candidate only.  It intentionally has no Lumen build stage: Cloud
 # Build's classic Docker daemon evaluates preceding stages for --target.
 FROM rust:1.96-bookworm AS builder
+ARG SOURCE_REVISION
 WORKDIR /workspace
 COPY . .
-RUN cargo build --locked --release -p sift --bin sift \
+RUN test -n "${SOURCE_REVISION}" \
+ && SIFT_SOURCE_REVISION="${SOURCE_REVISION}" cargo build --locked --release -p sift --bin sift \
  && install -D -m 0755 target/release/sift /out/sift
 
 FROM gcr.io/distroless/cc-debian12:nonroot

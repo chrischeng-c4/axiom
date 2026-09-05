@@ -15,7 +15,9 @@
 //! the generic envelope + builder, never the domain classification, which
 //! stays in the service's own `From<DomainError>` impl.
 
-use axum::http::StatusCode;
+use std::time::Duration;
+
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -30,6 +32,75 @@ pub struct ErrorEnvelope {
     pub message: String,
 }
 
+/// Optional projection position attached to a detailed service error.
+///
+/// The shared HTTP layer owns the wire fields. The service still decides when
+/// a projection is too far behind and which cursor values are meaningful.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProjectionMetadata {
+    pub projection: String,
+    pub required_cursor: u64,
+    pub current_cursor: u64,
+}
+
+/// The additive error body used by services that publish retry information.
+///
+/// [`ErrorEnvelope`] remains the exact two-field compatibility shape. An
+/// [`ApiErr`] renders this detailed form only after a detailed builder method
+/// is called.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct DetailedErrorEnvelope {
+    pub error: String,
+    pub message: String,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projection: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_cursor: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_cursor: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
+}
+
+/// Return the bounded client's requested delay for one detailed retryable
+/// response.
+///
+/// A caller must not replay a request from a basic error body, a client error
+/// other than `429`, or conflicting header and body metadata. The service
+/// still decides whether replaying that request is safe and how many attempts
+/// it permits.
+pub fn retry_delay_from_detailed_error(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Option<Duration> {
+    if status != StatusCode::TOO_MANY_REQUESTS && !status.is_server_error() {
+        return None;
+    }
+    let details: DetailedErrorEnvelope = serde_json::from_slice(body).ok()?;
+    if !details.retryable {
+        return None;
+    }
+    let header_seconds = match headers.get(header::RETRY_AFTER) {
+        Some(value) => Some(value.to_str().ok()?.parse::<u64>().ok()?),
+        None => None,
+    };
+    let seconds = match (header_seconds, details.retry_after_seconds) {
+        (Some(header), Some(body)) if header == body => header,
+        (None, None) => 0,
+        _ => return None,
+    };
+    Some(Duration::from_secs(seconds))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetailedErrorMetadata {
+    retryable: bool,
+    retry_after_seconds: Option<u64>,
+    projection: Option<ProjectionMetadata>,
+}
+
 /// Status-code + `kind` classification wrapper. Build one with
 /// [`ApiErr::new`] from a domain-error match arm; `.into_response()` renders
 /// it as [`ErrorEnvelope`] JSON paired with the status code.
@@ -37,6 +108,7 @@ pub struct ApiErr {
     status: StatusCode,
     kind: &'static str,
     message: String,
+    details: Option<DetailedErrorMetadata>,
 }
 
 impl ApiErr {
@@ -46,20 +118,82 @@ impl ApiErr {
             status,
             kind,
             message: message.into(),
+            details: None,
         }
+    }
+
+    /// Select the detailed wire shape and state whether a caller may retry.
+    pub fn with_retryable(mut self, retryable: bool) -> Self {
+        self.details
+            .get_or_insert(DetailedErrorMetadata {
+                retryable,
+                retry_after_seconds: None,
+                projection: None,
+            })
+            .retryable = retryable;
+        self
+    }
+
+    /// Attach a whole-second retry delay and render the matching Retry-After
+    /// response header. A retry delay always makes the error retryable.
+    pub fn with_retry_after_seconds(mut self, seconds: u64) -> Self {
+        let details = self.details.get_or_insert(DetailedErrorMetadata {
+            retryable: true,
+            retry_after_seconds: None,
+            projection: None,
+        });
+        details.retryable = true;
+        details.retry_after_seconds = Some(seconds);
+        self
+    }
+
+    /// Attach a service-owned projection position to the shared detailed body.
+    pub fn with_projection(mut self, projection: ProjectionMetadata) -> Self {
+        self.details
+            .get_or_insert(DetailedErrorMetadata {
+                retryable: false,
+                retry_after_seconds: None,
+                projection: None,
+            })
+            .projection = Some(projection);
+        self
     }
 }
 
 impl IntoResponse for ApiErr {
     fn into_response(self) -> Response {
-        (
+        let Some(details) = self.details else {
+            return (
+                self.status,
+                Json(ErrorEnvelope {
+                    error: self.kind.to_string(),
+                    message: self.message,
+                }),
+            )
+                .into_response();
+        };
+
+        let projection = details.projection;
+        let retry_after_seconds = details.retry_after_seconds;
+        let mut response = (
             self.status,
-            Json(ErrorEnvelope {
+            Json(DetailedErrorEnvelope {
                 error: self.kind.to_string(),
                 message: self.message,
+                retryable: details.retryable,
+                projection: projection.as_ref().map(|value| value.projection.clone()),
+                required_cursor: projection.as_ref().map(|value| value.required_cursor),
+                current_cursor: projection.as_ref().map(|value| value.current_cursor),
+                retry_after_seconds,
             }),
         )
-            .into_response()
+            .into_response();
+        if let Some(seconds) = retry_after_seconds {
+            if let Ok(value) = HeaderValue::from_str(&seconds.to_string()) {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+        }
+        response
     }
 }
 

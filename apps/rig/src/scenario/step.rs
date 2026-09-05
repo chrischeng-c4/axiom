@@ -24,6 +24,7 @@ pub struct HttpExpect {
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
     /// Dot-path assertions over the response JSON, e.g. `"$.total" = ">= 1"`.
+    /// Use `absent` to reject an optional error field that must not be returned.
     #[serde(default)]
     pub jsonpath: BTreeMap<String, String>,
 }
@@ -66,6 +67,13 @@ fn default_timeout_ms() -> u64 {
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
+    /// Extra request headers. Names and values support variable interpolation.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Read a bearer token from this file before every request. The path
+    /// supports interpolation, and long runs observe projected token rotation.
+    #[serde(default)]
+    pub bearer_token_file: Option<String>,
     #[serde(default)]
     pub body: Option<String>,
     #[serde(default)]

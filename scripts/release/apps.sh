@@ -23,7 +23,7 @@ release_app_require() {
 # Where the app's Cargo.toml, build.sh, and Dockerfile.release live.
 release_app_root() {
   release_app_require "$1"
-  case "$1" in sift) printf 'projects/sift\n' ;; *) printf 'apps/%s\n' "$1" ;; esac
+  case "$1" in sift) printf 'apps/sift\n' ;; *) printf 'apps/%s\n' "$1" ;; esac
 }
 # Directory of the app's verify-release-candidate.sh and verify-release-artifacts.sh.
 release_app_scripts_dir() {

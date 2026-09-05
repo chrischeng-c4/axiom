@@ -56,14 +56,47 @@ pub(super) fn execute_with_agent(
         None => None,
     };
 
+    let headers = request
+        .headers
+        .iter()
+        .map(|(name, value)| Ok((vars.interpolate(name)?, vars.interpolate(value)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let bearer_token = match &request.bearer_token_file {
+        Some(template) => {
+            let path = vars.interpolate(template)?;
+            let token = std::fs::read_to_string(&path)
+                .map_err(|error| format!("read bearer token file `{path}`: {error}"))?;
+            let token = token.trim();
+            if token.is_empty() {
+                return Err(format!("bearer token file `{path}` is empty"));
+            }
+            Some(token.to_string())
+        }
+        None => None,
+    };
+    if bearer_token.is_some()
+        && headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+    {
+        return Err("HTTP request cannot set both `authorization` and `bearer_token_file`".into());
+    }
+
     let method = request.method.to_uppercase();
     let started = Instant::now();
+    let mut outbound = agent.request(&method, &url);
+    if body.is_some() {
+        outbound = outbound.set("content-type", "application/json");
+    }
+    for (name, value) in &headers {
+        outbound = outbound.set(name, value);
+    }
+    if let Some(token) = &bearer_token {
+        outbound = outbound.set("authorization", &format!("Bearer {token}"));
+    }
     let result = match body {
-        Some(ref payload) => agent
-            .request(&method, &url)
-            .set("content-type", "application/json")
-            .send_string(payload),
-        None => agent.request(&method, &url).call(),
+        Some(ref payload) => outbound.send_string(payload),
+        None => outbound.call(),
     };
     let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
 
@@ -163,11 +196,14 @@ pub fn json_path(root: &Value, path: &str) -> Option<Value> {
     Some(current.clone())
 }
 
-/// Predicate over an optional JSON value: `>= 1`, `== "ok"`, `exists`.
+/// Predicate over an optional JSON value: `>= 1`, `== "ok"`, `exists`, `absent`.
 fn check_predicate(actual: Option<&Value>, predicate: &str) -> Result<bool, String> {
     let p = predicate.trim();
     if p == "exists" {
         return Ok(actual.is_some());
+    }
+    if p == "absent" {
+        return Ok(actual.is_none());
     }
     let Some(actual) = actual else {
         return Ok(false);
@@ -175,7 +211,9 @@ fn check_predicate(actual: Option<&Value>, predicate: &str) -> Result<bool, Stri
     let (op, rhs) = ["<=", ">=", "==", "!=", "<", ">"]
         .iter()
         .find_map(|op| p.strip_prefix(op).map(|rest| (*op, rest.trim())))
-        .ok_or_else(|| format!("unsupported predicate `{p}` (ops: == != < <= > >= exists)"))?;
+        .ok_or_else(|| {
+            format!("unsupported predicate `{p}` (ops: == != < <= > >= exists absent)")
+        })?;
 
     // String comparison when the rhs is quoted.
     if let Some(want) = rhs.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
@@ -233,6 +271,8 @@ mod tests {
         assert!(!check_predicate(Some(&json!(0)), ">= 1").unwrap());
         assert!(check_predicate(Some(&json!("ok")), "== \"ok\"").unwrap());
         assert!(check_predicate(Some(&json!(1)), "exists").unwrap());
+        assert!(check_predicate(None, "absent").unwrap());
+        assert!(!check_predicate(Some(&json!(null)), "absent").unwrap());
         assert!(!check_predicate(None, ">= 1").unwrap());
         assert!(check_predicate(Some(&json!(1)), "~ 2").is_err());
     }

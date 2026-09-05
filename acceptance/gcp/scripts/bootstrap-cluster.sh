@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Direct bootstrap remains an explicit provisioning command. Normal acceptance
+# must select this read-only mode; a failed read is never permission to create.
+existing_only=0
+if [[ "$#" == "1" && "$1" == "--existing-only" ]]; then
+  existing_only=1
+elif [[ "$#" != "0" ]]; then
+  echo "usage: bootstrap-cluster.sh [--existing-only]" >&2
+  exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 : "${PROJECT_ID:?PROJECT_ID is required}"
@@ -17,7 +27,21 @@ TFSTATE_BUCKET="${TFSTATE_BUCKET:-${PROJECT_ID}-axiom-tfstate}"
 CLUSTER_TF_DATA_DIR="${CLUSTER_TF_DATA_DIR:-/tmp/axiom-gcp-operator-cluster/.terraform}"
 
 if cluster_json="$(gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
-  --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json 2>/dev/null)"; then
+  --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json)"; then
+  jq -e --arg name "$PERSISTENT_CLUSTER_NAME" --arg zone "$GKE_ZONE" '
+    .name == $name and .location == $zone and .status == "RUNNING"
+    and (.autopilot.enabled // false) == false
+  ' <<<"$cluster_json" >/dev/null || {
+    echo "the existing cluster must be the exact running zonal Standard cluster" >&2
+    exit 1
+  }
+  datapath_provider="$(jq -r '.networkConfig.datapathProvider // ""' <<<"$cluster_json")"
+  fqdn_network_policy="$(jq -r '.networkConfig.enableFqdnNetworkPolicy // false' <<<"$cluster_json")"
+  if [[ "$datapath_provider" != "ADVANCED_DATAPATH" || "$fqdn_network_policy" != "true" ]]; then
+    echo "$PERSISTENT_CLUSTER_NAME requires Dataplane V2 and FQDN Network Policy; got datapathProvider=${datapath_provider:-unset}, enableFqdnNetworkPolicy=$fqdn_network_policy" >&2
+    echo "Destroy and recreate this empty acceptance cluster from acceptance/gcp/cluster/main.tf before retrying." >&2
+    exit 1
+  fi
   # Same drift class, same cheap place. The dedicated data-plane pool is what
   # gives `spec.placement` a real pool boundary to be proven against; without it
   # the placement leg hard-fails, but only after the legs before it have already
@@ -52,6 +76,11 @@ if cluster_json="$(gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME"
   fi
   printf '%s\n' "$PERSISTENT_CLUSTER_NAME"
   exit 0
+fi
+
+if [[ "$existing_only" == "1" ]]; then
+  echo "could not read the existing cluster; acceptance cannot create or repair shared infrastructure" >&2
+  exit 1
 fi
 
 # stdout is a CONTRACT: exactly the cluster name, one line, nothing else.
