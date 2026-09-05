@@ -1013,3 +1013,57 @@ mod add_registry_transitive {
         drop(server);
     }
 }
+
+// #4222: `pkgmgr-validate`'s `auth` family probe must accept the PEP 503
+// canonical name the registry resolver locks (`auth_demo` -> `auth-demo`),
+// not the literal underscored request string.
+mod lock_pins_package_tests {
+    use crate::pkgmanage::validate::lock_pins_package;
+
+    const SINGLE_ENTRY_LOCK: &str = r#"
+[[package]]
+name = "auth-demo"
+version = "1.0.0"
+"#;
+
+    const TWO_ENTRY_LOCK: &str = r#"
+[[package]]
+name = "auth-demo"
+version = "1.0.0"
+
+[[package]]
+name = "other-pkg"
+version = "2.0.0"
+"#;
+
+    #[test]
+    fn matches_canonical_name_at_requested_version() {
+        assert!(lock_pins_package(SINGLE_ENTRY_LOCK, "auth_demo", "1.0.0"));
+    }
+
+    #[test]
+    fn rejects_wrong_version_on_matching_package() {
+        assert!(!lock_pins_package(SINGLE_ENTRY_LOCK, "auth_demo", "2.0.0"));
+    }
+
+    #[test]
+    fn rejects_missing_package() {
+        let lock = r#"
+[[package]]
+name = "other-pkg"
+version = "1.0.0"
+"#;
+        assert!(!lock_pins_package(lock, "auth_demo", "1.0.0"));
+    }
+
+    #[test]
+    fn does_not_pair_name_from_one_entry_with_version_from_another() {
+        // `auth-demo` is pinned at 1.0.0, `other-pkg` at 2.0.0: a name from
+        // one entry must never satisfy a version borrowed from the other.
+        assert!(!lock_pins_package(TWO_ENTRY_LOCK, "auth_demo", "2.0.0"));
+        assert!(!lock_pins_package(TWO_ENTRY_LOCK, "other_pkg", "1.0.0"));
+        // Sanity: each entry still matches its own true pin.
+        assert!(lock_pins_package(TWO_ENTRY_LOCK, "auth_demo", "1.0.0"));
+        assert!(lock_pins_package(TWO_ENTRY_LOCK, "other_pkg", "2.0.0"));
+    }
+}

@@ -477,6 +477,60 @@ fn probe_init(bin: &Path) -> FamilyResult {
     FamilyResult::pass("init created mamba.toml + scaffolding").with_paths(Some(proj), None, None)
 }
 
+/// True when `lock`'s `[[package]]` table names `requested` (compared
+/// PEP 503-canonically, since the registry resolver pins the canonical
+/// form -- `auth_demo` -> `auth-demo` -- while the probe still requests
+/// the underscored name) at exactly `version`, within the same entry.
+///
+/// Parses `name = "..."` / `version = "..."` lines in order, closing an
+/// entry whenever a new `name =` line starts (or at end of input), so a
+/// name from one entry can never pair with a version from another.
+pub(crate) fn lock_pins_package(lock: &str, requested: &str, version: &str) -> bool {
+    let wanted = crate::pkgmanage::pkgmgr::resolver::requirement::normalize_name(requested);
+
+    let mut current_name: Option<String> = None;
+    let mut matched = false;
+
+    for line in lock.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name") {
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix('=') {
+                if let Some(value) = extract_quoted(rest) {
+                    current_name =
+                        Some(crate::pkgmanage::pkgmgr::resolver::requirement::normalize_name(
+                            &value,
+                        ));
+                    matched = current_name.as_deref() == Some(wanted.as_str());
+                    continue;
+                }
+            }
+        }
+        if matched {
+            if let Some(rest) = line.strip_prefix("version") {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix('=') {
+                    if let Some(value) = extract_quoted(rest) {
+                        if value == version {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Extracts the first `"..."`-quoted value from a TOML value fragment,
+/// e.g. `" \"auth-demo\""` -> `Some("auth-demo")`.
+fn extract_quoted(rest: &str) -> Option<String> {
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
 fn probe_auth(bin: &Path) -> FamilyResult {
     let tmp = ScratchDir::new("probe");
     let creds = tmp.path().join("credentials");
@@ -574,7 +628,7 @@ fn probe_auth(bin: &Path) -> FamilyResult {
         ));
     }
     let lock = std::fs::read_to_string(project.join("mamba.lock")).unwrap_or_default();
-    if !lock.contains("name = \"auth_demo\"") || !lock.contains("version = \"1.0.0\"") {
+    if !lock_pins_package(&lock, "auth_demo", "1.0.0") {
         return FamilyResult::fail(format!("authenticated add did not lock auth_demo: {lock}"));
     }
 
