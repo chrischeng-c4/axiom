@@ -20,7 +20,7 @@ already-written e2e cases — green.
 ## How
 
 - Start from the parent's exact assignment, named work item, and the e2e
-  contract authored by `build-stamp-e2e-dev`. The contract defines behavior and
+  contract authored by `build-stamp-qa`. The contract defines behavior and
   boundaries; do not replace it with a new design.
 - Read `libs/build-stamp/README.md` and `libs/build-stamp/CONTRIBUTING.md` when present, plus
   `STATUS.md` and `ROADMAP.md` when the project has adopted them.

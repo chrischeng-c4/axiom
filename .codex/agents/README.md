@@ -19,7 +19,7 @@ The fleet is three agents per project (22 apps and 22 libs), `aw-pm` for
 | Role | Effort | Owns |
 |---|---|---|
 | `<p>-pm` (45) | `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` as uncommitted drafts that pass `aw metadoc check` and `aw meta check`; never commits or binds a Milestone |
-| `<p>-e2e-dev` (44) | `max` | the e2e contract — behavior, performance, and security facets, written to fail first; never writes `src/` |
+| `<p>-qa` (44) | `max` | the e2e contract — behavior, performance, and security facets, written to fail first; never writes `src/` |
 | `<p>-dev` (44) | `medium` | source plus colocated unit tests, verified by running them; never writes `e2e/` |
 | `cto` | `high` | one cross-project boundary decision draft (shared → `libs/`, app-owned, or a new lib) as a `type:spike` body; writes nothing |
 | `project-manager` | `medium` | one release Milestone description draft, validated with `aw milestone validate --draft`; never creates it |

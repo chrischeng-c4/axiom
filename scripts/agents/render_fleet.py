@@ -48,8 +48,8 @@ LIBS: Tuple[str, ...] = (
     "storage-durable", "surface", "transport-h2c", "ui-runtime",
 )
 TIER_ROLES: Dict[str, Tuple[str, ...]] = {
-    "app": ("pm", "e2e-dev", "dev"),
-    "lib": ("pm", "e2e-dev", "dev"),
+    "app": ("pm", "qa", "dev"),
+    "lib": ("pm", "qa", "dev"),
 }
 # apps/aw is a Python uv project whose implementation agent is the hand-written
 # singleton `aw-dev`; it takes the product-manager role only, none of the

@@ -59,9 +59,9 @@ class RenderFleetTests(unittest.TestCase):
         rendered = render_fleet.rendered_agents(REPO)
         self.assertEqual(len(rendered), 133)
         self.assertNotIn("aw-dev", rendered)
-        self.assertNotIn("aw-e2e-dev", rendered)
+        self.assertNotIn("aw-qa", rendered)
         self.assertIn("aw-pm", rendered)
-        self.assertIn("lumen-e2e-dev", rendered)
+        self.assertIn("lumen-qa", rendered)
         self.assertIn("lumen-pm", rendered)
         self.assertIn("build-stamp-dev", rendered)
         self.assertIn("build-stamp-pm", rendered)
@@ -134,11 +134,11 @@ class RenderFleetTests(unittest.TestCase):
         self.assertEqual(render_fleet.check(self.tmp), [])
 
     def test_missing_projection_is_caught_and_written(self) -> None:
-        (self.tmp / ".codex/agents/cap-e2e-dev.toml").unlink()
+        (self.tmp / ".codex/agents/cap-qa.toml").unlink()
         self.assertEqual(render_fleet.check(self.tmp),
-                         ["missing: .codex/agents/cap-e2e-dev.toml"])
+                         ["missing: .codex/agents/cap-qa.toml"])
         self.assertEqual(render_fleet.write(self.tmp),
-                         ["wrote: .codex/agents/cap-e2e-dev.toml"])
+                         ["wrote: .codex/agents/cap-qa.toml"])
         self.assertEqual(render_fleet.check(self.tmp), [])
 
     def test_singleton_edit_reprojects_only_its_toml(self) -> None:

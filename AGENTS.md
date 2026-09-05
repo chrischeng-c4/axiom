@@ -73,7 +73,7 @@ gate. Re-typing those commands yourself keeps the work and drops the refusal.
 | a debug run of keep, defer, relay, or loom | `build-debug` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
 | a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release`: reuse the existing plan, prepare it read-only in the current mode if needed, then approved `apply` in Default mode; both stay in the main thread | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or `aw milestone` / `aw change` outside the approved plan |
-| a queue head's e2e contract | `aw-e2e-for`, through `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main thread |
+| a queue head's e2e contract | `aw-e2e-for`, through `<p>-qa` | writing `apps/<p>/e2e/*.rs` in the main thread |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, through `<p>-dev` | writing `apps/<p>/src/**` in the main thread |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision you have been making alone | `aw-ask-user` | one more stated assumption |
@@ -103,7 +103,7 @@ change edits a template, never one project's copy, and
 | Role | Effort | Owns | Never |
 |---|---|---|---|
 | `<p>-pm` (22 apps, 22 libs, plus `aw-pm`) | `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, `docs/**` as uncommitted drafts passing `aw metadoc check` and `aw meta check` | `aw metadoc commit`, any Git write, `Tracking:` binding, `src/`, `e2e/` |
-| `<p>-e2e-dev` (22 apps, 22 libs) | `max` | the e2e contract — black-box cases written to fail before the implementation exists | `src/` |
+| `<p>-qa` (22 apps, 22 libs) | `max` | the e2e contract — black-box cases written to fail before the implementation exists | `src/` |
 | `<p>-dev` (22 apps, 22 libs) | `medium` | source plus colocated unit tests, verified by running them | `e2e/` |
 | `cto` | `high` | one cross-project boundary decision draft as a `type:spike` body | any file write, issue creation, Milestone or issue choices |
 | `project-manager` | `medium` | one release Milestone description draft, validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding |
@@ -148,7 +148,7 @@ write root and an impl commit that touches no test file. Maintenance
 (`refactor`, `test`, `docs`, `chore`) has one `maint` phase whose type fixes
 its write boundary; no red is invented, and the controller runs each declared
 gate outside `aw maint` and records its exact exit and output digest with
-`aw maint record`. `libs/<name>/` has no phase script: the lib e2e-dev
+`aw maint record`. `libs/<name>/` has no phase script: the lib qa
 authors and runs its cases directly, the lib dev verifies with
 `cargo test -p <crate> --lib` then the full crate suite, and the controller
 owns every lib commit.

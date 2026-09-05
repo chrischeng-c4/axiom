@@ -72,7 +72,7 @@ class AgentEffortHookTests(unittest.TestCase):
         self.assertEqual(self.agents["cto"], "high")
         self.assertEqual(self.agents["project-manager"], "medium")
         self.assertEqual(self.agents["tech-design"], "xhigh")
-        self.assertEqual(self.agents["tape-e2e-dev"], "max")
+        self.assertEqual(self.agents["tape-qa"], "max")
         self.assertEqual(self.agents["tape-dev"], "medium")
         self.assertEqual(self.agents["tape-pm"], "high")
         self.assertEqual(self.agents["aw-pm"], "high")

@@ -33,7 +33,7 @@ the case that needs a stated reason.
 | a debug run of keep, defer, relay, or loom | `build-debug <app>` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release <app>` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
 | a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release`: reuse the existing plan, prepare it read-only in the current mode if needed, then approved `apply` in Default mode, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside the approved plan |
-| a queue head's e2e contract | `aw-e2e-for`, run by `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main session |
+| a queue head's e2e contract | `aw-e2e-for`, run by `<p>-qa` | writing `apps/<p>/e2e/*.rs` in the main session |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, run by `<p>-dev` | writing `apps/<p>/src/**` in the main session |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision the session has been making alone | `aw-ask-user` | one more stated assumption |
@@ -59,7 +59,7 @@ force push to a persistent ref, or a failing check is not yours to work
 around.
 
 **Subagents.** 139 under `.claude/agents/`: three per project (22 apps, 22
-libs: `<p>-pm`, `<p>-e2e-dev`, `<p>-dev`), `aw-pm` for `apps/aw` (whose
+libs: `<p>-pm`, `<p>-qa`, `<p>-dev`), `aw-pm` for `apps/aw` (whose
 engine work stays with `aw-dev`), the three planning singletons `cto`,
 `project-manager`, and `tech-design`, and `aw-dev`, `gke-operator`, and
 `agy-operator`. The pm and planning roles draft; the human confirms each
@@ -73,7 +73,7 @@ and `render_fleet.py --check` refuses a hand-edited file.
 | Agent | Model / effort | Owns | Never |
 |---|---|---|---|
 | `<p>-pm` | fable / `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` as uncommitted drafts that pass `aw metadoc check` and `aw meta check` | `aw metadoc commit`, any Git write, `Tracking:` binding, `src/`, `e2e/`, a cross-project boundary claim |
-| `<p>-e2e-dev` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
+| `<p>-qa` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
 | `<p>-dev` | sonnet / `medium` | source plus colocated unit tests, verified by running them; for apps it runs `aw-impl-for`, impl and maint legs | `e2e/` |
 | `cto` | fable / `high` | one cross-project boundary decision draft — shared → `libs/`, app-owned, or a new lib — as a `type:spike` body plus the `Sources` / `Boundary:` lines it implies | any file write, `gh issue create`, Milestone or issue choices |
 | `project-manager` | opus / `medium` | one release Milestone description draft for one promise, written to the path the session names and validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding, the Development Order |
@@ -95,7 +95,7 @@ tier is a default, not a ceiling: a hard case may raise `model` at dispatch
 time, and ownership does not move with it. For apps the phase script's
 `commit` is the runner's only Git write, and acceptance reads the commits,
 not the runner's summary; `libs/<name>/` has no phase script, so the lib
-e2e-dev authors and runs its cases directly, the lib dev verifies with
+qa authors and runs its cases directly, the lib dev verifies with
 `cargo test -p <crate> --lib` then the full crate suite, and the controller
 owns every lib commit. One writer per worktree at a time — phase scripts
 measure named reds against HEAD, so two concurrent writers poison each

@@ -51,10 +51,10 @@ class SpawnAgentEffortHookTests(unittest.TestCase):
         registry = load_registry()
         self.assertEqual(len(registry), 139)
         self.assertEqual(registry["tape-dev"], "medium")
-        self.assertEqual(registry["tape-e2e-dev"], "max")
+        self.assertEqual(registry["tape-qa"], "max")
         self.assertEqual(registry["tape-pm"], "high")
         self.assertEqual(registry["aw-pm"], "high")
-        self.assertNotIn("aw-e2e-dev", registry)
+        self.assertNotIn("aw-qa", registry)
         self.assertEqual(registry["agy-operator"], "low")
         self.assertEqual(registry["cto"], "high")
         self.assertEqual(registry["project-manager"], "medium")
@@ -63,7 +63,7 @@ class SpawnAgentEffortHookTests(unittest.TestCase):
 
     def test_matching_pinned_effort_is_accepted(self) -> None:
         validate_spawn_agent_call(payload("medium"))
-        validate_spawn_agent_call(payload("max", agent_type="tape-e2e-dev"))
+        validate_spawn_agent_call(payload("max", agent_type="tape-qa"))
         validate_spawn_agent_call(payload("low", agent_type="agy-operator"))
 
     def test_positive_history_bound_is_accepted(self) -> None:

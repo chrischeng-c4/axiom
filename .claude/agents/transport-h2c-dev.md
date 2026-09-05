@@ -20,7 +20,7 @@ already-written e2e cases — green.
 ## How
 
 - Start from the parent's exact assignment, named work item, and the e2e
-  contract authored by `transport-h2c-e2e-dev`. The contract defines behavior and
+  contract authored by `transport-h2c-qa`. The contract defines behavior and
   boundaries; do not replace it with a new design.
 - Read `libs/transport-h2c/README.md` and `libs/transport-h2c/CONTRIBUTING.md` when present, plus
   `STATUS.md` and `ROADMAP.md` when the project has adopted them.
