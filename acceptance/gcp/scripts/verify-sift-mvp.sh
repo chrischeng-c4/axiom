@@ -126,6 +126,7 @@ verify_pods_on_run_nodes() {
   kubectl get nodes -l "axiom-run-id=${RUN_ID}" -o json > "$nodes"
   jq -e \
     --arg run_id "$RUN_ID" \
+    --arg pool "$SIFT_NODE_POOL" \
     --argjson expected_count "$expected_count" \
     --slurpfile nodes "$nodes" '
     (.items | length) == $expected_count
@@ -134,7 +135,8 @@ verify_pods_on_run_nodes() {
       and .spec.nodeName != null
       and any($nodes[0].items[];
         .metadata.name == $pod.spec.nodeName
-        and .metadata.labels["axiom-run-id"] == $run_id))
+        and .metadata.labels["axiom-run-id"] == $run_id
+        and .metadata.labels["cloud.google.com/gke-nodepool"] == $pool))
   ' "$pods" >/dev/null \
     || die "${stem} did not have ${expected_count} pods only on this run's Sift nodes"
 }
@@ -1991,7 +1993,7 @@ failover_pod="sift-store-${failover_leader}"
 failover_node="$(kubectl -n "$NAMESPACE" get "pod/${failover_pod}" \
   -o jsonpath='{.spec.nodeName}')"
 [[ -n "$failover_node" ]] || die "could not resolve the leader VM"
-kubectl cordon "$failover_node"
+"$SCRIPT_DIR/sift-failover-vm.sh" cordon "$failover_node"
 kubectl -n "$NAMESPACE" get pods -l sift.axiom.dev/frontend=true -o json \
   | jq -r --arg node "$failover_node" \
       '.items[] | select(.spec.nodeName == $node) | .metadata.name' \
@@ -2010,13 +2012,11 @@ refresh_token
   || die "Raft leadership changed before the failover drill began"
 snapshot_restarts "$EVIDENCE_DIR/kubernetes/restarts-before-failover.json"
 
-gcloud compute instances describe "$failover_node" \
-  --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json \
-  > "$EVIDENCE_DIR/kubernetes/failover-vm-before.json"
 start_load_phase failover "$FAILOVER_SECONDS"
 sleep 30
-gcloud compute instances stop "$failover_node" \
-  --project="$PROJECT_ID" --zone="$GKE_ZONE" --quiet
+[[ "$(wait_store_leader)" == "$failover_leader" ]] \
+  || die "Raft leadership changed before the VM stop"
+"$SCRIPT_DIR/sift-failover-vm.sh" stop "$failover_node"
 date -u +%Y-%m-%dT%H:%M:%SZ \
   > "$EVIDENCE_DIR/kubernetes/failover-vm-stopped-at.txt"
 
@@ -2066,7 +2066,7 @@ while (( SECONDS < node_deadline )); do
   sleep 10
 done
 [[ "${ready_run_nodes:-0}" == "3" ]] || die "GKE auto-repair did not restore three ready run nodes"
-kubectl uncordon "$failover_node" >/dev/null 2>&1 || true
+"$SCRIPT_DIR/sift-failover-vm.sh" uncordon "$failover_node" >/dev/null 2>&1 || true
 wait_role_ready statefulset sift-store 3
 wait_role_ready statefulset sift-control 3
 wait_role_ready deployment sift-gateway 1

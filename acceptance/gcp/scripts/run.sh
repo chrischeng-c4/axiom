@@ -1102,9 +1102,11 @@ fi
 }
 
 echo ">> persistent Standard GKE cluster bootstrap or reuse"
+# All acceptance modes are existing-only. Only a separate direct bootstrap
+# command may create shared infrastructure; API read failures stop this run.
 PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" \
   PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
-  "$SCRIPT_DIR/bootstrap-cluster.sh" > "$EVIDENCE_DIR/persistent-cluster-name.txt"
+  "$SCRIPT_DIR/bootstrap-cluster.sh" --existing-only > "$EVIDENCE_DIR/persistent-cluster-name.txt"
 bootstrapped_cluster="$(cat "$EVIDENCE_DIR/persistent-cluster-name.txt")"
 [[ "$bootstrapped_cluster" == "$PERSISTENT_CLUSTER_NAME" ]] || {
   echo "bootstrap-cluster.sh must emit exactly '$PERSISTENT_CLUSTER_NAME' on stdout" >&2

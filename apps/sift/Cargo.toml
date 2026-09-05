@@ -322,3 +322,7 @@ build-stamp = { path = "../../libs/build-stamp" }
 [[test]]
 name = "operator_reconcile_oracle"
 path = "e2e/operator_reconcile_oracle.rs"
+
+[[test]]
+name = "gke_operation_scope"
+path = "e2e/gke_operation_scope.rs"
