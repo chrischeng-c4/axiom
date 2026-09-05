@@ -55,7 +55,12 @@ force push to a persistent ref, or a failing check is not yours to work
 around.
 
 **Subagents.** 91 under `.claude/agents/`: two per project (22 apps, 22
-libs) plus `aw-dev`, `gke-operator`, and `agy-operator`.
+libs) plus `aw-dev`, `gke-operator`, and `agy-operator`. The per-project
+files and every `.codex/agents/*.toml` are rendered by
+`scripts/agents/render_fleet.py --write` from
+`scripts/agents/templates/<tier>/<role>.md` and the explicit project list in
+that script; a fleet change edits the template, never one project's copy,
+and `render_fleet.py --check` refuses a hand-edited file.
 
 | Agent | Model / effort | Owns | Never |
 |---|---|---|---|

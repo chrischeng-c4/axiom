@@ -4,9 +4,14 @@ This directory holds the Codex-runtime projection of the Claude agent fleet:
 one `<name>.toml` per `.claude/agents/<name>.md`, 91 in total. The Claude
 markdown definition is the source of truth; each TOML carries the same
 `name`, `description`, pinned reasoning effort, and the full markdown body as
-`developer_instructions`. Regenerate after any `.claude/agents/` change —
-the generator deletes every `*.toml` first, so a removed Claude agent cannot
-survive here as a stale role.
+`developer_instructions`. The generator is `scripts/agents/render_fleet.py`:
+`--write` re-renders every projection after a `.claude/agents/` change and
+removes any `*.toml` with no markdown twin, so a removed Claude agent cannot
+survive here as a stale role; `--check` (run by
+`.codex/hooks/test_require_spawn_agent_effort.py`) refuses a hand-edited
+projection. The per-project markdown itself is rendered from
+`scripts/agents/templates/<tier>/<role>.md` — edit the template, never one
+project's copy.
 
 The fleet is two agents per project (22 apps and 22 libs) plus `aw-dev` and
 two operators:

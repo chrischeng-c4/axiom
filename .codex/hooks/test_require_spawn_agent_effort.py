@@ -106,6 +106,18 @@ class SpawnAgentEffortHookTests(unittest.TestCase):
     def test_registry_dir_is_the_codex_fleet(self) -> None:
         self.assertEqual(AGENTS_DIR, PROJECT_ROOT / ".codex" / "agents")
 
+    def test_fleet_is_rendered(self) -> None:
+        # Every TOML here is a projection of `.claude/agents/<name>.md`; a
+        # hand-edited role or a stale projection makes the registry lie.
+        result = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts/agents/render_fleet.py"),
+             "--check"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_project_hooks_wire_the_spawn_agent_gate(self) -> None:
         settings = json.loads(
             (PROJECT_ROOT / ".codex" / "hooks.json").read_text(encoding="utf-8")

@@ -88,9 +88,13 @@ yours to work around.
 
 ### Use Codex subagents; effort is pinned per role
 
-The fleet under `.codex/agents/` is 91 roles, generated from the agent
-markdown under `.claude/agents/`, which is the source of truth. Every role
-fixes `gpt-5.6-terra` and pins `model_reasoning_effort`.
+The fleet under `.codex/agents/` is 91 roles, rendered by
+`scripts/agents/render_fleet.py --write` from the agent markdown under
+`.claude/agents/`, which is the source of truth; the per-project markdown is
+itself rendered from `scripts/agents/templates/<tier>/<role>.md`, so a fleet
+change edits a template, never one project's copy, and
+`render_fleet.py --check` refuses a hand-edited file. Every role fixes
+`gpt-5.6-terra` and pins `model_reasoning_effort`.
 
 | Role | Effort | Owns | Never |
 |---|---|---|---|
