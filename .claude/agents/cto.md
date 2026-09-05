@@ -69,8 +69,8 @@ reject each line without re-reading the repository.
 
   Every `## Spawned` line names one document path, one existing or proposed
   ID, and the exact cell text. The `<project>-pm` agents turn those lines
-  into drafts, `aw-grill-me-to-meta` lands them, and the main session appends
-  `#<iid>` references when the tracker has them.
+  into drafts, the approved `aw-grill-release apply` lands them, and the
+  main session appends `#<iid>` references when the tracker has them.
 - Return the body in your final message. When the evidence does not support
   a decision, return `## Decision` as `undecided` with the missing
   observation named; that is a valid result.

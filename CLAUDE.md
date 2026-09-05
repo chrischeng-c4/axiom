@@ -38,10 +38,10 @@ the case that needs a stated reason.
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision the session has been making alone | `aw-ask-user` | one more stated assumption |
 | a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` here |
-| a project's `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` draft | `<p>-pm`, then `aw-grill-me-to-meta` in the main session | writing the four paths in the grill from scratch |
+| a project's `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` draft | `<p>-pm`, then `aw-grill-release` in the main session | writing the four paths in the plan from scratch |
 | whether behavior is shared (→ `libs/`), app-owned, or needs a new lib | `cto` for the `type:spike` draft; the human decides | a boundary settled inside one project's docs |
-| a release Milestone's description draft | `project-manager`, then `aw-grill-meta-to-milestone` | a description written in the grill from scratch |
-| a Milestone's issue body drafts | `tech-design`, then `aw-grill-milestone-to-issue` | GHAN bodies typed in the grill from scratch |
+| a release Milestone's description draft | `project-manager`, then `aw-grill-release` | a description written in the plan from scratch |
+| a Milestone's issue body drafts | `tech-design`, then `aw-grill-release` | GHAN bodies typed in the plan from scratch |
 | a paid GKE acceptance run to launch and watch | `gke-operator` | polling `gcloud`/`kubectl` from the main session |
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
@@ -63,7 +63,8 @@ libs: `<p>-pm`, `<p>-qa`, `<p>-dev`), `aw-pm` for `apps/aw` (whose
 engine work stays with `aw-dev`), the three planning singletons `cto`,
 `project-manager`, and `tech-design`, and `aw-dev`, `gke-operator`, and
 `agy-operator`. The pm and planning roles draft; the human confirms each
-draft in a grill, and only the main session lands it. The per-project
+draft in `aw-grill-release plan`, and only the approved `apply` lands it.
+A drafted answer the human has not confirmed is not an answer. The per-project
 files and every `.codex/agents/*.toml` are rendered by
 `scripts/agents/render_fleet.py --write` from
 `scripts/agents/templates/<tier>/<role>.md` and the explicit project list in

@@ -78,10 +78,10 @@ gate. Re-typing those commands yourself keeps the work and drops the refusal.
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision you have been making alone | `aw-ask-user` | one more stated assumption |
 | a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` yourself |
-| a project's `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` draft | `<p>-pm`, then `aw-grill-me-to-meta` in the main thread | writing the four paths in the grill from scratch |
+| a project's `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` draft | `<p>-pm`, then `aw-grill-release` in the main thread | writing the four paths in the plan from scratch |
 | whether behavior is shared (→ `libs/`), app-owned, or needs a new lib | `cto` for the `type:spike` draft; the human decides | a boundary settled inside one project's docs |
-| a release Milestone's description draft | `project-manager`, then `aw-grill-meta-to-milestone` | a description written in the grill from scratch |
-| a Milestone's issue body drafts | `tech-design`, then `aw-grill-milestone-to-issue` | GHAN bodies typed in the grill from scratch |
+| a release Milestone's description draft | `project-manager`, then `aw-grill-release` | a description written in the plan from scratch |
+| a Milestone's issue body drafts | `tech-design`, then `aw-grill-release` | GHAN bodies typed in the plan from scratch |
 | a paid GKE acceptance run to launch and watch | `gke-operator` | polling `gcloud`/`kubectl` from the main thread |
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |

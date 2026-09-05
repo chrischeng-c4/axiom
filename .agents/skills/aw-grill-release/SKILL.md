@@ -26,8 +26,26 @@ project from that plan without choosing new product decisions during writes.
    `apps/<name>` or `libs/<name>` projects. Read each project's
    `README.md` and `CONTRIBUTING.md`, its META-docs, its manifest, and its live
    tracker state. Run `uv run --project apps/aw aw wis gap <project>` once.
+   Drafts prepared before this skill are inputs, never answers. Read each
+   one that exists: a `<project>-pm` draft left uncommitted under the
+   project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**`
+   (`git -c core.fsmonitor=false status --short -- <project>`); a
+   `project-manager` description draft at the path the session named, checked
+   with
+   `uv run --project apps/aw aw milestone validate --description-file <path> --title <project>@<version> --draft`;
+   and `tech-design` bodies under
+   `uv run --project apps/aw aw change bodydir --type <type>`, each checked
+   with
+   `uv run --project apps/aw aw change validate --type <type> --body-file <path>`.
 3. Ask only for product, version, issue-boundary, type, or order decisions that
    the human's input and repository evidence do not already settle.
+   A drafted answer the human has not confirmed is not an answer: a draft
+   section enters the plan's `after` text, Milestone description, or issue
+   body only after the human confirms it, section by section, and an
+   unconfirmed section stays out. A `project-manager` draft's skeleton
+   `Pending:` line becomes the plan's `{{development_order}}`; a
+   `tech-design` body enters with the type, owner label, and `priority` the
+   human confirms.
    For a new release Milestone, derive the normal version from every prior
    open and closed release Milestone with `aw milestone next-version`. Use its
    default minor bump without asking. Ask only when there is no prior release
@@ -72,7 +90,11 @@ project from that plan without choosing new product decisions during writes.
 1. Confirm Default mode and an explicit human approval of one exact validated
    plan digest. This approved digest is the only write authority. Stop if
    either is absent.
-2. Materialize only the approved canonical JSON under `.aw/release-plans/`.
+2. Set aside any uncommitted draft still in the working tree: its confirmed
+   bytes already live in the plan's `after` text, and the facade refuses a
+   dirty tree (`working tree is dirty before apply`) and rewrites every
+   planned document from the plan itself.
+   Materialize only the approved canonical JSON under `.aw/release-plans/`.
    Re-run `release-plan validate` and require the same `plan_sha256`.
 3. Apply one project only:
 
@@ -121,3 +143,9 @@ project from that plan without choosing new product decisions during writes.
 - Never delete or roll back remote state to hide an incomplete receipt.
 - Never change product source, tests, tags, releases, or cloud resources in
   this skill.
+- Never dispatch `<project>-pm`, `cto`, `project-manager`, or `tech-design`
+  inside this skill; their drafts are prepared before `plan` and enter it
+  only as answers the human confirmed.
+- Never treat a draft as confirmed because it validates; `aw milestone
+  validate` and `aw change validate` check shape, and the human's
+  confirmation supplies the decision.
