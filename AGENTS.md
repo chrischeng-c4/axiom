@@ -78,17 +78,20 @@ gate. Re-typing those commands yourself keeps the work and drops the refusal.
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision you have been making alone | `aw-ask-user` | one more stated assumption |
 | a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` yourself |
+| whether behavior is shared (→ `libs/`), app-owned, or needs a new lib | `cto` for the `type:spike` draft; the human decides | a boundary settled inside one project's docs |
+| a release Milestone's description draft | `project-manager`, then `aw-grill-meta-to-milestone` | a description written in the grill from scratch |
+| a Milestone's issue body drafts | `tech-design`, then `aw-grill-milestone-to-issue` | GHAN bodies typed in the grill from scratch |
 | a paid GKE acceptance run to launch and watch | `gke-operator` | polling `gcloud`/`kubectl` from the main thread |
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
 
-Each `SKILL.md`'s `## Rules` names what stays with the human — a `refused:`
+Each `SKILL.md`'s `## Never` names what stays with the human — a `refused:`
 exit, a force push to a persistent ref, a failing check — and that is not
 yours to work around.
 
 ### Use Codex subagents; effort is pinned per role
 
-The fleet under `.codex/agents/` is 91 roles, rendered by
+The fleet under `.codex/agents/` is 94 roles, rendered by
 `scripts/agents/render_fleet.py --write` from the agent markdown under
 `.claude/agents/`, which is the source of truth; the per-project markdown is
 itself rendered from `scripts/agents/templates/<tier>/<role>.md`, so a fleet
@@ -100,6 +103,9 @@ change edits a template, never one project's copy, and
 |---|---|---|---|
 | `<p>-e2e-dev` (22 apps, 22 libs) | `max` | the e2e contract — black-box cases written to fail before the implementation exists | `src/` |
 | `<p>-dev` (22 apps, 22 libs) | `medium` | source plus colocated unit tests, verified by running them | `e2e/` |
+| `cto` | `high` | one cross-project boundary decision draft as a `type:spike` body | any file write, issue creation, Milestone or issue choices |
+| `project-manager` | `medium` | one release Milestone description draft, validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding |
+| `tech-design` | `xhigh` | one Milestone's GHAN issue-body drafts under `aw change bodydir`, validated with `aw change validate --body-file` | `aw change create`, `src/`, `e2e/`, docs, design directories |
 | `aw-dev` | `medium` | one bounded change to the `apps/aw` Python CLI | protocol or lifecycle redesign |
 | `gke-operator` | `medium` | launching and watching a paid GKE acceptance run; raw observations | acceptance, tracker, source |
 | `agy-operator` | `low` | one frozen AGY dispatch round | authoring, verifying, Git, tracker |

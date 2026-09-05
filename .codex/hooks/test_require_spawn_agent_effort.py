@@ -49,10 +49,13 @@ def payload(
 class SpawnAgentEffortHookTests(unittest.TestCase):
     def test_registry_matches_fleet(self) -> None:
         registry = load_registry()
-        self.assertEqual(len(registry), 91)
+        self.assertEqual(len(registry), 94)
         self.assertEqual(registry["tape-dev"], "medium")
         self.assertEqual(registry["tape-e2e-dev"], "max")
         self.assertEqual(registry["agy-operator"], "low")
+        self.assertEqual(registry["cto"], "high")
+        self.assertEqual(registry["project-manager"], "medium")
+        self.assertEqual(registry["tech-design"], "xhigh")
         self.assertLessEqual(set(registry.values()), VALID_EFFORTS)
 
     def test_matching_pinned_effort_is_accepted(self) -> None:

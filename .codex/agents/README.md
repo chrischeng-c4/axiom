@@ -1,7 +1,7 @@
 # Codex agent fleet — projection of `.claude/agents/`
 
 This directory holds the Codex-runtime projection of the Claude agent fleet:
-one `<name>.toml` per `.claude/agents/<name>.md`, 91 in total. The Claude
+one `<name>.toml` per `.claude/agents/<name>.md`, 94 in total. The Claude
 markdown definition is the source of truth; each TOML carries the same
 `name`, `description`, pinned reasoning effort, and the full markdown body as
 `developer_instructions`. The generator is `scripts/agents/render_fleet.py`:
@@ -13,13 +13,16 @@ projection. The per-project markdown itself is rendered from
 `scripts/agents/templates/<tier>/<role>.md` — edit the template, never one
 project's copy.
 
-The fleet is two agents per project (22 apps and 22 libs) plus `aw-dev` and
-two operators:
+The fleet is two agents per project (22 apps and 22 libs) plus three
+planning singletons, `aw-dev`, and two operators:
 
 | Role | Effort | Owns |
 |---|---|---|
 | `<p>-e2e-dev` (44) | `max` | the e2e contract — behavior, performance, and security facets, written to fail first; never writes `src/` |
 | `<p>-dev` (44) | `medium` | source plus colocated unit tests, verified by running them; never writes `e2e/` |
+| `cto` | `high` | one cross-project boundary decision draft (shared → `libs/`, app-owned, or a new lib) as a `type:spike` body; writes nothing |
+| `project-manager` | `medium` | one release Milestone description draft, validated with `aw milestone validate --draft`; never creates it |
+| `tech-design` | `xhigh` | one Milestone's GHAN issue-body drafts under `aw change bodydir`, validated with `aw change validate --body-file`; never creates them |
 | `aw-dev` | `medium` | bounded changes to the `apps/aw` Python CLI, pytest via uv |
 | `agy-operator` | `low` | one frozen AGY dispatch round |
 | `gke-operator` | `medium` | babysitting the paid GKE acceptance harness |

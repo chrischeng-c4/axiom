@@ -38,6 +38,9 @@ the case that needs a stated reason.
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision the session has been making alone | `aw-ask-user` | one more stated assumption |
 | a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` here |
+| whether behavior is shared (→ `libs/`), app-owned, or needs a new lib | `cto` for the `type:spike` draft; the human decides | a boundary settled inside one project's docs |
+| a release Milestone's description draft | `project-manager`, then `aw-grill-meta-to-milestone` | a description written in the grill from scratch |
+| a Milestone's issue body drafts | `tech-design`, then `aw-grill-milestone-to-issue` | GHAN bodies typed in the grill from scratch |
 | a paid GKE acceptance run to launch and watch | `gke-operator` | polling `gcloud`/`kubectl` from the main session |
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
@@ -54,8 +57,11 @@ it. Each `SKILL.md` names what stays with the human: a `refused:` exit, a
 force push to a persistent ref, or a failing check is not yours to work
 around.
 
-**Subagents.** 91 under `.claude/agents/`: two per project (22 apps, 22
-libs) plus `aw-dev`, `gke-operator`, and `agy-operator`. The per-project
+**Subagents.** 94 under `.claude/agents/`: two per project (22 apps, 22
+libs) plus the three planning singletons `cto`, `project-manager`, and
+`tech-design`, and `aw-dev`, `gke-operator`, and `agy-operator`. The
+planning singletons draft; the human confirms each draft in a grill, and
+only the main session lands it. The per-project
 files and every `.codex/agents/*.toml` are rendered by
 `scripts/agents/render_fleet.py --write` from
 `scripts/agents/templates/<tier>/<role>.md` and the explicit project list in
@@ -66,6 +72,9 @@ and `render_fleet.py --check` refuses a hand-edited file.
 |---|---|---|---|
 | `<p>-e2e-dev` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
 | `<p>-dev` | sonnet / `medium` | source plus colocated unit tests, verified by running them; for apps it runs `aw-impl-for`, impl and maint legs | `e2e/` |
+| `cto` | fable / `high` | one cross-project boundary decision draft — shared → `libs/`, app-owned, or a new lib — as a `type:spike` body plus the `Sources` / `Boundary:` lines it implies | any file write, `gh issue create`, Milestone or issue choices |
+| `project-manager` | opus / `medium` | one release Milestone description draft for one promise, written to the path the session names and validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding, the Development Order |
+| `tech-design` | opus / `xhigh` | one Milestone's typed issue bodies as GHAN drafts under `aw change bodydir`, validated with `aw change validate --body-file` | `aw change create`, `src/`, `e2e/`, docs, a `tech-design/` or `external-contracts/` directory |
 | `aw-dev` | sonnet / `medium` | one bounded change to the `apps/aw` CLI, verified with pytest through `uv` | protocol or lifecycle redesign |
 | `gke-operator` | sonnet / `medium` | launching and watching a paid GKE acceptance run; reports raw observations | acceptance, tracker, source |
 | `agy-operator` | sonnet / `low` | one frozen AGY dispatch round | authoring, verifying, Git, tracker |
@@ -74,7 +83,9 @@ Dispatch through the Agent tool with the description prefixed
 `[effort=<level>]` (`low`, `medium`, `high`, `xhigh`, or `max`) and
 `subagent_type` naming a registered agent whose frontmatter `effort:`
 matches; `.claude/hooks/require_agent_effort.py` refuses a missing marker,
-an unknown value, a built-in or unregistered agent, or a mismatch. When no
+an unknown value, a built-in or unregistered agent, a mismatch, or a fleet
+whose frontmatter `model:` is not one of `sonnet`, `opus`, `fable`, `haiku`
+(an unknown alias would silently fall back to the session model). When no
 registered agent has the right ownership at that effort, keep the work here
 or report the gap — never claim another effort to pass the hook. The model
 tier is a default, not a ceiling: a hard case may raise `model` at dispatch
