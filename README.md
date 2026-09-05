@@ -23,7 +23,7 @@ details.
 | [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |
 | [rig](apps/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
 | [mamba](apps/mamba/README.md) | Force-typed Python compiler. |
-| [sift](projects/sift/README.md) | Sift is the GCP/GKE-first operational event platform in the Axiom stack. |
+| [sift](apps/sift/README.md) | Sift is the GCP/GKE-first operational event platform in the Axiom stack. |
 | [lumen](apps/lumen/README.md) | A K8s-native, log-replicated search specialist. |
 | [jet](apps/jet/README.md) | Jet is a Rust-native frontend toolchain. |
 | [relay](apps/relay/README.md) | `relay` is the online single-cast pull work-queue broker in the Axiom stack (RabbitMQ/SQS-shaped): a producer publishes a task, a worker pulls (leases) it, runs it, and acks — each message is delivered exactly once to one of the competing consumers, then reclaimed (delete-on-ack). |
@@ -97,7 +97,7 @@ an installer yet are marked _coming soon_.
 | [meter](apps/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/meter/install.sh \| sh` |
 | [pgpool](apps/pgpool/README.md) | `pgpool` | _coming soon_ |
 | [preview](apps/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/preview/install.sh \| sh` |
-| [sift](projects/sift/README.md) | `sift` | _coming soon_ |
+| [sift](apps/sift/README.md) | `sift` | _coming soon_ |
 | [relay](apps/relay/README.md) | `relay` | _coming soon_ |
 | [rig](apps/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/rig/install.sh \| sh` |
 | [tape](apps/tape/README.md) | `tape` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/tape/install.sh \| sh` |

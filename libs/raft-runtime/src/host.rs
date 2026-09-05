@@ -558,7 +558,7 @@ impl RpcTracker {
     pub(crate) async fn wait_idle(&self) {
         loop {
             let notified = self.idle.notified();
-            if self.active.load(Ordering::Acquire) == 0 {
+            if self.active.load(Ordering::SeqCst) == 0 {
                 return;
             }
             notified.await;
@@ -579,6 +579,21 @@ impl Drop for RpcGuard {
 }
 
 impl Shared {
+    /// Register direct peer work before checking the shutdown gate. The shared
+    /// ordering with shutdown and wait_idle means an admitted operation cannot
+    /// be missed by the drain. Proposal quiesce alone still allows final flush.
+    fn begin_coordinated_peer_work(&self) -> Result<Arc<RpcGuard>> {
+        let tracker = Arc::clone(&self.rpc_tracker);
+        tracker.active.fetch_add(1, Ordering::SeqCst);
+        let guard = Arc::new(RpcGuard { tracker });
+        if self.shutdown_started.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "raft: coordinated peer work is closed because shutdown has started"
+            ));
+        }
+        Ok(guard)
+    }
+
     fn http_client(&self) -> reqwest::Client {
         self.peer_transport
             .as_ref()
@@ -1757,6 +1772,7 @@ impl RaftHost {
     /// Verify that every voter advertises the local state machine's snapshot
     /// capability before a product performs a snapshot-dependent mutation.
     pub async fn require_snapshot_capability_on_all_voters(&self) -> Result<()> {
+        let _operation = self.shared.begin_coordinated_peer_work()?;
         let (term, voters) = {
             let node = self.shared.node.lock().await;
             if !node.is_leader() && node.conf_state().membership.voters.len() > 1 {
@@ -1803,6 +1819,7 @@ impl RaftHost {
     /// Products use this barrier before a destructive transition whose query
     /// fence must be visible on every serving replica, not only on a quorum.
     pub async fn require_applied_index_on_all_voters(&self, index: Index) -> Result<()> {
+        let _operation = self.shared.begin_coordinated_peer_work()?;
         let (term, voters) = {
             let node = self.shared.node.lock().await;
             if !node.is_leader() && node.conf_state().membership.voters.len() > 1 {
@@ -1887,6 +1904,7 @@ impl RaftHost {
         up_to: Index,
         require_every_voter: bool,
     ) -> Result<SnapshotCompactionOutcome> {
+        let operation = self.shared.begin_coordinated_peer_work()?;
         let (term, snapshot_term, voters, bytes, checkpoint_index, already_compacted) = {
             let n = self.shared.node.lock().await;
             let applied = self.shared.sm.applied_index();
@@ -1975,7 +1993,11 @@ impl RaftHost {
         for voter in remote_voters {
             let shared = Arc::clone(&self.shared);
             let data = bytes.clone();
+            let operation = Arc::clone(&operation);
             requests.spawn(async move {
+                // Cancellation of the caller only schedules JoinSet aborts.
+                // Keep the drain lease until this worker actually stops too.
+                let _operation = operation;
                 let response = shared
                     .request_snapshot(
                         voter,

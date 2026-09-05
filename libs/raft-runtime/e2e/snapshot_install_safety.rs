@@ -547,3 +547,210 @@ async fn higher_term_snapshot_refusal_steps_the_old_leader_down_immediately() {
     assert!(!old_leader.is_leader);
     assert!(old_leader.term >= 100);
 }
+
+/// Shutdown must account for a snapshot request started by the public
+/// coordinator. Holding only its reply leaves Raft heartbeats and leadership
+/// handoff available, so an unfinished drain cannot hide behind another phase.
+#[tokio::test]
+async fn shutdown_waits_for_coordinated_snapshot_reply_before_safe_peer_close() {
+    use axum::{extract::Request, middleware::Next};
+    use raft_runtime::{LeadershipHandoff, ShutdownPhase};
+    use server_lifecycle::ShutdownDeadline;
+    use std::time::Duration;
+    use tokio::{sync::watch, task::JoinSet};
+
+    let mut nodes = cluster(3).await;
+    let leader = await_leader(&nodes).await.expect("a leader is elected");
+    let applied = nodes[leader].host.propose(vec![1]).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        for node in &nodes {
+            while node.sm.applied.load(Ordering::Acquire) < applied {
+                tokio::task::yield_now().await;
+            }
+        }
+    })
+    .await
+    .expect("both voters apply the proposal before snapshot and shutdown");
+
+    let held_voter = (0..nodes.len()).find(|index| *index != leader).unwrap();
+    let other_voter = (0..nodes.len())
+        .find(|index| *index != leader && *index != held_voter)
+        .unwrap();
+    let (entered_tx, mut entered_rx) = watch::channel(None);
+    let (release_tx, release_rx) = watch::channel(false);
+    let router = nodes[held_voter]
+        .host
+        .router()
+        .layer(axum::middleware::from_fn(
+            move |request: Request, next: Next| {
+                let entered_tx = entered_tx.clone();
+                let mut release_rx = release_rx.clone();
+                async move {
+                    let hold_reply = request.uri().path() == "/raft/install-snapshot-capable";
+                    let response = next.run(request).await;
+                    if hold_reply {
+                        entered_tx.send_replace(Some(response.status()));
+                        while !*release_rx.borrow() {
+                            if release_rx.changed().await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    response
+                }
+            },
+        ));
+    let (listener, held_reply_url) = bind().await;
+    // Dropping either JoinSet cancels its tasks if a setup assertion fails.
+    // Dropping release_tx also opens the reply gate by closing its watch.
+    let mut servers = JoinSet::new();
+    servers.spawn(async move {
+        let mut connections = JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((stream, _)) = accepted else { break };
+                    let router = router.clone();
+                    connections.spawn(async move {
+                        let _ = transport_h2c::server::serve_connection(stream, router).await;
+                    });
+                }
+                Some(_) = connections.join_next(), if !connections.is_empty() => {}
+            }
+        }
+    });
+    nodes[leader]
+        .host
+        .upsert_peer(held_voter as u64, held_reply_url)
+        .await;
+
+    let mut snapshots = JoinSet::new();
+    let host = Arc::clone(&nodes[leader].host);
+    snapshots.spawn(async move { host.snapshot_and_compact_through_outcome(applied).await });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while entered_rx.borrow().is_none() {
+            entered_rx
+                .changed()
+                .await
+                .expect("the reply gate remains alive");
+        }
+    })
+    .await
+    .expect("the coordinator reaches the actual voter snapshot handler");
+    assert_eq!(
+        *entered_rx.borrow(),
+        Some(axum::http::StatusCode::OK),
+        "the gate holds a successful snapshot reply"
+    );
+    assert_eq!(nodes[held_voter].host.snapshot_index().await, applied);
+    assert!(
+        snapshots.try_join_next().is_none(),
+        "the held reply keeps the coordinator pending"
+    );
+    assert_eq!(
+        nodes[other_voter].sm.applied.load(Ordering::Acquire),
+        applied
+    );
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while nodes[other_voter].host.snapshot_index().await < applied {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the other voter accepts its snapshot before leadership handoff");
+
+    let shutdown = tokio::time::timeout(
+        Duration::from_secs(3),
+        nodes[leader].host.shutdown_within(
+            ShutdownDeadline::from_now(Duration::from_secs(2), Duration::ZERO).unwrap(),
+        ),
+    )
+    .await;
+    let snapshot_finished_at_shutdown = snapshots.try_join_next().is_some();
+
+    // Complete or cancel every task before asserting the shutdown result.
+    release_tx.send_replace(true);
+    if !snapshot_finished_at_shutdown {
+        let _ = tokio::time::timeout(Duration::from_secs(2), snapshots.join_next()).await;
+    }
+    snapshots.abort_all();
+    while snapshots.join_next().await.is_some() {}
+    nodes[leader]
+        .host
+        .upsert_peer(held_voter as u64, nodes[held_voter].url.clone())
+        .await;
+    servers.abort_all();
+    while servers.join_next().await.is_some() {}
+    let mut shutdowns = JoinSet::new();
+    for node in &nodes {
+        let host = Arc::clone(&node.host);
+        shutdowns.spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(3), host.shutdown()).await;
+        });
+    }
+    while shutdowns.join_next().await.is_some() {}
+    for node in &mut nodes {
+        node._serve.abort();
+        let _ = (&mut node._serve).await;
+    }
+
+    let report = shutdown.expect("shutdown returns within its bounded drain deadline");
+    assert!(
+        matches!(report.handoff, LeadershipHandoff::Transferred { .. }),
+        "another caught-up voter remains available for leadership handoff: {report:?}"
+    );
+    assert!(
+        report.incomplete_phase.is_none()
+            || report.incomplete_phase == Some(ShutdownPhase::PeerRpcDrain),
+        "shutdown must reach the peer drain phase: {report:?}"
+    );
+    assert!(
+        snapshot_finished_at_shutdown || !report.peer_listener_close_safe,
+        "shutdown reported peer_listener_close_safe=true while a coordinated snapshot reply was held and its caller remained pending: {report:?}"
+    );
+}
+
+#[tokio::test]
+async fn coordinated_snapshot_work_stays_open_for_final_flush_but_closes_at_shutdown() {
+    use server_lifecycle::ShutdownDeadline;
+    use std::time::Duration;
+
+    let mut nodes = cluster(1).await;
+    let host = Arc::clone(&nodes[0].host);
+    let applied = host.propose(vec![1]).await.unwrap();
+    host.quiesce_proposals();
+
+    // A product can stop writes before it archives and compacts its final batch.
+    host.require_snapshot_capability_on_all_voters()
+        .await
+        .unwrap();
+    host.require_applied_index_on_all_voters(applied)
+        .await
+        .unwrap();
+    assert_eq!(host.snapshot_and_compact().await.unwrap(), applied);
+
+    let report = host
+        .shutdown_within(
+            ShutdownDeadline::from_now(Duration::from_secs(2), Duration::ZERO).unwrap(),
+        )
+        .await;
+    nodes[0]._serve.abort();
+    let _ = (&mut nodes[0]._serve).await;
+    assert!(report.peer_listener_close_safe, "{report:?}");
+
+    let outcomes = [
+        host.require_snapshot_capability_on_all_voters().await,
+        host.require_applied_index_on_all_voters(applied).await,
+        host.snapshot_and_compact().await.map(|_| ()),
+        host.snapshot_and_compact_through_quorum_outcome(applied)
+            .await
+            .map(|_| ()),
+    ];
+    for outcome in outcomes {
+        assert!(
+            outcome.is_err(),
+            "coordinated snapshot work must be refused after safe peer close"
+        );
+    }
+    assert_eq!(host.snapshot_index().await, applied);
+}
