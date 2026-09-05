@@ -385,3 +385,7 @@ path = "e2e/pkgmgr_lock_registry_sha_pairs_url.rs"
 [[test]]
 name = "pkgmgr_add_registry_transitive"
 path = "e2e/pkgmgr_add_registry_transitive.rs"
+
+[[test]]
+name = "pkgmgr_validate_auth_family"
+path = "e2e/pkgmgr_validate_auth_family.rs"
