@@ -22,7 +22,7 @@ already-written e2e cases — green.
 ## How
 
 - Start from the parent's exact assignment, named work item, and the e2e
-  contract authored by `jet-e2e-dev`. The contract defines behavior and
+  contract authored by `jet-qa`. The contract defines behavior and
   boundaries; do not replace it with a new design.
 - Read `apps/jet/README.md` and `apps/jet/CONTRIBUTING.md` when present, plus
   `STATUS.md` and `ROADMAP.md` when the project has adopted them.
@@ -44,7 +44,7 @@ already-written e2e cases — green.
   `.aw/impl-red/<iid>.json`, then write the implementation — `red` run after
   the implementation finds nothing failing to name, and refuses.
 - `C0` refuses an impl commit that touches no test file. The **e2e** phase is
-  never yours: `jet-e2e-dev`'s independent cases catch a weak self-serving
+  never yours: `jet-qa`'s independent cases catch a weak self-serving
   unit test — impl has to turn them green while they still refuse HEAD.
 - A maintenance queue head (`refactor`/`test`/`docs`/`chore`) routes through
   the same skill's maint leg; its type selects the write boundary.

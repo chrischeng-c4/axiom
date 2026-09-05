@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Optional
@@ -14,6 +16,7 @@ from typing import Optional
 from require_agent_effort import (
     DispatchPolicyError,
     VALID_EFFORTS,
+    VALID_MODELS,
     load_project_agent_efforts,
     validate_agent_call,
 )
@@ -38,6 +41,16 @@ def payload(agent: str, effort: Optional[str]) -> dict[str, object]:
     }
 
 
+def write_agent(root: Path, name: str, model: Optional[str], effort: str = "medium") -> None:
+    agent_dir = root / ".claude" / "agents"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    lines = ["---", f"name: {name}"]
+    if model is not None:
+        lines.append(f"model: {model}")
+    lines += [f"effort: {effort}", "---", "", "Body.", ""]
+    (agent_dir / f"{name}.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 class AgentEffortHookTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -46,6 +59,43 @@ class AgentEffortHookTests(unittest.TestCase):
     def test_every_project_agent_has_one_valid_effort(self) -> None:
         self.assertTrue(self.agents)
         self.assertTrue(set(self.agents.values()).issubset(VALID_EFFORTS))
+
+    def test_every_project_agent_pins_a_valid_model(self) -> None:
+        model_line = re.compile(r"^model:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
+        for path in sorted((PROJECT_ROOT / ".claude" / "agents").glob("*.md")):
+            with self.subTest(agent=path.stem):
+                found = model_line.findall(path.read_text(encoding="utf-8"))
+                self.assertEqual(len(found), 1, path)
+                self.assertIn(found[0], VALID_MODELS, path)
+
+    def test_planning_roles_pin_their_effort(self) -> None:
+        self.assertEqual(self.agents["cto"], "high")
+        self.assertEqual(self.agents["project-manager"], "medium")
+        self.assertEqual(self.agents["tech-design"], "xhigh")
+        self.assertEqual(self.agents["tape-qa"], "max")
+        self.assertEqual(self.agents["tape-dev"], "medium")
+        self.assertEqual(self.agents["tape-pm"], "high")
+        self.assertEqual(self.agents["aw-pm"], "high")
+
+    def test_fable_model_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_agent(root, "demo-cto", "fable", "high")
+            self.assertEqual(load_project_agent_efforts(root), {"demo-cto": "high"})
+
+    def test_unknown_model_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_agent(root, "demo-dev", "gpt")
+            with self.assertRaisesRegex(DispatchPolicyError, "no valid explicit model"):
+                load_project_agent_efforts(root)
+
+    def test_missing_model_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_agent(root, "demo-dev", None)
+            with self.assertRaisesRegex(DispatchPolicyError, "no valid explicit model"):
+                load_project_agent_efforts(root)
 
     def test_project_settings_wire_the_pre_tool_use_gate(self) -> None:
         settings = json.loads(

@@ -73,29 +73,41 @@ gate. Re-typing those commands yourself keeps the work and drops the refusal.
 | a debug run of keep, defer, relay, or loom | `build-debug` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
 | a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release`: reuse the existing plan, prepare it read-only in the current mode if needed, then approved `apply` in Default mode; both stay in the main thread | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or `aw milestone` / `aw change` outside the approved plan |
-| a queue head's e2e contract | `aw-e2e-for`, through `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main thread |
+| a queue head's e2e contract | `aw-e2e-for`, through `<p>-qa` | writing `apps/<p>/e2e/*.rs` in the main thread |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, through `<p>-dev` | writing `apps/<p>/src/**` in the main thread |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision you have been making alone | `aw-ask-user` | one more stated assumption |
 | a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` yourself |
+| a project's `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` draft | `<p>-pm`, then `aw-grill-release` in the main thread | writing the four paths in the plan from scratch |
+| whether behavior is shared (→ `libs/`), app-owned, or needs a new lib | `cto` for the `type:spike` draft; the human decides | a boundary settled inside one project's docs |
+| a release Milestone's description draft | `project-manager`, then `aw-grill-release` | a description written in the plan from scratch |
+| a Milestone's issue body drafts | `tech-design`, then `aw-grill-release` | GHAN bodies typed in the plan from scratch |
 | a paid GKE acceptance run to launch and watch | `gke-operator` | polling `gcloud`/`kubectl` from the main thread |
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
 
-Each `SKILL.md`'s `## Rules` names what stays with the human — a `refused:`
+Each `SKILL.md`'s `## Never` names what stays with the human — a `refused:`
 exit, a force push to a persistent ref, a failing check — and that is not
 yours to work around.
 
 ### Use Codex subagents; effort is pinned per role
 
-The fleet under `.codex/agents/` is 91 roles, generated from the agent
-markdown under `.claude/agents/`, which is the source of truth. Every role
-fixes `gpt-5.6-terra` and pins `model_reasoning_effort`.
+The fleet under `.codex/agents/` is 139 roles, rendered by
+`scripts/agents/render_fleet.py --write` from the agent markdown under
+`.claude/agents/`, which is the source of truth; the per-project markdown is
+itself rendered from `scripts/agents/templates/<tier>/<role>.md`, so a fleet
+change edits a template, never one project's copy, and
+`render_fleet.py --check` refuses a hand-edited file. Every role fixes
+`gpt-5.6-terra` and pins `model_reasoning_effort`.
 
 | Role | Effort | Owns | Never |
 |---|---|---|---|
-| `<p>-e2e-dev` (22 apps, 22 libs) | `max` | the e2e contract — black-box cases written to fail before the implementation exists | `src/` |
+| `<p>-pm` (22 apps, 22 libs, plus `aw-pm`) | `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, `docs/**` as uncommitted drafts passing `aw metadoc check` and `aw meta check` | `aw metadoc commit`, any Git write, `Tracking:` binding, `src/`, `e2e/` |
+| `<p>-qa` (22 apps, 22 libs) | `max` | the e2e contract — black-box cases written to fail before the implementation exists, answering for the product's behavior, security, and performance in every contract (a case, or a reason anchored to the change points; a missing performance budget is a gap for `<p>-pm`) | `src/`, an invented performance number, a facet excused by the issue's silence |
 | `<p>-dev` (22 apps, 22 libs) | `medium` | source plus colocated unit tests, verified by running them | `e2e/` |
+| `cto` | `high` | one cross-project boundary decision draft as a `type:spike` body | any file write, issue creation, Milestone or issue choices |
+| `project-manager` | `medium` | one release Milestone description draft, validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding |
+| `tech-design` | `xhigh` | one Milestone's GHAN issue-body drafts under `aw change bodydir`, validated with `aw change validate --body-file` | `aw change create`, `src/`, `e2e/`, docs, design directories |
 | `aw-dev` | `medium` | one bounded change to the `apps/aw` Python CLI | protocol or lifecycle redesign |
 | `gke-operator` | `medium` | launching and watching a paid GKE acceptance run; raw observations | acceptance, tracker, source |
 | `agy-operator` | `low` | one frozen AGY dispatch round | authoring, verifying, Git, tracker |
@@ -136,7 +148,7 @@ write root and an impl commit that touches no test file. Maintenance
 (`refactor`, `test`, `docs`, `chore`) has one `maint` phase whose type fixes
 its write boundary; no red is invented, and the controller runs each declared
 gate outside `aw maint` and records its exact exit and output digest with
-`aw maint record`. `libs/<name>/` has no phase script: the lib e2e-dev
+`aw maint record`. `libs/<name>/` has no phase script: the lib qa
 authors and runs its cases directly, the lib dev verifies with
 `cargo test -p <crate> --lib` then the full crate suite, and the controller
 owns every lib commit.

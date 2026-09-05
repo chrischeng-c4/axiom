@@ -1,20 +1,29 @@
 # Codex agent fleet — projection of `.claude/agents/`
 
 This directory holds the Codex-runtime projection of the Claude agent fleet:
-one `<name>.toml` per `.claude/agents/<name>.md`, 91 in total. The Claude
+one `<name>.toml` per `.claude/agents/<name>.md`, 139 in total. The Claude
 markdown definition is the source of truth; each TOML carries the same
 `name`, `description`, pinned reasoning effort, and the full markdown body as
-`developer_instructions`. Regenerate after any `.claude/agents/` change —
-the generator deletes every `*.toml` first, so a removed Claude agent cannot
-survive here as a stale role.
+`developer_instructions`. The generator is `scripts/agents/render_fleet.py`:
+`--write` re-renders every projection after a `.claude/agents/` change and
+removes any `*.toml` with no markdown twin, so a removed Claude agent cannot
+survive here as a stale role; `--check` (run by
+`.codex/hooks/test_require_spawn_agent_effort.py`) refuses a hand-edited
+projection. The per-project markdown itself is rendered from
+`scripts/agents/templates/<tier>/<role>.md` — edit the template, never one
+project's copy.
 
-The fleet is two agents per project (22 apps and 22 libs) plus `aw-dev` and
-two operators:
+The fleet is three agents per project (22 apps and 22 libs), `aw-pm` for
+`apps/aw`, three planning singletons, `aw-dev`, and two operators:
 
 | Role | Effort | Owns |
 |---|---|---|
-| `<p>-e2e-dev` (44) | `max` | the e2e contract — behavior, performance, and security facets, written to fail first; never writes `src/` |
+| `<p>-pm` (45) | `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` as uncommitted drafts that pass `aw metadoc check` and `aw meta check`; never commits or binds a Milestone |
+| `<p>-qa` (44) | `max` | the e2e contract — behavior, performance, and security facets, written to fail first; never writes `src/` |
 | `<p>-dev` (44) | `medium` | source plus colocated unit tests, verified by running them; never writes `e2e/` |
+| `cto` | `high` | one cross-project boundary decision draft (shared → `libs/`, app-owned, or a new lib) as a `type:spike` body; writes nothing |
+| `project-manager` | `medium` | one release Milestone description draft, validated with `aw milestone validate --draft`; never creates it |
+| `tech-design` | `xhigh` | one Milestone's GHAN issue-body drafts under `aw change bodydir`, validated with `aw change validate --body-file`; never creates them |
 | `aw-dev` | `medium` | bounded changes to the `apps/aw` Python CLI, pytest via uv |
 | `agy-operator` | `low` | one frozen AGY dispatch round |
 | `gke-operator` | `medium` | babysitting the paid GKE acceptance harness |
@@ -28,8 +37,10 @@ A hard case may still be raised at dispatch time — by editing nothing and
 overriding `model` in the spawn call — but phase ownership does not move
 with the model.
 
-Every role fixes `model = "gpt-5.6-terra"`. The Claude fleet's opus/sonnet
-tier split maps onto the pinned effort split (`max` vs `medium`) instead.
+Every role fixes `model = "gpt-5.6-terra"`. The Claude fleet pins its model
+per role (`fable` for `<p>-pm` and `cto`, `opus` for `project-manager` and
+`tech-design`, `sonnet` for the ladder and operators); this projection
+carries only the effort split, not the model tier.
 Two Claude frontmatter fields have no Codex TOML equivalent and are not
 projected: `tools` (Codex has no per-tool allowlist; the `## Never` sections
 carry the same boundaries as prose) and `skills` (the bodies name the

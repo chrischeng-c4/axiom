@@ -202,6 +202,10 @@ def collect(repo: Path) -> Reporter:
             "Include no command, hook, script, or executable field.",
             "aw milestone next-version", "default minor bump",
             "G1 through G5", "G6 and G7",
+            "A drafted answer the human has not confirmed is not an answer",
+            "<project>-pm", "project-manager", "tech-design",
+            "aw milestone validate --description-file",
+            "aw change bodydir --type <type>",
         ),
         "aw-e2e-for": (
             "aw milestone next",

@@ -49,15 +49,21 @@ def payload(
 class SpawnAgentEffortHookTests(unittest.TestCase):
     def test_registry_matches_fleet(self) -> None:
         registry = load_registry()
-        self.assertEqual(len(registry), 91)
+        self.assertEqual(len(registry), 139)
         self.assertEqual(registry["tape-dev"], "medium")
-        self.assertEqual(registry["tape-e2e-dev"], "max")
+        self.assertEqual(registry["tape-qa"], "max")
+        self.assertEqual(registry["tape-pm"], "high")
+        self.assertEqual(registry["aw-pm"], "high")
+        self.assertNotIn("aw-qa", registry)
         self.assertEqual(registry["agy-operator"], "low")
+        self.assertEqual(registry["cto"], "high")
+        self.assertEqual(registry["project-manager"], "medium")
+        self.assertEqual(registry["tech-design"], "xhigh")
         self.assertLessEqual(set(registry.values()), VALID_EFFORTS)
 
     def test_matching_pinned_effort_is_accepted(self) -> None:
         validate_spawn_agent_call(payload("medium"))
-        validate_spawn_agent_call(payload("max", agent_type="tape-e2e-dev"))
+        validate_spawn_agent_call(payload("max", agent_type="tape-qa"))
         validate_spawn_agent_call(payload("low", agent_type="agy-operator"))
 
     def test_positive_history_bound_is_accepted(self) -> None:
@@ -105,6 +111,18 @@ class SpawnAgentEffortHookTests(unittest.TestCase):
 
     def test_registry_dir_is_the_codex_fleet(self) -> None:
         self.assertEqual(AGENTS_DIR, PROJECT_ROOT / ".codex" / "agents")
+
+    def test_fleet_is_rendered(self) -> None:
+        # Every TOML here is a projection of `.claude/agents/<name>.md`; a
+        # hand-edited role or a stale projection makes the registry lie.
+        result = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts/agents/render_fleet.py"),
+             "--check"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_project_hooks_wire_the_spawn_agent_gate(self) -> None:
         settings = json.loads(

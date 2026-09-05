@@ -33,11 +33,15 @@ the case that needs a stated reason.
 | a debug run of keep, defer, relay, or loom | `build-debug <app>` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release <app>` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
 | a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release`: reuse the existing plan, prepare it read-only in the current mode if needed, then approved `apply` in Default mode, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside the approved plan |
-| a queue head's e2e contract | `aw-e2e-for`, run by `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main session |
+| a queue head's e2e contract | `aw-e2e-for`, run by `<p>-qa` | writing `apps/<p>/e2e/*.rs` in the main session |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, run by `<p>-dev` | writing `apps/<p>/src/**` in the main session |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision the session has been making alone | `aw-ask-user` | one more stated assumption |
 | a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` here |
+| a project's `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` draft | `<p>-pm`, then `aw-grill-release` in the main session | writing the four paths in the plan from scratch |
+| whether behavior is shared (→ `libs/`), app-owned, or needs a new lib | `cto` for the `type:spike` draft; the human decides | a boundary settled inside one project's docs |
+| a release Milestone's description draft | `project-manager`, then `aw-grill-release` | a description written in the plan from scratch |
+| a Milestone's issue body drafts | `tech-design`, then `aw-grill-release` | GHAN bodies typed in the plan from scratch |
 | a paid GKE acceptance run to launch and watch | `gke-operator` | polling `gcloud`/`kubectl` from the main session |
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
@@ -54,13 +58,27 @@ it. Each `SKILL.md` names what stays with the human: a `refused:` exit, a
 force push to a persistent ref, or a failing check is not yours to work
 around.
 
-**Subagents.** 91 under `.claude/agents/`: two per project (22 apps, 22
-libs) plus `aw-dev`, `gke-operator`, and `agy-operator`.
+**Subagents.** 139 under `.claude/agents/`: three per project (22 apps, 22
+libs: `<p>-pm`, `<p>-qa`, `<p>-dev`), `aw-pm` for `apps/aw` (whose
+engine work stays with `aw-dev`), the three planning singletons `cto`,
+`project-manager`, and `tech-design`, and `aw-dev`, `gke-operator`, and
+`agy-operator`. The pm and planning roles draft; the human confirms each
+draft in `aw-grill-release plan`, and only the approved `apply` lands it.
+A drafted answer the human has not confirmed is not an answer. The per-project
+files and every `.codex/agents/*.toml` are rendered by
+`scripts/agents/render_fleet.py --write` from
+`scripts/agents/templates/<tier>/<role>.md` and the explicit project list in
+that script; a fleet change edits the template, never one project's copy,
+and `render_fleet.py --check` refuses a hand-edited file.
 
 | Agent | Model / effort | Owns | Never |
 |---|---|---|---|
-| `<p>-e2e-dev` | opus / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
+| `<p>-pm` | fable / `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` as uncommitted drafts that pass `aw metadoc check` and `aw meta check` | `aw metadoc commit`, any Git write, `Tracking:` binding, `src/`, `e2e/`, a cross-project boundary claim |
+| `<p>-qa` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists, answering for the product's behavior, security, and performance in every contract (a case, or a reason anchored to the change points; a missing performance budget is a gap for `<p>-pm`); for apps it runs `aw-e2e-for` itself | `src/`, an invented performance number, a facet excused by the issue's silence |
 | `<p>-dev` | sonnet / `medium` | source plus colocated unit tests, verified by running them; for apps it runs `aw-impl-for`, impl and maint legs | `e2e/` |
+| `cto` | fable / `high` | one cross-project boundary decision draft — shared → `libs/`, app-owned, or a new lib — as a `type:spike` body plus the `Sources` / `Boundary:` lines it implies | any file write, `gh issue create`, Milestone or issue choices |
+| `project-manager` | opus / `medium` | one release Milestone description draft for one promise, written to the path the session names and validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding, the Development Order |
+| `tech-design` | opus / `xhigh` | one Milestone's typed issue bodies as GHAN drafts under `aw change bodydir`, validated with `aw change validate --body-file` | `aw change create`, `src/`, `e2e/`, docs, a `tech-design/` or `external-contracts/` directory |
 | `aw-dev` | sonnet / `medium` | one bounded change to the `apps/aw` CLI, verified with pytest through `uv` | protocol or lifecycle redesign |
 | `gke-operator` | sonnet / `medium` | launching and watching a paid GKE acceptance run; reports raw observations | acceptance, tracker, source |
 | `agy-operator` | sonnet / `low` | one frozen AGY dispatch round | authoring, verifying, Git, tracker |
@@ -69,14 +87,16 @@ Dispatch through the Agent tool with the description prefixed
 `[effort=<level>]` (`low`, `medium`, `high`, `xhigh`, or `max`) and
 `subagent_type` naming a registered agent whose frontmatter `effort:`
 matches; `.claude/hooks/require_agent_effort.py` refuses a missing marker,
-an unknown value, a built-in or unregistered agent, or a mismatch. When no
+an unknown value, a built-in or unregistered agent, a mismatch, or a fleet
+whose frontmatter `model:` is not one of `sonnet`, `opus`, `fable`, `haiku`
+(an unknown alias would silently fall back to the session model). When no
 registered agent has the right ownership at that effort, keep the work here
 or report the gap — never claim another effort to pass the hook. The model
 tier is a default, not a ceiling: a hard case may raise `model` at dispatch
 time, and ownership does not move with it. For apps the phase script's
 `commit` is the runner's only Git write, and acceptance reads the commits,
 not the runner's summary; `libs/<name>/` has no phase script, so the lib
-e2e-dev authors and runs its cases directly, the lib dev verifies with
+qa authors and runs its cases directly, the lib dev verifies with
 `cargo test -p <crate> --lib` then the full crate suite, and the controller
 owns every lib commit. One writer per worktree at a time — phase scripts
 measure named reds against HEAD, so two concurrent writers poison each
@@ -258,9 +278,11 @@ Maintenance has one `maint` phase. Its type selects its write boundary:
   written proves nothing about the change, so run the phase-1 case and
   observe its failure before moving on.
 - `docs/**` (with `README.md`, `STATUS.md`, `ROADMAP.md`) is where the approved
-  `aw-grill-release apply` writes, before any work item exists. It is not a
-  ladder write root — `C0` refuses a dirty `docs/` path like any other — so
-  land a META-doc before `aw e2e start`, not during.
+  `aw-grill-release apply` writes, before any work item exists. A `<p>-pm` run
+  drafts those bytes first; the plan's approved `after` text carries only the
+  sections the human confirmed, and a section the human did not confirm does
+  not land. It is not a ladder write root — `C0` refuses a dirty `docs/` path
+  like any other — so land a META-doc before `aw e2e start`, not during.
 - `external-contracts/` and `tech-design/` are not write roots; a
   `// SPEC-MANAGED:` header names a producer that no longer exists. A design
   decision goes in the `//!` or `///` block of the module or type that owns
@@ -326,7 +348,8 @@ not exactly `_paths.SKILLS`; elsewhere the listing is the whole check.
 
 **Design lives in source.** A module's `//!` block carries the rules it
 owns, a type's `///` block its own; there is no technical-design step and no
-ADR tree. In the sixteen projects the TD/EC retirement emptied —
+ADR tree (`tech-design` is an agent that drafts issue bodies, never a
+directory). In the sixteen projects the TD/EC retirement emptied —
 `apps/lumen`, `apps/tape`, and `libs/{build-stamp, cli-std,
 metrics-prometheus, openapi-codegen, peer-tls, raft-core, raft-runtime,
 service-auth, service-backup, service-http, service-k8s,

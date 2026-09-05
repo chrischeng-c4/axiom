@@ -153,6 +153,18 @@ def weaken_grill_gap_contract(root: Path) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+def land_unconfirmed_draft(root: Path) -> None:
+    for runtime in (".agents", ".claude"):
+        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace(
+            "A drafted answer the human has not confirmed is not an answer",
+            "A drafted answer counts as an answer",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+
 def bypass_plan_digest(root: Path) -> None:
     path = root / "apps/aw/src/aw/scripts/release_plan.py"
     text = path.read_text(encoding="utf-8")
@@ -237,6 +249,9 @@ def main() -> int:
              "FAIL aw-grill-release: carries typed queue contract `default minor bump`"),
         case("grill weakens gap handoff", weaken_grill_gap_contract,
              "FAIL aw-grill-release: carries typed queue contract `G1 through G5`"),
+        case("grill lands an unconfirmed draft", land_unconfirmed_draft,
+             "FAIL aw-grill-release: carries typed queue contract "
+             "`A drafted answer the human has not confirmed is not an answer`"),
         case("release plan ignores approved digest", bypass_plan_digest,
              "FAIL release_plan.py keeps validate read-only and apply approval-bound"),
         case("release plan schema changes", change_release_plan_schema,

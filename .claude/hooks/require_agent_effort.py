@@ -12,6 +12,10 @@ from typing import Any, Dict
 
 
 VALID_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+# The model aliases the Agent tool accepts, plus the one explicit fable id.
+# A frontmatter `model:` outside this set silently falls back to the session
+# model, so the pin would lie; refuse it instead.
+VALID_MODELS = frozenset({"sonnet", "opus", "fable", "haiku", "claude-fable-5-1"})
 EFFORT_MARKER = re.compile(
     r"^\[effort=(low|medium|high|xhigh|max)\](?:\s+|$)"
 )
@@ -50,7 +54,7 @@ def _agent_frontmatter(path: Path) -> Dict[str, str]:
 
     fields: Dict[str, str] = {}
     for line in lines[1:end]:
-        match = re.fullmatch(r"(name|effort):\s*(.*?)\s*", line)
+        match = re.fullmatch(r"(name|effort|model):\s*(.*?)\s*", line)
         if not match:
             continue
         key, raw_value = match.groups()
@@ -75,6 +79,10 @@ def load_project_agent_efforts(project_root: Path) -> Dict[str, str]:
         if effort not in VALID_EFFORTS:
             raise DispatchPolicyError(
                 f"Agent {name!r} has no valid explicit effort in {path}"
+            )
+        if fields.get("model") not in VALID_MODELS:
+            raise DispatchPolicyError(
+                f"Agent {name!r} has no valid explicit model in {path}"
             )
         if name in agents:
             raise DispatchPolicyError(f"duplicate project Agent name: {name}")
