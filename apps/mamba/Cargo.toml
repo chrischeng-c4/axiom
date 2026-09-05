@@ -377,3 +377,7 @@ path = "e2e/pkgmgr_index_url_simple.rs"
 [[test]]
 name = "pkgmgr_run_file_venv"
 path = "e2e/pkgmgr_run_file_venv.rs"
+
+[[test]]
+name = "pkgmgr_lock_registry_sha_pairs_url"
+path = "e2e/pkgmgr_lock_registry_sha_pairs_url.rs"
