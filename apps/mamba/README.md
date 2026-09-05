@@ -11,7 +11,7 @@ through that package manager; the CPython runtime replacement (tiers T1 to T7
 under [Runtime replacement order](#runtime-replacement-order)) comes third,
 and its `MambaModule` carrier for a kit matches the wheel's Python API.
 [STATUS.md](STATUS.md) records what the package manager supports today and
-[ROADMAP.md](ROADMAP.md) orders the three outcomes.
+[ROADMAP.md](ROADMAP.md) orders the two remaining outcomes.
 
 For implementation map, see [llms.txt](llms.txt).
 
@@ -35,23 +35,25 @@ is the one `mamba <verb> --help` prints.
 3. Create the environment: `mamba venv` seeds `.venv` from the first `python`
    on `PATH`; pass `--python <PYTHON>` to choose another interpreter.
 4. Add a dependency and lock it: `mamba add ./wheels/foo-1.2.3-py3-none-any.whl`
-   takes a local wheel, and `mamba add --index <DIR> foo` resolves a bare name
-   from an index built by `mamba index build --out <DIR> <WHEEL_OR_DIR>...`;
-   both update `mamba.toml` and `mamba.lock`.
-5. Converge the environment: `mamba sync` installs `mamba.lock` into `.venv`
-   and is a no-op when run again; `mamba sync --check` fails without writing
-   when the two differ.
+   takes a local wheel, `mamba add --index <DIR> foo` resolves a bare name
+   from an index built by `mamba index build --out <DIR> <WHEEL_OR_DIR>...`,
+   and `mamba add --index-url <URL> foo` resolves it from a registry base or
+   its `…/simple` URL; each updates `mamba.toml` and `mamba.lock`, pinning
+   the transitive closure with a `sha256` per package.
+5. Converge the environment: `mamba sync` installs the locked wheels into
+   `.venv`'s `lib/pythonX.Y/site-packages`, removes what the lock no longer
+   pins, and is a no-op when run again; `mamba sync --check` fails without
+   writing when the two differ.
 6. Run inside the environment: `mamba run -- python -c 'import sys; print(sys.executable)'`
-   prints the `.venv` interpreter. `mamba run <file.py>` compiles the file
-   with mamba today; the ROADMAP outcome
-   [uv-workflow-parity](ROADMAP.md#uv-workflow-parity) makes the `.venv`
-   interpreter the default there.
+   prints the `.venv` interpreter, and `mamba run main.py` executes the file
+   on that interpreter; `mamba run --compile main.py` compiles it with mamba
+   instead.
 
 ## Runtime replacement order
 
 The compiler and runtime work, ordered T1 to T7. This order is the ROADMAP
 outcome [cpython-runtime-replacement](ROADMAP.md#cpython-runtime-replacement)
-and starts after `uv-workflow-parity` and `mambalibs-cpython-wheels`. Each
+and starts after the shipped uv workflow parity and `mambalibs-cpython-wheels`. Each
 tier's exit gate is still to be written, so no tier below is claimed; the
 capabilities that are claimed, with their gates, are under
 [Capabilities](#capabilities).
@@ -916,7 +918,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 | Capability      | C1 Py3.12 parity            | No — ① type **74.1%** enforced (auto-measured) + **100%** sound · ② ~18% run-correct |
 | Capability      | C2 Perf > CPython           | No — compute median ~13× faster, but object/float slower **and** memory regresses; the boxed value model is the keystone |
 | Capability      | C3 mambalibs end-to-end     | No — most kits stub-only; the first carrier is the PyO3 wheels, ROADMAP `mambalibs-cpython-wheels` |
-| Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/auth/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache |
+| Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/auth/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache; `sync` installs real wheels, `lock` pins the transitive closure, `run <file>` executes on `.venv` |
 | Runtime         | core substrate stability    | **99.1%** — sound; only edge crashes (deep recursion, gen-nesting cap, MRO, async-gen hang) |
 | Ceiling         | match Golang (`mamba/go`)   | ~4× behind Go on compute today (Go ~50× vs CPython, mamba ~13×); gap = value model + codegen, not JIT-vs-AOT |
 | Standardization | managed                     | No — 5.1%; epic [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
@@ -940,6 +942,7 @@ which is why deriving it from the directory finds nothing.
 | Every command and its flags | `mamba --help` and `mamba <verb> --help`; the command surface is declared in [src/main.rs](src/main.rs) |
 | Package-manager behaviour | [src/pkgmanage/](src/pkgmanage/), one module per verb; `run.rs` owns the `run` preflight |
 | Package-manager cases | [tests/pkgmgr/runner.rs](tests/pkgmgr/runner.rs), one module per verb, declared as the `pkgmgr` `[[test]]` target in [Cargo.toml](Cargo.toml) |
+| Package-manager e2e cases | [e2e/](e2e/), one black-box case per file, each its own `[[test]]` target in [Cargo.toml](Cargo.toml) |
 | What the package manager supports today | [STATUS.md](STATUS.md) |
 | What changes next, in order | [ROADMAP.md](ROADMAP.md) |
 | The product promises behind both | [docs/product/README.md](docs/product/README.md) |
@@ -953,8 +956,8 @@ executable gates that verify it; every gate is a `[[test]]` target declared in
 the runtime side, whose tier order is under
 [Runtime replacement order](#runtime-replacement-order) and whose ROADMAP
 outcome is `cpython-runtime-replacement`. The fourth is the package manager,
-whose rows are in [STATUS.md](STATUS.md) and whose next outcome is
-`uv-workflow-parity`.
+whose rows are in [STATUS.md](STATUS.md) and whose shipped outcome
+`uv-workflow-parity` is measured by the `pkgmgr_*` gates below.
 
 ### Capability index
 
@@ -1015,16 +1018,29 @@ whose rows are in [STATUS.md](STATUS.md) and whose next outcome is
   `tool`, `version`, `tree`, `export`, `package`, `publish --dry-run`,
   `index`, `auth`, `audit`, `pip`, `shell`, `cache`, and `hash` drive a
   project offline from a frozen local index, a local wheel path, or an
-  explicit registry URL, on the CPython already on `PATH`; the six
-  [STATUS.md](STATUS.md) rows record the supported scope and the one limit,
-  and `mamba pkgmgr-validate --json` replays the same workflow families from
-  a built binary.
+  explicit registry URL, on the CPython already on `PATH`: `lock` pins the
+  transitive closure with a `sha256` per package, `sync` installs the locked
+  wheels into `.venv`'s standard site-packages and removes what the lock
+  drops, and `run <file>` executes the file on the `.venv` interpreter; the
+  six [STATUS.md](STATUS.md) rows record the supported scope and limits, and
+  `mamba pkgmgr-validate --json` replays the same workflow families from a
+  built binary.
 - Sources:
-  - [`apps/mamba`](./) owns every verb under `src/pkgmanage/` and the
-    `pkgmgr` cases under `tests/pkgmgr/`.
+  - [`apps/mamba`](./) owns every verb under `src/pkgmanage/`, the `pkgmgr`
+    cases under `tests/pkgmgr/`, and the `pkgmgr_*` black-box cases under
+    `e2e/`.
   - [`libs/cli-std`](../../libs/cli-std/README.md) supplies the standard
     command set and shell-completion conventions the binary exposes.
 - Gate: `cargo test -p mamba --test pkgmgr`
+- Gate: `cargo test -p mamba --test pkgmgr_lock_frozen_transitive`
+- Gate: `cargo test -p mamba --test pkgmgr_sync_real_install`
+- Gate: `cargo test -p mamba --test pkgmgr_sync_prune`
+- Gate: `cargo test -p mamba --test pkgmgr_index_url_simple`
+- Gate: `cargo test -p mamba --test pkgmgr_run_file_venv`
+- Gate: `cargo test -p mamba --test pkgmgr_lock_registry_sha_pairs_url`
+- Gate: `cargo test -p mamba --test pkgmgr_add_registry_transitive`
+- Gate: `cargo test -p mamba --test pkgmgr_validate_auth_family`
+- Gate: `cargo test -p mamba --test pkgmgr_remove_keeps_remaining_closure`
 - Gate: `cargo test -p mamba --test schema_gates`
 
 ## Supporting documents
@@ -1032,7 +1048,7 @@ whose rows are in [STATUS.md](STATUS.md) and whose next outcome is
 | Document | Use it for |
 |---|---|
 | [STATUS.md](STATUS.md) | The package manager's support matrix, one row per workflow, each with its gate. |
-| [ROADMAP.md](ROADMAP.md) | The three outcomes in delivery order and the four non-goals. |
+| [ROADMAP.md](ROADMAP.md) | The two open outcomes in delivery order and the four non-goals. |
 | [docs/product/README.md](docs/product/README.md) | The product promises each outcome and STATUS row comes from. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build discipline, the test layout, and the verification rules for a change. |
 | [llms.txt](llms.txt) | The implementation map for agents. |

@@ -13,56 +13,76 @@ nothing reaches PyPI implicitly.
 - Promise: `mamba init` scaffolds `mamba.toml`; `add`, `remove`, `lock`,
   `export`, `tree`, and `workspace` keep `mamba.toml` and `mamba.lock`
   consistent from a frozen `--index <DIR>`, a local wheel path, or an explicit
-  `--index-url`; `venv` seeds `.venv` from the first `python` on `PATH` or
-  from `--python`; `sync` converges `.venv` to `mamba.lock` and is a no-op the
-  second time; `run -- <cmd>` runs a command inside that environment;
+  `--index-url` (a registry base or its `…/simple` URL), pinning the
+  transitive closure with a paired `sha256` and `url` or `path` per package;
+  `venv` seeds `.venv` from the first `python` on `PATH` or from `--python`;
+  `sync` installs the locked wheels into `.venv`'s
+  `lib/pythonX.Y/site-packages`, removes what the lock no longer pins, and is
+  a no-op the second time; `run -- <cmd>` runs a command inside that
+  environment and `run <file>` executes the file on the `.venv` interpreter;
   `python`, `tool`, `version`, `package`, `shell`, `cache`, `hash`, `index`,
   `auth`, `audit`, and `pip` cover the rest of the workflow. Every verb is
   driven offline by the `pkgmgr` test target.
-- Limits today: `mamba run <file>` compiles the file with mamba rather than
-  executing it on the `.venv` interpreter; `publish` validates payloads with
-  `--dry-run` and has no upload case; `auth login` stores plaintext
-  credentials.
+- Limits today: a bare `add <name>` needs `--index`, `--index-url`, or
+  `MAMBA_FROZEN_INDEX` / `MAMBA_INDEX_URL`, and `mamba.toml` records no
+  index, so the source is repeated on every `add` and `lock`. `sync` compares
+  `.venv` to `mamba.lock`, never `mamba.lock` to `mamba.toml`, so an edited
+  manifest needs `lock` first. `version` reads `pyproject.toml`, not
+  `mamba.toml`. `tool install` resolves only from a frozen index. `publish`
+  validates payloads with `--dry-run` and has no upload case; `auth login`
+  stores plaintext credentials.
 - Non-goals: `uv.lock` byte compatibility; building C extensions from sdist;
   the full `pip` option surface.
 - Neighbours: first section of the area.
-  [uv workflow parity](#uv-workflow-parity) changes the `run` default this
-  section records as a limit and nothing else here.
+  [uv workflow parity](#uv-workflow-parity-milestone-130) shipped the real
+  install, the transitive lock, and the `run <file>` default this section
+  records, and nothing else here.
 - Status rows: `project-dependencies`, `environment-and-run`,
   `interpreter-management`, `build-and-version`, `tooling-and-cache`,
   `sources-and-credentials`.
 
 ## uv workflow parity (Milestone #130)
 
-- Problem: a Python developer who reaches for mamba as a `uv` replacement
-  hits a different `run`: inside a project `mamba run <file>` compiles the
-  file through mamba, so a program that relies on CPython semantics or on a
-  C extension in `.venv` fails where `uv run <file>` succeeds. The other
-  common verbs differ from `uv` in flags, exit codes, and output in ways no
-  case measures today.
+- Problem: none open as shipped; the limits below are where the next
+  package-manager outcome starts.
 - Who: a Python developer with a system or managed CPython who wants to run
   `mamba` where they run `uv`, without installing or learning a mamba
   runtime.
-- Promise: the common `uv` subcommands (`init`, `add`, `remove`, `lock`,
-  `sync`, `run`, `venv`, `python`, `tool`, `version`, `tree`, and `export`)
-  accept the same flags, exit with the same codes, and leave the same
-  `pyproject.toml`, lockfile, and `.venv` artifacts as `uv`, measured by a
-  black-box case per verb under `apps/mamba/e2e/`. Inside a project,
-  `mamba run <file>` executes the file on the `.venv` interpreter by default;
-  compiling through mamba is an explicit opt-in flag. No mamba runtime is
-  needed for any of it.
+- Promise: inside a project `mamba run <file>` executes the file on the
+  `.venv` interpreter, `mamba run --compile <file>` compiles it with mamba,
+  and outside a project `run <file>` uses the first `python` on `PATH`.
+  `sync` installs the locked wheels into `.venv`'s PEP 405
+  `lib/pythonX.Y/site-packages`, is a no-op the second time, removes the
+  packages the lock no longer pins, and `sync --check` reports the drift
+  without writing. `index build` records each wheel's `Requires-Dist` and
+  sha256, so `lock` and `add --index <DIR>` pin the transitive closure with a
+  paired `sha256` and `path`; `lock` and `add --index-url <URL>` do the same
+  against a registry base or its `…/simple` URL with a paired `sha256` and
+  `url`; `remove` keeps the remaining roots' closure and digests; and
+  `pkgmgr-validate` accepts the PEP 503 canonical name the lock records. No
+  mamba runtime is needed for any of it. Each behaviour is one black-box
+  `[[test]]` under `apps/mamba/e2e/`: `pkgmgr_run_file_venv`,
+  `pkgmgr_sync_real_install`, `pkgmgr_sync_prune`,
+  `pkgmgr_lock_frozen_transitive`, `pkgmgr_index_url_simple`,
+  `pkgmgr_lock_registry_sha_pairs_url`, `pkgmgr_add_registry_transitive`,
+  `pkgmgr_remove_keeps_remaining_closure`, and
+  `pkgmgr_validate_auth_family`.
+- Limits today: flag, exit-code, and artifact parity with `uv` is measured
+  only for the verbs those cases drive (`add`, `remove`, `lock`, `sync`,
+  `run`, `index`, and `pkgmgr-validate`); `init`, `venv`, `python`, `tool`,
+  `version`, `tree`, and `export` are measured by the `pkgmgr` target alone.
+  The manifest is `mamba.toml`, not `pyproject.toml`, and `version` reads
+  `pyproject.toml` only. `tool install` resolves only from a frozen index. A
+  bare `add <name>` needs a source flag or variable and `mamba.toml` records
+  none; `sync` never compares `mamba.lock` to `mamba.toml`.
 - Non-goals: `uv.lock` byte compatibility; resolver speed parity; every `pip`
   option that `uv pip` does not expose; sdist C-extension builds.
-- Open: the name of the opt-in compiler flag on `mamba run`. Which
-  subcommands and flags count as common: the list above is the interview's
-  answer, and the Milestone's issue set fixes it. Whether `mamba run <file>`
-  outside a project falls back to the `python` on `PATH` or keeps compiling.
-- Neighbours: rewrites the `run` limit in
-  [Offline project workflow](#offline-project-workflow) and flips the
+- Neighbours: rewrote the `run` limit in
+  [Offline project workflow](#offline-project-workflow) and flipped the
   `environment-and-run` STATUS row to Supported;
   [runtime.md](runtime.md) § CPython runtime replacement starts after this
-  outcome and does not touch the package manager's contract.
-- Outcome: `uv-workflow-parity`. Tracking: [Milestone #130](https://github.com/chrischeng-c4/axiom/milestone/130).
+  section and does not touch the package manager's contract.
+- Status rows: `environment-and-run`, `project-dependencies`.
 
 ## Non-goals in this area
 

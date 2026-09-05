@@ -10,28 +10,6 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
 
 ## Near-term outcomes
 
-### uv workflow parity
-
-- ID: `uv-workflow-parity`
-- Outcome: A Python developer with a system or managed CPython uses `mamba` in
-  place of `uv` for the common project workflow (`init`, `add`, `remove`,
-  `lock`, `sync`, `run`, `venv`, `python`, `tool`, `version`, `tree`, and
-  `export`) and gets the same observable behaviour: the same flags, the same
-  exit codes, and the same on-disk artifacts. Inside a project,
-  `mamba run <file>` executes the file on the `.venv` interpreter by default,
-  and compiling through mamba is an explicit opt-in flag. No mamba runtime is
-  needed to use mamba this way.
-- Boundary: Observable behaviour of the common subcommands only: flags, exit
-  codes, stdout shape, and the `pyproject.toml`, lockfile, and `.venv`
-  artifacts. Byte compatibility of `uv.lock`, resolver speed, and every `pip`
-  option that `uv pip` does not expose stay outside it.
-- Completion evidence: Black-box cases under `apps/mamba/e2e/` run each parity
-  verb against a project fixture and compare exit code and artifacts with the
-  documented `uv` behaviour; `cargo test -p mamba --test pkgmgr` stays green;
-  and `mamba run <file>` inside a project observably executes on the `.venv`
-  interpreter with no mamba runtime present.
-- Tracking: [Milestone #130](https://github.com/chrischeng-c4/axiom/milestone/130).
-
 ### mambalibs CPython wheels
 
 - ID: `mambalibs-cpython-wheels`
@@ -48,8 +26,9 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
   publish, index, install, import, and pytest path for each promised kit,
   starting with the data-science kits. The `MambaModule` carrier for the same
   kit, a CPython C-API emulation layer, and sdist builds on the user's machine
-  stay outside it. It starts after `uv-workflow-parity` and does not change
-  the package manager's contract.
+  stay outside it. It starts after the shipped uv workflow parity
+  ([STATUS](STATUS.md) `environment-and-run`) and does not change the
+  package manager's contract.
 - Completion evidence: A `[[test]]` target under `apps/mamba/e2e/` builds a
   kit wheel with maturin, serves it through `mamba index`, installs it with
   `mamba add` and `mamba sync` into a fresh `.venv`, and runs the kit's pytest
@@ -67,8 +46,9 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
 - Boundary: The compiler and runtime work the tiers describe, plus the
   `MambaModule` carrier for each kit that already ships as a wheel under
   `mambalibs-cpython-wheels`, matching that wheel's Python API. It starts
-  after `uv-workflow-parity` and `mambalibs-cpython-wheels` and does not
-  change the package manager's contract.
+  after the shipped uv workflow parity ([STATUS](STATUS.md)
+  `environment-and-run`) and `mambalibs-cpython-wheels` and does not change
+  the package manager's contract.
 - Completion evidence: `cargo test -p mamba --test conformance_contract` and
   `cargo test -p mamba --release --test perf_pin` exit zero over the tier's
   fixture set, with the tier's exit gate written and named in the README

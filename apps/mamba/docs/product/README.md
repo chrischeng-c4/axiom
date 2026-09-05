@@ -50,7 +50,7 @@ came first.
 
 | Horizon | Outcome | Section |
 |---|---|---|
-| H1 | `uv-workflow-parity` | [package-manager.md](package-manager.md) § uv workflow parity |
+| H1 | `uv-workflow-parity` (shipped) | [package-manager.md](package-manager.md) § uv workflow parity; STATUS `environment-and-run`, `project-dependencies` |
 | H2 | `mambalibs-cpython-wheels` | [mambalibs.md](mambalibs.md) § mambalibs CPython wheels |
 | H3 | `cpython-runtime-replacement` | [runtime.md](runtime.md) § CPython runtime replacement |
 
@@ -59,7 +59,7 @@ came first.
 | Section | File | Kind | Owner |
 |---|---|---|---|
 | Offline project workflow | package-manager.md | shipped, limited | STATUS `project-dependencies`, `environment-and-run`, `interpreter-management`, `build-and-version`, `tooling-and-cache`, `sources-and-credentials` |
-| uv workflow parity | package-manager.md | outcome | ROADMAP `uv-workflow-parity` |
+| uv workflow parity | package-manager.md | shipped, limited | STATUS `environment-and-run`, `project-dependencies` |
 | mambalibs CPython wheels | mambalibs.md | outcome | ROADMAP `mambalibs-cpython-wheels` |
 | CPython runtime replacement | runtime.md | outcome | ROADMAP `cpython-runtime-replacement` |
 
