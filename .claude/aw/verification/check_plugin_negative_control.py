@@ -103,12 +103,15 @@ def remove_plan_first(root: Path) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def make_plan_open(root: Path) -> None:
+def restore_native_plan_gate(root: Path) -> None:
     for runtime in (".agents", ".claude"):
         path = root / runtime / "skills/aw-grill-release/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace("Stop if the runtime cannot confirm it.",
-                            "Continue when the runtime cannot confirm it.", 1)
+        text = text.replace(
+            "Prepare the plan read-only in any runtime mode. No mode switch is required.",
+            "Confirm native Plan mode. Stop if the runtime cannot confirm it.",
+            1,
+        )
         path.write_text(text, encoding="utf-8")
 
 
@@ -224,10 +227,10 @@ def main() -> int:
              "FAIL milestone.py defaults new release Milestones to a minor bump"),
         case("grill skips mode selection", remove_plan_first,
              "FAIL aw-grill-release: first step selects a mode"),
-        case("grill Plan mode is open", make_plan_open,
-             "FAIL aw-grill-release: Plan mode is fail-closed"),
+        case("grill restores native Plan-mode gate", restore_native_plan_gate,
+             "FAIL aw-grill-release: Plan preparation ignores native UI mode"),
         case("grill Plan section writes", put_write_in_plan,
-             "FAIL aw-grill-release: Plan section has no write command"),
+             "FAIL aw-grill-release: Plan operation has no write command"),
         case("grill Apply mode is open", make_apply_open,
              "FAIL aw-grill-release: Apply mode is fail-closed"),
         case("grill loses default version policy", remove_grill_version_policy,

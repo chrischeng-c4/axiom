@@ -47,6 +47,10 @@ the repository root). `e2e/test_cli.py` measures the delegation with
 
 ### Release plans
 
+`aw-grill-release` reuses an existing plan and its approved decisions.
+Read-only preparation and validation work in any runtime mode. A validated
+plan with an approved digest goes directly to Apply in Default mode.
+
 `aw release-plan validate --plan <path|->` reads and canonicalizes one closed
 `release-plan-v1` JSON document. It accepts an unsealed draft, adds
 `plan_sha256`, and prints one sealed canonical plan. The digest covers the

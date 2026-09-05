@@ -129,7 +129,7 @@ directory for a file none of them owns.
 | `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
 | `check_plugin.py` | a missing or drifted seven-skill mirror, missing script, legacy issue-epic writer, or incomplete release-plan, type, and Milestone contract |
-| `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that skips Plan mode |
+| `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that restores a native Plan-mode gate |
 | `check_milestone.py` | a malformed SemVer-core title, wrong next-version bump, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
 | `check_type_registry.py` | a missing, duplicate, unknown, intake, or legacy executable type; wrong flow; unsafe retype; or lifecycle close without matching commit evidence |
 | `check_type_migration.py` | an incomplete or drifted manifest, wrong fixed mapping, partial replacement hidden as complete, unsafe readback, or resume without the same receipt |
@@ -498,7 +498,8 @@ silently.
 ## Who opens a delivery issue
 
 `aw-grill-release` settles the complete issue set, each issue type, each
-priority, and the global order with the human in Plan mode. Its approved Apply
+priority, and the global order with the human during its read-only plan
+operation. Its approved Apply
 uses `release_plan.py`, which delegates writes to `milestone.py` and
 `change.py`; no SKILL.md may name a direct
 `gh issue|pr create|edit|close|comment|delete|reopen` command. The positive

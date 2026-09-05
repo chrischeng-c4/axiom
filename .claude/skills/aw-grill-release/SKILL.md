@@ -1,6 +1,6 @@
 ---
 name: aw-grill-release
-description: Plan or apply product promises, release Milestones, typed delivery issues, and Development Order through a read-only Plan phase and an approved, resumable Default-mode Apply phase.
+description: Prepare or reuse release plans in the current runtime mode, then apply approved product promises, Milestones, typed issues, and Development Order through a resumable receipt.
 ---
 
 # AW Grill Release
@@ -12,13 +12,16 @@ project from that plan without choosing new product decisions during writes.
 
 ## How
 
-1. Select `plan` or `apply`. Refuse an omitted or ambiguous mode.
+1. Select `plan` or `apply` from the request and the available plan.
+   A validated plan with an approved digest goes directly to Apply.
    The public forms are `aw-grill-release plan <project|milestone|intent>` and
    `aw-grill-release apply <approved-plan>`.
 
 ### Plan
 
-1. Confirm native Plan mode. Stop if the runtime cannot confirm it.
+1. Prepare the plan read-only in any runtime mode. No mode switch is required.
+   Reuse an existing approved plan and its settled decisions. Do not restart
+   the interview.
 2. Resolve the project, Milestone reference, or intent to an ordered list of
    `apps/<name>` or `libs/<name>` projects. Read each project's
    `README.md` and `CONTRIBUTING.md`, its META-docs, its manifest, and its live
@@ -92,6 +95,8 @@ project from that plan without choosing new product decisions during writes.
 ## Acceptance
 
 - `plan` is read-only and asks no question already answered by the input.
+- An existing plan needs no runtime mode switch or repeated approval of
+  unchanged decisions. Apply still requires approval of the exact digest.
 - The validator accepts the closed plan and prints its canonical SHA-256.
 - `apply` uses that exact approved digest and changes one project only.
 - A complete receipt binds every write and final readback; an incomplete
@@ -107,8 +112,9 @@ project from that plan without choosing new product decisions during writes.
 ## Never
 
 - Never run `apply` in Plan mode or run `plan` as permission to write.
-- Never edit an approved plan during Apply. Return to Plan mode on drift or a
-  missing decision.
+- Never edit an approved plan during Apply. On drift or a missing decision,
+  return to read-only preparation in the current mode and ask only about
+  the unresolved change.
 - Never use direct GitHub writers, issue epics, `epic:<iid>`, bare Milestone
   numbers, legacy issue types, or an inferred issue order.
 - Never start another apply after a partial write. Resume the same receipt.

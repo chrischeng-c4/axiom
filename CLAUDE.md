@@ -32,7 +32,7 @@ the case that needs a stated reason.
 | a pull request, or its merge | `gh-create-pr`, `gh-merge-pr` | `gh pr create` / `gh pr merge` typed here |
 | a debug run of keep, defer, relay, or loom | `build-debug <app>` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release <app>` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
-| a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release plan` in Plan mode, then its approved `apply` in Default mode, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside the approved plan |
+| a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release`: reuse the existing plan, prepare it read-only in the current mode if needed, then approved `apply` in Default mode, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside the approved plan |
 | a queue head's e2e contract | `aw-e2e-for`, run by `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main session |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, run by `<p>-dev` | writing `apps/<p>/src/**` in the main session |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
@@ -87,7 +87,7 @@ uncommitted work in the target write root. A dev stalled twice on the same
 task is not re-dispatched; the controller takes over.
 
 **The main session keeps** the three planning skills
-(`aw-grill-release`, `aw-prepare-goal`, `aw-ask-user` — their Plan paths need
+(`aw-grill-release`, `aw-prepare-goal`, `aw-ask-user` — their questions need
 AskUserQuestion, which subagents do not have), dispatch scheduling, final
 acceptance, git land, tracker semantic decisions, AGY payload authorization,
 long read-only investigations, and any task too small to be worth
@@ -132,7 +132,7 @@ The seven `aw-*` entry points:
 
 | Skill | Reach for it when | It does |
 |---|---|---|
-| `aw-grill-release` | product promises, a release Milestone, or its typed issue order must be planned or applied | `plan` is read-only in Plan mode and returns a canonical digest; `apply` runs only in Default mode against that approved digest, changes one project, and resumes every partial write from one receipt |
+| `aw-grill-release` | product promises, a release Milestone, or its typed issue order must be planned or applied | reuse the existing plan; `plan` is read-only in any runtime mode and returns a canonical digest; a validated plan with an approved digest goes directly to `apply` in Default mode, which changes one project and resumes from one receipt |
 | `aw-e2e-for` | a scope's queue head is `type:feat`, `type:fix`, or `type:perf` | drives e2e for each behavior queue head in the scope; a Milestone yields at most one e2e commit per run, and maintenance heads are reported as `aw-impl-for` work |
 | `aw-impl-for` | a scope's queue head has landed e2e evidence, or is a maintenance type | drives impl for behavior heads and maint for `type:refactor`/`test`/`docs`/`chore` heads, closing each issue to advance the queue |
 | `aw-test-for` | a scope's work looks finished and needs closing regression verification | read-only: checks each issue's lifecycle trailers against its commits, then runs the project gates unfiltered; writes nothing |
@@ -140,16 +140,17 @@ The seven `aw-*` entry points:
 | `aw-prepare-goal` | a project, typed issue, release Milestone, or bare intent must become decidable conditions | reads the project or tracker, selects the next route by type, and sets no goal unless the human explicitly asks |
 | `aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
 
-The behavior sequence is `aw-grill-release plan` → approved
+For a new plan, the behavior sequence is `aw-grill-release plan` → approved
 `aw-grill-release apply` → `aw-e2e-for` → `aw-impl-for` →
 `aw-test-for`; maintenance heads route through `aw-impl-for`'s maint leg;
 `aw-prepare-goal` and `aw-ask-user` stand outside it. The handoffs are
 machine-checked by the engine — a release Milestone must bind to a product
 promise, `aw milestone next` selects the one executable queue head,
 `aw change close` advances the queue only after every required piece of
-evidence matches its commit — so a grill interviews (Plan mode first, never
-inventing an answer you did not give, offering only gates the repository
-already runs), and the execution skills read `#<iid>` as one typed issue and
+evidence matches its commit. An existing plan resumes at its next unfinished
+step. A grill reuses settled decisions and asks only for missing answers,
+without requiring a runtime mode switch. It offers only gates the repository
+already runs. The execution skills read `#<iid>` as one typed issue and
 only `milestone:<number>` or an exact `<project>@<version>` title as a
 Milestone. Each `SKILL.md` carries the rest.
 
