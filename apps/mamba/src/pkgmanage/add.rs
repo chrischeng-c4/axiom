@@ -41,6 +41,7 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     }
 
     let mut index_used: Option<PathBuf> = None;
+    let mut registry_used: Option<String> = None;
     let resolved = if let Some(provider) = sub.get_one::<String>("provider") {
         resolve_with_provider(spec_raw, provider)?
     } else if looks_like_wheel_path(spec_raw) {
@@ -52,6 +53,8 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
         let index_url = resolve_index_url(sub);
         if let Some(idx) = &index_dir {
             index_used = Some(idx.clone());
+        } else if !offline {
+            registry_used = index_url.clone();
         }
         resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?
     };
@@ -75,11 +78,15 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     }
     let new_manifest = state.render();
 
-    // A local-index add renders the same transitive closure `mamba lock`
-    // would, through the same resolver and writer, so the two commands agree
-    // byte for byte. Every other source keeps the single-package renderer.
+    // A local-index add and a registry (`--index-url`) add both render the
+    // same transitive closure `mamba lock` would, through the same resolver
+    // and writer, so `add`/`lock` agree byte for byte. Every other source
+    // (offline pin, direct file, `--provider`, no source configured) keeps
+    // the single-package renderer.
     let new_lockfile = if let Some(idx) = &index_used {
         crate::pkgmanage::lock::resolve_and_render_via_index(&state, idx)?
+    } else if let Some(url) = &registry_used {
+        crate::pkgmanage::lock::resolve_and_render_via_registry(&state, url)?
     } else {
         render_lockfile_for_manifest_with_resolved(&state, &resolved)?
     };

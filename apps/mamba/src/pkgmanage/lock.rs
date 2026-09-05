@@ -66,12 +66,7 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
         );
     } else {
         match resolve_index_url(sub) {
-            Some(index_url) => {
-                let mut resolved = resolve_via_pypi(&registry_deps, &index_url)?;
-                resolved.extend(resolve_manifest_provider_deps(&state)?);
-                resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
-                render_lockfile(&state.dependencies, &resolved)
-            }
+            Some(index_url) => resolve_and_render_via_registry(&state, &index_url)?,
             None => bail!(
                 "no package source configured for `mamba lock`; pass --index DIR, \
                  set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
@@ -388,6 +383,25 @@ pub(crate) fn resolve_and_render_via_index(state: &ManifestState, index: &Path) 
         resolve_transitive(&direct, index)?
     };
     resolved.extend(provider_resolved);
+    resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
+    Ok(render_lockfile(&state.dependencies, &resolved))
+}
+
+/// Resolve `state`'s registry dependencies against a live PyPI-style index
+/// and render the same `mamba.lock` body `mamba lock --index-url` would
+/// write for this manifest, so `mamba add --index-url` and `mamba lock
+/// --index-url` agree byte for byte through this one seam (#4221).
+pub(crate) fn resolve_and_render_via_registry(
+    state: &ManifestState,
+    index_url: &str,
+) -> Result<String> {
+    let registry_deps = registry_dependency_strings(state);
+    let mut resolved = if registry_deps.is_empty() {
+        Vec::new()
+    } else {
+        resolve_via_pypi(&registry_deps, index_url)?
+    };
+    resolved.extend(resolve_manifest_provider_deps(state)?);
     resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
     Ok(render_lockfile(&state.dependencies, &resolved))
 }

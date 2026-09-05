@@ -777,3 +777,239 @@ mod lock_artifact_pairing {
         assert_eq!(sha256, wheel_digest);
     }
 }
+
+// #4221: `mamba add --index-url` and `mamba lock --index-url` must write the
+// same lock body for the same manifest and registry, through the one seam
+// `resolve_and_render_via_registry` -- rather than `add` handing the single
+// `ResolvedDep` it fetched for the requested package to the single-package
+// renderer, which drops every transitive edge the registry declared.
+//
+// This exercises the seam directly against a two-node registry graph
+// (`gizmo` depends on `sprocket`), asserting the rendered `mamba.lock` body:
+// both pins present, paired `sha256`/`url` for each, `direct = true` kept on
+// the requested package, and its `dependencies` naming the transitive pin.
+// The externally observable end-to-end shape (through the real binary,
+// `sync`, and `run`) is judged by
+// `apps/mamba/e2e/pkgmgr_add_registry_transitive.rs`.
+mod add_registry_transitive {
+    use crate::pkgmanage::add::ManifestState;
+    use crate::pkgmanage::lock::resolve_and_render_via_registry;
+    use crate::pkgmanage::pkgmgr::wheel_build::{compose_filename, CoreMetadata, WheelBuilder, WheelMetadata};
+    use sha2::{Digest, Sha256};
+    use std::collections::BTreeMap;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const ROOT_DIST: &str = "gizmo";
+    const LEAF_DIST: &str = "sprocket";
+    const VERSION: &str = "1.0";
+    const ROOT_WHEEL_FILE: &str = "gizmo-1.0-py3-none-any.whl";
+    const LEAF_WHEEL_FILE: &str = "sprocket-1.0-py3-none-any.whl";
+
+    fn sha256_bytes(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Build one minimal but real wheel through the product's own wheel
+    /// builder, so the digest asserted below is the digest of exactly the
+    /// bytes served at that entry's own url.
+    fn build_wheel(dist: &str, expected_file: &str) -> Vec<u8> {
+        let dir = tempfile::tempdir().expect("fixture: create a temp dir for the wheel");
+        let filename = compose_filename(dist, VERSION, "py3", "none", "any");
+        let mut wheel_meta = WheelMetadata::new("mamba-unit-add-registry-transitive");
+        wheel_meta.tags.push("py3-none-any".into());
+        let core_meta = CoreMetadata::new(dist, VERSION);
+        let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+        builder.add_file(format!("{dist}/__init__.py"), "ORIGIN = 1\n".to_string());
+        let wheel = builder
+            .build_to_dir(dir.path())
+            .unwrap_or_else(|e| panic!("fixture: build wheel {dist}-{VERSION}: {e:?}"));
+        assert_eq!(
+            wheel.file_name().and_then(|n| n.to_str()),
+            Some(expected_file)
+        );
+        std::fs::read(&wheel).unwrap_or_else(|e| panic!("read {}: {e}", wheel.display()))
+    }
+
+    fn simple_page(dist: &str, wheel_file: &str, wheel_url: &str, digest: &str) -> String {
+        format!(
+            "<!DOCTYPE html>\n\
+             <html><head><title>Links for {dist}</title></head>\n\
+             <body>\n\
+             <a href=\"{wheel_url}#sha256={digest}\">{wheel_file}</a><br/>\n\
+             </body></html>\n"
+        )
+    }
+
+    fn manifest_state(deps: &[&str]) -> ManifestState {
+        ManifestState {
+            project_name: "unit-fixture".to_string(),
+            project_version: "0.1.0".to_string(),
+            python_requires: ">=3.12".to_string(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            dev_dependencies: Vec::new(),
+            source_overrides: BTreeMap::new(),
+        }
+    }
+
+    struct Pin {
+        name: String,
+        version: String,
+        sha256: String,
+        url: String,
+        direct: Option<bool>,
+        dependencies: Vec<String>,
+    }
+
+    fn parse_lock(body: &str) -> Vec<Pin> {
+        let doc: toml::Value = body
+            .parse()
+            .unwrap_or_else(|e| panic!("parse lock body: {e}\n--- body ---\n{body}"));
+        let packages = doc
+            .get("package")
+            .and_then(|v| v.as_array())
+            .unwrap_or_else(|| panic!("lock body has no [[package]] array\n--- body ---\n{body}"));
+        let string_at = |t: &toml::Value, key: &str| -> String {
+            t.get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        packages
+            .iter()
+            .map(|t| Pin {
+                name: string_at(t, "name"),
+                version: string_at(t, "version"),
+                sha256: string_at(t, "sha256"),
+                url: string_at(t, "url"),
+                direct: t.get("direct").and_then(|v| v.as_bool()),
+                dependencies: t
+                    .get("dependencies")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    fn find<'a>(pins: &'a [Pin], name: &str) -> &'a Pin {
+        pins.iter()
+            .find(|p| p.name == name)
+            .unwrap_or_else(|| panic!("no pin named `{name}` in {:?}", pins.iter().map(|p| &p.name).collect::<Vec<_>>()))
+    }
+
+    #[test]
+    fn add_and_lock_seam_pins_the_transitive_closure_with_paired_digests() {
+        // Build the two wheels and their pages/routes on a multi-thread
+        // tokio runtime, kept alive for the whole test; the seam under test
+        // builds its own runtime internally and must be called outside any
+        // `block_on` of this one.
+        let rt = tokio::runtime::Runtime::new().expect("fixture: build a runtime for the registry");
+
+        let root_bytes = build_wheel(ROOT_DIST, ROOT_WHEEL_FILE);
+        let leaf_bytes = build_wheel(LEAF_DIST, LEAF_WHEEL_FILE);
+        let root_digest = sha256_bytes(&root_bytes);
+        let leaf_digest = sha256_bytes(&leaf_bytes);
+        assert_ne!(root_digest, leaf_digest);
+
+        let (server, root_url, leaf_url) = rt.block_on(async {
+            let server = MockServer::start().await;
+            let base = server.uri();
+            let root_wheel_route = format!("/files/{ROOT_WHEEL_FILE}");
+            let leaf_wheel_route = format!("/files/{LEAF_WHEEL_FILE}");
+            let root_url = format!("{base}{root_wheel_route}");
+            let leaf_url = format!("{base}{leaf_wheel_route}");
+
+            for route in [
+                format!("/pypi/{ROOT_DIST}/json"),
+                format!("/pypi/{LEAF_DIST}/json"),
+                format!("/pypi/{LEAF_DIST}/{VERSION}/json"),
+            ] {
+                Mock::given(method("GET"))
+                    .and(path(route))
+                    .respond_with(ResponseTemplate::new(404))
+                    .mount(&server)
+                    .await;
+            }
+
+            Mock::given(method("GET"))
+                .and(path(format!("/pypi/{ROOT_DIST}/{VERSION}/json")))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    format!("{{\"info\":{{\"requires_dist\":[\"{LEAF_DIST}\"]}}}}").into_bytes(),
+                    "application/json",
+                ))
+                .mount(&server)
+                .await;
+
+            for (route, page) in [
+                (
+                    format!("/simple/{ROOT_DIST}/"),
+                    simple_page(ROOT_DIST, ROOT_WHEEL_FILE, &root_url, &root_digest),
+                ),
+                (
+                    format!("/simple/{LEAF_DIST}/"),
+                    simple_page(LEAF_DIST, LEAF_WHEEL_FILE, &leaf_url, &leaf_digest),
+                ),
+            ] {
+                Mock::given(method("GET"))
+                    .and(path(route))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_raw(page.into_bytes(), "text/html; charset=utf-8"),
+                    )
+                    .mount(&server)
+                    .await;
+            }
+
+            for (route, bytes) in [
+                (root_wheel_route.clone(), root_bytes.clone()),
+                (leaf_wheel_route.clone(), leaf_bytes.clone()),
+            ] {
+                Mock::given(method("GET"))
+                    .and(path(route))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_raw(bytes, "application/octet-stream"),
+                    )
+                    .mount(&server)
+                    .await;
+            }
+
+            (server, root_url, leaf_url)
+        });
+
+        let index_url = format!("{}/simple", server.uri());
+        let state = manifest_state(&[&format!("{ROOT_DIST}=={VERSION}")]);
+
+        // Called synchronously, outside any `block_on` of `rt`: the seam
+        // builds its own runtime internally.
+        let body = resolve_and_render_via_registry(&state, &index_url)
+            .unwrap_or_else(|e| panic!("resolve_and_render_via_registry: {e}\n--- body so far: n/a ---"));
+
+        let pins = parse_lock(&body);
+
+        let root = find(&pins, ROOT_DIST);
+        assert_eq!(root.version, VERSION);
+        assert_eq!(root.direct, Some(true));
+        assert_eq!(root.dependencies, vec![format!("{LEAF_DIST}=={VERSION}")]);
+        assert!(!root.sha256.is_empty() && !root.url.is_empty());
+        assert_eq!(root.url, root_url);
+        assert_eq!(root.sha256, root_digest);
+
+        let leaf = find(&pins, LEAF_DIST);
+        assert_eq!(leaf.version, VERSION);
+        assert_eq!(leaf.direct, Some(false));
+        assert!(leaf.dependencies.is_empty());
+        assert!(!leaf.sha256.is_empty() && !leaf.url.is_empty());
+        assert_eq!(leaf.url, leaf_url);
+        assert_eq!(leaf.sha256, leaf_digest);
+
+        drop(server);
+    }
+}
