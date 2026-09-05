@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Check nine byte-identical AW skills and their typed-delivery contract."""
+"""Check the exact byte-identical AW skill set and release-plan contract."""
 
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 from pathlib import Path
 
@@ -11,9 +12,7 @@ from pathlib import Path
 SKILLS = (
     "aw-ask-user",
     "aw-e2e-for",
-    "aw-grill-me-to-meta",
-    "aw-grill-meta-to-milestone",
-    "aw-grill-milestone-to-issue",
+    "aw-grill-release",
     "aw-impl-for",
     "aw-prepare-goal",
     "aw-review",
@@ -25,13 +24,16 @@ SCRIPTS = (
     "e2e.py",
     "epic.py",
     "impl.py",
+    "leg.py",
     "maint.py",
+    "meta.py",
     "metadoc.py",
     "milestone.py",
     "type_migration.py",
     "wi_types.py",
     "wis.py",
     "workitem.py",
+    "release_plan.py",
 )
 MILESTONE_VERBS = (
     "skeleton",
@@ -57,7 +59,7 @@ LEGACY_WRITE = re.compile(r"\b(?:epic\.py|aw epic)\s+(?:create|update|close)\b")
 # registry, which is exactly the shape of a retired `aw <verb>` (wi, ec, td...).
 AW_GROUPS = (
     "change", "milestone", "e2e", "impl", "maint",
-    "wis", "meta", "metadoc", "version",
+    "wis", "meta", "metadoc", "release-plan", "version",
 )
 AW_INVOCATION = re.compile(r"(?:`|\buv run --project apps/aw )aw\s+([a-z0-9-]+)")
 LAUNCHER_PREFIX = "uv run --project apps/aw aw "
@@ -84,6 +86,32 @@ def frontmatter(text: str) -> dict[str, str]:
         if found:
             fields[key.strip()] = value.strip()
     return fields
+
+
+def string_constants(source: str) -> dict[str, str]:
+    """Return literal module constants only when each name has one write.
+
+    The all-tree write count refuses a later assignment hidden in a branch or
+    function.  A caller can therefore treat a missing name as contract drift.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+    values: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant) \
+                and isinstance(node.value.value, str):
+            values[target.id] = node.value.value
+    writes: dict[str, int] = {name: 0 for name in values}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) \
+                and node.id in writes:
+            writes[node.id] += 1
+    return {name: value for name, value in values.items() if writes[name] == 1}
 
 
 def aw_directories(root: Path) -> list[str]:
@@ -164,30 +192,16 @@ def collect(repo: Path) -> Reporter:
         report.check(f"{name} exists", (scripts_root / name).is_file())
 
     required_phrases = {
-        "aw-grill-me-to-meta": (
-            "Use before release Milestone planning.",
-            "(Milestone #<number>)",
-            "Tracking: Not assigned.",
-        ),
-        "aw-grill-meta-to-milestone": (
-            "GitHub's native milestone field is the only",
-            "<project>@<major>.<minor>.<patch>",
-            "aw milestone next-version <project> --json",
-            "default `minor` bump",
-            "--bump patch", "--bump major", "initial version",
-            "## Development Order",
-            "/aw-grill-milestone-to-issue",
-            "(Milestone #<number>)",
-        ),
-        "aw-grill-milestone-to-issue": (
-            "## Development Order",
-            "aw milestone reconcile",
-            "issue order, and the type of every issue.",
-            "type:feat", "type:fix", "type:refactor", "type:perf",
-            "type:test", "type:docs", "type:chore",
-            "type:spike", "type:report", "legacy `type:change`",
-            "global queue order.", "Only its first open row is executable.",
-            "/aw-grill-meta-to-milestone",
+        "aw-grill-release": (
+            "release-plan-v1", "release-plan validate --plan -",
+            "approved digest", "Apply one project only", "Default mode",
+            "tracker baseline summary", "{{milestone_number}}",
+            "{{development_order}}", "exact owner label",
+            "The list is also the enforced Apply order.",
+            "one sealed canonical", "plan_sha256", "approved `priority`",
+            "Include no command, hook, script, or executable field.",
+            "aw milestone next-version", "default minor bump",
+            "G1 through G5", "G6 and G7",
         ),
         "aw-e2e-for": (
             "aw milestone next",
@@ -267,17 +281,57 @@ def collect(repo: Path) -> Reporter:
                     command in text,
                 )
 
-    for skill in ("aw-grill-me-to-meta", "aw-grill-meta-to-milestone",
-                  "aw-grill-milestone-to-issue"):
+    for skill in ("aw-grill-release",):
         text = bodies.get(skill, "")
         how = text.partition("## How")[2].partition("## Acceptance")[0]
+        plan_section = how.partition("### Plan")[2].partition("### Apply")[0]
+        apply_section = how.partition("### Apply")[2]
         first = re.search(r"^(?P<rank>[1-9][0-9]*)\.\s+(?P<step>.+)$", how, re.M)
-        report.check(f"{skill}: first step enters Plan mode",
+        report.check(f"{skill}: first step selects a mode",
                      bool(first) and first.group("rank") == "1"
-                     and first.group("step").startswith("Enter Plan mode"),
+                     and first.group("step").startswith("Select `plan` or `apply`"),
                      f"first={first.group(0)!r}" if first else "no numbered step")
         report.check(f"{skill}: Plan mode is fail-closed",
-                     re.search(r"Stop if\s+the runtime cannot\s+confirm Plan mode\.", how) is not None)
+                     "Confirm native Plan mode. Stop if the runtime cannot confirm it." in how)
+        write_verbs = (
+            "release-plan apply", "release-plan resume", "metadoc commit",
+            "milestone create", "milestone update", "change create", "change update",
+            "git add", "git commit", "git push",
+        )
+        report.check(f"{skill}: Plan section has no write command",
+                     not any(verb in plan_section for verb in write_verbs))
+        report.check(f"{skill}: Apply mode is fail-closed",
+                     "Confirm Default mode and an explicit human approval" in apply_section
+                     and "approved digest is the only write authority" in apply_section)
+
+    retired = tuple("aw-grill-" + suffix for suffix in (
+        "me-to-meta", "meta-to-milestone", "milestone-to-issue",
+    ))
+    for skill, text in bodies.items():
+        report.check(f"{skill}: has no retired grill name", not any(name in text for name in retired))
+
+    release_plan_path = scripts_root / "release_plan.py"
+    release_plan_source = release_plan_path.read_text(encoding="utf-8") if release_plan_path.is_file() else ""
+    release_plan_constants = string_constants(release_plan_source)
+    report.check("release_plan.py has frozen schema and verbs",
+                 release_plan_constants.get("SCHEMA") == "release-plan-v1"
+                 and release_plan_constants.get("RECEIPT_SCHEMA")
+                 == "release-plan-receipt-v1"
+                 and '"validate"' in release_plan_source and '"apply"' in release_plan_source
+                 and '"resume"' in release_plan_source)
+    report.check("release_plan.py keeps validate read-only and apply approval-bound",
+                 'stdin_ok=True' in release_plan_source and 'stdin_ok=False' in release_plan_source
+                 and 'if sha != args.approved_digest:' in release_plan_source
+                 and 'approved digest does not match canonical plan' in release_plan_source)
+    report.check("release_plan.py binds baselines and resumable write identities",
+                 '"tracker_baseline"' in release_plan_source
+                 and "def _tracker_snapshot" in release_plan_source
+                 and "def _write_receipt" in release_plan_source
+                 and "def _recover_pending_issue" in release_plan_source
+                 and "def _verify_complete" in release_plan_source
+                 and "_after_write(\"milestone\")" in release_plan_source
+                 and "_after_write(\"meta_commit\")" in release_plan_source
+                 and "_after_write(\"finalize\")" in release_plan_source)
 
     milestone_path = scripts_root / "milestone.py"
     milestone_source = milestone_path.read_text(encoding="utf-8") if milestone_path.is_file() else ""
@@ -371,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     if report.failed:
         print(f"\n=> RED: {len(report.failed)} failure(s)")
         return 1
-    print("\n=> GREEN: nine byte-identical typed-delivery AW skill pairs")
+    print(f"\n=> GREEN: {len(SKILLS)} byte-identical typed-delivery AW skill pairs")
     return 0
 
 

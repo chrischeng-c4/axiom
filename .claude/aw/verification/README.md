@@ -1,6 +1,6 @@
 # Verification
 
-Gates for the two nine-skill AW mirrors, the release Milestone contract, and
+Gates for the two seven-skill AW mirrors, the release Milestone contract, and
 the remaining work-item schemas.
 
 ```
@@ -61,11 +61,10 @@ apps/aw/src/aw/
 .claude/aw/
   verification/   this directory
 .claude/skills/
-  aw-ask-user/                aw-e2e-for/                  aw-grill-me-to-meta/
-  aw-grill-meta-to-milestone/ aw-grill-milestone-to-issue/ aw-impl-for/
-  aw-prepare-goal/            aw-review/                   aw-test-for/
+  aw-ask-user/  aw-e2e-for/  aw-grill-release/  aw-impl-for/
+  aw-prepare-goal/  aw-review/  aw-test-for/
 .agents/skills/
-  the same nine SKILL.md files, byte-identical for Codex
+  the same exact SKILL.md files, byte-identical for Codex
 ```
 
 This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why
@@ -83,7 +82,7 @@ namespace survived only because it was literally in each directory's name;
 since the rename it means the directory and frontmatter name are both
 `aw-<skill>`.
 
-The thirteen scripts cannot be split across the nine skill directories, and that
+The fourteen scripts cannot be split across the seven skill directories, and that
 is not a preference: `e2e.py` and `impl.py` each load `leg.py` by
 `Path(__file__).parent / "leg.py"`, and `leg.change_module()` loads `change.py`
 the same way. One directory is load-bearing.
@@ -108,17 +107,14 @@ into it are deleted too, along with `prd.py`, renamed to `metadoc.py` and
 widened from one write root (`docs/product/`) to four
 (`README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**`) in the same change. There is
 no technical-design step: a design decision lives in the `//!` or `///` block
-of the module or type that owns it (`CLAUDE.md`, "Authoring"). The three grills
-that used to open and shape work items — `grill-me-to-epic`, `grill-me-to-change`
-and `grill-epic-to-changes` — folded first into a single `grill-meta-to-wis`,
-which split again on 2026-09-02 into `grill-meta-to-milestone` (the
-promise↔Milestone structure) and `grill-milestone-to-issue` (one Milestone's
-typed issue set and order). Both run `wis.py gap <project>` for the seven
-`G1..G7` rows of what a project's META-docs promise and its work-item set
-disagree about, then close their half of the gap through
-`milestone.py create|update` and `change.py create|update`.
-`check-meta` folded into `grill-me-to-meta`'s three-step landing sequence
-instead of surviving as its own skill.
+of the module or type that owns it (`CLAUDE.md`, "Authoring"). Product
+documents, release Milestones, typed issues, and Development Order now enter
+through one `aw-grill-release` skill. Its Plan phase is read-only. Its Apply phase
+delegates the exact approved digest to `release_plan.py`. That facade owns
+baseline checks, one-project writes, receipts, recovery, readback,
+reconciliation, and the final full `wis.py gap` snapshot. G1 through G5 are
+the planning gate. G6 and G7 remain recorded delivery work until the later
+e2e and implementation phases clear them.
 
 The scripts sit beside the skills rather than inside one. They lived under
 `skills/wi-epic-grill/scripts/` while that was the only skill running them,
@@ -132,7 +128,7 @@ directory for a file none of them owns.
 |---|---|
 | `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
-| `check_plugin.py` | a missing or drifted nine-skill mirror, missing script, legacy issue-epic writer, or incomplete type and Milestone contract |
+| `check_plugin.py` | a missing or drifted seven-skill mirror, missing script, legacy issue-epic writer, or incomplete release-plan, type, and Milestone contract |
 | `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that skips Plan mode |
 | `check_milestone.py` | a malformed SemVer-core title, wrong next-version bump, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
 | `check_type_registry.py` | a missing, duplicate, unknown, intake, or legacy executable type; wrong flow; unsafe retype; or lifecycle close without matching commit evidence |
@@ -501,9 +497,10 @@ silently.
 
 ## Who opens a delivery issue
 
-`aw-grill-milestone-to-issue` settles the complete issue set, each issue type,
-and the global order with the human in Plan mode. It then uses `milestone.py`
-and `change.py`; no SKILL.md may name a direct
+`aw-grill-release` settles the complete issue set, each issue type, each
+priority, and the global order with the human in Plan mode. Its approved Apply
+uses `release_plan.py`, which delegates writes to `milestone.py` and
+`change.py`; no SKILL.md may name a direct
 `gh issue|pr create|edit|close|comment|delete|reopen` command. The positive
 control for that detector is the former hand-written `gh issue create` block,
 so the assertion stays pinned to a defect that actually existed.

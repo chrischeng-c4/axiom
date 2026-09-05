@@ -16,9 +16,7 @@ CHECKER = HERE / "check_plugin.py"
 SKILLS = (
     "aw-ask-user",
     "aw-e2e-for",
-    "aw-grill-me-to-meta",
-    "aw-grill-meta-to-milestone",
-    "aw-grill-milestone-to-issue",
+    "aw-grill-release",
     "aw-impl-for",
     "aw-prepare-goal",
     "aw-review",
@@ -99,19 +97,83 @@ def change_default_milestone_bump(root: Path) -> None:
 
 def remove_plan_first(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-me-to-meta/SKILL.md"
+        path = root / runtime / "skills/aw-grill-release/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace("1. Enter Plan mode", "1. Read repository context", 1)
+        text = text.replace("1. Select `plan` or `apply`", "1. Read repository context", 1)
         path.write_text(text, encoding="utf-8")
 
 
 def make_plan_open(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-meta-to-milestone/SKILL.md"
+        path = root / runtime / "skills/aw-grill-release/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace("Stop if\n   the runtime cannot confirm Plan mode.",
-                            "Continue when the runtime cannot confirm Plan mode.", 1)
+        text = text.replace("Stop if the runtime cannot confirm it.",
+                            "Continue when the runtime cannot confirm it.", 1)
         path.write_text(text, encoding="utf-8")
+
+
+def put_write_in_plan(root: Path) -> None:
+    for runtime in (".agents", ".claude"):
+        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace(
+            "### Apply", "Run `release-plan apply` now.\n\n### Apply", 1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+
+def make_apply_open(root: Path) -> None:
+    for runtime in (".agents", ".claude"):
+        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace(
+            "Confirm Default mode and an explicit human approval",
+            "Assume Default mode and human approval",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+
+def remove_grill_version_policy(root: Path) -> None:
+    for runtime in (".agents", ".claude"):
+        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("default minor bump", "selected bump", 1)
+        path.write_text(text, encoding="utf-8")
+
+
+def weaken_grill_gap_contract(root: Path) -> None:
+    for runtime in (".agents", ".claude"):
+        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("G1 through G5", "some planning rows", 1)
+        path.write_text(text, encoding="utf-8")
+
+
+def bypass_plan_digest(root: Path) -> None:
+    path = root / "apps/aw/src/aw/scripts/release_plan.py"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("if sha != args.approved_digest:", "if False:", 1)
+    path.write_text(text, encoding="utf-8")
+
+
+def change_release_plan_schema(root: Path) -> None:
+    path = root / "apps/aw/src/aw/scripts/release_plan.py"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace('SCHEMA = "release-plan-v1"',
+                        'SCHEMA = "release-plan-v2"', 1)
+    path.write_text(text, encoding="utf-8")
+
+
+def conditionally_reassign_release_plan_schema(root: Path) -> None:
+    path = root / "apps/aw/src/aw/scripts/release_plan.py"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        'SCHEMA = "release-plan-v1"',
+        'SCHEMA = "release-plan-v1"\nif True:\n    SCHEMA = "release-plan-v2"',
+        1,
+    )
+    path.write_text(text, encoding="utf-8")
 
 
 def erase_behavior_flow(root: Path) -> None:
@@ -160,10 +222,25 @@ def main() -> int:
              "FAIL milestone.py exposes `next`"),
         case("Milestone default bump changes", change_default_milestone_bump,
              "FAIL milestone.py defaults new release Milestones to a minor bump"),
-        case("grill skips Plan mode", remove_plan_first,
-             "FAIL aw-grill-me-to-meta: first step enters Plan mode"),
+        case("grill skips mode selection", remove_plan_first,
+             "FAIL aw-grill-release: first step selects a mode"),
         case("grill Plan mode is open", make_plan_open,
-             "FAIL aw-grill-meta-to-milestone: Plan mode is fail-closed"),
+             "FAIL aw-grill-release: Plan mode is fail-closed"),
+        case("grill Plan section writes", put_write_in_plan,
+             "FAIL aw-grill-release: Plan section has no write command"),
+        case("grill Apply mode is open", make_apply_open,
+             "FAIL aw-grill-release: Apply mode is fail-closed"),
+        case("grill loses default version policy", remove_grill_version_policy,
+             "FAIL aw-grill-release: carries typed queue contract `default minor bump`"),
+        case("grill weakens gap handoff", weaken_grill_gap_contract,
+             "FAIL aw-grill-release: carries typed queue contract `G1 through G5`"),
+        case("release plan ignores approved digest", bypass_plan_digest,
+             "FAIL release_plan.py keeps validate read-only and apply approval-bound"),
+        case("release plan schema changes", change_release_plan_schema,
+             "FAIL release_plan.py has frozen schema and verbs"),
+        case("release plan schema is reassigned in a branch",
+             conditionally_reassign_release_plan_schema,
+             "FAIL release_plan.py has frozen schema and verbs"),
         case("frozen behavior flow is erased", erase_behavior_flow,
              "FAIL wi_types.py owns the frozen delivery and intake vocabulary"),
         case("legacy migration loses apply", remove_migration_apply,

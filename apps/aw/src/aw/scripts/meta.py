@@ -116,7 +116,7 @@ PRODUCERS: dict[str, str] = {}
 # same way the deleted binary's verbs were.
 AW_GROUPS = (
     "change", "milestone", "e2e", "impl", "maint",
-    "wis", "meta", "metadoc", "version",
+    "wis", "meta", "metadoc", "release-plan", "version",
 )
 AW_INVOCATION = re.compile(r"(?:`|\buv run --project apps/aw )aw\s+([a-z0-9-]+)")
 AW_SPAN = re.compile(r"`((?:uv run --project apps/aw )?aw\s+[a-z][^`]*)`")
@@ -143,10 +143,11 @@ AW_BARE = re.compile(r"^\s*aw\s+([a-z0-9-]+)")
 # `aw wi validate`" in the present tense -- that is the rot, not a record of it.
 # `apps/mamba/CONTRIBUTING.md:90` was a live instruction in a checklist table
 # telling a human to run `aw wi create`; exempting it would have left a reader
-# following a command that cannot run. It now names `/aw-grill-milestone-to-issue` and
-# `change.py create`, which is the shape a forward-looking instruction has to
-# take -- unlike a past-tense evidence row, which must not be repointed at a
-# live command, because that fabricates a measurement nobody took.
+# following a command that cannot run. It now names an approved
+# `aw-grill-release apply` and `change.py create`, which is the shape a
+# forward-looking instruction has to take -- unlike a past-tense evidence row,
+# which must not be repointed at a live command, because that fabricates a
+# measurement nobody took.
 DEAD_COMMAND_EXEMPT: dict[str, tuple[str, ...]] = {
     "CLAUDE.md": (
         'a stray `aw wi …` now fails with "command not found"',

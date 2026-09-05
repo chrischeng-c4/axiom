@@ -27,6 +27,7 @@ maint_app = typer.Typer(no_args_is_help=True, help="Maintenance phase for refact
 wis_app = typer.Typer(no_args_is_help=True, help="Promise-to-tracker gap measurement.")
 meta_app = typer.Typer(no_args_is_help=True, help="META-doc rule scan (read-only).")
 metadoc_app = typer.Typer(no_args_is_help=True, help="META-doc write allowlist check and commit.")
+release_plan_app = typer.Typer(no_args_is_help=True, help="Approved, resumable multi-project release planning.")
 
 app.add_typer(change_app, name="change")
 app.add_typer(milestone_app, name="milestone")
@@ -36,6 +37,7 @@ app.add_typer(maint_app, name="maint")
 app.add_typer(wis_app, name="wis")
 app.add_typer(meta_app, name="meta")
 app.add_typer(metadoc_app, name="metadoc")
+app.add_typer(release_plan_app, name="release-plan")
 
 
 def _delegate(module: str, argv: list[str]) -> None:
@@ -43,7 +45,7 @@ def _delegate(module: str, argv: list[str]) -> None:
     scripts = str(_SCRIPTS)
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
-    mod = importlib.import_module(module)
+    mod = importlib.import_module(module.replace("-", "_"))
     raise typer.Exit(mod.main(argv))
 
 
@@ -56,6 +58,31 @@ def main() -> None:
 def version() -> None:
     """Print the aw version."""
     typer.echo(__version__)
+
+
+# --- release-plan ---------------------------------------------------------
+
+@release_plan_app.command("validate")
+def release_plan_validate(plan: str = typer.Option(..., "--plan")) -> None:
+    """Canonicalize and validate a release plan without changing state."""
+    _delegate("release-plan", ["validate", "--plan", plan])
+
+
+@release_plan_app.command("apply")
+def release_plan_apply(
+    plan: str = typer.Option(..., "--plan"),
+    project: str = typer.Option(..., "--project"),
+    approved_digest: str = typer.Option(..., "--approved-digest"),
+) -> None:
+    """Apply one approved project through its durable receipt."""
+    _delegate("release-plan", ["apply", "--plan", plan, "--project", project,
+                                "--approved-digest", approved_digest])
+
+
+@release_plan_app.command("resume")
+def release_plan_resume(receipt: str = typer.Option(..., "--receipt")) -> None:
+    """Continue or re-check one existing release-plan receipt."""
+    _delegate("release-plan", ["resume", "--receipt", receipt])
 
 
 # --- change ---------------------------------------------------------------

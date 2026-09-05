@@ -57,8 +57,8 @@ they wrap.
 
 ### Reach for a skill before typing the commands it wraps
 
-Eighteen skills live under `.agents/skills/`, each byte-identical to its
-`.claude/skills/` twin: the nine `aw-*` lifecycle skills and nine standalone
+Sixteen skills live under `.agents/skills/`, each byte-identical to its
+`.claude/skills/` twin: the seven `aw-*` lifecycle skills and nine standalone
 ones — `git-commit`, `git-rebase`, `git-push`, `git-land`, `gh-create-pr`,
 `gh-merge-pr`, `build-debug`, `build-release`, `ui-ux-pro-max`. A skill's name is its directory name — no leading slash, no
 colon form. A skill is a `SKILL.md` you open and follow; the enforcement is
@@ -72,7 +72,7 @@ gate. Re-typing those commands yourself keeps the work and drops the refusal.
 | a pull request, or its merge | `gh-create-pr`, `gh-merge-pr` | `gh pr create` / `gh pr merge` typed yourself |
 | a debug run of keep, defer, relay, or loom | `build-debug` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
-| a project's META-docs, its release Milestone, or a Milestone's issue set | `aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`, `aw-grill-milestone-to-issue` — they interview the human, so they run in the main thread | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or `aw milestone` / `aw change` outside a grill |
+| a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release plan` in Plan mode, then its approved `apply` in Default mode; both stay in the main thread | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or `aw milestone` / `aw change` outside the approved plan |
 | a queue head's e2e contract | `aw-e2e-for`, through `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main thread |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, through `<p>-dev` | writing `apps/<p>/src/**` in the main thread |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
@@ -148,8 +148,8 @@ implementation stay as colocated unit tests. `tech-design/`,
 `external-contracts/`, and `tests/` are superseded — never add a file to one
 — and a design decision goes in the `//!` or `///` block of the module or
 type that owns it. `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` are
-written by `aw-grill-me-to-meta` before any work item exists, never during a
-phase.
+written by the approved `aw-grill-release apply` before any work item exists,
+never during a phase.
 
 ### Git and worktrees
 

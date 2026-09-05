@@ -829,9 +829,8 @@ def cmd_adopt(args) -> int:
     """Rename a staged body to `<iid>.md` once the tracker has assigned one.
 
     `create` does this for itself. This verb exists for work items opened
-    through `gh issue create` directly rather than through this script -- the
-    child work items `/aw-grill-milestone-to-issue` opens -- where nothing else is
-    positioned to complete the rename.
+    through `gh issue create` directly rather than through this script, where
+    nothing else is positioned to complete the rename.
     """
     path = Path(args.path)
     if not path.is_file():

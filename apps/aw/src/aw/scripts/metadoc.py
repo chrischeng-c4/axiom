@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Refuse a META-doc run that reached outside the project's own documents.
 
-`/aw-grill-me-to-meta` interviews a human and writes prose. Prose is exactly
-what no exit code can judge, so this script judges the two things around it
-that an exit code *can*: where the run wrote, and what the commit says about
-it.
+`aw-grill-release plan` interviews a human without writing. Its approved
+`apply` writes the exact planned prose. Prose is exactly what no exit code can
+judge, so this script judges the two things around it that an exit code *can*:
+where the run wrote, and what the commit says about it.
 
 **Where it wrote.** The skill's `## Never` list already says "never write
 outside the named project's documents". A `Never` list is a sentence an agent
@@ -35,10 +35,9 @@ forgotten:
     meta.py check <project>        # M1-M7 over the edited tree
     metadoc.py commit <project> --why <path>
 
-**What the commit says.** The next skill in the ladder --
-`/aw-grill-meta-to-milestone`, which measures the promises against the tracker and
-the codebase -- has to find these commits and know what each one touched. It
-cannot get that from a hand-written subject line. So `commit` is the only
+**What the commit says.** `aw-grill-release apply` measures the promises
+against the tracker and the codebase. It must know what each commit touched.
+It cannot get that from a hand-written subject line. So `commit` is the only
 writer here: it re-runs every check, stages exactly the allowlist, and appends
 a trailer block naming the project, every section this commit added, modified,
 or removed, and how many of those are still unbound. That makes the history
@@ -70,6 +69,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -162,7 +162,9 @@ BULLET = re.compile(r"^-[ \t]+(?P<key>Promise, for now|[A-Z][A-Za-z -]*?)"
                     r":[ \t]*(?P<rest>.*)$")
 BACKTICKED = re.compile(r"`([^`]+)`")
 TRAILER = re.compile(r"^[A-Za-z][A-Za-z-]*: .+$")
-TRACKING_LINK = re.compile(r"Tracking:[ \t]*\[(?:Milestone[ \t]+#|#)\d+\]")
+TRACKING_LINK = re.compile(
+    r"Tracking:[ \t]*\[(?P<kind>Milestone[ \t]+#|#)(?P<number>\d+)\]"
+)
 
 
 @dataclass(frozen=True)
@@ -181,7 +183,7 @@ CHECKS = {
     "P1": "the project carries README.md, STATUS.md, ROADMAP.md and docs/",
     "P2": "every changed path is one of the project's four document paths",
     "P3": "one of those four actually changed",
-    "P4": "no heading or Tracking: line gained a tracker binding",
+    "P4": "no heading or Tracking: line gained or changed a tracker binding",
     "P5": "every touched section carries its own kind's bullets, in order",
     "P6": "an Outcome: bullet keeps its Tracking: on the same line",
     "P7": "every STATUS row id and ROADMAP outcome id resolves",
@@ -316,7 +318,7 @@ def is_area(repo: Path, project: str, path: str) -> bool:
     areas they made `wis.py`'s `G1` row permanently `?` UNMEASURED for every
     one of those projects, because a section with no owner bullet has no kind.
 
-    So the index is the registry. `/aw-grill-me-to-meta` already writes one
+    So the index is the registry. `aw-grill-release apply` writes one
     `README.md` per `docs/` directory and refuses a section indexed in the
     wrong directory's; this makes that file the thing that declares its
     directory to hold promises at all. A reference document needs no marker
@@ -357,8 +359,15 @@ def area_population(repo: Path, project: str) -> tuple[int, int]:
     return areas, reference
 
 
-def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
-    """Every finding, and the population each check was measured over."""
+def collect(repo: Path, project: str, *,
+            release_milestone_number: int | None = None) -> tuple[list[Finding], dict]:
+    """Every finding, and the population each check was measured over.
+
+    ``release_milestone_number`` is an internal handoff for ``release-plan``.
+    The public ``check`` and ``commit`` parsers never expose it. A normal
+    META-doc run therefore cannot add a tracker binding. The approved-plan
+    facade can add only its one exact Milestone number.
+    """
     out: list[Finding] = []
     root = repo / project
     areas = f"{project}/{AREAS}"
@@ -371,8 +380,9 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
                                "names a README capability, and these files are "
                                "where those ids have to resolve"))
     if not (repo / areas).is_dir():
-        out.append(Finding("P1", areas, "missing; run /aw-grill-me-to-meta in "
-                           "create mode before this check can mean anything"))
+        out.append(Finding("P1", areas, "missing; use aw-grill-release plan "
+                           "in product mode, then approve and apply it before "
+                           "this check can mean anything"))
         return out, {"project": project, "changed": [], "sections": 0,
                       "areas": 0, "reference": 0}
 
@@ -412,16 +422,47 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
         # point of a brownfield META-doc run -- and refusing it outright would
         # make this check unusable on every project past its first epic.
         before = git_show(repo, path)
-        gained_bound = ({bare(t) for t, _ in parsed if BINDING.search(t)}
-                        - {bare(t) for t, _ in sections(before) if BINDING.search(t)})
-        for title in sorted(gained_bound):
-            out.append(Finding("P4", path, f"section `{title}` gained a tracker "
-                               "binding; that is /aw-grill-meta-to-milestone's write, "
-                               "made in the same run that opens the milestone"))
-        gained_links = (len(TRACKING_LINK.findall(text))
-                        - len(TRACKING_LINK.findall(before)))
-        if gained_links > 0:
-            out.append(Finding("P4", path, f"{gained_links} `Tracking:` tracker "
+        before_bindings = {}
+        for raw, _body in sections(before):
+            milestone_match = MILESTONE.search(raw)
+            legacy_match = LEGACY_IID.search(raw)
+            before_bindings[bare(raw)] = (
+                ("milestone", int(milestone_match.group(1)))
+                if milestone_match else
+                (("issue", int(legacy_match.group(1))) if legacy_match else None)
+            )
+        for raw, _body in parsed:
+            milestone_match = MILESTONE.search(raw)
+            legacy_match = LEGACY_IID.search(raw)
+            after_binding = (
+                ("milestone", int(milestone_match.group(1)))
+                if milestone_match else
+                (("issue", int(legacy_match.group(1))) if legacy_match else None)
+            )
+            title = bare(raw)
+            if after_binding is not None \
+                    and after_binding != before_bindings.get(title) \
+                    and after_binding != ("milestone", release_milestone_number):
+                out.append(Finding("P4", path, f"section `{title}` gained or changed a tracker "
+                                   "binding; that is aw-grill-release apply's write, "
+                                   "made in the same run that opens the milestone"))
+        before_links = Counter(
+            ("milestone" if match.group("kind").startswith("Milestone") else "issue",
+             int(match.group("number")))
+            for match in TRACKING_LINK.finditer(before)
+        )
+        after_links = Counter(
+            ("milestone" if match.group("kind").startswith("Milestone") else "issue",
+             int(match.group("number")))
+            for match in TRACKING_LINK.finditer(text)
+        )
+        gained_links = list((after_links - before_links).elements())
+        refused_links = [
+            binding for binding in gained_links
+            if binding != ("milestone", release_milestone_number)
+        ]
+        if refused_links:
+            out.append(Finding("P4", path, f"{len(refused_links)} `Tracking:` tracker "
                                "link(s) appeared; a section this skill writes "
                                "ends `Tracking: not assigned.`"))
 
@@ -460,7 +501,7 @@ def collect(repo: Path, project: str) -> tuple[list[Finding], dict]:
                                    f"bullets out of order: {', '.join(ordered)}"))
             for key, rest in bullets(body):
                 if key == "Outcome":
-                    # The one-line rule is not cosmetic: /aw-grill-meta-to-milestone
+                    # The one-line rule is not cosmetic: aw-grill-release plan
                     # finds the line with `grep` when it binds the section, and
                     # a soft wrap hides it from the bind.
                     raw_line = next((line for line in body.splitlines()
@@ -600,7 +641,7 @@ def section_modes(repo: Path, project: str, changed: list[str]) -> list[str]:
 def unbound_count(repo: Path, project: str, changed: list[str]) -> int:
     """Touched sections still carrying no Milestone binding.
 
-    What `/aw-grill-meta-to-milestone` reads to know how much of this commit is still
+    What `aw-grill-release plan` reads to know how much of this commit is still
     waiting for a work item -- and what its `unbound promise` gap row starts
     from.
     """
@@ -685,7 +726,10 @@ def cmd_commit(args: argparse.Namespace) -> int:
     if len(subject) > 72:
         usage_error(f"--why subject is {len(subject)} chars; keep it under 72")
 
-    findings, population = collect(repo, project)
+    findings, population = collect(
+        repo, project,
+        release_milestone_number=getattr(args, "release_milestone_number", None),
+    )
     if findings:
         report(findings, population, "text", "")
         print("\nrefusing to commit: fix the findings above")
