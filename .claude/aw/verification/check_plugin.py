@@ -291,14 +291,20 @@ def collect(repo: Path) -> Reporter:
                      bool(first) and first.group("rank") == "1"
                      and first.group("step").startswith("Select `plan` or `apply`"),
                      f"first={first.group(0)!r}" if first else "no numbered step")
-        report.check(f"{skill}: Plan mode is fail-closed",
-                     "Confirm native Plan mode. Stop if the runtime cannot confirm it." in how)
+        report.check(f"{skill}: Plan preparation ignores native UI mode",
+                     "Prepare the plan read-only in any runtime mode. No mode switch is required."
+                     in plan_section
+                     and "native Plan mode" not in how)
+        report.check(f"{skill}: settled plans go directly to Apply",
+                     "A validated plan with an approved digest goes directly to Apply." in how
+                     and "Reuse an existing approved plan and its settled decisions." in how
+                     and "Do not restart\n   the interview." in plan_section)
         write_verbs = (
             "release-plan apply", "release-plan resume", "metadoc commit",
             "milestone create", "milestone update", "change create", "change update",
             "git add", "git commit", "git push",
         )
-        report.check(f"{skill}: Plan section has no write command",
+        report.check(f"{skill}: Plan operation has no write command",
                      not any(verb in plan_section for verb in write_verbs))
         report.check(f"{skill}: Apply mode is fail-closed",
                      "Confirm Default mode and an explicit human approval" in apply_section

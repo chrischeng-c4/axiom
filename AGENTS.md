@@ -72,7 +72,7 @@ gate. Re-typing those commands yourself keeps the work and drops the refusal.
 | a pull request, or its merge | `gh-create-pr`, `gh-merge-pr` | `gh pr create` / `gh pr merge` typed yourself |
 | a debug run of keep, defer, relay, or loom | `build-debug` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
-| a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release plan` in Plan mode, then its approved `apply` in Default mode; both stay in the main thread | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or `aw milestone` / `aw change` outside the approved plan |
+| a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release`: reuse the existing plan, prepare it read-only in the current mode if needed, then approved `apply` in Default mode; both stay in the main thread | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or `aw milestone` / `aw change` outside the approved plan |
 | a queue head's e2e contract | `aw-e2e-for`, through `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main thread |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, through `<p>-dev` | writing `apps/<p>/src/**` in the main thread |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |

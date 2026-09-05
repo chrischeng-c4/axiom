@@ -121,8 +121,9 @@ def skill_invocation(skill: str) -> str:
 # and a design decision now lives in the `//!` or `///` block of the module
 # or type that owns it (`CLAUDE.md`, "Authoring").
 # The product and release interviews now have one entry: `aw-grill-release`.
-# Its Plan phase reads META documents, tracker state, and `wis.py gap`, then
-# returns one closed plan and digest without writes. Its Default-mode Apply
+# Its read-only plan operation reads META documents, tracker state, and
+# `wis.py gap`, then returns one closed plan and digest without writes. Its
+# Default-mode Apply
 # phase sends that exact approved plan to `release_plan.py`. The facade runs
 # `metadoc.py`, `meta.py`, `milestone.py`, `change.py`, and `wis.py` through a
 # durable receipt. This keeps interview decisions in the skill and retryable

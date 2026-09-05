@@ -16,7 +16,10 @@ only when the human explicitly asks it to create or set the goal.
 ## How
 
 1. Resolve the input:
-   - a project routes to `aw-grill-release plan`;
+   - a project with a validated plan and approved digest routes directly to
+     `aw-grill-release apply`;
+   - otherwise, reuse its existing plan in `aw-grill-release plan` without a
+     runtime mode switch or a repeated interview;
    - `#<iid>` routes by type: behavior to e2e then impl, maintenance to maint,
      and intake to intake handling;
    - `milestone:<number>` or `<project>@<version>` routes to its queue head;
