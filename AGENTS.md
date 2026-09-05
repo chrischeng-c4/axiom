@@ -103,7 +103,7 @@ change edits a template, never one project's copy, and
 | Role | Effort | Owns | Never |
 |---|---|---|---|
 | `<p>-pm` (22 apps, 22 libs, plus `aw-pm`) | `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, `docs/**` as uncommitted drafts passing `aw metadoc check` and `aw meta check` | `aw metadoc commit`, any Git write, `Tracking:` binding, `src/`, `e2e/` |
-| `<p>-qa` (22 apps, 22 libs) | `max` | the e2e contract — black-box cases written to fail before the implementation exists | `src/` |
+| `<p>-qa` (22 apps, 22 libs) | `max` | the e2e contract — black-box cases written to fail before the implementation exists, answering for the product's behavior, security, and performance in every contract (a case, or a reason anchored to the change points; a missing performance budget is a gap for `<p>-pm`) | `src/`, an invented performance number, a facet excused by the issue's silence |
 | `<p>-dev` (22 apps, 22 libs) | `medium` | source plus colocated unit tests, verified by running them | `e2e/` |
 | `cto` | `high` | one cross-project boundary decision draft as a `type:spike` body | any file write, issue creation, Milestone or issue choices |
 | `project-manager` | `medium` | one release Milestone description draft, validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding |

@@ -73,7 +73,7 @@ and `render_fleet.py --check` refuses a hand-edited file.
 | Agent | Model / effort | Owns | Never |
 |---|---|---|---|
 | `<p>-pm` | fable / `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` as uncommitted drafts that pass `aw metadoc check` and `aw meta check` | `aw metadoc commit`, any Git write, `Tracking:` binding, `src/`, `e2e/`, a cross-project boundary claim |
-| `<p>-qa` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
+| `<p>-qa` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists, answering for the product's behavior, security, and performance in every contract (a case, or a reason anchored to the change points; a missing performance budget is a gap for `<p>-pm`); for apps it runs `aw-e2e-for` itself | `src/`, an invented performance number, a facet excused by the issue's silence |
 | `<p>-dev` | sonnet / `medium` | source plus colocated unit tests, verified by running them; for apps it runs `aw-impl-for`, impl and maint legs | `e2e/` |
 | `cto` | fable / `high` | one cross-project boundary decision draft — shared → `libs/`, app-owned, or a new lib — as a `type:spike` body plus the `Sources` / `Boundary:` lines it implies | any file write, `gh issue create`, Milestone or issue choices |
 | `project-manager` | opus / `medium` | one release Milestone description draft for one promise, written to the path the session names and validated with `aw milestone validate --draft` | `aw milestone create`, docs, `Tracking:` binding, the Development Order |

@@ -57,6 +57,13 @@ section instead of writing it.
     file ends with its non-goals.
   When `STATUS.md` or `ROADMAP.md` is missing, draft all four paths in the
   same run; the landing commit needs all four present.
+- A performance gap reported by `claim-token-qa` names a `src/` change point,
+  the capability or surface `ID` it belongs to, the consumer's calling
+  `path:line`, and a command with its observed value. Draft the budget as
+  the owning capability's `- Promise:` line or that surface's STATUS
+  `Limits` cell, stated as a limit the human confirms; the observed value is
+  the measurement, never the promise. A budget the tree cannot keep today is
+  a ROADMAP outcome, not a capability.
 - Run the checks and fix until both are clean:
 
   ```bash
