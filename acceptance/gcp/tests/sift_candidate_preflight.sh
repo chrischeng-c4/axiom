@@ -34,9 +34,9 @@ printf '%s\n' \
   'printf "candidate gate passed\\n"' \
   > "$repo/apps/sift/test.sh"
 chmod +x "$repo/apps/sift/test.sh" "$repo/acceptance/gcp/scripts/"*.sh
-git -c init.defaultBranch=main -C "$repo" init -q
-git -C "$repo" add .
-git -c user.name=Sift-Test -c user.email=sift-test@example.invalid \
+git -c core.fsmonitor=false -c init.defaultBranch=main -C "$repo" init -q
+git -c core.fsmonitor=false -C "$repo" add .
+git -c core.fsmonitor=false -c user.name=Sift-Test -c user.email=sift-test@example.invalid \
   -C "$repo" commit -qm fixture
 
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$fake_bin/docker"
@@ -52,7 +52,7 @@ exact_build() {
   [[ ! -e "$cancelled" ]] || status="CANCELLED"
   jq -n \
     --argjson failure "$(cat "$failure_receipt")" \
-    --arg id "$build_id" --arg status "$status" '
+    --arg id "$build_id" --arg status "$status" --arg scenario "$SIFT_FAKE_SCENARIO" '
       {
         id:$id,
         status:$status,
@@ -66,6 +66,7 @@ exact_build() {
         },
         source:{storageSource:{
           bucket:"axiom-test_cloudbuild",
+          generation:"301",
           object:("source/axiom-gcp-operator-" + $failure.run_id + "/source.tgz")
         }},
         tags:[
@@ -75,7 +76,8 @@ exact_build() {
           ("axiom-acquisition-" + $failure.acquisition_id)
         ],
         results:{images:[]}
-      }
+      } | .sourceProvenance.resolvedStorageSource = .source.storageSource
+      | if $scenario == "source-hash-mismatch" then del(.sourceProvenance) else . end
     '
 }
 case "${1:-} ${2:-}" in
@@ -122,6 +124,10 @@ case "${1:-} ${2:-}" in
             exit 1
           }
           cp "${SIFT_FAKE_STATE_DIR:?}/remote-submit-intent.json" "$destination_arg"
+          ;;
+        */source.tgz\#301)
+          [[ "${SIFT_FAKE_SCENARIO:?}" == "source-hash-mismatch" ]] || exit 1
+          printf 'different archive bytes\n' > "$destination_arg"
           ;;
         *)
           echo "NOT_FOUND" >&2
@@ -188,15 +194,18 @@ case "${1:-} ${2:-}" in
     if [[ -f "$failure_receipt" ]]; then
       exact_build "$build_id"
     else
-      jq -n --arg id "$build_id" --arg run_id "${RUN_ID:?}" '
+      jq -n --arg id "$build_id" --arg run_id "${RUN_ID:?}" \
+        --arg scenario "$SIFT_FAKE_SCENARIO" '
         {
           id:$id,
           status:"WORKING",
           source:{storageSource:{
             bucket:"axiom-test_cloudbuild",
+            generation:"301",
             object:("source/axiom-gcp-operator-" + $run_id + "/source.tgz")
           }}
-        }
+        } | .sourceProvenance.resolvedStorageSource = .source.storageSource
+        | if $scenario == "source-hash-mismatch" then del(.sourceProvenance) | .status = "QUEUED" else . end
       '
     fi
     ;;
@@ -216,6 +225,17 @@ case "${1:-} ${2:-}" in
           exit 1
         }
         jq -n '{generation:"201"}'
+        ;;
+      */source.tgz\#301)
+        case "${SIFT_FAKE_SCENARIO:?}" in
+          source-hash-mismatch|source-generation-mismatch)
+            generation=301
+            [[ "$SIFT_FAKE_SCENARIO" != "source-generation-mismatch" ]] || generation=302
+            jq -n --arg generation "$generation" --arg run_id "${RUN_ID:?}" \
+              '{bucket:"axiom-test_cloudbuild",name:("source/axiom-gcp-operator-" + $run_id + "/source.tgz"),generation:$generation}'
+            ;;
+          *) echo "injected source-object receipt failure" >&2; exit 54 ;;
+        esac
         ;;
       *)
         echo "injected source-object receipt failure" >&2
@@ -419,6 +439,27 @@ jq -e '
   and .image_tag == (.git_sha + "-build-failed-" + .acquisition_id)
   and .source_prefix == "gs://axiom-test_cloudbuild/source/axiom-gcp-operator-build-failed"
   ' "${failed_build_dir}.failed/candidate-preparation-failure.json" >/dev/null
+
+for scenario in source-generation-mismatch source-hash-mismatch; do
+  : > "$gcloud_log"
+  version_run_id=bad-generation
+  [[ "$scenario" != "source-hash-mismatch" ]] || version_run_id=bad-source-hash
+  version_failure_dir="$(run_failure "$scenario" "$version_run_id")"
+  # Both metadata and content reads must name the generation, not the latest object.
+  rg -F "storage objects describe gs://axiom-test_cloudbuild/source/axiom-gcp-operator-${version_run_id}/source.tgz#301 --format=json" "$gcloud_log" >/dev/null
+  if [[ "$scenario" == "source-hash-mismatch" ]]; then
+    jq -e '.status == "QUEUED" and .sourceProvenance == null' "${version_failure_dir}.failed/cloud-build-submit.json" >/dev/null
+    rg -F "storage cp gs://axiom-test_cloudbuild/source/axiom-gcp-operator-${version_run_id}/source.tgz#301 " "$gcloud_log" >/dev/null
+    rg -F 'Cloud Build staged source does not match the candidate archive' "$test_root/${version_run_id}.log" >/dev/null
+  else
+    rg -F 'GCS source receipt does not match the Cloud Build generation' "$test_root/${version_run_id}.log" >/dev/null
+    if rg -F "storage cp gs://axiom-test_cloudbuild/source/axiom-gcp-operator-${version_run_id}/source.tgz" "$gcloud_log" >/dev/null; then
+      echo "a mismatched generation receipt reached the source download" >&2
+      exit 1
+    fi
+  fi
+  [[ ! -e "$version_failure_dir" && -f "${version_failure_dir}.failed/candidate-cleanup.json" ]]
+done
 
 : > "$gcloud_log"
 lost_response_dir="$(run_failure lost-response lost-response)"

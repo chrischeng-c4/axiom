@@ -40,7 +40,7 @@ jq -n --arg git_sha "$git_sha" --arg source_sha "$source_sha" \
   --arg acquisition_id "$acquisition_id" '
   {
     id:"build-1",
-    source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-receipt1/source.tgz"}},
+    source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-receipt1/source.tgz",generation:"301"}},
     substitutions:{
       _GIT_SHA:$git_sha,
       _RUN_ID:"receipt1",
@@ -49,7 +49,7 @@ jq -n --arg git_sha "$git_sha" --arg source_sha "$source_sha" \
       _TAG:$image_tag,
       _CANDIDATE_ACQUISITION_ID:$acquisition_id
     }
-  }
+  } | .sourceProvenance.resolvedStorageSource = .source.storageSource
   ' \
   > "$candidate_dir/cloud-build-submit.json"
 jq -n \
@@ -66,7 +66,7 @@ jq -n \
     {
       id:"build-1",
       status:"SUCCESS",
-      source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-receipt1/source.tgz"}},
+      source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-receipt1/source.tgz",generation:"301"}},
       substitutions:{
         _GIT_SHA:$git_sha,
         _RUN_ID:"receipt1",
@@ -86,9 +86,9 @@ jq -n \
         {name:$rig_name,digest:$rig_digest},
         {name:$runner_name,digest:$runner_digest}
       ]}
-    }
+    } | .sourceProvenance.resolvedStorageSource = .source.storageSource
   ' > "$candidate_dir/cloud-build-final.json"
-jq -n '{bucket:"axiom-test_cloudbuild",name:"source/axiom-gcp-operator-receipt1/source.tgz"}' \
+jq -n '{bucket:"axiom-test_cloudbuild",name:"source/axiom-gcp-operator-receipt1/source.tgz",generation:"301"}' \
   > "$candidate_dir/cloud-build-source-object.json"
 jq -n --arg git_sha "$git_sha" --arg source_bundle_sha256 "$source_sha" \
   --arg source_uri "$source_prefix/source.tgz" \
@@ -208,6 +208,48 @@ if [[ -n "${SIFT_CANDIDATE_FIXTURE_OUT:-}" ]]; then
 fi
 copy_sift_candidate_evidence "$candidate_dir" "$copied"
 verify_sift_candidate_directory "$copied"
+
+# Refresh the file hash after each mutation. These must fail on the source
+# version contract, not merely on byte tampering.
+for mutation in submit-version submit-both submit-resolved final-version final-missing final-unresolved object-version; do
+  case "$mutation" in
+    submit-version) name=cloud-build-submit.json; filter='.source.storageSource.generation = "302"' ;;
+    submit-both) name=cloud-build-submit.json; filter='.source.storageSource.generation = "302" | .sourceProvenance.resolvedStorageSource = .source.storageSource' ;;
+    submit-resolved) name=cloud-build-submit.json; filter='.sourceProvenance.resolvedStorageSource.generation = "302"' ;;
+    final-version) name=cloud-build-final.json; filter='.source.storageSource.generation = "302" | .sourceProvenance.resolvedStorageSource = .source.storageSource' ;;
+    final-missing) name=cloud-build-final.json; filter='del(.source.storageSource.generation)' ;;
+    final-unresolved) name=cloud-build-final.json; filter='del(.sourceProvenance)' ;;
+    object-version) name=cloud-build-source-object.json; filter='.generation = "302"' ;;
+  esac
+  jq "$filter" "$copied/$name" > "$candidate_dir/$name"
+  digest="$(sift_candidate_file_sha256 "$candidate_dir/$name")"
+  jq --arg name "$name" --arg digest "$digest" '.file_sha256[$name] = $digest' \
+    "$copied/candidate.json" > "$candidate_dir/candidate.json"
+  if verify_sift_candidate_directory "$candidate_dir"; then
+    echo "candidate validation accepted source generation mutation: $mutation" >&2
+    exit 1
+  fi
+  cp "$copied/$name" "$candidate_dir/$name"
+  cp "$copied/candidate.json" "$candidate_dir/candidate.json"
+done
+# The first asynchronous build receipt can precede resolved provenance. Its
+# pinned source must still match the object and the fully resolved final build.
+jq 'del(.sourceProvenance)' "$copied/cloud-build-submit.json" > "$candidate_dir/cloud-build-submit.json"
+digest="$(sift_candidate_file_sha256 "$candidate_dir/cloud-build-submit.json")"
+jq --arg digest "$digest" '.file_sha256["cloud-build-submit.json"] = $digest' \
+  "$copied/candidate.json" > "$candidate_dir/candidate.json"
+verify_sift_candidate_directory "$candidate_dir" || {
+  echo "candidate validation rejected an unresolved initial receipt with verified final provenance" >&2
+  exit 1
+}
+cp "$copied/cloud-build-submit.json" "$candidate_dir/cloud-build-submit.json"
+cp "$copied/candidate.json" "$candidate_dir/candidate.json"
+jq '.source.storageSource.generation = "302" | .sourceProvenance.resolvedStorageSource = .source.storageSource' \
+  "$copied/cloud-build-final.json" > "$test_root/live-build.json"
+if verify_sift_candidate_build_receipt "$candidate_dir/candidate.json" "$test_root/live-build.json"; then
+  echo "live build validation accepted a different source generation" >&2
+  exit 1
+fi
 
 printf 'tampered\n' >> "$candidate_dir/candidate-gate.log"
 if verify_sift_candidate_directory "$candidate_dir"; then

@@ -430,4 +430,145 @@ fn missing_observed_unread_source_is_durably_accounted() {
     assert!(rejection.contains("observed uncommitted bytes"));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn follow_collector_survives_outage_without_process_restart() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("pods");
+    let log = pod_log(&root);
+    let checkpoint = temp.path().join("checkpoint.json");
+    let quarantine = temp.path().join("quarantine.jsonl");
+    let event = serde_json::to_string(&service_event(
+        "continuous_outage",
+        "same process drains after outage",
+        Some(TRACE_ID),
+        "f7ad6b7169203335",
+    ))
+    .unwrap();
+    std::fs::write(&log, cri_line("stdout", "F", &event)).unwrap();
+    let port = reserve_port();
+    let base = format!("http://127.0.0.1:{port}");
+    let child = collector_command(&root, &checkpoint, &quarantine, &base)
+        .arg("--follow")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut collector = SiftProcess {
+        child,
+        stderr: Arc::new(Mutex::new(Vec::new())),
+        reader: None,
+    };
+    let original_pid = collector.child.id();
+    let startup_deadline = Instant::now() + Duration::from_secs(10);
+    while !checkpoint.exists() {
+        assert!(
+            collector.child.try_wait().unwrap().is_none(),
+            "collector exited during the startup outage"
+        );
+        assert!(
+            Instant::now() < startup_deadline,
+            "collector did not open its source"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(
+        collector.child.try_wait().unwrap().is_none(),
+        "follow collector must keep its pending batch through a retryable outage"
+    );
+    let value: Value = serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
+    assert_eq!(
+        value["files"].as_object().unwrap().values().next().unwrap()["offset"],
+        0
+    );
+
+    let client = reqwest::Client::builder().http1_only().build().unwrap();
+    let mut server = SiftProcess::spawn(port, &temp.path().join("sift-data"));
+    wait_ready(&mut server, &client, &base).await;
+    wait_for_count(&client, &base, 1).await;
+    assert_eq!(collector.child.id(), original_pid);
+    assert!(collector.child.try_wait().unwrap().is_none());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let value: Value = serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
+        if value["files"].as_object().unwrap().values().next().unwrap()["offset"]
+            .as_u64()
+            .unwrap()
+            > 0
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "successful delivery must commit the checkpoint"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn follow_collector_stops_on_explicit_permanent_502() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("pods");
+    let log = pod_log(&root);
+    let checkpoint = temp.path().join("checkpoint.json");
+    let quarantine = temp.path().join("quarantine.jsonl");
+    let event = serde_json::to_string(&service_event(
+        "permanent_failure",
+        "pending",
+        None,
+        "f7ad6b7169203335",
+    ))
+    .unwrap();
+    std::fs::write(&log, cri_line("stdout", "F", &event)).unwrap();
+    let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = requests.clone();
+    let app = axum::Router::new().route("/v1/logs", axum::routing::post(move || {
+        let seen = seen.clone();
+        async move {
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            (axum::http::StatusCode::BAD_GATEWAY, axum::Json(json!({
+                "error": "invalid_upstream", "message": "permanent configuration error", "retryable": false
+            })))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let child = collector_command(&root, &checkpoint, &quarantine, &base)
+        .arg("--follow")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut collector = SiftProcess {
+        child,
+        stderr: Arc::new(Mutex::new(Vec::new())),
+        reader: None,
+    };
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if let Some(status) = collector.child.try_wait().unwrap() {
+            assert!(!status.success());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "explicit permanent failure must not retry forever"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let value: Value = serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
+    assert_eq!(
+        value["files"].as_object().unwrap().values().next().unwrap()["offset"],
+        0
+    );
+    server.abort();
+}
+
 // HANDWRITE-END

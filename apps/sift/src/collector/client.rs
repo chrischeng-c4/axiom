@@ -95,7 +95,10 @@ impl CollectorClient {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let message = format!("Sift ingest HTTP {status}: {}", truncate(&body, 512));
-            return Err(if retryable_status(status) {
+            let retryable = retryable_status(status)
+                && serde_json::from_str::<service_http::DetailedErrorEnvelope>(&body)
+                    .map_or(true, |details| details.retryable);
+            return Err(if retryable {
                 service_collector::DeliveryFailure::retryable(message)
             } else {
                 service_collector::DeliveryFailure::permanent(format!(

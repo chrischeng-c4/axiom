@@ -135,7 +135,8 @@ jq -n \
       },
       source:{storageSource:{
         bucket:"axiom-test_cloudbuild",
-        object:("source/axiom-gcp-operator-" + $run_id + "/source.tgz")
+        object:("source/axiom-gcp-operator-" + $run_id + "/source.tgz"),
+        generation:"301"
       }},
       tags:[
         "sift-mvp",
@@ -148,7 +149,7 @@ jq -n \
         {name:($registry + "/rig:" + $image_tag),digest:$rig_digest},
         {name:($registry + "/sift-acceptance-runner:" + $image_tag),digest:$runner_digest}
       ]}
-    }
+    } | .sourceProvenance.resolvedStorageSource = .source.storageSource
   ' > "$state_dir/build.json"
 
 cat > "$fake_bin/gcloud" <<'EOF'
@@ -793,7 +794,8 @@ cp "$state_dir/build.json" "$recovery_dir/cloud-build-submit.json"
 cp "$state_dir/build.json" "$recovery_dir/cloud-build-final.json"
 jq -n '{
   bucket:"axiom-test_cloudbuild",
-  name:"source/axiom-gcp-operator-cleanup-retry/source.tgz"
+  name:"source/axiom-gcp-operator-cleanup-retry/source.tgz",
+  generation:"301"
 }' > "$recovery_dir/cloud-build-source-object.json"
 jq -n \
   --arg git_sha "$git_sha" --arg source_bundle_sha256 "$source_sha" \

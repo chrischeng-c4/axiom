@@ -51,7 +51,7 @@ jq -n --arg git_sha "$git_sha" --arg source_sha "$source_sha" \
   --arg acquisition_id "$acquisition_id" '
   {
     id:"build-1",
-    source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-boundary1/source.tgz"}},
+    source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-boundary1/source.tgz",generation:"301"}},
     substitutions:{
       _GIT_SHA:$git_sha,
       _RUN_ID:"boundary1",
@@ -60,7 +60,7 @@ jq -n --arg git_sha "$git_sha" --arg source_sha "$source_sha" \
       _TAG:$image_tag,
       _CANDIDATE_ACQUISITION_ID:$acquisition_id
     }
-  }
+  } | .sourceProvenance.resolvedStorageSource = .source.storageSource
   ' > "$candidate_dir/cloud-build-submit.json"
 jq -n \
   --arg git_sha "$git_sha" --arg source_sha "$source_sha" \
@@ -74,7 +74,7 @@ jq -n \
   --arg acquisition_id "$acquisition_id" '
     {
       id:"build-1",status:"SUCCESS",
-      source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-boundary1/source.tgz"}},
+      source:{storageSource:{bucket:"axiom-test_cloudbuild",object:"source/axiom-gcp-operator-boundary1/source.tgz",generation:"301"}},
       substitutions:{
         _GIT_SHA:$git_sha,
         _RUN_ID:"boundary1",
@@ -94,9 +94,9 @@ jq -n \
         {name:$rig_name,digest:$rig_digest},
         {name:$runner_name,digest:$runner_digest}
       ]}
-    }
+    } | .sourceProvenance.resolvedStorageSource = .source.storageSource
   ' > "$candidate_dir/cloud-build-final.json"
-jq -n '{bucket:"axiom-test_cloudbuild",name:"source/axiom-gcp-operator-boundary1/source.tgz"}' \
+jq -n '{bucket:"axiom-test_cloudbuild",name:"source/axiom-gcp-operator-boundary1/source.tgz",generation:"301"}' \
   > "$candidate_dir/cloud-build-source-object.json"
 jq -n --arg git_sha "$git_sha" --arg source_bundle_sha256 "$source_sha" \
   --arg source_uri "$source_prefix/source.tgz" \

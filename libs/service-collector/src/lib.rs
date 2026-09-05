@@ -208,6 +208,17 @@ pub struct RunReport {
     pub progress: SourceProgress,
 }
 
+/// Controls delivery only. Source polling still follows `RuntimeConfig::follow`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeliveryRetryMode {
+    /// Stop after `RetryPolicy::max_retries`, as the original API does.
+    Bounded,
+    /// Keep the same bounded batch on retryable failures, with capped backoff.
+    /// Dropping the runtime future cancels delivery without committing its cursors.
+    /// Permanent failures and invalid success receipts still stop the runtime.
+    UntilCancelled,
+}
+
 pub async fn run_collector<S, D, B, Q>(
     source: &mut S,
     decoder: &D,
@@ -221,7 +232,37 @@ where
     B: BatchSink<D::Item>,
     Q: QuarantineSink<<S::Rejection as CollectorRejection>::Entry>,
 {
+    run_collector_with_delivery_mode(
+        source,
+        decoder,
+        sink,
+        quarantine,
+        config,
+        DeliveryRetryMode::Bounded,
+    )
+    .await
+}
+
+pub async fn run_collector_with_delivery_mode<S, D, B, Q>(
+    source: &mut S,
+    decoder: &D,
+    sink: &B,
+    quarantine: &mut Q,
+    config: RuntimeConfig,
+    delivery_mode: DeliveryRetryMode,
+) -> Result<RunReport>
+where
+    S: CollectorSource + ?Sized,
+    D: RecordDecoder<S::Record, Rejection = <S::Rejection as CollectorRejection>::Entry>,
+    B: BatchSink<D::Item>,
+    Q: QuarantineSink<<S::Rejection as CollectorRejection>::Entry>,
+{
     let config = config.validate()?;
+    RetryPolicy::new(
+        config.retry.max_retries,
+        config.retry.initial_backoff,
+        config.retry.max_backoff,
+    )?;
     let mut report = RunReport {
         progress: source.progress(),
         ..RunReport::default()
@@ -268,7 +309,7 @@ where
             break;
         }
 
-        let delivered = deliver_with_retry(sink, &records, config.retry).await?;
+        let delivered = deliver_with_retry(sink, &records, config.retry, delivery_mode).await?;
         quarantine
             .append(&rejections)
             .map_err(|error| anyhow!("collector quarantine append failed: {error}"))?;
@@ -309,6 +350,7 @@ async fn deliver_with_retry<B, T>(
     sink: &B,
     records: &[T],
     retry: RetryPolicy,
+    delivery_mode: DeliveryRetryMode,
 ) -> Result<DeliveryReceipt>
 where
     B: BatchSink<T>,
@@ -316,7 +358,8 @@ where
     if records.is_empty() {
         return Ok(DeliveryReceipt::default());
     }
-    for attempt in 0..=retry.max_retries {
+    let mut attempt = 0_usize;
+    loop {
         match sink.send(records).await {
             Ok(receipt) => {
                 let covered = receipt
@@ -338,16 +381,18 @@ where
             Err(error) if !error.is_retryable() => {
                 return Err(anyhow!("collector delivery failed permanently: {error}"));
             }
-            Err(error) if attempt == retry.max_retries => {
+            Err(error)
+                if delivery_mode == DeliveryRetryMode::Bounded && attempt >= retry.max_retries =>
+            {
                 return Err(anyhow!(
                     "collector delivery exhausted after {} attempt(s): {error}",
-                    retry.max_retries + 1
+                    retry.max_retries.saturating_add(1)
                 ));
             }
             Err(_) => tokio::time::sleep(retry.delay(attempt)).await,
         }
+        attempt = attempt.saturating_add(1);
     }
-    unreachable!("the inclusive retry loop always returns")
 }
 
 /// Append-only JSONL quarantine with an fsync before returning.

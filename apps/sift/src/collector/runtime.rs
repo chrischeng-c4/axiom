@@ -54,7 +54,7 @@ pub async fn run(config: CollectorConfig) -> Result<CollectorSummary> {
     }
     let mut quarantine =
         service_collector::JsonlQuarantine::<QuarantineEntry>::new(&config.quarantine_path);
-    let report = service_collector::run_collector(
+    let report = service_collector::run_collector_with_delivery_mode(
         &mut *source,
         &SiftRecordDecoder {
             project: &config.project,
@@ -72,6 +72,11 @@ pub async fn run(config: CollectorConfig) -> Result<CollectorSummary> {
             )?,
             follow: config.follow,
             follow_poll_interval: config.follow_poll_interval,
+        },
+        if config.follow {
+            service_collector::DeliveryRetryMode::UntilCancelled
+        } else {
+            service_collector::DeliveryRetryMode::Bounded
         },
     )
     .await?;

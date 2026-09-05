@@ -109,10 +109,16 @@ verify_sift_candidate_submit_intent() {
 verify_sift_candidate_build_receipt() {
   local candidate_receipt="$1"
   local build_receipt="$2"
+  local source_object expected_hash
   [[ -f "$candidate_receipt" && ! -L "$candidate_receipt" \
     && -f "$build_receipt" && ! -L "$build_receipt" ]] || return 1
+  source_object="$(dirname "$candidate_receipt")/cloud-build-source-object.json"
+  [[ -f "$source_object" && ! -L "$source_object" ]] || return 1
+  expected_hash="$(jq -er '.file_sha256["cloud-build-source-object.json"]' "$candidate_receipt")" || return 1
+  [[ "$(sift_candidate_file_sha256 "$source_object")" == "$expected_hash" ]] || return 1
   jq -e \
-    --slurpfile candidate "$candidate_receipt" '
+    --slurpfile candidate "$candidate_receipt" \
+    --slurpfile object "$source_object" '
       ($candidate[0]) as $c
       | type == "object"
       and .id == $c.cloud_build_id
@@ -127,6 +133,11 @@ verify_sift_candidate_build_receipt() {
         | sub("^gs://"; "") | split("/")[0])
       and .source.storageSource.object == ($c.source_object_uri
         | sub("^gs://[^/]+/"; ""))
+      and ($object[0].generation | type == "string" and test("^[1-9][0-9]*$"))
+      and .source.storageSource.generation == $object[0].generation
+      and .source.storageSource.bucket == $object[0].bucket
+      and .source.storageSource.object == $object[0].name
+      and .sourceProvenance.resolvedStorageSource == .source.storageSource
       and ((.tags // []) | index("sift-mvp") != null)
       and ((.tags // []) | index("axiom-run-" + $c.run_id) != null)
       and ((.tags // []) | index("axiom-source-" + $c.source_bundle_sha256) != null)
@@ -316,6 +327,9 @@ verify_sift_candidate_directory() {
         | sub("^gs://"; "") | split("/")[0])
       and $submit[0].source.storageSource.object == ($c.source_object_uri
         | sub("^gs://[^/]+/"; ""))
+      and $submit[0].source.storageSource.generation == $object[0].generation
+      and ($submit[0].sourceProvenance.resolvedStorageSource == null
+        or $submit[0].sourceProvenance.resolvedStorageSource == $submit[0].source.storageSource)
       and ($object[0] | type) == "object"
       and $object[0].bucket == ($c.source_object_uri
         | sub("^gs://"; "") | split("/")[0])

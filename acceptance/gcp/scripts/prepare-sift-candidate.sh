@@ -472,10 +472,30 @@ source_uri="$(validated_source_object_uri \
   echo "Cloud Build staged source outside the run-scoped prefix" >&2
   exit 1
 }
-gcloud storage objects describe "$source_uri" --format=json \
+source_generation="$(jq -er '
+  .source.storageSource.generation | select(type == "string" and test("^[1-9][0-9]*$"))
+' "$receipts/cloud-build-submit.json")" || {
+  echo "Cloud Build did not identify an immutable source generation" >&2
+  exit 1
+}
+# An asynchronous build can be queued before output provenance is available.
+# The final receipt must contain it; any value already present must match now.
+jq -e '.sourceProvenance.resolvedStorageSource == null
+  or .sourceProvenance.resolvedStorageSource == .source.storageSource' \
+  "$receipts/cloud-build-submit.json" >/dev/null || {
+  echo "Cloud Build resolved a different source version" >&2
+  exit 1
+}
+versioned_source_uri="${source_uri}#${source_generation}"
+gcloud storage objects describe "$versioned_source_uri" --format=json \
   > "$receipts/cloud-build-source-object.json"
+jq -e --arg generation "$source_generation" '.generation == $generation' \
+  "$receipts/cloud-build-source-object.json" >/dev/null || {
+  echo "GCS source receipt does not match the Cloud Build generation" >&2
+  exit 1
+}
 staged_source="$work_root/cloud-build-staged-source.tar.gz"
-gcloud storage cp "$source_uri" "$staged_source" >/dev/null
+gcloud storage cp "$versioned_source_uri" "$staged_source" >/dev/null
 staged_sha="$(sift_candidate_file_sha256 "$staged_source")"
 [[ "$staged_sha" == "$source_sha" ]] || {
   echo "Cloud Build staged source does not match the candidate archive" >&2
