@@ -722,3 +722,58 @@ mod run_file {
         assert!(!routes_to_compiler(false, "main.py"));
     }
 }
+
+// #4220: `resolve_via_pypi`'s pin must carry the (url, sha256) of the same
+// artifact -- the wheel `pick_artifact_url`-equivalent selection picks --
+// rather than the first sha256 listed on the release page. This exercises
+// the pure selection seam (`lock::select_artifact`) with no network: a
+// release whose first file is an sdist with a different digest than the
+// host wheel that follows it.
+mod lock_artifact_pairing {
+    use crate::pkgmanage::lock::select_artifact;
+    use crate::pkgmanage::pkgmgr::tags::TagSelector;
+    use crate::pkgmanage::pkgmgr::types::{FileHash, ReleaseFile};
+
+    fn release_file(filename: &str, url: &str, sha256: &str) -> ReleaseFile {
+        ReleaseFile {
+            filename: filename.to_string(),
+            url: url.to_string(),
+            hash: FileHash {
+                algorithm: "sha256".to_string(),
+                digest: sha256.to_string(),
+            },
+            requires_python: None,
+            size: None,
+            upload_time: None,
+            yanked: false,
+            yanked_reason: None,
+            dist_info_metadata: serde_json::Value::Null,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn selected_pair_names_the_wheel_not_the_sdist_listed_first() {
+        let sdist_digest = "a".repeat(64);
+        let wheel_digest = "b".repeat(64);
+        let files = vec![
+            release_file(
+                "demo-1.0.tar.gz",
+                "https://example.test/demo-1.0.tar.gz",
+                &sdist_digest,
+            ),
+            release_file(
+                "demo-1.0-py3-none-any.whl",
+                "https://example.test/demo-1.0-py3-none-any.whl",
+                &wheel_digest,
+            ),
+        ];
+        let selector = TagSelector::current_host();
+
+        let (url, sha256) = select_artifact(&files, &selector)
+            .expect("a compatible wheel is present in the release");
+
+        assert_eq!(url, "https://example.test/demo-1.0-py3-none-any.whl");
+        assert_eq!(sha256, wheel_digest);
+    }
+}

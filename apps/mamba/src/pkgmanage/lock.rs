@@ -159,27 +159,32 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
         .map(|n| (n.name.clone(), n.version.clone()))
         .collect();
     for node in &graph.nodes {
-        // Resolver carries hashes per node but not filenames — for now we
-        // accept the first sha256 it surfaces (host-aware filtering happens
-        // in `mamba add` where filenames are available; once the resolver
-        // also threads filenames through ResolvedNode we'll switch this to
-        // tag scoring too).
-        let _ = &selector;
-        let sha = node
-            .files
-            .iter()
-            .find(|h| h.algorithm == "sha256" && !h.digest.is_empty())
-            .map(|h| h.digest.clone());
-        // Look up the canonical artifact URL through the sibling client. Tick
+        // Look up the canonical artifact through the sibling client. Tick
         // 15: the URL travels with the sha so `mamba sync` can perform a
-        // download_artifact() + sha-verify pass without re-resolving.
-        let url = pick_artifact_url(
+        // download_artifact() + sha-verify pass without re-resolving. #4220:
+        // `sha256` and `url` must name the same file, so both come from the
+        // one paired selection below rather than `sha256` from `node.files`
+        // (page order) and `url` from an independent pick.
+        let picked = pick_artifact_url(
             &url_client,
             &url_handle,
             &node.name,
             &node.version,
             &selector,
         );
+        let (sha, url) = match picked {
+            Some((url, sha256)) => (Some(sha256), Some(url)),
+            // Metadata fetch failed or no acceptable file: preserve today's
+            // behaviour of falling back to the resolver's own first sha256,
+            // with no url.
+            None => (
+                node.files
+                    .iter()
+                    .find(|h| h.algorithm == "sha256" && !h.digest.is_empty())
+                    .map(|h| h.digest.clone()),
+                None,
+            ),
+        };
         out.push(Resolved {
             pin: Pin {
                 name: node.name.clone(),
@@ -203,41 +208,53 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
     Ok(out)
 }
 
-/// Choose the canonical artifact URL for a resolved (name, version) pair,
-/// preferring the best-scoring wheel for the current host (PEP 425) and
-/// falling back to any non-yanked wheel, then sdist. Mirrors `mamba add`'s
-/// `pick_best_wheel` selection logic so `mamba sync` downloads the same
-/// artifact that `mamba add` would have recorded.
-fn pick_artifact_url(
-    client: &crate::pkgmanage::pkgmgr::IndexClient,
-    runtime: &tokio::runtime::Handle,
-    name: &str,
-    version: &str,
+/// Pure artifact-selection seam: given one release's files, pick the same
+/// artifact `mamba add`'s `pick_best_wheel` would (best-scoring wheel for
+/// the host per PEP 425, falling back to any non-yanked wheel, then sdist)
+/// and return the chosen file's `(url, sha256)` together, so `mamba lock`
+/// can never pair one file's digest with a different file's url (#4220).
+pub(crate) fn select_artifact(
+    files: &[crate::pkgmanage::pkgmgr::types::ReleaseFile],
     selector: &crate::pkgmanage::pkgmgr::tags::TagSelector,
-) -> Option<String> {
+) -> Option<(String, String)> {
     use crate::pkgmanage::pkgmgr::tags::parse_wheel_filename;
-    let meta = runtime.block_on(client.fetch_metadata(name)).ok()?;
-    let files = meta.releases.get(version)?;
-    let mut best: Option<(u32, String)> = None;
-    let mut fallback_wheel: Option<String> = None;
-    let mut fallback_sdist: Option<String> = None;
+    let mut best: Option<(u32, String, String)> = None;
+    let mut fallback_wheel: Option<(String, String)> = None;
+    let mut fallback_sdist: Option<(String, String)> = None;
     for f in files {
         if f.yanked || f.hash.algorithm != "sha256" || f.hash.digest.is_empty() {
             continue;
         }
         if let Some(wt) = parse_wheel_filename(&f.filename) {
             if let Some(score) = selector.score(&wt) {
-                if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
-                    best = Some((score, f.url.clone()));
+                if best.as_ref().map(|(s, _, _)| score > *s).unwrap_or(true) {
+                    best = Some((score, f.url.clone(), f.hash.digest.clone()));
                 }
             } else if fallback_wheel.is_none() {
-                fallback_wheel = Some(f.url.clone());
+                fallback_wheel = Some((f.url.clone(), f.hash.digest.clone()));
             }
         } else if fallback_sdist.is_none() {
-            fallback_sdist = Some(f.url.clone());
+            fallback_sdist = Some((f.url.clone(), f.hash.digest.clone()));
         }
     }
-    best.map(|(_, u)| u).or(fallback_wheel).or(fallback_sdist)
+    best.map(|(_, u, s)| (u, s))
+        .or(fallback_wheel)
+        .or(fallback_sdist)
+}
+
+/// Choose the canonical artifact `(url, sha256)` pair for a resolved
+/// (name, version) pair. Delegates to `select_artifact` so there is one
+/// selection path shared by every caller.
+fn pick_artifact_url(
+    client: &crate::pkgmanage::pkgmgr::IndexClient,
+    runtime: &tokio::runtime::Handle,
+    name: &str,
+    version: &str,
+    selector: &crate::pkgmanage::pkgmgr::tags::TagSelector,
+) -> Option<(String, String)> {
+    let meta = runtime.block_on(client.fetch_metadata(name)).ok()?;
+    let files = meta.releases.get(version)?;
+    select_artifact(files, selector)
 }
 
 fn pypi_cache_dir() -> PathBuf {
