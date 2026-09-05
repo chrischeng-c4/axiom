@@ -644,6 +644,203 @@ fn render_string_list(items: &[String]) -> String {
     out
 }
 
+/// One `[[package]]` entry read from an on-disk `mamba.lock`, carried as raw
+/// field bytes: the prune below must never re-resolve or blank a surviving
+/// pin, only decide whether it survives at all.
+struct PruneEntry {
+    name: String,
+    version: String,
+    sha256: String,
+    url: String,
+    source_kind: String,
+    path: String,
+    provider: String,
+    provides: Vec<String>,
+    compatibility: String,
+    maturity: String,
+    /// Whether the entry carried a `direct` key at all. The manifest-shaped
+    /// renderer (`add::render_lockfile_for_manifest`) omits the key
+    /// entirely, and a prune over that shape must keep it absent rather
+    /// than inventing one.
+    direct_present: bool,
+    dependencies: Vec<String>,
+}
+
+fn parse_prune_entries(lock_src: &str) -> Result<Vec<PruneEntry>> {
+    let doc: toml::Value = lock_src.parse().context("parse mamba.lock")?;
+    let arr = match doc.get("package") {
+        Some(toml::Value::Array(a)) => a.clone(),
+        Some(_) => bail!("mamba.lock `package` is not an array"),
+        None => return Ok(Vec::new()),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for entry in arr {
+        let tbl = entry
+            .as_table()
+            .context("mamba.lock package entry is not a table")?;
+        let str_field = |key: &str| -> String {
+            tbl.get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let name = tbl
+            .get("name")
+            .and_then(|v| v.as_str())
+            .context("mamba.lock package missing `name`")?
+            .to_string();
+        let version = tbl
+            .get("version")
+            .and_then(|v| v.as_str())
+            .context("mamba.lock package missing `version`")?
+            .to_string();
+        let dependencies = tbl
+            .get("dependencies")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let provides = tbl
+            .get("provides")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push(PruneEntry {
+            name,
+            version,
+            sha256: str_field("sha256"),
+            url: str_field("url"),
+            source_kind: str_field("source_kind"),
+            path: str_field("path"),
+            provider: str_field("provider"),
+            provides,
+            compatibility: str_field("compatibility"),
+            maturity: str_field("maturity"),
+            direct_present: tbl.get("direct").and_then(|v| v.as_bool()).is_some(),
+            dependencies,
+        });
+    }
+    Ok(out)
+}
+
+/// The canonical `name==version` identity a dependency edge or a manifest
+/// root is matched by: PEP 503 normalized name, exact version.
+fn prune_edge_key(name: &str, version: &str) -> String {
+    format!("{}=={}", normalize_name(name), version)
+}
+
+/// Rebuild the `SourceMeta` an entry's raw `source_kind`/`path`/provider
+/// fields describe, so the surviving render can go back through
+/// `append_lock_source_fields` -- the same writer `mamba add`/`mamba lock`
+/// use -- rather than re-deriving the field shape by hand.
+fn reconstruct_source(e: &PruneEntry) -> SourceMeta {
+    match e.source_kind.as_str() {
+        "direct_file" => SourceMeta::DirectFile {
+            path: e.path.clone(),
+        },
+        "index" => SourceMeta::Index {
+            path: e.path.clone(),
+        },
+        "mamba_provider" => SourceMeta::MambaProvider {
+            provider: e.provider.clone(),
+            provides: e.provides.clone(),
+            compatibility: e.compatibility.clone(),
+            maturity: e.maturity.clone(),
+        },
+        _ => SourceMeta::Default,
+    }
+}
+
+/// Prune an existing `mamba.lock` body down to the transitive closure the
+/// manifest's remaining dependencies still reach, carrying every surviving
+/// pin's `sha256`, `url`, and source fields through byte-for-byte and
+/// recomputing only `direct` (and only where the entry already carried that
+/// key). Returns `None` when the lock cannot be trusted for this prune --
+/// unparsable text, or a remaining manifest root with no matching entry --
+/// so the caller (`remove::cmd_remove`) falls back to a full
+/// manifest-shaped render.
+pub(crate) fn prune_lock_for_remaining_roots(
+    state: &ManifestState,
+    lock_src: &str,
+) -> Option<String> {
+    let entries = parse_prune_entries(lock_src).ok()?;
+    let mut by_key: BTreeMap<String, usize> = BTreeMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        by_key.insert(prune_edge_key(&e.name, &e.version), i);
+    }
+
+    // Every remaining manifest root must already have a recorded pin; a
+    // root the lock never named means the lock cannot be trusted for this
+    // prune at all.
+    let mut root_indices: BTreeSet<usize> = BTreeSet::new();
+    for dep in &state.dependencies {
+        let pin = Pin::parse(dep).ok()?;
+        let key = prune_edge_key(&pin.name, &pin.version);
+        let idx = *by_key.get(&key)?;
+        root_indices.insert(idx);
+    }
+
+    // BFS from the remaining roots along each entry's own recorded
+    // `dependencies` edges. An edge that resolves to no known entry is
+    // dropped silently rather than panicking -- the lock it was read from
+    // may already be stale in ways this prune does not have to fix.
+    let mut reachable: BTreeSet<usize> = BTreeSet::new();
+    let mut queue: VecDeque<usize> = root_indices.iter().copied().collect();
+    while let Some(idx) = queue.pop_front() {
+        if !reachable.insert(idx) {
+            continue;
+        }
+        for edge in &entries[idx].dependencies {
+            let Some((n, v)) = edge.split_once("==") else {
+                continue;
+            };
+            if let Some(&next) = by_key.get(&prune_edge_key(n.trim(), v.trim())) {
+                if !reachable.contains(&next) {
+                    queue.push_back(next);
+                }
+            }
+        }
+    }
+
+    let mut kept: Vec<&PruneEntry> = reachable.iter().map(|&i| &entries[i]).collect();
+    kept.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut input = state.dependencies.clone();
+    input.sort();
+    input.dedup();
+    let input_hash = compute_input_hash(&input);
+
+    let mut out = String::with_capacity(512);
+    out.push_str("format_version = 1\n");
+    out.push_str(&format!("input_hash = \"{input_hash}\"\n"));
+    for e in kept {
+        out.push('\n');
+        out.push_str("[[package]]\n");
+        out.push_str(&format!("name = \"{}\"\n", e.name));
+        out.push_str(&format!("version = \"{}\"\n", e.version));
+        out.push_str(&format!("sha256 = \"{}\"\n", e.sha256));
+        let source = reconstruct_source(e);
+        append_lock_source_fields(&mut out, &e.name, &e.version, &e.url, &source);
+        if e.direct_present {
+            let idx = by_key[&prune_edge_key(&e.name, &e.version)];
+            let is_direct = root_indices.contains(&idx);
+            out.push_str(&format!("direct = {is_direct}\n"));
+        }
+        out.push_str(&format!(
+            "dependencies = {}\n",
+            render_string_list(&e.dependencies)
+        ));
+    }
+    Some(out)
+}
+
 fn compute_input_hash(deps: &[String]) -> String {
     let mut hasher = Sha256::new();
     for d in deps {

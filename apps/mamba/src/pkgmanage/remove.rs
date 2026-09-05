@@ -16,6 +16,7 @@ use clap::ArgMatches;
 use std::fs;
 
 use crate::pkgmanage::add::{atomic_write, render_lockfile_for_manifest, ManifestState};
+use crate::pkgmanage::lock::prune_lock_for_remaining_roots;
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -46,10 +47,23 @@ pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
     let removed = before.len() != state.dependencies.len();
 
     let new_manifest = state.render();
-    let new_lockfile = render_lockfile_for_manifest(&state)?;
+
+    // Prune the lock already on disk down to the closure the remaining
+    // manifest roots still reach, carrying every surviving pin's sha256/url
+    // through byte for byte. Fall back to a full manifest-shaped render only
+    // when the lock cannot be trusted for this prune -- absent, unparsable,
+    // or missing a pin for a root the manifest still names -- never by
+    // re-resolving against any index; `remove` stays offline either way.
+    let lock_path = project_dir.join(LOCKFILE_FILE);
+    let new_lockfile = match fs::read_to_string(&lock_path) {
+        Ok(existing) => match prune_lock_for_remaining_roots(&state, &existing) {
+            Some(pruned) => pruned,
+            None => render_lockfile_for_manifest(&state)?,
+        },
+        Err(_) => render_lockfile_for_manifest(&state)?,
+    };
 
     atomic_write(&manifest_path, new_manifest.as_bytes())?;
-    let lock_path = project_dir.join(LOCKFILE_FILE);
     atomic_write(&lock_path, new_lockfile.as_bytes())?;
 
     if !removed {

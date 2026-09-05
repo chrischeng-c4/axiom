@@ -1067,3 +1067,259 @@ version = "1.0.0"
         assert!(lock_pins_package(TWO_ENTRY_LOCK, "other_pkg", "2.0.0"));
     }
 }
+
+// Colocated unit tests for #4223: `mamba remove` must prune `mamba.lock`'s
+// transitive closure rather than re-render it from the manifest, carrying
+// every surviving pin's `sha256`/`url` through byte for byte and dropping
+// only what the removed package alone reached.
+//
+// These cover the pruning seam itself -- reachability from the remaining
+// manifest roots, `direct` recomputation, and replay determinism -- as
+// opposed to `apps/mamba/e2e/pkgmgr_remove_keeps_remaining_closure.rs`,
+// which judges the externally observable `mamba remove` behavior end to end
+// against a real registry and a real `.venv`.
+mod remove_prunes_lock {
+    use crate::pkgmanage::add::ManifestState;
+    use crate::pkgmanage::lock::prune_lock_for_remaining_roots;
+    use std::collections::BTreeMap;
+
+    /// The three-entry lock this whole module prunes from: `app` (a root)
+    /// depends on `lib` (transitive only), and `extra` is an unrelated
+    /// second root. Each entry carries a distinct non-empty `sha256`/`url`
+    /// so a pairing mistake -- one file's digest kept with another's url --
+    /// would be visible.
+    const THREE_ENTRY_LOCK: &str = r#"format_version = 1
+input_hash = "test"
+
+[[package]]
+name = "app"
+version = "1.0"
+sha256 = "app-sha"
+url = "http://registry.example/app-1.0.whl"
+source = "pypi://app/1.0"
+direct = true
+dependencies = ["lib==1.0"]
+
+[[package]]
+name = "lib"
+version = "1.0"
+sha256 = "lib-sha"
+url = "http://registry.example/lib-1.0.whl"
+source = "pypi://lib/1.0"
+direct = false
+dependencies = []
+
+[[package]]
+name = "extra"
+version = "1.0"
+sha256 = "extra-sha"
+url = "http://registry.example/extra-1.0.whl"
+source = "pypi://extra/1.0"
+direct = true
+dependencies = []
+"#;
+
+    fn manifest_with(deps: &[&str]) -> ManifestState {
+        ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            dev_dependencies: Vec::new(),
+            source_overrides: BTreeMap::new(),
+        }
+    }
+
+    struct Entry {
+        sha256: String,
+        url: String,
+        direct: Option<bool>,
+        dependencies: Vec<String>,
+    }
+
+    fn entries(lock: &str) -> BTreeMap<String, Entry> {
+        let doc: toml::Value = lock.parse().expect("parse pruned lock");
+        let mut out = BTreeMap::new();
+        let packages = doc
+            .get("package")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for t in packages {
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap().to_string();
+            let sha256 = t
+                .get("sha256")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let url = t
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let direct = t.get("direct").and_then(|v| v.as_bool());
+            let dependencies = t
+                .get("dependencies")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            out.insert(
+                name,
+                Entry {
+                    sha256,
+                    url,
+                    direct,
+                    dependencies,
+                },
+            );
+        }
+        out
+    }
+
+    #[test]
+    fn removing_a_root_keeps_the_remaining_roots_transitive_closure() {
+        // Manifest after `remove extra`: only `app` remains a root.
+        let state = manifest_with(&["app==1.0"]);
+        let pruned = prune_lock_for_remaining_roots(&state, THREE_ENTRY_LOCK)
+            .expect("a lock recording every remaining root must prune, not fall back");
+        let entries = entries(&pruned);
+
+        assert!(
+            !entries.contains_key("extra"),
+            "the removed package's own pin must be dropped"
+        );
+        let app = entries.get("app").expect("the remaining root must stay");
+        assert_eq!(app.sha256, "app-sha");
+        assert_eq!(app.url, "http://registry.example/app-1.0.whl");
+        assert_eq!(app.direct, Some(true));
+        assert_eq!(app.dependencies, vec!["lib==1.0".to_string()]);
+
+        let lib = entries
+            .get("lib")
+            .expect("the transitive pin `app` still reaches must survive");
+        assert_eq!(lib.sha256, "lib-sha");
+        assert_eq!(lib.url, "http://registry.example/lib-1.0.whl");
+        assert_eq!(lib.direct, Some(false));
+        assert_eq!(lib.dependencies, Vec::<String>::new());
+    }
+
+    #[test]
+    fn removing_the_last_root_reaching_a_transitive_pin_drops_it_too() {
+        // Manifest after `remove app`: only `extra` remains a root.
+        let state = manifest_with(&["extra==1.0"]);
+        let pruned = prune_lock_for_remaining_roots(&state, THREE_ENTRY_LOCK)
+            .expect("a lock recording every remaining root must prune, not fall back");
+        let entries = entries(&pruned);
+
+        assert_eq!(
+            entries.keys().cloned().collect::<Vec<_>>(),
+            vec!["extra".to_string()],
+            "with `app` gone, `lib` is unreachable and must go with it"
+        );
+        let extra = &entries["extra"];
+        assert_eq!(extra.sha256, "extra-sha");
+        assert_eq!(extra.url, "http://registry.example/extra-1.0.whl");
+        assert_eq!(extra.direct, Some(true));
+    }
+
+    #[test]
+    fn a_root_that_is_also_another_roots_dependency_stays_after_its_own_removal() {
+        // Both `app` and `lib` start as manifest roots (`lib` was `add`ed
+        // directly too), so this lock records `lib.direct = true`.
+        let lock = r#"format_version = 1
+input_hash = "test"
+
+[[package]]
+name = "app"
+version = "1.0"
+sha256 = "app-sha"
+url = "http://registry.example/app-1.0.whl"
+source = "pypi://app/1.0"
+direct = true
+dependencies = ["lib==1.0"]
+
+[[package]]
+name = "lib"
+version = "1.0"
+sha256 = "lib-sha"
+url = "http://registry.example/lib-1.0.whl"
+source = "pypi://lib/1.0"
+direct = true
+dependencies = []
+"#;
+        // Manifest after `remove lib`: only `app` remains a root, but `lib`
+        // is still reachable through app's own pinned edge.
+        let state = manifest_with(&["app==1.0"]);
+        let pruned = prune_lock_for_remaining_roots(&state, lock)
+            .expect("a lock recording every remaining root must prune, not fall back");
+        let entries = entries(&pruned);
+
+        let lib = entries
+            .get("lib")
+            .expect("`lib` is still reachable through `app` and must survive its own removal");
+        assert_eq!(
+            lib.direct,
+            Some(false),
+            "`lib` is no longer a manifest root itself, so `direct` must be recomputed \
+             to false even though it survives"
+        );
+        assert_eq!(lib.sha256, "lib-sha");
+        assert_eq!(lib.url, "http://registry.example/lib-1.0.whl");
+    }
+
+    #[test]
+    fn pruning_the_pruned_output_again_is_byte_identical() {
+        let state = manifest_with(&["app==1.0"]);
+        let once = prune_lock_for_remaining_roots(&state, THREE_ENTRY_LOCK)
+            .expect("first prune must succeed");
+        let twice = prune_lock_for_remaining_roots(&state, &once)
+            .expect("pruning an already-pruned lock for the same manifest must succeed");
+        assert_eq!(
+            once, twice,
+            "pruning a lock that already matches the manifest's remaining roots must be \
+             a byte-identical no-op"
+        );
+    }
+
+    #[test]
+    fn removing_every_root_empties_the_lock() {
+        let state = manifest_with(&[]);
+        let pruned = prune_lock_for_remaining_roots(&state, THREE_ENTRY_LOCK)
+            .expect("an empty manifest still prunes -- there are no roots to miss");
+        assert!(
+            !pruned.contains("[[package]]"),
+            "with no remaining root, no package can be reachable\n{pruned}"
+        );
+    }
+
+    #[test]
+    fn a_lock_missing_a_remaining_roots_entry_signals_fallback() {
+        // `app` is a remaining root the manifest names, but this lock never
+        // recorded it -- the seam must refuse to guess and let the caller
+        // fall back to a full manifest-shaped render.
+        let state = manifest_with(&["app==1.0", "extra==1.0"]);
+        let lock = r#"format_version = 1
+input_hash = "test"
+
+[[package]]
+name = "extra"
+version = "1.0"
+sha256 = "extra-sha"
+url = "http://registry.example/extra-1.0.whl"
+source = "pypi://extra/1.0"
+direct = true
+dependencies = []
+"#;
+        assert!(prune_lock_for_remaining_roots(&state, lock).is_none());
+    }
+
+    #[test]
+    fn unparsable_lock_text_signals_fallback() {
+        let state = manifest_with(&["app==1.0"]);
+        assert!(prune_lock_for_remaining_roots(&state, "not valid toml {{{").is_none());
+    }
+}
