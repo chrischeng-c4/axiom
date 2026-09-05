@@ -74,6 +74,8 @@ class AgentEffortHookTests(unittest.TestCase):
         self.assertEqual(self.agents["tech-design"], "xhigh")
         self.assertEqual(self.agents["tape-e2e-dev"], "max")
         self.assertEqual(self.agents["tape-dev"], "medium")
+        self.assertEqual(self.agents["tape-pm"], "high")
+        self.assertEqual(self.agents["aw-pm"], "high")
 
     def test_fable_model_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

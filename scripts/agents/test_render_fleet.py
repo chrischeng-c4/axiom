@@ -57,17 +57,21 @@ class RenderFleetTests(unittest.TestCase):
 
     def test_rendered_population(self) -> None:
         rendered = render_fleet.rendered_agents(REPO)
-        self.assertEqual(len(rendered), 88)
+        self.assertEqual(len(rendered), 133)
         self.assertNotIn("aw-dev", rendered)
         self.assertNotIn("aw-e2e-dev", rendered)
+        self.assertIn("aw-pm", rendered)
         self.assertIn("lumen-e2e-dev", rendered)
+        self.assertIn("lumen-pm", rendered)
         self.assertIn("build-stamp-dev", rendered)
+        self.assertIn("build-stamp-pm", rendered)
 
     def test_singletons_are_projected_not_rewritten(self) -> None:
         expected = render_fleet.expected_files(REPO)
         agents = render_fleet.claude_agents_dir(REPO)
         codex = render_fleet.codex_agents_dir(REPO)
-        for singleton in ("aw-dev", "gke-operator", "agy-operator"):
+        for singleton in ("aw-dev", "gke-operator", "agy-operator", "cto",
+                          "project-manager", "tech-design"):
             self.assertNotIn(agents / f"{singleton}.md", expected)
             self.assertIn(codex / f"{singleton}.toml", expected)
 

@@ -49,9 +49,12 @@ def payload(
 class SpawnAgentEffortHookTests(unittest.TestCase):
     def test_registry_matches_fleet(self) -> None:
         registry = load_registry()
-        self.assertEqual(len(registry), 94)
+        self.assertEqual(len(registry), 139)
         self.assertEqual(registry["tape-dev"], "medium")
         self.assertEqual(registry["tape-e2e-dev"], "max")
+        self.assertEqual(registry["tape-pm"], "high")
+        self.assertEqual(registry["aw-pm"], "high")
+        self.assertNotIn("aw-e2e-dev", registry)
         self.assertEqual(registry["agy-operator"], "low")
         self.assertEqual(registry["cto"], "high")
         self.assertEqual(registry["project-manager"], "medium")

@@ -38,6 +38,7 @@ the case that needs a stated reason.
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
 | a decision the session has been making alone | `aw-ask-user` | one more stated assumption |
 | a bounded change to the `apps/aw` CLI | `aw-dev` | editing `apps/aw/src/**` here |
+| a project's `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` draft | `<p>-pm`, then `aw-grill-me-to-meta` in the main session | writing the four paths in the grill from scratch |
 | whether behavior is shared (→ `libs/`), app-owned, or needs a new lib | `cto` for the `type:spike` draft; the human decides | a boundary settled inside one project's docs |
 | a release Milestone's description draft | `project-manager`, then `aw-grill-meta-to-milestone` | a description written in the grill from scratch |
 | a Milestone's issue body drafts | `tech-design`, then `aw-grill-milestone-to-issue` | GHAN bodies typed in the grill from scratch |
@@ -57,11 +58,12 @@ it. Each `SKILL.md` names what stays with the human: a `refused:` exit, a
 force push to a persistent ref, or a failing check is not yours to work
 around.
 
-**Subagents.** 94 under `.claude/agents/`: two per project (22 apps, 22
-libs) plus the three planning singletons `cto`, `project-manager`, and
-`tech-design`, and `aw-dev`, `gke-operator`, and `agy-operator`. The
-planning singletons draft; the human confirms each draft in a grill, and
-only the main session lands it. The per-project
+**Subagents.** 139 under `.claude/agents/`: three per project (22 apps, 22
+libs: `<p>-pm`, `<p>-e2e-dev`, `<p>-dev`), `aw-pm` for `apps/aw` (whose
+engine work stays with `aw-dev`), the three planning singletons `cto`,
+`project-manager`, and `tech-design`, and `aw-dev`, `gke-operator`, and
+`agy-operator`. The pm and planning roles draft; the human confirms each
+draft in a grill, and only the main session lands it. The per-project
 files and every `.codex/agents/*.toml` are rendered by
 `scripts/agents/render_fleet.py --write` from
 `scripts/agents/templates/<tier>/<role>.md` and the explicit project list in
@@ -70,6 +72,7 @@ and `render_fleet.py --check` refuses a hand-edited file.
 
 | Agent | Model / effort | Owns | Never |
 |---|---|---|---|
+| `<p>-pm` | fable / `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` as uncommitted drafts that pass `aw metadoc check` and `aw meta check` | `aw metadoc commit`, any Git write, `Tracking:` binding, `src/`, `e2e/`, a cross-project boundary claim |
 | `<p>-e2e-dev` | sonnet / `max` | the e2e contract — black-box cases written to fail before the implementation exists; for apps it runs `aw-e2e-for` itself | `src/` |
 | `<p>-dev` | sonnet / `medium` | source plus colocated unit tests, verified by running them; for apps it runs `aw-impl-for`, impl and maint legs | `e2e/` |
 | `cto` | fable / `high` | one cross-project boundary decision draft — shared → `libs/`, app-owned, or a new lib — as a `type:spike` body plus the `Sources` / `Boundary:` lines it implies | any file write, `gh issue create`, Milestone or issue choices |
@@ -274,9 +277,11 @@ Maintenance has one `maint` phase. Its type selects its write boundary:
   written proves nothing about the change, so run the phase-1 case and
   observe its failure before moving on.
 - `docs/**` (with `README.md`, `STATUS.md`, `ROADMAP.md`) is where the approved
-  `aw-grill-release apply` writes, before any work item exists. It is not a
-  ladder write root — `C0` refuses a dirty `docs/` path like any other — so
-  land a META-doc before `aw e2e start`, not during.
+  `aw-grill-release apply` writes, before any work item exists. A `<p>-pm` run
+  drafts those bytes first; the plan's approved `after` text carries only the
+  sections the human confirmed, and a section the human did not confirm does
+  not land. It is not a ladder write root — `C0` refuses a dirty `docs/` path
+  like any other — so land a META-doc before `aw e2e start`, not during.
 - `external-contracts/` and `tech-design/` are not write roots; a
   `// SPEC-MANAGED:` header names a producer that no longer exists. A design
   decision goes in the `//!` or `///` block of the module or type that owns
@@ -342,7 +347,8 @@ not exactly `_paths.SKILLS`; elsewhere the listing is the whole check.
 
 **Design lives in source.** A module's `//!` block carries the rules it
 owns, a type's `///` block its own; there is no technical-design step and no
-ADR tree. In the sixteen projects the TD/EC retirement emptied —
+ADR tree (`tech-design` is an agent that drafts issue bodies, never a
+directory). In the sixteen projects the TD/EC retirement emptied —
 `apps/lumen`, `apps/tape`, and `libs/{build-stamp, cli-std,
 metrics-prometheus, openapi-codegen, peer-tls, raft-core, raft-runtime,
 service-auth, service-backup, service-http, service-k8s,

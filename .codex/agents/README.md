@@ -1,7 +1,7 @@
 # Codex agent fleet — projection of `.claude/agents/`
 
 This directory holds the Codex-runtime projection of the Claude agent fleet:
-one `<name>.toml` per `.claude/agents/<name>.md`, 94 in total. The Claude
+one `<name>.toml` per `.claude/agents/<name>.md`, 139 in total. The Claude
 markdown definition is the source of truth; each TOML carries the same
 `name`, `description`, pinned reasoning effort, and the full markdown body as
 `developer_instructions`. The generator is `scripts/agents/render_fleet.py`:
@@ -13,11 +13,12 @@ projection. The per-project markdown itself is rendered from
 `scripts/agents/templates/<tier>/<role>.md` — edit the template, never one
 project's copy.
 
-The fleet is two agents per project (22 apps and 22 libs) plus three
-planning singletons, `aw-dev`, and two operators:
+The fleet is three agents per project (22 apps and 22 libs), `aw-pm` for
+`apps/aw`, three planning singletons, `aw-dev`, and two operators:
 
 | Role | Effort | Owns |
 |---|---|---|
+| `<p>-pm` (45) | `high` | one project's `README.md`, `STATUS.md`, `ROADMAP.md`, and `docs/**` as uncommitted drafts that pass `aw metadoc check` and `aw meta check`; never commits or binds a Milestone |
 | `<p>-e2e-dev` (44) | `max` | the e2e contract — behavior, performance, and security facets, written to fail first; never writes `src/` |
 | `<p>-dev` (44) | `medium` | source plus colocated unit tests, verified by running them; never writes `e2e/` |
 | `cto` | `high` | one cross-project boundary decision draft (shared → `libs/`, app-owned, or a new lib) as a `type:spike` body; writes nothing |
@@ -36,9 +37,10 @@ A hard case may still be raised at dispatch time — by editing nothing and
 overriding `model` in the spawn call — but phase ownership does not move
 with the model.
 
-Every role fixes `model = "gpt-5.6-terra"`. The Claude per-project fleet is
-sonnet throughout; its tiers differ by pinned effort (`max` vs `medium`),
-and that effort split is what this projection carries.
+Every role fixes `model = "gpt-5.6-terra"`. The Claude fleet pins its model
+per role (`fable` for `<p>-pm` and `cto`, `opus` for `project-manager` and
+`tech-design`, `sonnet` for the ladder and operators); this projection
+carries only the effort split, not the model tier.
 Two Claude frontmatter fields have no Codex TOML equivalent and are not
 projected: `tools` (Codex has no per-tool allowlist; the `## Never` sections
 carry the same boundaries as prose) and `skills` (the bodies name the

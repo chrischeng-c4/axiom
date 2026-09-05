@@ -48,12 +48,13 @@ LIBS: Tuple[str, ...] = (
     "storage-durable", "surface", "transport-h2c", "ui-runtime",
 )
 TIER_ROLES: Dict[str, Tuple[str, ...]] = {
-    "app": ("e2e-dev", "dev"),
-    "lib": ("e2e-dev", "dev"),
+    "app": ("pm", "e2e-dev", "dev"),
+    "lib": ("pm", "e2e-dev", "dev"),
 }
 # apps/aw is a Python uv project whose implementation agent is the hand-written
-# singleton `aw-dev`; it takes none of the per-project ladder roles.
-ROLE_OVERRIDES: Dict[str, Tuple[str, ...]] = {"aw": ()}
+# singleton `aw-dev`; it takes the product-manager role only, none of the
+# per-project ladder roles.
+ROLE_OVERRIDES: Dict[str, Tuple[str, ...]] = {"aw": ("pm",)}
 
 PROJECTS: Tuple[Tuple[str, str], ...] = tuple(
     [("app", name) for name in APPS] + [("lib", name) for name in LIBS]
