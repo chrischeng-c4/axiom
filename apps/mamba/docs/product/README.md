@@ -13,15 +13,14 @@ way round.
 - A shipped promise names the [STATUS](../../STATUS.md) rows that measure it.
   A future promise names the [ROADMAP](../../ROADMAP.md) outcome that owns it
   and ends with `Tracking: Not assigned.` until its release Milestone exists.
-- A future section is written before its release Milestone. When the
-  Milestone is opened with `/aw-grill-meta-to-milestone`, the Milestone title
-  carries the version and the section heading gains the Milestone binding.
-  Its issue set is carved from the section's Promise by
-  `/aw-grill-milestone-to-issue`, so nothing is promised here that the
-  tracker cannot measure.
-- Every section carries the parts `/aw-grill-me-to-meta` interviews for —
+- A future section is written before its release Milestone. Use
+  `aw-grill-release plan` to fix the promise, version, issue set, and order
+  without writing. Its approved `apply` opens or updates the Milestone, adds
+  the binding, and writes the typed issues, so nothing is promised here that
+  the tracker cannot measure.
+- Every section carries the parts `aw-grill-release plan` asks for —
   Problem, Who, Promise, Non-goals, Neighbours — plus `Open:` lines for
-  decisions the downstream grills still have to settle. An `Open:` line is a
+  decisions the release plan still has to settle. An `Open:` line is a
   question, not a default; the issue body answers it or the human does.
 - A new capability area is a change to this index first and to the README
   `### Capability index` when the area ships.

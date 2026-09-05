@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from aw.scripts import metadoc
 
 
@@ -83,3 +85,49 @@ def test_p8_refuses_a_deleted_directory_index(tmp_path: Path, monkeypatch) -> No
 
     assert len(findings) == 1
     assert findings[0].path == f"{PROJECT}/docs/product/README.md"
+
+
+def test_only_internal_release_apply_may_add_a_milestone_binding(
+        tmp_path: Path, monkeypatch) -> None:
+    root = ready_project(tmp_path)
+    folder = root / "docs/product"
+    folder.mkdir()
+    (folder / "README.md").write_text(
+        "## Section index\n\n| Section | File |\n|---|---|\n| Future | area.md |\n",
+        encoding="utf-8",
+    )
+    area = folder / "area.md"
+    area.write_text(
+        "## Future (Milestone #7)\n\n"
+        "- Problem: problem.\n- Who: people.\n- Promise: promise.\n"
+        "- Non-goals: none.\n- Open: none.\n- Neighbours: none.\n"
+        "- Outcome: `future`. Tracking: not assigned.\n\n"
+        "## Non-goals in this area\n",
+        encoding="utf-8",
+    )
+    path = f"{PROJECT}/docs/product/area.md"
+    before = area.read_text(encoding="utf-8").replace(" (Milestone #7)", "")
+    monkeypatch.setattr(metadoc.leg, "dirty_set", lambda _repo: [path])
+    monkeypatch.setattr(metadoc, "git_show", lambda _repo, _path: before)
+    monkeypatch.setattr(metadoc, "pinned_launcher", lambda: [sys.executable])
+
+    public, _population = metadoc.collect(tmp_path, PROJECT)
+    approved, _population = metadoc.collect(
+        tmp_path, PROJECT, release_milestone_number=7,
+    )
+    wrong_number, _population = metadoc.collect(
+        tmp_path, PROJECT, release_milestone_number=8,
+    )
+
+    assert [finding for finding in public if finding.rule == "P4"]
+    assert not [finding for finding in approved if finding.rule == "P4"]
+    assert [finding for finding in wrong_number if finding.rule == "P4"]
+
+
+@pytest.mark.parametrize("option", [
+    "--allow-release-binding", "--release-milestone-number",
+])
+def test_public_metadoc_parser_exposes_no_binding_bypass(option: str) -> None:
+    with pytest.raises(SystemExit) as error:
+        metadoc.main(["check", PROJECT, option, "7"])
+    assert error.value.code == 2

@@ -54,6 +54,17 @@ DIGEST = "b" * 64
 # The delegated module is always the group name -- that equality is what lets
 # check_next_command map a printed `aw <group> ...` back to `<group>.py`.
 CASES: tuple[tuple[str, str, list[str], list[str]], ...] = (
+    ("release-plan", "validate",
+     ["release-plan", "validate", "--plan", "plan.json"],
+     ["validate", "--plan", "plan.json"]),
+    ("release-plan", "apply",
+     ["release-plan", "apply", "--plan", "plan.json", "--project", "apps/demo",
+      "--approved-digest", DIGEST],
+     ["apply", "--plan", "plan.json", "--project", "apps/demo",
+      "--approved-digest", DIGEST]),
+    ("release-plan", "resume",
+     ["release-plan", "resume", "--receipt", ".aw/release-plans/a/demo.json"],
+     ["resume", "--receipt", ".aw/release-plans/a/demo.json"]),
     ("change", "skeleton",
      ["change", "skeleton", "--type", "feat"],
      ["skeleton", "--type", "feat"]),
@@ -250,7 +261,7 @@ def engine_refusal(module_name: str, argv: list[str]) -> str | None:
     scripts = str(cli._SCRIPTS)
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
-    module = importlib.import_module(module_name)
+    module = importlib.import_module(module_name.replace("-", "_"))
     err = io.StringIO()
     originals = {name: getattr(module, name)
                  for name in vars(module) if name.startswith("cmd_")}

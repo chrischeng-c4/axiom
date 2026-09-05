@@ -16,8 +16,7 @@ only when the human explicitly asks it to create or set the goal.
 ## How
 
 1. Resolve the input:
-   - a project routes to `aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`,
-     or `aw-grill-milestone-to-issue`;
+   - a project routes to `aw-grill-release plan`;
    - `#<iid>` routes by type: behavior to e2e then impl, maintenance to maint,
      and intake to intake handling;
    - `milestone:<number>` or `<project>@<version>` routes to its queue head;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure the distance between what a project promises and what it tracks.
 
-`/aw-grill-meta-to-milestone` and `/aw-grill-milestone-to-issue` read three
+`aw-grill-release plan` reads three
 things that are supposed to describe the
 same product -- the META-docs, the codebase, and the open work items -- and
 reorganises the third until it matches the first two. Almost all of that is

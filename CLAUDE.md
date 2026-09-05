@@ -32,7 +32,7 @@ the case that needs a stated reason.
 | a pull request, or its merge | `gh-create-pr`, `gh-merge-pr` | `gh pr create` / `gh pr merge` typed here |
 | a debug run of keep, defer, relay, or loom | `build-debug <app>` | `cargo build`, `docker build`, `kind load` |
 | a release of lumen, tape, sift, keep, relay, or defer, or loom's GKE acceptance run | `build-release <app>` | `cargo build --release`, `gh workflow run`, tagging or publishing by hand |
-| a project's META-docs, its release Milestone, or a Milestone's issue set | `aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`, `aw-grill-milestone-to-issue`, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside a grill |
+| a project's META-docs, release Milestone, or ordered issue set | `aw-grill-release plan` in Plan mode, then its approved `apply` in Default mode, in the main session | editing `README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**` directly, or calling `aw milestone` / `aw change` outside the approved plan |
 | a queue head's e2e contract | `aw-e2e-for`, run by `<p>-e2e-dev` | writing `apps/<p>/e2e/*.rs` in the main session |
 | a queue head's implementation, or a maintenance head | `aw-impl-for`, run by `<p>-dev` | writing `apps/<p>/src/**` in the main session |
 | closing verification, or a project audit | `aw-test-for`, `aw-review` | an ad-hoc `cargo test` with a name filter |
@@ -42,8 +42,8 @@ the case that needs a stated reason.
 | an authorized external AGY round | one fresh `agy-operator` | forwarding the payload yourself |
 | UI/UX design, review, or fix | `ui-ux-pro-max` | an invented palette or layout |
 
-**Skills.** Eighteen, each a directory `.claude/skills/<name>/` with a
-byte-identical twin at `.agents/skills/<name>/`: the nine `aw-*` lifecycle
+**Skills.** Sixteen, each a directory `.claude/skills/<name>/` with a
+byte-identical twin at `.agents/skills/<name>/`: the seven `aw-*` lifecycle
 skills under `## Skills` plus `git-commit`, `git-rebase`, `git-push`,
 `git-land`, `gh-create-pr`, `gh-merge-pr`, `build-debug`, `build-release`,
 `ui-ux-pro-max`. A skill's name is its directory
@@ -86,9 +86,8 @@ other's baseline; cross-project parallelism means separate `app/<name>` /
 uncommitted work in the target write root. A dev stalled twice on the same
 task is not re-dispatched; the controller takes over.
 
-**The main session keeps** the five interviewing skills
-(`aw-grill-me-to-meta`, `aw-grill-meta-to-milestone`,
-`aw-grill-milestone-to-issue`, `aw-prepare-goal`, `aw-ask-user` — they need
+**The main session keeps** the three planning skills
+(`aw-grill-release`, `aw-prepare-goal`, `aw-ask-user` — their Plan paths need
 AskUserQuestion, which subagents do not have), dispatch scheduling, final
 acceptance, git land, tracker semantic decisions, AGY payload authorization,
 long read-only investigations, and any task too small to be worth
@@ -116,7 +115,8 @@ delegating.
 `aw` is the Typer CLI at `apps/aw` (engine: the argparse scripts under
 `apps/aw/src/aw/scripts/`), run from the repository root as
 `uv run --project apps/aw aw <group> …` — groups `change`, `milestone`,
-`e2e`, `impl`, `maint`, `wis`, `meta`, `metadoc`, `version`. That prefix is
+`e2e`, `impl`, `maint`, `wis`, `meta`, `metadoc`, `release-plan`, `version`.
+That prefix is
 what its `next.command:` lines print, and `uv` supplies the pinned Python
 3.13; a bare `python3` is 3.9 on at least one machine here. The protocol is
 stdout and exit codes. There is no `aw` on `PATH`: the Rust binary that
@@ -128,13 +128,11 @@ calls its `run_all.py`, so it is a check a human runs.
 
 ## Skills
 
-The nine `aw-*` entry points:
+The seven `aw-*` entry points:
 
 | Skill | Reach for it when | It does |
 |---|---|---|
-| `aw-grill-me-to-meta` | a project's `README.md`, `STATUS.md`, `ROADMAP.md`, or a `docs/**` section is missing, stale, wrong, or no longer wanted | interviews you, then writes those four paths for one project through the landing sequence `aw metadoc check` → `aw meta check` → `aw metadoc commit`; absorbs the retired standalone meta-checking skill as that sequence's second step |
-| `aw-grill-meta-to-milestone` | a future `docs/**` promise has no release Milestone, or a Milestone binds to no promise | runs `aw wis gap` (G1, G3–G5), then `aw milestone next-version`/`skeleton`/`create --draft`; the Milestone title owns the version and the promise heading gains `(Milestone #<number>)` |
-| `aw-grill-milestone-to-issue` | a release Milestone's issue set, types, or order is missing or wrong | answers G2, G6 and G7; creates typed issues through `aw change`, assigns them to the Milestone, and finalizes `## Development Order` — the assigned issues own the work set and that list owns the sequence |
+| `aw-grill-release` | product promises, a release Milestone, or its typed issue order must be planned or applied | `plan` is read-only in Plan mode and returns a canonical digest; `apply` runs only in Default mode against that approved digest, changes one project, and resumes every partial write from one receipt |
 | `aw-e2e-for` | a scope's queue head is `type:feat`, `type:fix`, or `type:perf` | drives e2e for each behavior queue head in the scope; a Milestone yields at most one e2e commit per run, and maintenance heads are reported as `aw-impl-for` work |
 | `aw-impl-for` | a scope's queue head has landed e2e evidence, or is a maintenance type | drives impl for behavior heads and maint for `type:refactor`/`test`/`docs`/`chore` heads, closing each issue to advance the queue |
 | `aw-test-for` | a scope's work looks finished and needs closing regression verification | read-only: checks each issue's lifecycle trailers against its commits, then runs the project gates unfiltered; writes nothing |
@@ -142,8 +140,8 @@ The nine `aw-*` entry points:
 | `aw-prepare-goal` | a project, typed issue, release Milestone, or bare intent must become decidable conditions | reads the project or tracker, selects the next route by type, and sets no goal unless the human explicitly asks |
 | `aw-ask-user` | the session has been deciding for you — stated assumptions, a route picked alone, `Open:` lines it read past | walks the context for every pending question, asks each through AskUserQuestion, and prints a decision table; writes nothing |
 
-The behavior sequence is `aw-grill-me-to-meta` → `aw-grill-meta-to-milestone`
-→ `aw-grill-milestone-to-issue` → `aw-e2e-for` → `aw-impl-for` →
+The behavior sequence is `aw-grill-release plan` → approved
+`aw-grill-release apply` → `aw-e2e-for` → `aw-impl-for` →
 `aw-test-for`; maintenance heads route through `aw-impl-for`'s maint leg;
 `aw-prepare-goal` and `aw-ask-user` stand outside it. The handoffs are
 machine-checked by the engine — a release Milestone must bind to a product
@@ -258,8 +256,8 @@ Maintenance has one `maint` phase. Its type selects its write boundary:
 - Never open `src/**` first; a contract that was green before the change was
   written proves nothing about the change, so run the phase-1 case and
   observe its failure before moving on.
-- `docs/**` (with `README.md`, `STATUS.md`, `ROADMAP.md`) is where
-  `aw-grill-me-to-meta` writes, before any work item exists. It is not a
+- `docs/**` (with `README.md`, `STATUS.md`, `ROADMAP.md`) is where the approved
+  `aw-grill-release apply` writes, before any work item exists. It is not a
   ladder write root — `C0` refuses a dirty `docs/` path like any other — so
   land a META-doc before `aw e2e start`, not during.
 - `external-contracts/` and `tech-design/` are not write roots; a

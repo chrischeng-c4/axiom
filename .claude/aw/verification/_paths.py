@@ -74,12 +74,11 @@ SKILLS_DIR = REPO / ".claude/skills"
 # command from the directory -- and the frontmatter `name:` is held equal to
 # the directory name by check_plugin.py, so `aw-<skill>/` is invoked as
 # `/aw-<skill>` and listed as `aw-<skill>`. One prefix, one namespace. Naming
-# the nine here rather than globbing keeps a stray directory from silently
+# the exact set here rather than globbing keeps a stray directory from silently
 # joining the population under test.
 NAMESPACE = "aw"
 SKILL_PREFIX = f"{NAMESPACE}-"      # directory, invocation, and frontmatter name: aw-<skill>
-SKILLS = ("ask-user", "e2e-for", "grill-me-to-meta",
-          "grill-meta-to-milestone", "grill-milestone-to-issue", "impl-for",
+SKILLS = ("ask-user", "e2e-for", "grill-release", "impl-for",
           "prepare-goal", "review", "test-for")
 
 
@@ -121,24 +120,16 @@ def skill_invocation(skill: str) -> str:
 # beside them; both skills and the whole `docs/technical/` tree are deleted,
 # and a design decision now lives in the `//!` or `///` block of the module
 # or type that owns it (`CLAUDE.md`, "Authoring").
-# `check-meta` is gone too, but not by deletion -- it folded into
-# `grill-me-to-meta`, whose three-step landing sequence runs `meta.py check`
-# as its second step. The check that used to be a skill a human had to
-# remember to run separately is now a step the landing sequence cannot skip.
+# The product and release interviews now have one entry: `aw-grill-release`.
+# Its Plan phase reads META documents, tracker state, and `wis.py gap`, then
+# returns one closed plan and digest without writes. Its Default-mode Apply
+# phase sends that exact approved plan to `release_plan.py`. The facade runs
+# `metadoc.py`, `meta.py`, `milestone.py`, `change.py`, and `wis.py` through a
+# durable receipt. This keeps interview decisions in the skill and retryable
+# writes in the engine.
 #
-# `grill-me-to-prd` is `grill-me-to-meta` under its current name. Its write
-# allowlist widened in the same rename from one path (`docs/product/`) to
-# four (`README.md`, `STATUS.md`, `ROADMAP.md`, `docs/**`); see the comment
-# above `METADOC_SCRIPT` below for what enforces that.
-#
-# `grill-me-to-epic`, `grill-me-to-change` and `grill-epic-to-changes`
-# became one skill (`grill-meta-to-wis`), which split again on 2026-09-02
-# into two: `grill-meta-to-milestone` owns the promise<->Milestone structure
-# (version choice, draft Milestone, heading binding -- `wis.py gap` rows G1
-# and G3-G5), and `grill-milestone-to-issue` owns the issue set behind one
-# Milestone (typed issues, the Development Order list, reconcile -- rows G2,
-# G6, G7). Both run `wis.py gap <project>` and write only through
-# `milestone.py` / `change.py`.
+# The META allowlist remains four roots: `README.md`, `STATUS.md`,
+# `ROADMAP.md`, and `docs/**`. See `METADOC_SCRIPT` below for its enforcement.
 
 # Two kinds of skill, and the difference decides which rules can apply.
 #
@@ -165,12 +156,12 @@ def skill_invocation(skill: str) -> str:
 # declared commands read-only and reports exit codes, with nothing
 # underspecified to resolve.
 #
-# `grill-me-to-meta` is interviewing for the reason `grill-me-to-prd` was: it
+# `aw-grill-release` is interviewing because it
 # runs before any work item exists, so everything it writes -- across all
 # four paths in its allowlist now, not the single `docs/product/` path it
 # used to be -- is in the human's head, including how to resolve whatever
 # `meta.py check` surfaces in the landing sequence's second step.
-# `grill-meta-to-milestone` and `grill-milestone-to-issue` are interviewing
+# `aw-grill-release` is interviewing
 # for a parallel reason: `wis.py gap` prints what is missing, not what to do
 # about it -- only the human can say which version a release takes, or
 # whether a gap closes by opening a change, merging two issues, or closing
@@ -185,11 +176,10 @@ def skill_invocation(skill: str) -> str:
 # human's head. Classifying it procedural would forbid the very tool that route
 # is made of, and would leave the no-iid case answered by whatever the agent
 # guessed the human meant.
-INTERVIEWING = ("ask-user", "grill-me-to-meta", "grill-meta-to-milestone",
-                "grill-milestone-to-issue", "prepare-goal")
+INTERVIEWING = ("ask-user", "grill-release", "prepare-goal")
 PROCEDURAL = ("e2e-for", "impl-for", "review", "test-for")
 
-# The nine scripts sit in one directory, not inside a skill. They were under
+# The fourteen scripts sit in one directory, not inside a skill. They were under
 # `wi-epic-grill/scripts/` (then `grill-me-to-epic`, folded into
 # `grill-meta-to-wis`, since split in two) while it was the only skill
 # running them, which made
@@ -252,7 +242,7 @@ META_SCRIPT = SCRIPTS / "meta.py"
 
 # The META-doc run's own refusal. It is not on the ladder either, and it is the
 # only script here whose subject is prose rather than a work item:
-# `/aw-grill-me-to-meta` writes `<project>/README.md`, `STATUS.md`,
+# `aw-grill-release apply` writes `<project>/README.md`, `STATUS.md`,
 # `ROADMAP.md` and `docs/**`, and this refuses a run that reached outside those
 # four, then writes the one commit that run is allowed. Two verbs, `check` and
 # `commit`, and the split is what keeps the read from being able to repair what
@@ -265,8 +255,8 @@ META_SCRIPT = SCRIPTS / "meta.py"
 METADOC_SCRIPT = SCRIPTS / "metadoc.py"
 
 # The read-only work-item/promise gap reader, and also not on the ladder: it
-# owns no work item and writes nothing. `grill-meta-to-milestone` and
-# `grill-milestone-to-issue` each run its one verb, `gap <project>`, for the
+# owns no work item and writes nothing. `aw-grill-release plan` runs its one verb,
+# `gap <project>`, for the
 # seven G1..G7 rows before reorganising their half of the work-item set
 # through `milestone.py` / `change.py` -- every write those skills make goes
 # through those two, never through this one.

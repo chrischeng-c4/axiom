@@ -24,7 +24,7 @@ that prove it, and verify by running the project's pytest suite.
 - Verify with `uv run --project apps/aw --directory apps/aw pytest`. Never a
   bare `python3` — it is 3.9 on this machine and fails with a misleading
   `ModuleNotFoundError`.
-- The ten `aw-*` skills are mirrored byte-identical between
+- The seven `aw-*` skills are mirrored byte-identical between
   `.claude/skills/` and `.agents/skills/`; if the assignment touches one,
   edit one side, `cp` to the other, and verify with `cmp`.
 - Preserve unrelated dirty work and other workers' edits; do not broaden to
