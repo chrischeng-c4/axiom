@@ -389,3 +389,7 @@ path = "e2e/pkgmgr_add_registry_transitive.rs"
 [[test]]
 name = "pkgmgr_validate_auth_family"
 path = "e2e/pkgmgr_validate_auth_family.rs"
+
+[[test]]
+name = "pkgmgr_remove_keeps_remaining_closure"
+path = "e2e/pkgmgr_remove_keeps_remaining_closure.rs"
