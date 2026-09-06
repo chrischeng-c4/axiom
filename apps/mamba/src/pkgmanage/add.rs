@@ -26,6 +26,7 @@ use crate::pkgmanage::manifest::pyproject;
 use crate::pkgmanage::pkgmgr::resolver::specifier::{all_match, Op, VersionSpecifier};
 use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Requirement};
 
+use crate::pkgmanage::manifest::pyproject::DepTarget;
 pub(crate) use crate::pkgmanage::manifest::pyproject::{ManifestSource, ManifestState};
 
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -33,49 +34,72 @@ const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
 
 pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
-    let spec_raw = sub
-        .get_one::<String>("spec")
-        .context("missing required argument <spec>")?;
     let project_dir = std::env::current_dir().context("read current directory")?;
     let manifest_path = pyproject::locate(&project_dir)?;
+    let target = DepTarget::from_flags(
+        sub.get_flag("dev"),
+        sub.get_one::<String>("group").map(String::as_str),
+        sub.get_one::<String>("optional").map(String::as_str),
+    );
+
+    let mut specs: Vec<String> = sub
+        .get_many::<String>("spec")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    for file in sub.get_many::<String>("requirements").into_iter().flatten() {
+        let path = project_dir.join(file);
+        specs.extend(read_requirements_file(&path)?);
+    }
+    if specs.is_empty() {
+        bail!("nothing to add: pass a requirement, a wheel path, or `-r FILE`");
+    }
 
     let mut index_used: Option<PathBuf> = None;
     let mut registry_used: Option<String> = None;
-    let resolved = if let Some(provider) = sub.get_one::<String>("provider") {
-        resolve_with_provider(spec_raw, provider)?
-    } else if looks_like_wheel_path(spec_raw) {
-        resolve_with_local_wheel(spec_raw, &project_dir)?
-    } else {
-        let spec = DepSpec::parse(spec_raw)?;
-        let index_dir = resolve_index_dir(sub);
-        let offline = sub.get_flag("offline");
-        let index_url = resolve_index_url(sub);
-        if let Some(idx) = &index_dir {
-            index_used = Some(idx.clone());
-        } else if !offline {
-            registry_used = index_url.clone();
-        }
-        resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?
-    };
+    let mut resolved_all: Vec<ResolvedDep> = Vec::with_capacity(specs.len());
+    for spec_raw in &specs {
+        let resolved = if let Some(provider) = sub.get_one::<String>("provider") {
+            resolve_with_provider(spec_raw, provider)?
+        } else if looks_like_wheel_path(spec_raw) {
+            resolve_with_local_wheel(spec_raw, &project_dir)?
+        } else {
+            let spec = DepSpec::parse(spec_raw)?;
+            let index_dir = resolve_index_dir(sub);
+            let offline = sub.get_flag("offline");
+            let index_url = resolve_index_url(sub);
+            if let Some(idx) = &index_dir {
+                index_used = Some(idx.clone());
+            } else if !offline {
+                registry_used = index_url.clone();
+            }
+            resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?
+        };
+        resolved_all.push(resolved);
+    }
 
     let manifest_src = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let mut state = ManifestState::parse(&manifest_src)?;
-    state.upsert_dependency(&resolved.dep_string());
-    match &resolved.source {
-        SourceMeta::MambaProvider { provider, .. } => {
-            state.upsert_source(
-                &resolved.name,
-                ManifestSource::MambaProvider {
-                    provider: provider.clone(),
-                },
-            );
-        }
-        SourceMeta::Default | SourceMeta::DirectFile { .. } | SourceMeta::Index { .. } => {
-            state.remove_source(&resolved.name);
+    for resolved in &resolved_all {
+        state.upsert_dependency_in(&resolved.dep_string(), &target);
+        match &resolved.source {
+            SourceMeta::MambaProvider { provider, .. } => {
+                state.upsert_source(
+                    &resolved.name,
+                    ManifestSource::MambaProvider {
+                        provider: provider.clone(),
+                    },
+                );
+            }
+            SourceMeta::Default | SourceMeta::DirectFile { .. } | SourceMeta::Index { .. } => {
+                state.remove_source(&resolved.name);
+            }
         }
     }
     let new_manifest = state.render_into(&manifest_src)?;
+    // The pins the existing lock carries stay put; only the package being
+    // added may move, the way `uv add` leaves the rest of `uv.lock` alone.
+    let prefs = crate::pkgmanage::lock::lock_preferences(&project_dir, false, &[]);
 
     // A local-index add and a registry (`--index-url`) add both render the
     // same transitive closure `mamba lock` would, through the same resolver
@@ -83,11 +107,11 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     // (offline pin, direct file, `--provider`, no source configured) keeps
     // the single-package renderer.
     let new_lockfile = if let Some(idx) = &index_used {
-        crate::pkgmanage::lock::resolve_and_render_via_index(&state, idx)?
+        crate::pkgmanage::lock::resolve_and_render_via_index(&state, idx, &prefs)?
     } else if let Some(url) = &registry_used {
-        crate::pkgmanage::lock::resolve_and_render_via_registry(&state, url)?
+        crate::pkgmanage::lock::resolve_and_render_via_registry(&state, url, &prefs)?
     } else {
-        render_lockfile_for_manifest_with_resolved(&state, &resolved)?
+        render_lockfile_for_manifest_with_resolved(&state, &resolved_all)?
     };
 
     let lock_path = project_dir.join(LOCKFILE_FILE);
@@ -95,6 +119,65 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     atomic_write(&lock_path, new_lockfile.as_bytes())?;
 
     Ok(())
+}
+
+/// The requirements `mamba add -r FILE` reads: pip's requirements format
+/// as far as `uv add -r` honours it for a project. Blank lines and `#`
+/// comments are dropped, a trailing `\` continues the line, and a nested
+/// `-r` / `--requirement` is read relative to the file naming it. Every
+/// other `-`-prefixed option (`-e`, `-c`, `--index-url`, …) is refused by
+/// name rather than silently skipped, so a file that needs it is never
+/// half-added.
+pub(crate) fn read_requirements_file(path: &Path) -> Result<Vec<String>> {
+    let src = fs::read_to_string(path)
+        .with_context(|| format!("read requirements file {}", path.display()))?;
+    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut out = Vec::new();
+    let mut pending = String::new();
+    for raw_line in src.lines() {
+        let line = strip_requirements_comment(raw_line);
+        if let Some(cont) = line.trim_end().strip_suffix('\\') {
+            pending.push_str(cont);
+            continue;
+        }
+        pending.push_str(line);
+        let logical = std::mem::take(&mut pending);
+        let logical = logical.trim();
+        if logical.is_empty() {
+            continue;
+        }
+        if let Some(nested) = logical
+            .strip_prefix("-r ")
+            .or_else(|| logical.strip_prefix("--requirement "))
+            .or_else(|| logical.strip_prefix("--requirement="))
+        {
+            out.extend(read_requirements_file(&base.join(nested.trim()))?);
+            continue;
+        }
+        if logical.starts_with('-') {
+            let option = logical.split_whitespace().next().unwrap_or(logical);
+            bail!(
+                "unsupported requirements option `{option}` in {}: `mamba add -r` accepts \
+                 requirement lines and nested `-r` only",
+                path.display()
+            );
+        }
+        out.push(logical.to_string());
+    }
+    Ok(out)
+}
+
+/// Drop a `#` comment: one that starts the line, or one preceded by
+/// whitespace, the way pip does — `foo==1.0 # pinned` keeps `foo==1.0`,
+/// while a `#` inside a URL fragment with no space before it survives.
+fn strip_requirements_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'#' && (i == 0 || bytes[i - 1].is_ascii_whitespace()) {
+            return &line[..i];
+        }
+    }
+    line
 }
 
 /// A parsed `mamba add` argument. `raw` is the trimmed text exactly as the
@@ -750,6 +833,13 @@ pub(crate) fn dep_name(spec: &str) -> &str {
 
 #[cfg(test)]
 fn render_lockfile_with_hashes(deps: &[String], just_added: &ResolvedDep) -> String {
+    let mut state = ManifestState::parse(
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\nrequires-python = \">=3.12\"\ndependencies = []\n",
+    )
+    .unwrap();
+    for d in deps {
+        state.upsert_dependency(d);
+    }
     let mut hashes = std::collections::BTreeMap::new();
     let mut urls = std::collections::BTreeMap::new();
     let mut sources = std::collections::BTreeMap::new();
@@ -765,65 +855,61 @@ fn render_lockfile_with_hashes(deps: &[String], just_added: &ResolvedDep) -> Str
             SourceMeta::DirectFile { path: path.clone() },
         );
     }
-    render_lockfile_with_known_hashes(deps, &hashes, &urls, &sources)
+    render_lockfile_with_known_hashes(&state, &hashes, &urls, &sources)
 }
 
 fn render_lockfile_for_manifest_with_resolved(
     state: &ManifestState,
-    just_added: &ResolvedDep,
+    just_added: &[ResolvedDep],
 ) -> Result<String> {
     let mut hashes = BTreeMap::new();
     let mut urls = BTreeMap::new();
     let mut sources = collect_manifest_sources(state)?;
-    if let Some(h) = just_added.sha256.as_deref() {
-        hashes.insert(just_added.name.clone(), h.to_string());
-    }
-    if let Some(u) = just_added.url.as_deref() {
-        urls.insert(just_added.name.clone(), u.to_string());
-    }
-    match &just_added.source {
-        SourceMeta::Default => {}
-        SourceMeta::DirectFile { path } => {
-            sources.insert(
-                just_added.name.clone(),
-                SourceMeta::DirectFile { path: path.clone() },
-            );
+    for added in just_added {
+        if let Some(h) = added.sha256.as_deref() {
+            hashes.insert(added.name.clone(), h.to_string());
         }
-        SourceMeta::MambaProvider {
-            provider,
-            provides,
-            compatibility,
-            maturity,
-        } => {
-            sources.insert(
-                just_added.name.clone(),
-                SourceMeta::MambaProvider {
-                    provider: provider.clone(),
-                    provides: provides.clone(),
-                    compatibility: compatibility.clone(),
-                    maturity: maturity.clone(),
-                },
-            );
+        if let Some(u) = added.url.as_deref() {
+            urls.insert(added.name.clone(), u.to_string());
         }
-        SourceMeta::Index { path } => {
-            sources.insert(
-                just_added.name.clone(),
-                SourceMeta::Index { path: path.clone() },
-            );
+        match &added.source {
+            SourceMeta::Default => {}
+            SourceMeta::DirectFile { path } => {
+                sources.insert(
+                    added.name.clone(),
+                    SourceMeta::DirectFile { path: path.clone() },
+                );
+            }
+            SourceMeta::MambaProvider {
+                provider,
+                provides,
+                compatibility,
+                maturity,
+            } => {
+                sources.insert(
+                    added.name.clone(),
+                    SourceMeta::MambaProvider {
+                        provider: provider.clone(),
+                        provides: provides.clone(),
+                        compatibility: compatibility.clone(),
+                        maturity: maturity.clone(),
+                    },
+                );
+            }
+            SourceMeta::Index { path } => {
+                sources.insert(added.name.clone(), SourceMeta::Index { path: path.clone() });
+            }
         }
     }
     Ok(render_lockfile_with_known_hashes(
-        &state.dependencies,
-        &hashes,
-        &urls,
-        &sources,
+        state, &hashes, &urls, &sources,
     ))
 }
 
 pub(crate) fn render_lockfile_for_manifest(state: &ManifestState) -> Result<String> {
     let sources = collect_manifest_sources(state)?;
     Ok(render_lockfile_with_known_hashes(
-        &state.dependencies,
+        state,
         &BTreeMap::new(),
         &BTreeMap::new(),
         &sources,
@@ -832,7 +918,7 @@ pub(crate) fn render_lockfile_for_manifest(state: &ManifestState) -> Result<Stri
 
 fn collect_manifest_sources(state: &ManifestState) -> Result<BTreeMap<String, SourceMeta>> {
     let mut sources = BTreeMap::new();
-    for dep in &state.dependencies {
+    for dep in state.all_dependency_specs() {
         let Some((name, version)) = dep.split_once("==") else {
             continue;
         };
@@ -869,14 +955,19 @@ pub(crate) fn source_meta_from_manifest(
     }
 }
 
+/// The single-package lock shape (`dependencies = []`, no `direct` key)
+/// `add` writes when no index resolved a closure: one entry per exact
+/// `==` requirement across the project list, every group, and every extra,
+/// each tagged with the lists that name it.
 pub(crate) fn render_lockfile_with_known_hashes(
-    deps: &[String],
+    state: &ManifestState,
     hashes: &std::collections::BTreeMap<String, String>,
     urls: &std::collections::BTreeMap<String, String>,
     sources: &std::collections::BTreeMap<String, SourceMeta>,
 ) -> String {
-    let input_hash = compute_input_hash(deps);
-    let mut entries: Vec<(String, String)> = deps
+    let input_hash = compute_input_hash(&state.lock_inputs());
+    let mut entries: Vec<(String, String)> = state
+        .all_dependency_specs()
         .iter()
         .filter_map(|d| {
             let (n, v) = d.split_once("==")?;
@@ -885,11 +976,19 @@ pub(crate) fn render_lockfile_with_known_hashes(
         .collect();
     entries.sort();
     entries.dedup_by(|a, b| a.0 == b.0);
+    let name_index: BTreeMap<String, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (n, _))| (normalize_name(n), i))
+        .collect();
+    let no_edges: Vec<Vec<usize>> = vec![Vec::new(); entries.len()];
+    let membership =
+        crate::pkgmanage::lock::compute_membership(&no_edges, &name_index, &state.lock_roots());
 
     let mut out = String::with_capacity(256);
     out.push_str("format_version = 1\n");
     out.push_str(&format!("input_hash = \"{input_hash}\"\n"));
-    for (name, version) in &entries {
+    for (i, (name, version)) in entries.iter().enumerate() {
         let sha = hashes.get(name).map(String::as_str).unwrap_or("");
         let url = urls.get(name).map(String::as_str).unwrap_or("");
         out.push('\n');
@@ -914,6 +1013,8 @@ pub(crate) fn render_lockfile_with_known_hashes(
                 append_lock_source_fields(&mut out, name, version, url, &SourceMeta::Default);
             }
         }
+        let m = &membership[i];
+        crate::pkgmanage::lock::append_membership_fields(&mut out, m.project, &m.groups, &m.extras);
         out.push_str("dependencies = []\n");
     }
     out
@@ -983,22 +1084,7 @@ pub(crate) fn append_lock_source_fields(
     }
 }
 
-fn compute_input_hash(deps: &[String]) -> String {
-    let mut sorted = deps.to_vec();
-    sorted.sort();
-    sorted.dedup();
-    let mut hasher = Sha256::new();
-    for d in &sorted {
-        hasher.update(d.as_bytes());
-        hasher.update(b"\n");
-    }
-    let bytes = hasher.finalize();
-    let mut hex = String::with_capacity(64);
-    for b in bytes {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    hex
-}
+pub(crate) use crate::pkgmanage::lock::compute_input_hash;
 
 pub(crate) fn atomic_write(dest: &Path, body: &[u8]) -> Result<()> {
     let tmp = dest.with_extension({
@@ -1095,7 +1181,9 @@ mod tests {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: vec!["a==1.0".into(), "b==2.0".into()],
-            dev_dependencies: vec![],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         };
         s.upsert_dependency("a==1.1");
@@ -1119,7 +1207,9 @@ mod tests {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: vec!["AddApp==3.0".into()],
-            dev_dependencies: vec![],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         };
         s.upsert_dependency("addapp==3.0");
@@ -1139,7 +1229,9 @@ mod tests {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: vec!["addapp>=2,<3".into()],
-            dev_dependencies: vec![],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         };
         s.upsert_dependency("addapp<3");
@@ -1153,7 +1245,9 @@ mod tests {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: vec!["addapp>=2,<3".into()],
-            dev_dependencies: vec![],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         };
         s.remove_dependency("addapp");
@@ -1222,7 +1316,9 @@ mod tests {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: vec!["mamba-httpx-compat==0.1.0".into()],
-            dev_dependencies: vec![],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         };
         s.upsert_source(
@@ -1275,6 +1371,30 @@ mod tests {
             body.contains(&format!("sha256 = \"{}\"", "deadbeef".repeat(8))),
             "lockfile must carry sha256 for just-added pkg: {body}"
         );
+    }
+
+    #[test]
+    fn requirements_file_honours_comments_continuations_and_nesting() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("sub");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("more.txt"),
+            "# nested\nthird>=3 # trailing comment\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("req.txt"),
+            "first==1.0\n\n  # comment line\nsecond \\\n  >=2,<3\n-r sub/more.txt\n",
+        )
+        .unwrap();
+        let specs = read_requirements_file(&dir.path().join("req.txt")).unwrap();
+        assert_eq!(specs, vec!["first==1.0", "second   >=2,<3", "third>=3"]);
+
+        fs::write(dir.path().join("bad.txt"), "-e .\n").unwrap();
+        let err = read_requirements_file(&dir.path().join("bad.txt")).unwrap_err();
+        assert!(err.to_string().contains("`-e`"), "{err}");
+        assert!(read_requirements_file(&dir.path().join("missing.txt")).is_err());
     }
 
     #[test]

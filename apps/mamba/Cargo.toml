@@ -434,3 +434,7 @@ path = "e2e/pkgmgr_lock_refuses_when_requires_dist_cannot_be_fetched.rs"
 [[test]]
 name = "pkgmgr_sync_writes_the_installer_marker"
 path = "e2e/pkgmgr_sync_writes_the_installer_marker.rs"
+
+[[test]]
+name = "pkgmgr_flag_surface_uv_parity"
+path = "e2e/pkgmgr_flag_surface_uv_parity.rs"

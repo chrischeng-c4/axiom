@@ -30,8 +30,9 @@ use crate::pkgmanage::add::{
     append_lock_source_fields, atomic_write, dep_name, source_meta_from_manifest, ManifestState,
     SourceMeta,
 };
-use crate::pkgmanage::manifest::pyproject;
+use crate::pkgmanage::manifest::pyproject::{self, LockRoot};
 use crate::pkgmanage::pkgmgr::pip_install::is_extra_marker;
+use crate::pkgmanage::sync::parse_locked_packages;
 
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
@@ -46,13 +47,19 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     let state = ManifestState::parse(&manifest_src)?;
 
     let offline = sub.get_flag("offline");
+    let upgrade_packages: Vec<String> = sub
+        .get_many::<String>("upgrade-package")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    let prefs = lock_preferences(&project_dir, sub.get_flag("upgrade"), &upgrade_packages);
     let registry_deps = registry_dependency_strings(&state);
     let body = if let Some(idx) = resolve_index_dir(sub) {
-        resolve_and_render_via_index(&state, &idx)?
+        resolve_and_render_via_index(&state, &idx, &prefs)?
     } else if registry_deps.is_empty() {
         let mut resolved = resolve_manifest_provider_deps(&state)?;
+        assign_membership(&mut resolved, &state);
         resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
-        render_lockfile(&state.dependencies, &resolved)
+        render_lockfile(&state, &resolved)
     } else if offline {
         bail!(
             "no frozen index configured and --offline set (pass --index DIR \
@@ -60,7 +67,7 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
         );
     } else {
         match resolve_index_url(sub) {
-            Some(index_url) => resolve_and_render_via_registry(&state, &index_url)?,
+            Some(index_url) => resolve_and_render_via_registry(&state, &index_url, &prefs)?,
             None => bail!(
                 "no package source configured for `mamba lock`; pass --index DIR, \
                  set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
@@ -88,7 +95,43 @@ fn resolve_index_url(sub: &ArgMatches) -> Option<String> {
         .or_else(|| std::env::var(INDEX_URL_ENV).ok())
 }
 
-fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
+/// The versions an existing `mamba.lock` already pinned, PEP 503 name →
+/// version. A resolve prefers these over the newest candidate whenever they
+/// still satisfy the requirement, so `mamba lock` on an unchanged manifest
+/// is a no-op and `mamba add` moves only the package it adds. `--upgrade`
+/// empties the map and `--upgrade-package NAME` drops one entry, which is
+/// exactly how `uv lock` decides what may move.
+pub(crate) type Preferences = BTreeMap<String, String>;
+
+/// Read `project_dir`'s lock into a [`Preferences`] map, minus what the
+/// upgrade flags release. A missing or unreadable lock prefers nothing.
+pub(crate) fn lock_preferences(
+    project_dir: &Path,
+    upgrade_all: bool,
+    upgrade_packages: &[String],
+) -> Preferences {
+    if upgrade_all {
+        return Preferences::new();
+    }
+    let Ok(src) = fs::read_to_string(project_dir.join(LOCKFILE_FILE)) else {
+        return Preferences::new();
+    };
+    let Ok(packages) = parse_locked_packages(&src) else {
+        return Preferences::new();
+    };
+    let released: BTreeSet<String> = upgrade_packages.iter().map(|n| normalize_name(n)).collect();
+    packages
+        .into_iter()
+        .filter(|p| !released.contains(&normalize_name(&p.name)))
+        .map(|p| (normalize_name(&p.name), p.version))
+        .collect()
+}
+
+fn resolve_via_pypi(
+    deps: &[String],
+    index_url: &str,
+    prefs: &Preferences,
+) -> Result<Vec<Resolved>> {
     use crate::pkgmanage::pkgmgr::http::index_client_for_url;
     use crate::pkgmanage::pkgmgr::markers::{evaluate as eval_marker, MarkerEnv};
     use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
@@ -125,13 +168,15 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
     let provider = IndexClientProvider::new(client, handle);
 
     let host_env = MarkerEnv::current_host();
-    let resolver = Resolver::new(provider).with_marker_eval(move |_version, marker| match marker {
-        Some(m) => match eval_marker(m, &host_env) {
-            Ok(v) => !v,
-            Err(_) => false,
-        },
-        None => false,
-    });
+    let resolver = Resolver::new(provider)
+        .with_preferences(prefs.clone())
+        .with_marker_eval(move |_version, marker| match marker {
+            Some(m) => match eval_marker(m, &host_env) {
+                Ok(v) => !v,
+                Err(_) => false,
+            },
+            None => false,
+        });
 
     let graph = resolver
         .resolve(&roots)
@@ -191,6 +236,9 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
             sha256: sha,
             url,
             source: SourceMeta::Default,
+            project: true,
+            groups: Vec::new(),
+            extras: Vec::new(),
         });
     }
     out.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
@@ -329,25 +377,155 @@ pub(crate) struct Resolved {
     /// frozen-local-index resolves where the URL is not known.
     pub(crate) url: Option<String>,
     pub(crate) source: SourceMeta,
+    /// Reachable from `[project] dependencies`. `false` only for a package
+    /// that groups or extras alone pull in; `mamba sync` installs it only
+    /// when one of those is selected. Set by [`assign_membership`].
+    pub(crate) project: bool,
+    /// The `[dependency-groups]` groups whose closure contains this package.
+    pub(crate) groups: Vec<String>,
+    /// The `[project.optional-dependencies]` extras whose closure contains
+    /// this package.
+    pub(crate) extras: Vec<String>,
+}
+
+/// Which manifest lists reach one lock entry. `project` is the plain
+/// `[project] dependencies` closure; `groups` and `extras` name every group
+/// and extra whose own closure contains the entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Membership {
+    pub(crate) project: bool,
+    pub(crate) groups: Vec<String>,
+    pub(crate) extras: Vec<String>,
+}
+
+/// Walk `edges` (index → dependency indices) from every root's entry and
+/// record, per entry, which selections reach it. `index` maps a PEP 503
+/// name to its entry; a root whose name has no entry contributes nothing.
+pub(crate) fn compute_membership(
+    edges: &[Vec<usize>],
+    index: &BTreeMap<String, usize>,
+    roots: &[LockRoot],
+) -> Vec<Membership> {
+    let mut out: Vec<Membership> = (0..edges.len())
+        .map(|_| Membership {
+            project: false,
+            groups: Vec::new(),
+            extras: Vec::new(),
+        })
+        .collect();
+    // (kind, name) → seed entries; kind 0 = project, 1 = group, 2 = extra.
+    let mut seeds: BTreeMap<(u8, String), Vec<usize>> = BTreeMap::new();
+    for root in roots {
+        let Ok(name) = requirement_name(&root.spec) else {
+            continue;
+        };
+        let Some(&i) = index.get(&normalize_name(&name)) else {
+            continue;
+        };
+        if root.project {
+            seeds.entry((0, String::new())).or_default().push(i);
+        }
+        for g in &root.groups {
+            seeds.entry((1, g.clone())).or_default().push(i);
+        }
+        for e in &root.extras {
+            seeds.entry((2, e.clone())).or_default().push(i);
+        }
+    }
+    for ((kind, name), starts) in seeds {
+        let mut reached: BTreeSet<usize> = BTreeSet::new();
+        let mut queue: VecDeque<usize> = starts.into_iter().collect();
+        while let Some(i) = queue.pop_front() {
+            if !reached.insert(i) {
+                continue;
+            }
+            for &next in &edges[i] {
+                if !reached.contains(&next) {
+                    queue.push_back(next);
+                }
+            }
+        }
+        for i in reached {
+            match kind {
+                0 => out[i].project = true,
+                1 => out[i].groups.push(name.clone()),
+                _ => out[i].extras.push(name.clone()),
+            }
+        }
+    }
+    for m in &mut out {
+        m.groups.sort();
+        m.groups.dedup();
+        m.extras.sort();
+        m.extras.dedup();
+    }
+    out
+}
+
+/// Stamp every resolved node with the manifest lists that reach it, walking
+/// each node's own `requires` edges from `state`'s lock roots.
+pub(crate) fn assign_membership(resolved: &mut [Resolved], state: &ManifestState) {
+    let index: BTreeMap<String, usize> = resolved
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (normalize_name(&r.pin.name), i))
+        .collect();
+    let edges: Vec<Vec<usize>> = resolved
+        .iter()
+        .map(|r| {
+            r.requires
+                .iter()
+                .filter_map(|e| requirement_name(e).ok())
+                .filter_map(|n| index.get(&normalize_name(&n)).copied())
+                .collect()
+        })
+        .collect();
+    let membership = compute_membership(&edges, &index, &state.lock_roots());
+    for (r, m) in resolved.iter_mut().zip(membership) {
+        r.project = m.project;
+        r.groups = m.groups;
+        r.extras = m.extras;
+    }
+}
+
+/// The `project = false` / `groups = […]` / `extras = […]` lines one lock
+/// entry carries, each written only when it says something: a package the
+/// project dependencies reach and no group or extra names emits nothing, so
+/// a lock for a manifest without groups is byte-identical to one written
+/// before groups were locked.
+pub(crate) fn append_membership_fields(
+    out: &mut String,
+    project: bool,
+    groups: &[String],
+    extras: &[String],
+) {
+    if !project {
+        out.push_str("project = false\n");
+    }
+    if !groups.is_empty() {
+        out.push_str(&format!("groups = {}\n", render_string_list(groups)));
+    }
+    if !extras.is_empty() {
+        out.push_str(&format!("extras = {}\n", render_string_list(extras)));
+    }
 }
 
 fn registry_dependency_strings(state: &ManifestState) -> Vec<String> {
     state
-        .dependencies
-        .iter()
+        .all_dependency_specs()
+        .into_iter()
         .filter(|dep| !state.source_overrides.contains_key(dep_name(dep)))
-        .cloned()
         .collect()
 }
 
 fn resolve_manifest_provider_deps(state: &ManifestState) -> Result<Vec<Resolved>> {
     let mut out = Vec::new();
-    for dep in &state.dependencies {
-        let name = dep_name(dep);
+    for dep in state.all_dependency_specs() {
+        let name = dep_name(&dep);
         let Some(source) = state.source_overrides.get(name) else {
             continue;
         };
-        let pin = Pin::parse(dep)?;
+        let pin = Pin::parse(&dep)?;
         out.push(Resolved {
             source: source_meta_from_manifest(&pin.name, &pin.version, source)?,
             pin,
@@ -355,6 +533,9 @@ fn resolve_manifest_provider_deps(state: &ManifestState) -> Result<Vec<Resolved>
             requires: Vec::new(),
             sha256: None,
             url: None,
+            project: true,
+            groups: Vec::new(),
+            extras: Vec::new(),
         });
     }
     Ok(out)
@@ -364,21 +545,22 @@ fn resolve_manifest_provider_deps(state: &ManifestState) -> Result<Vec<Resolved>
 /// render the same `mamba.lock` body `mamba lock --index` would write for
 /// this manifest, so `mamba add --index` and `mamba lock --index` agree byte
 /// for byte on the same project (frozen decision, #4206).
-pub(crate) fn resolve_and_render_via_index(state: &ManifestState, index: &Path) -> Result<String> {
+pub(crate) fn resolve_and_render_via_index(
+    state: &ManifestState,
+    index: &Path,
+    prefs: &Preferences,
+) -> Result<String> {
     let provider_resolved = resolve_manifest_provider_deps(state)?;
     let registry_deps = registry_dependency_strings(state);
     let mut resolved = if registry_deps.is_empty() {
         Vec::new()
     } else {
-        let direct: Vec<Pin> = registry_deps
-            .iter()
-            .map(|d| Pin::parse(d))
-            .collect::<Result<Vec<_>>>()?;
-        resolve_transitive(&direct, index)?
+        resolve_transitive(&registry_deps, index, prefs)?
     };
     resolved.extend(provider_resolved);
+    assign_membership(&mut resolved, state);
     resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
-    Ok(render_lockfile(&state.dependencies, &resolved))
+    Ok(render_lockfile(state, &resolved))
 }
 
 /// Resolve `state`'s registry dependencies against a live PyPI-style index
@@ -388,16 +570,18 @@ pub(crate) fn resolve_and_render_via_index(state: &ManifestState, index: &Path) 
 pub(crate) fn resolve_and_render_via_registry(
     state: &ManifestState,
     index_url: &str,
+    prefs: &Preferences,
 ) -> Result<String> {
     let registry_deps = registry_dependency_strings(state);
     let mut resolved = if registry_deps.is_empty() {
         Vec::new()
     } else {
-        resolve_via_pypi(&registry_deps, index_url)?
+        resolve_via_pypi(&registry_deps, index_url, prefs)?
     };
     resolved.extend(resolve_manifest_provider_deps(state)?);
+    assign_membership(&mut resolved, state);
     resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
-    Ok(render_lockfile(&state.dependencies, &resolved))
+    Ok(render_lockfile(state, &resolved))
 }
 
 /// The bare package name a raw requirement string (`name`, `name>=1`,
@@ -431,8 +615,19 @@ fn requirement_matches_version(raw: &str, candidate: &str) -> Result<bool> {
     Ok(specifier::all_match(&specs, candidate))
 }
 
-fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
-    let direct_keys: BTreeSet<String> = direct.iter().map(|p| p.key()).collect();
+/// Resolve `roots` (raw requirement strings: `name`, `name==1.0`,
+/// `name>=1,<3`) and their closure against a frozen index. A root is
+/// `direct`; a version already in `prefs` is kept whenever the requirement
+/// still admits it.
+fn resolve_transitive(
+    roots: &[String],
+    index: &Path,
+    prefs: &Preferences,
+) -> Result<Vec<Resolved>> {
+    let direct_names: BTreeSet<String> = roots
+        .iter()
+        .map(|r| Ok(normalize_name(&requirement_name(r)?)))
+        .collect::<Result<_>>()?;
     // Keyed by name (not `name==version`, #4225): two requirements on one
     // name must be compared against the version already picked, not treated
     // as two independent, never-intersecting resolutions.
@@ -440,7 +635,7 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
     // The requirement text that decided each name, so a later-arriving
     // requirement that disagrees can be named in the refusal alongside it.
     let mut deciding_requirement: BTreeMap<String, String> = BTreeMap::new();
-    let mut queue: VecDeque<String> = direct.iter().map(|p| p.key()).collect();
+    let mut queue: VecDeque<String> = roots.iter().cloned().collect();
     while let Some(raw) = queue.pop_front() {
         let name_key = normalize_name(&requirement_name(&raw)?);
         if let Some(prior) = seen.get(&name_key) {
@@ -460,9 +655,8 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
             continue;
         }
 
-        let (pin, meta) = load_metadata(&raw, index)?;
-        let key = pin.key();
-        let is_direct = direct_keys.contains(&key);
+        let (pin, meta) = load_metadata_with(&raw, index, prefs)?;
+        let is_direct = direct_names.contains(&name_key);
         let filtered_requires: Vec<String> = meta
             .requires
             .iter()
@@ -471,7 +665,7 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
             .collect();
         let mut requires_keys = Vec::with_capacity(filtered_requires.len());
         for req in &filtered_requires {
-            let (dep_pin, _) = load_metadata(req, index)?;
+            let (dep_pin, _) = load_metadata_with(req, index, prefs)?;
             requires_keys.push(dep_pin.key());
         }
         let source = if meta.path.is_empty() {
@@ -494,6 +688,9 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
                 },
                 url: None,
                 source,
+                project: true,
+                groups: Vec::new(),
+                extras: Vec::new(),
             },
         );
         deciding_requirement.insert(name_key, raw.clone());
@@ -521,6 +718,17 @@ pub(crate) struct IndexMetadata {
 /// `pip_install::candidate_versions`, the same selection `pip install`
 /// already does against a frozen index), then read that version's metadata.
 pub(crate) fn load_metadata(requirement: &str, index: &Path) -> Result<(Pin, IndexMetadata)> {
+    load_metadata_with(requirement, index, &Preferences::new())
+}
+
+/// [`load_metadata`] that keeps the version `prefs` names for this package
+/// when it is among the candidates the requirement admits, and falls back
+/// to the highest otherwise.
+pub(crate) fn load_metadata_with(
+    requirement: &str,
+    index: &Path,
+    prefs: &Preferences,
+) -> Result<(Pin, IndexMetadata)> {
     use crate::pkgmanage::pkgmgr::pip_install::candidate_versions;
     use crate::pkgmanage::pkgmgr::requirements_parse::{parse_one_line, RequirementLine};
 
@@ -538,14 +746,21 @@ pub(crate) fn load_metadata(requirement: &str, index: &Path) -> Result<(Pin, Ind
         );
     }
     let versions = candidate_versions(&pkg_dir, &req.specifiers)?;
-    let version = versions.into_iter().next().with_context(|| {
-        format!(
-            "no candidate for `{}` matching {:?} in index {}",
-            req.name,
-            req.specifiers,
-            index.display()
-        )
-    })?;
+    let preferred = prefs
+        .get(&normalize_name(&req.name))
+        .and_then(|p| versions.iter().find(|v| *v == p))
+        .cloned();
+    let version = match preferred {
+        Some(v) => v,
+        None => versions.into_iter().next().with_context(|| {
+            format!(
+                "no candidate for `{}` matching {:?} in index {}",
+                req.name,
+                req.specifiers,
+                index.display()
+            )
+        })?,
+    };
     let ver_dir = pkg_dir.join(&version);
     let meta_path = ver_dir.join("metadata.toml");
     let mut sha256 = String::new();
@@ -640,11 +855,8 @@ fn absolutize(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn render_lockfile(direct_deps: &[String], resolved: &[Resolved]) -> String {
-    let mut input = direct_deps.to_vec();
-    input.sort();
-    input.dedup();
-    let input_hash = compute_input_hash(&input);
+fn render_lockfile(state: &ManifestState, resolved: &[Resolved]) -> String {
+    let input_hash = compute_input_hash(&state.lock_inputs());
 
     let mut out = String::with_capacity(512);
     out.push_str("format_version = 1\n");
@@ -666,6 +878,7 @@ fn render_lockfile(direct_deps: &[String], resolved: &[Resolved]) -> String {
             &r.source,
         );
         out.push_str(&format!("direct = {}\n", r.direct));
+        append_membership_fields(&mut out, r.project, &r.groups, &r.extras);
         out.push_str(&format!(
             "dependencies = {}\n",
             render_string_list(&r.requires)
@@ -826,51 +1039,79 @@ pub(crate) fn prune_lock_for_remaining_roots(
         by_key.insert(prune_edge_key(&e.name, &e.version), i);
     }
 
-    // Every remaining manifest root must already have a recorded pin; a
-    // root the lock never named means the lock cannot be trusted for this
-    // prune at all.
+    let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        by_name.entry(normalize_name(&e.name)).or_default().push(i);
+    }
+
+    // Every remaining manifest root -- project, group, or extra -- must
+    // already have a recorded pin: an exact `==` root by name and version,
+    // any other requirement by name alone when the lock holds exactly one
+    // entry for it. A root the lock never named means the lock cannot be
+    // trusted for this prune at all.
+    let roots = state.lock_roots();
     let mut root_indices: BTreeSet<usize> = BTreeSet::new();
-    for dep in &state.dependencies {
-        let pin = Pin::parse(dep).ok()?;
-        let key = prune_edge_key(&pin.name, &pin.version);
-        let idx = *by_key.get(&key)?;
+    for root in &roots {
+        let idx = match Pin::parse(&root.spec) {
+            Ok(pin) => *by_key.get(&prune_edge_key(&pin.name, &pin.version))?,
+            Err(_) => {
+                let name = normalize_name(&requirement_name(&root.spec).ok()?);
+                match by_name.get(&name)?.as_slice() {
+                    [only] => *only,
+                    _ => return None,
+                }
+            }
+        };
         root_indices.insert(idx);
     }
 
-    // BFS from the remaining roots along each entry's own recorded
-    // `dependencies` edges. An edge that resolves to no known entry is
-    // dropped silently rather than panicking -- the lock it was read from
-    // may already be stale in ways this prune does not have to fix.
+    // Each entry's own recorded `dependencies` edges, as indices. An edge
+    // that resolves to no known entry is dropped silently rather than
+    // panicking -- the lock it was read from may already be stale in ways
+    // this prune does not have to fix.
+    let edges: Vec<Vec<usize>> = entries
+        .iter()
+        .map(|e| {
+            e.dependencies
+                .iter()
+                .filter_map(|edge| {
+                    let (n, v) = edge.split_once("==")?;
+                    by_key.get(&prune_edge_key(n.trim(), v.trim())).copied()
+                })
+                .collect()
+        })
+        .collect();
+
+    // BFS from the remaining roots.
     let mut reachable: BTreeSet<usize> = BTreeSet::new();
     let mut queue: VecDeque<usize> = root_indices.iter().copied().collect();
     while let Some(idx) = queue.pop_front() {
         if !reachable.insert(idx) {
             continue;
         }
-        for edge in &entries[idx].dependencies {
-            let Some((n, v)) = edge.split_once("==") else {
-                continue;
-            };
-            if let Some(&next) = by_key.get(&prune_edge_key(n.trim(), v.trim())) {
-                if !reachable.contains(&next) {
-                    queue.push_back(next);
-                }
+        for &next in &edges[idx] {
+            if !reachable.contains(&next) {
+                queue.push_back(next);
             }
         }
     }
 
-    let mut kept: Vec<&PruneEntry> = reachable.iter().map(|&i| &entries[i]).collect();
-    kept.sort_by(|a, b| a.name.cmp(&b.name));
+    let name_index: BTreeMap<String, usize> = by_name
+        .iter()
+        .filter_map(|(n, idxs)| idxs.first().map(|&i| (n.clone(), i)))
+        .collect();
+    let membership = compute_membership(&edges, &name_index, &roots);
 
-    let mut input = state.dependencies.clone();
-    input.sort();
-    input.dedup();
-    let input_hash = compute_input_hash(&input);
+    let mut kept: Vec<usize> = reachable.iter().copied().collect();
+    kept.sort_by(|&a, &b| entries[a].name.cmp(&entries[b].name));
+
+    let input_hash = compute_input_hash(&state.lock_inputs());
 
     let mut out = String::with_capacity(512);
     out.push_str("format_version = 1\n");
     out.push_str(&format!("input_hash = \"{input_hash}\"\n"));
-    for e in kept {
+    for idx in kept {
+        let e = &entries[idx];
         out.push('\n');
         out.push_str("[[package]]\n");
         out.push_str(&format!("name = \"{}\"\n", e.name));
@@ -879,10 +1120,11 @@ pub(crate) fn prune_lock_for_remaining_roots(
         let source = reconstruct_source(e);
         append_lock_source_fields(&mut out, &e.name, &e.version, &e.url, &source);
         if e.direct_present {
-            let idx = by_key[&prune_edge_key(&e.name, &e.version)];
             let is_direct = root_indices.contains(&idx);
             out.push_str(&format!("direct = {is_direct}\n"));
         }
+        let m = &membership[idx];
+        append_membership_fields(&mut out, m.project, &m.groups, &m.extras);
         out.push_str(&format!(
             "dependencies = {}\n",
             render_string_list(&e.dependencies)
@@ -891,9 +1133,15 @@ pub(crate) fn prune_lock_for_remaining_roots(
     Some(out)
 }
 
-fn compute_input_hash(deps: &[String]) -> String {
+/// The lock's `input_hash`: sha256 over the sorted, deduplicated inputs
+/// (`ManifestState::lock_inputs`), one per line. Shared by every lock
+/// writer so `add`, `lock`, `remove`, and `sync --locked` agree on it.
+pub(crate) fn compute_input_hash(deps: &[String]) -> String {
+    let mut sorted = deps.to_vec();
+    sorted.sort();
+    sorted.dedup();
     let mut hasher = Sha256::new();
-    for d in deps {
+    for d in &sorted {
         hasher.update(d.as_bytes());
         hasher.update(b"\n");
     }
@@ -935,6 +1183,9 @@ mod tests {
                 sha256: None,
                 url: None,
                 source: SourceMeta::Default,
+                project: true,
+                groups: Vec::new(),
+                extras: Vec::new(),
             },
             Resolved {
                 pin: Pin {
@@ -946,10 +1197,151 @@ mod tests {
                 sha256: None,
                 url: None,
                 source: SourceMeta::Default,
+                project: true,
+                groups: Vec::new(),
+                extras: Vec::new(),
             },
         ];
-        let a = render_lockfile(&["a==1.0".to_string()], &resolved);
-        let b = render_lockfile(&["a==1.0".to_string()], &resolved);
+        let state = manifest_state(&["a==1.0"], &[], &[]);
+        let a = render_lockfile(&state, &resolved);
+        let b = render_lockfile(&state, &resolved);
         assert_eq!(a, b);
+        assert!(!a.contains("project = "), "{a}");
+        assert!(!a.contains("groups = "), "{a}");
+    }
+
+    fn manifest_state(deps: &[&str], dev: &[&str], extras: &[(&str, &[&str])]) -> ManifestState {
+        let mut src = String::from(
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\nrequires-python = \">=3.12\"\n",
+        );
+        src.push_str(&format!(
+            "dependencies = {}\n",
+            render_string_list(&deps.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        ));
+        if !extras.is_empty() {
+            src.push_str("\n[project.optional-dependencies]\n");
+            for (name, members) in extras {
+                src.push_str(&format!(
+                    "{name} = {}\n",
+                    render_string_list(&members.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+                ));
+            }
+        }
+        if !dev.is_empty() {
+            src.push_str(&format!(
+                "\n[dependency-groups]\ndev = {}\n",
+                render_string_list(&dev.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+            ));
+        }
+        ManifestState::parse(&src).unwrap()
+    }
+
+    fn node(name: &str, version: &str, direct: bool, requires: &[&str]) -> Resolved {
+        Resolved {
+            pin: Pin {
+                name: name.into(),
+                version: version.into(),
+            },
+            direct,
+            requires: requires.iter().map(|s| s.to_string()).collect(),
+            sha256: None,
+            url: None,
+            source: SourceMeta::Default,
+            project: true,
+            groups: Vec::new(),
+            extras: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn membership_follows_each_selection_closure() {
+        // core -> shared; pytest (dev) -> shared, pluggy; fastdep (extra
+        // "fast") stands alone.
+        let state = manifest_state(
+            &["core==1.0"],
+            &["pytest==8.0"],
+            &[("fast", &["fastdep==2.0"])],
+        );
+        let mut resolved = vec![
+            node("core", "1.0", true, &["shared==0.1"]),
+            node("fastdep", "2.0", true, &[]),
+            node("pluggy", "1.5", false, &[]),
+            node("pytest", "8.0", true, &["shared==0.1", "pluggy==1.5"]),
+            node("shared", "0.1", false, &[]),
+        ];
+        assign_membership(&mut resolved, &state);
+        let by_name = |n: &str| resolved.iter().find(|r| r.pin.name == n).unwrap();
+        assert!(by_name("core").project && by_name("core").groups.is_empty());
+        assert!(by_name("shared").project);
+        assert_eq!(by_name("shared").groups, vec!["dev"]);
+        assert!(!by_name("pytest").project);
+        assert_eq!(by_name("pytest").groups, vec!["dev"]);
+        assert!(!by_name("pluggy").project);
+        assert_eq!(by_name("pluggy").groups, vec!["dev"]);
+        assert!(!by_name("fastdep").project);
+        assert_eq!(by_name("fastdep").extras, vec!["fast"]);
+        assert!(by_name("fastdep").groups.is_empty());
+
+        let body = render_lockfile(&state, &resolved);
+        assert!(
+            body.contains("name = \"pluggy\"\nversion = \"1.5\"\nsha256 = \"\"\nurl = \"\"\nsource = \"pypi://pluggy/1.5\"\ndirect = false\nproject = false\ngroups = [\"dev\"]\ndependencies = []\n"),
+            "{body}"
+        );
+        assert!(
+            body.contains("name = \"shared\"\nversion = \"0.1\"\nsha256 = \"\"\nurl = \"\"\nsource = \"pypi://shared/0.1\"\ndirect = false\ngroups = [\"dev\"]\ndependencies = []\n"),
+            "{body}"
+        );
+        assert!(
+            body.contains(
+                "direct = true\nproject = false\nextras = [\"fast\"]\ndependencies = []\n"
+            ),
+            "{body}"
+        );
+        assert!(body.contains("name = \"core\"\nversion = \"1.0\"\nsha256 = \"\"\nurl = \"\"\nsource = \"pypi://core/1.0\"\ndirect = true\ndependencies = [\"shared==0.1\"]\n"), "{body}");
+        // The hash covers the group and extra members too.
+        let plain = manifest_state(&["core==1.0"], &[], &[]);
+        assert_ne!(
+            compute_input_hash(&state.lock_inputs()),
+            compute_input_hash(&plain.lock_inputs())
+        );
+        assert_eq!(
+            compute_input_hash(&plain.lock_inputs()),
+            compute_input_hash(&["core==1.0".to_string()])
+        );
+    }
+
+    #[test]
+    fn preferences_keep_a_locked_version_only_while_it_still_matches() {
+        let index = tempfile::tempdir().unwrap();
+        for v in ["1.0", "2.0", "3.0"] {
+            let dir = index.path().join("lib").join(v);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("metadata.toml"), "requires = []\n").unwrap();
+        }
+        let mut prefs = Preferences::new();
+        prefs.insert("lib".into(), "2.0".into());
+        let (pin, _) = load_metadata_with("lib", index.path(), &prefs).unwrap();
+        assert_eq!(pin.version, "2.0");
+        let (pin, _) = load_metadata_with("lib>=2.5", index.path(), &prefs).unwrap();
+        assert_eq!(pin.version, "3.0");
+        let (pin, _) = load_metadata_with("lib", index.path(), &Preferences::new()).unwrap();
+        assert_eq!(pin.version, "3.0");
+
+        // `lock_preferences` reads the lock, honours --upgrade-package, and
+        // --upgrade releases everything.
+        let project = tempfile::tempdir().unwrap();
+        fs::write(
+            project.path().join(LOCKFILE_FILE),
+            "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"Lib\"\nversion = \"2.0\"\nsha256 = \"\"\nurl = \"\"\ndependencies = []\n\n[[package]]\nname = \"other\"\nversion = \"1.0\"\nsha256 = \"\"\nurl = \"\"\ndependencies = []\n",
+        )
+        .unwrap();
+        let all = lock_preferences(project.path(), false, &[]);
+        assert_eq!(all.get("lib").map(String::as_str), Some("2.0"));
+        assert_eq!(all.get("other").map(String::as_str), Some("1.0"));
+        let one = lock_preferences(project.path(), false, &["LIB".to_string()]);
+        assert!(!one.contains_key("lib"));
+        assert!(one.contains_key("other"));
+        assert!(lock_preferences(project.path(), true, &[]).is_empty());
+        assert!(lock_preferences(index.path(), false, &[]).is_empty());
     }
 }

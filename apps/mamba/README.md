@@ -1019,9 +1019,11 @@ whose rows are in [STATUS.md](STATUS.md) and whose shipped outcome
   `index`, `auth`, `audit`, `pip`, `shell`, `cache`, and `hash` drive a
   project offline from a frozen local index, a local wheel path, or an
   explicit registry URL, on the CPython already on `PATH`: `lock` pins the
-  transitive closure with a `sha256` per package, `sync` installs the locked
-  wheels into `.venv`'s standard site-packages and removes what the lock
-  drops, and `run <file>` executes the file on the `.venv` interpreter; the
+  transitive closure with a `sha256` per package and keeps recorded pins
+  until `--upgrade` frees them, `sync` installs the locked wheels for the
+  selected PEP 735 groups and extras into `.venv`'s standard site-packages
+  and removes what the selection drops, and `run <file>` executes the file
+  on the `.venv` interpreter; the
   six [STATUS.md](STATUS.md) rows record the supported scope and limits, and
   `mamba pkgmgr-validate --json` replays the same workflow families from a
   built binary.
@@ -1041,6 +1043,7 @@ whose rows are in [STATUS.md](STATUS.md) and whose shipped outcome
 - Gate: `cargo test -p mamba --test pkgmgr_add_registry_transitive`
 - Gate: `cargo test -p mamba --test pkgmgr_validate_auth_family`
 - Gate: `cargo test -p mamba --test pkgmgr_remove_keeps_remaining_closure`
+- Gate: `cargo test -p mamba --test pkgmgr_flag_surface_uv_parity`
 - Gate: `cargo test -p mamba --test schema_gates`
 
 ## Supporting documents

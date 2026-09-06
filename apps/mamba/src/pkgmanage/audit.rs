@@ -225,6 +225,9 @@ mod tests {
             provides: Vec::new(),
             compatibility: String::new(),
             maturity: String::new(),
+            project: true,
+            groups: Vec::new(),
+            extras: Vec::new(),
         }];
         let db = AdvisoryDb {
             advisories: vec![Advisory {

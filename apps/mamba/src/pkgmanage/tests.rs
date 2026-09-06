@@ -31,7 +31,10 @@ fn clean_requires_strips_non_extra_markers_but_keeps_the_requirement() {
 fn clean_requires_keeps_plain_requirements_unchanged() {
     let raw = vec!["lib>=1".to_string(), "other==2.0".to_string()];
     let cleaned = clean_requires(&raw);
-    assert_eq!(cleaned, vec!["lib>=1".to_string(), "other==2.0".to_string()]);
+    assert_eq!(
+        cleaned,
+        vec!["lib>=1".to_string(), "other==2.0".to_string()]
+    );
 }
 
 #[test]
@@ -84,15 +87,15 @@ fn escape_toml_string_escapes_backslash_and_double_quote() {
 // externally observable end-to-end `sync` / `run` / `sync --check` shape.
 
 mod sync_pip_run_real_install {
+    use crate::pkgmanage::pip::{resolve_default_python, resolve_default_site_packages};
     use crate::pkgmanage::pkgmgr::installer::{InstallMode, InstallRequest, Installer};
+    use crate::pkgmanage::pkgmgr::toolchain::PythonVersion;
     use crate::pkgmanage::pkgmgr::venv::{
         create_venv, first_python_on_path, VenvCreationOutcome, VenvLayout, VenvOptions,
     };
     use crate::pkgmanage::pkgmgr::wheel_build::{
         compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
     };
-    use crate::pkgmanage::pkgmgr::toolchain::PythonVersion;
-    use crate::pkgmanage::pip::{resolve_default_python, resolve_default_site_packages};
     use crate::pkgmanage::run::{configure_command_environment, Mode};
     use crate::pkgmanage::sync::{resolve_artifact_path, resolve_site_packages, LockedPkg};
 
@@ -108,6 +111,9 @@ mod sync_pip_run_real_install {
             provides: Vec::new(),
             compatibility: String::new(),
             maturity: String::new(),
+            project: true,
+            groups: Vec::new(),
+            extras: Vec::new(),
         }
     }
 
@@ -134,9 +140,8 @@ mod sync_pip_run_real_install {
         std::fs::create_dir_all(&venv_dir).unwrap();
         std::fs::write(venv_dir.join("pyvenv.cfg"), "version = 3.11.9\n").unwrap();
 
-        let expected =
-            VenvLayout::for_current_platform(&venv_dir, &PythonVersion::new(3, 11, 9))
-                .site_packages;
+        let expected = VenvLayout::for_current_platform(&venv_dir, &PythonVersion::new(3, 11, 9))
+            .site_packages;
         let got = resolve_site_packages(&venv_dir);
 
         assert_ne!(
@@ -263,9 +268,8 @@ mod sync_pip_run_real_install {
         std::fs::create_dir_all(&venv_dir).unwrap();
         std::fs::write(venv_dir.join("pyvenv.cfg"), "version = 3.11.9\n").unwrap();
 
-        let expected =
-            VenvLayout::for_current_platform(&venv_dir, &PythonVersion::new(3, 11, 9))
-                .site_packages;
+        let expected = VenvLayout::for_current_platform(&venv_dir, &PythonVersion::new(3, 11, 9))
+            .site_packages;
         let got = resolve_default_site_packages(cwd);
 
         assert_ne!(
@@ -284,9 +288,8 @@ mod sync_pip_run_real_install {
         std::fs::create_dir_all(&venv_dir).unwrap();
         std::fs::write(venv_dir.join("pyvenv.cfg"), "version = 3.11.9\n").unwrap();
 
-        let expected =
-            VenvLayout::for_current_platform(&venv_dir, &PythonVersion::new(3, 11, 9))
-                .python_executable;
+        let expected = VenvLayout::for_current_platform(&venv_dir, &PythonVersion::new(3, 11, 9))
+            .python_executable;
         let got = resolve_default_python(cwd);
 
         assert_eq!(got, expected);
@@ -332,6 +335,9 @@ mod sync_prune {
             provides: Vec::new(),
             compatibility: String::new(),
             maturity: String::new(),
+            project: true,
+            groups: Vec::new(),
+            extras: Vec::new(),
         }
     }
 
@@ -579,7 +585,10 @@ mod sync_prune {
         let core_meta = CoreMetadata::new(dist, version);
         let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
         builder.add_file(format!("{dist}/__init__.py"), String::new());
-        builder.add_file(format!("{dist}/cli.py"), "def main():\n    return 0\n".to_string());
+        builder.add_file(
+            format!("{dist}/cli.py"),
+            "def main():\n    return 0\n".to_string(),
+        );
         builder.set_entry_points(format!("[console_scripts]\n{script} = {dist}.cli:main\n"));
         builder.build_to_dir(dir).unwrap()
     }
@@ -648,7 +657,10 @@ mod sync_prune {
 
         prune_distribution(&installer, &site, "cliapp").expect("prune cliapp");
         assert!(!wrapper.exists(), "the wrapper must be removed by prune");
-        assert!(!dist_info.exists(), "the dist-info must be removed by prune");
+        assert!(
+            !dist_info.exists(),
+            "the dist-info must be removed by prune"
+        );
     }
 
     #[test]
@@ -734,7 +746,10 @@ mod index_url_simple {
 
     #[test]
     fn normalize_index_url_is_case_sensitive_and_never_rewrites_the_host_or_path() {
-        assert_eq!(normalize_index_url("http://h:1/Simple"), "http://h:1/Simple");
+        assert_eq!(
+            normalize_index_url("http://h:1/Simple"),
+            "http://h:1/Simple"
+        );
         assert_eq!(
             normalize_index_url("https://pypi.org/simple"),
             "https://pypi.org"
@@ -752,14 +767,7 @@ mod index_url_simple {
     /// same normalisation for free.
     #[test]
     fn both_pypi_entry_points_construct_the_client_through_the_normaliser() {
-        let client = index_client_for_url(
-            "http://h:1/simple/",
-            String::new(),
-            8,
-            30,
-            3,
-            None,
-        );
+        let client = index_client_for_url("http://h:1/simple/", String::new(), 8, 30, 3, None);
         assert_eq!(client.index_url, "http://h:1");
     }
 }
@@ -820,8 +828,7 @@ mod run_file {
         std::fs::create_dir_all(&venv).unwrap();
         std::fs::write(venv.join("pyvenv.cfg"), "").unwrap();
 
-        let interpreter =
-            resolve_run_interpreter(tmp.path(), &Mode::EmptyLock, None).unwrap();
+        let interpreter = resolve_run_interpreter(tmp.path(), &Mode::EmptyLock, None).unwrap();
         assert_eq!(interpreter, venv_python_path(tmp.path()));
     }
 
@@ -969,7 +976,9 @@ mod lock_artifact_pairing {
 mod add_registry_transitive {
     use crate::pkgmanage::add::ManifestState;
     use crate::pkgmanage::lock::resolve_and_render_via_registry;
-    use crate::pkgmanage::pkgmgr::wheel_build::{compose_filename, CoreMetadata, WheelBuilder, WheelMetadata};
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
+    };
     use sha2::{Digest, Sha256};
     use std::collections::BTreeMap;
     use wiremock::matchers::{method, path};
@@ -1038,7 +1047,9 @@ mod add_registry_transitive {
             project_version: "0.1.0".to_string(),
             python_requires: ">=3.12".to_string(),
             dependencies: deps.iter().map(|d| d.to_string()).collect(),
-            dev_dependencies: Vec::new(),
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         }
     }
@@ -1088,9 +1099,12 @@ mod add_registry_transitive {
     }
 
     fn find<'a>(pins: &'a [Pin], name: &str) -> &'a Pin {
-        pins.iter()
-            .find(|p| p.name == name)
-            .unwrap_or_else(|| panic!("no pin named `{name}` in {:?}", pins.iter().map(|p| &p.name).collect::<Vec<_>>()))
+        pins.iter().find(|p| p.name == name).unwrap_or_else(|| {
+            panic!(
+                "no pin named `{name}` in {:?}",
+                pins.iter().map(|p| &p.name).collect::<Vec<_>>()
+            )
+        })
     }
 
     #[test]
@@ -1104,8 +1118,10 @@ mod add_registry_transitive {
         let nonce = process_nonce();
         let root_dist = format!("gizmo-{nonce}");
         let leaf_dist = format!("sprocket-{nonce}");
-        let root_wheel_file = compose_filename(&root_dist, VERSION, "py3", "none", "any").to_filename();
-        let leaf_wheel_file = compose_filename(&leaf_dist, VERSION, "py3", "none", "any").to_filename();
+        let root_wheel_file =
+            compose_filename(&root_dist, VERSION, "py3", "none", "any").to_filename();
+        let leaf_wheel_file =
+            compose_filename(&leaf_dist, VERSION, "py3", "none", "any").to_filename();
 
         let root_bytes = build_wheel(&root_dist, &root_wheel_file);
         let leaf_bytes = build_wheel(&leaf_dist, &leaf_wheel_file);
@@ -1169,8 +1185,7 @@ mod add_registry_transitive {
                 Mock::given(method("GET"))
                     .and(path(route))
                     .respond_with(
-                        ResponseTemplate::new(200)
-                            .set_body_raw(bytes, "application/octet-stream"),
+                        ResponseTemplate::new(200).set_body_raw(bytes, "application/octet-stream"),
                     )
                     .mount(&server)
                     .await;
@@ -1184,8 +1199,10 @@ mod add_registry_transitive {
 
         // Called synchronously, outside any `block_on` of `rt`: the seam
         // builds its own runtime internally.
-        let body = resolve_and_render_via_registry(&state, &index_url)
-            .unwrap_or_else(|e| panic!("resolve_and_render_via_registry: {e}\n--- body so far: n/a ---"));
+        let body = resolve_and_render_via_registry(&state, &index_url, &Default::default())
+            .unwrap_or_else(|e| {
+                panic!("resolve_and_render_via_registry: {e}\n--- body so far: n/a ---")
+            });
 
         let pins = parse_lock(&body);
 
@@ -1320,7 +1337,9 @@ dependencies = []
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: deps.iter().map(|d| d.to_string()).collect(),
-            dev_dependencies: Vec::new(),
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         }
     }
@@ -1543,7 +1562,9 @@ mod conflict_refused {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: deps.iter().map(|d| d.to_string()).collect(),
-            dev_dependencies: Vec::new(),
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         }
     }
@@ -1593,7 +1614,7 @@ mod conflict_refused {
     fn frozen_index_conflicting_transitive_requirements_are_refused() {
         let index = frozen_index("lib<2");
         let state = manifest_with(&["app==1.0", "other==1.0"]);
-        let err = resolve_and_render_via_index(&state, index.path())
+        let err = resolve_and_render_via_index(&state, index.path(), &Default::default())
             .expect_err("a graph with no satisfying version of `lib` must be refused");
         assert_names_conflict(&err.to_string());
     }
@@ -1602,7 +1623,7 @@ mod conflict_refused {
     fn frozen_index_still_pins_a_name_two_requirements_agree_on() {
         let index = frozen_index("lib>=1");
         let state = manifest_with(&["app==1.0", "other==1.0"]);
-        let body = resolve_and_render_via_index(&state, index.path())
+        let body = resolve_and_render_via_index(&state, index.path(), &Default::default())
             .expect("a graph both edges of which `lib==3.0` satisfies must still lock");
         let doc: toml::Value = body.parse().expect("parse mamba.lock");
         let packages = doc
@@ -1639,7 +1660,9 @@ mod conflict_refused {
     // name and shared with the real `$HOME`/`MAMBA_CACHE_DIR` this process
     // runs under -- can read a stale entry back for these names.
 
-    use crate::pkgmanage::pkgmgr::wheel_build::{compose_filename, CoreMetadata, WheelBuilder, WheelMetadata};
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
+    };
 
     fn process_nonce() -> String {
         let pid = std::process::id();
@@ -1666,7 +1689,8 @@ mod conflict_refused {
             .and_then(|n| n.to_str())
             .unwrap_or_else(|| panic!("fixture: the wheel builder named {}", wheel.display()))
             .to_string();
-        let bytes = std::fs::read(&wheel).unwrap_or_else(|e| panic!("read {}: {e}", wheel.display()));
+        let bytes =
+            std::fs::read(&wheel).unwrap_or_else(|e| panic!("read {}: {e}", wheel.display()));
         (file, bytes)
     }
 
@@ -1675,7 +1699,9 @@ mod conflict_refused {
             "<!DOCTYPE html>\n<html><head><title>Links for {dist}</title></head>\n<body>\n"
         );
         for (file, url, digest) in entries {
-            body.push_str(&format!("<a href=\"{url}#sha256={digest}\">{file}</a><br/>\n"));
+            body.push_str(&format!(
+                "<a href=\"{url}#sha256={digest}\">{file}</a><br/>\n"
+            ));
         }
         body.push_str("</body></html>\n");
         body
@@ -1745,12 +1771,10 @@ mod conflict_refused {
                     .collect();
                 Mock::given(method("GET"))
                     .and(wire_path(format!("/simple/{dist}/")))
-                    .respond_with(
-                        ResponseTemplate::new(200).set_body_raw(
-                            registry_simple_page(dist, &refs).into_bytes(),
-                            "text/html; charset=utf-8",
-                        ),
-                    )
+                    .respond_with(ResponseTemplate::new(200).set_body_raw(
+                        registry_simple_page(dist, &refs).into_bytes(),
+                        "text/html; charset=utf-8",
+                    ))
                     .mount(&server)
                     .await;
             }
@@ -1773,10 +1797,13 @@ mod conflict_refused {
                 .await;
             Mock::given(method("GET"))
                 .and(wire_path(format!("/pypi/{other_dist}/1.0/json")))
-                .respond_with(ResponseTemplate::new(200).set_body_raw(
-                    format!("{{\"info\":{{\"requires_dist\":[\"{other_requires}\"]}}}}").into_bytes(),
-                    "application/json",
-                ))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_raw(
+                        format!("{{\"info\":{{\"requires_dist\":[\"{other_requires}\"]}}}}")
+                            .into_bytes(),
+                        "application/json",
+                    ),
+                )
                 .mount(&server)
                 .await;
             for v in ["1.0", "3.0"] {
@@ -1806,7 +1833,7 @@ mod conflict_refused {
         let index_url = format!("{}/simple", server.uri());
         let state = manifest_with(&[&format!("{app_dist}==1.0"), &format!("{other_dist}==1.0")]);
 
-        let err = resolve_and_render_via_registry(&state, &index_url)
+        let err = resolve_and_render_via_registry(&state, &index_url, &Default::default())
             .expect_err("a graph with no satisfying version of `lib` must be refused");
         let msg = err.to_string();
         assert!(
@@ -1831,7 +1858,7 @@ mod conflict_refused {
         let index_url = format!("{}/simple", server.uri());
         let state = manifest_with(&[&format!("{app_dist}==1.0"), &format!("{other_dist}==1.0")]);
 
-        let body = resolve_and_render_via_registry(&state, &index_url)
+        let body = resolve_and_render_via_registry(&state, &index_url, &Default::default())
             .expect("a graph both edges of which `lib==3.0` satisfies must still lock");
         let doc: toml::Value = body.parse().expect("parse mamba.lock");
         let packages = doc
@@ -1928,7 +1955,9 @@ mod add_range_requirement_seam {
             project_version: "0.1.0".to_string(),
             python_requires: ">=3.12".to_string(),
             dependencies: deps.iter().map(|d| d.to_string()).collect(),
-            dev_dependencies: Vec::new(),
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         }
     }
@@ -1968,14 +1997,12 @@ mod add_range_requirement_seam {
     }
 
     fn find<'a>(pins: &'a [Pin], name: &str) -> &'a Pin {
-        pins.iter()
-            .find(|p| p.name == name)
-            .unwrap_or_else(|| {
-                panic!(
-                    "no pin named `{name}` in {:?}",
-                    pins.iter().map(|p| &p.name).collect::<Vec<_>>()
-                )
-            })
+        pins.iter().find(|p| p.name == name).unwrap_or_else(|| {
+            panic!(
+                "no pin named `{name}` in {:?}",
+                pins.iter().map(|p| &p.name).collect::<Vec<_>>()
+            )
+        })
     }
 
     #[test]
@@ -2041,8 +2068,7 @@ mod add_range_requirement_seam {
                 Mock::given(method("GET"))
                     .and(path(route))
                     .respond_with(
-                        ResponseTemplate::new(200)
-                            .set_body_raw(bytes, "application/octet-stream"),
+                        ResponseTemplate::new(200).set_body_raw(bytes, "application/octet-stream"),
                     )
                     .mount(&server)
                     .await;
@@ -2065,7 +2091,7 @@ mod add_range_requirement_seam {
 
         // Called synchronously, outside any `block_on` of `rt`: the seam
         // builds its own runtime internally.
-        let body = resolve_and_render_via_registry(&state, &index_url)
+        let body = resolve_and_render_via_registry(&state, &index_url, &Default::default())
             .unwrap_or_else(|e| panic!("resolve_and_render_via_registry: {e}"));
         let pins = parse_lock(&body);
         let pin = find(&pins, &dist);
@@ -2097,7 +2123,9 @@ mod add_dependency_identity_is_the_name_before_the_operator {
             project_version: "0.1.0".to_string(),
             python_requires: ">=3.12".to_string(),
             dependencies,
-            dev_dependencies: Vec::new(),
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         }
     }
@@ -2120,10 +2148,7 @@ mod add_dependency_identity_is_the_name_before_the_operator {
 
     #[test]
     fn remove_finds_a_handwritten_range_entry_by_name() {
-        let mut state = manifest_state(vec![
-            "keep==1.0".to_string(),
-            "gizmo>=1.5".to_string(),
-        ]);
+        let mut state = manifest_state(vec!["keep==1.0".to_string(), "gizmo>=1.5".to_string()]);
         state.remove_dependency("gizmo");
         assert_eq!(state.dependencies, vec!["keep==1.0".to_string()]);
     }

@@ -192,7 +192,7 @@ mod tests {
         );
         let state = ManifestState::parse(&out).unwrap();
         assert_eq!(state.dependencies, vec!["foo==1.0"]);
-        assert_eq!(state.dev_dependencies, vec!["pytest"]);
+        assert_eq!(state.dev_dependencies(), &["pytest".to_string()]);
         assert_eq!(state.python_requires, ">=3.11");
     }
 

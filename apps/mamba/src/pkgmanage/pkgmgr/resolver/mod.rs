@@ -84,6 +84,12 @@ pub struct Resolver {
     /// uploaded strictly after this UTC instant are dropped from
     /// the per-version candidate list. None = no cutoff.
     exclude_newer: Option<ExcludeNewer>,
+    /// Versions to try first when they satisfy the requirement, keyed by
+    /// PEP 503 name: the pins an existing lock already carries, so an
+    /// unchanged requirement keeps its pin instead of drifting to the newest
+    /// release (`uv lock` without `--upgrade`). A preferred version outside
+    /// the requirement's candidate set is ignored. Default: none.
+    preferences: BTreeMap<String, String>,
 }
 
 impl Resolver {
@@ -94,7 +100,19 @@ impl Resolver {
             prerelease_policy: PrereleasePolicy::default(),
             resolution_strategy: ResolutionStrategy::default(),
             exclude_newer: None,
+            preferences: BTreeMap::new(),
         }
+    }
+
+    /// Prefer these already-locked versions (any name spelling; normalized
+    /// here) over the strategy's first pick whenever they satisfy the
+    /// requirement. See the `preferences` field.
+    pub fn with_preferences(mut self, preferences: BTreeMap<String, String>) -> Self {
+        self.preferences = preferences
+            .into_iter()
+            .map(|(name, version)| (normalize_pref_name(&name), version))
+            .collect();
+        self
     }
 
     /// Override the marker-exclusion policy. The closure receives the candidate
@@ -241,11 +259,14 @@ impl Universe for Resolver {
         // module's contract clean.
         let mut ascending: Vec<String> = policy_filtered;
         ascending.reverse();
-        Ok(order_by_strategy(
-            self.resolution_strategy,
-            is_direct,
-            ascending,
-        ))
+        let mut ordered = order_by_strategy(self.resolution_strategy, is_direct, ascending);
+        if let Some(preferred) = self.preferences.get(&normalize_pref_name(name)) {
+            if let Some(pos) = ordered.iter().position(|v| v == preferred) {
+                let v = ordered.remove(pos);
+                ordered.insert(0, v);
+            }
+        }
+        Ok(ordered)
     }
 
     fn node(&self, name: &str, version: &str) -> Result<ResolvedNode, ResolutionError> {
@@ -295,9 +316,7 @@ impl Universe for Resolver {
             .fetch_version_requires_blocking(name, version)
             .map_err(|e| ResolutionError {
                 kind: ResolutionErrorKind::RequiresDistUnavailable,
-                trace: format!(
-                    "{name}=={version}: requires_dist could not be fetched: {e}"
-                ),
+                trace: format!("{name}=={version}: requires_dist could not be fetched: {e}"),
                 involved: vec![name.to_string()],
             })?;
         let mut requires: Vec<Requirement> = Vec::new();
@@ -331,6 +350,29 @@ impl Universe for Resolver {
             requires,
         })
     }
+}
+
+/// PEP 503 normalization for the preference map: lowercase, runs of
+/// `-`/`_`/`.` collapsed to one `-`.
+fn normalize_pref_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_sep = false;
+    for c in name.chars() {
+        let is_sep = c == '-' || c == '_' || c == '.';
+        if is_sep {
+            if !prev_sep && !out.is_empty() {
+                out.push('-');
+            }
+            prev_sep = true;
+        } else {
+            out.push(c.to_ascii_lowercase());
+            prev_sep = false;
+        }
+    }
+    if out.ends_with('-') {
+        out.pop();
+    }
+    out
 }
 
 /// Project an ascending candidate list into the order the strategy prefers,
@@ -575,7 +617,12 @@ pub(crate) fn search(
                 .find(|d| d.name == name)
                 .map(|d| &d.decided_with)
                 .expect("a decided name has a decision on the stack");
-            let refusal = conflict_error(&name, Some(decided_with), &offending, &decided[&name].version);
+            let refusal = conflict_error(
+                &name,
+                Some(decided_with),
+                &offending,
+                &decided[&name].version,
+            );
             backtrack(universe, &mut raised, &mut decided, &mut stack, refusal)?;
             continue;
         }
@@ -647,7 +694,11 @@ fn spell_specifier(s: &VersionSpecifier) -> String {
 
 /// Spell a conjunctive specifier set, comma-joined, e.g. `>=2,<3`.
 fn spell_specifiers(specs: &[VersionSpecifier]) -> String {
-    specs.iter().map(spell_specifier).collect::<Vec<_>>().join(",")
+    specs
+        .iter()
+        .map(spell_specifier)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Apply the `--prerelease` policy to a newest-first specifier-filtered

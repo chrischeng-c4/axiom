@@ -17,17 +17,31 @@ use std::fs;
 
 use crate::pkgmanage::add::{atomic_write, render_lockfile_for_manifest, ManifestState};
 use crate::pkgmanage::lock::prune_lock_for_remaining_roots;
-use crate::pkgmanage::manifest::pyproject;
+use crate::pkgmanage::manifest::pyproject::{self, DepTarget};
 
 const LOCKFILE_FILE: &str = "mamba.lock";
 
 pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
-    let name = sub
-        .get_one::<String>("name")
-        .context("missing required argument <name>")?;
-    if name.trim().is_empty() {
+    let names: Vec<String> = sub
+        .get_many::<String>("name")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    if names.is_empty() || names.iter().any(|n| n.trim().is_empty()) {
         bail!("empty dependency name");
     }
+    // Bare `remove NAME` drops the name from every list; `--dev`,
+    // `--group`, or `--optional` narrows it to that one list, the way
+    // `uv remove` does.
+    let scoped = sub.get_flag("dev")
+        || sub.get_one::<String>("group").is_some()
+        || sub.get_one::<String>("optional").is_some();
+    let target = scoped.then(|| {
+        DepTarget::from_flags(
+            sub.get_flag("dev"),
+            sub.get_one::<String>("group").map(String::as_str),
+            sub.get_one::<String>("optional").map(String::as_str),
+        )
+    });
 
     let project_dir = std::env::current_dir().context("read current directory")?;
     let manifest_path = pyproject::locate(&project_dir)?;
@@ -36,9 +50,20 @@ pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let mut state = ManifestState::parse(&manifest_src)?;
 
-    let before = state.dependencies.clone();
-    state.remove_dependency(name);
-    let removed = before.len() != state.dependencies.len();
+    let mut not_recorded: Vec<&str> = Vec::new();
+    for name in &names {
+        let removed = match &target {
+            Some(t) => state.remove_dependency_in(name, t),
+            None => {
+                let before = state.all_dependency_specs();
+                state.remove_dependency(name);
+                before != state.all_dependency_specs()
+            }
+        };
+        if !removed {
+            not_recorded.push(name);
+        }
+    }
 
     let new_manifest = state.render_into(&manifest_src)?;
 
@@ -60,7 +85,7 @@ pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
     atomic_write(&manifest_path, new_manifest.as_bytes())?;
     atomic_write(&lock_path, new_lockfile.as_bytes())?;
 
-    if !removed {
+    for name in not_recorded {
         eprintln!("mamba: `{name}` was not recorded as a dependency (no-op)");
     }
 

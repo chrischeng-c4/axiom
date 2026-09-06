@@ -170,6 +170,45 @@ pub fn resolve_run_interpreter(
     }
 }
 
+/// The interpreter `mamba run --python REQUEST <file>` spawns instead of
+/// the one `resolve_run_interpreter` would pick: a path to an executable
+/// (relative paths resolve against `project_dir`), or a bare name looked
+/// up on `path_value`. A request that names nothing runnable is refused
+/// rather than falling back, so the flag never runs a different Python
+/// than the one asked for.
+pub fn resolve_python_override(
+    request: &str,
+    project_dir: &Path,
+    path_value: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf> {
+    let as_path = Path::new(request);
+    if request.contains(std::path::MAIN_SEPARATOR) || request.contains('/') {
+        let candidate = if as_path.is_absolute() {
+            as_path.to_path_buf()
+        } else {
+            project_dir.join(as_path)
+        };
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        bail!(
+            "`--python {request}`: {} is not an executable file",
+            candidate.display()
+        );
+    }
+    if let Some(path) = path_value {
+        for dir in std::env::split_paths(path) {
+            let candidate = dir.join(request);
+            #[cfg(windows)]
+            let candidate = candidate.with_extension("exe");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    bail!("`--python {request}`: no such interpreter on PATH; pass a path to one")
+}
+
 /// Walk `path_value` (a `PATH`-shaped environment value) for the first
 /// `python3`, falling back to `python` in the same directory before moving
 /// on to the next — so a directory carrying both never yields `python` over

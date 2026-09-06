@@ -589,9 +589,8 @@ fn parenthesized_requires_dist_line_resolves_to_the_bounded_edge() {
         &[("legacyapp", "1.0", &["legacylib (<3,>=1.21.1)"])],
     );
     let root_reqs = roots(&["legacyapp"]);
-    let graph = search(&table, &root_reqs).expect(
-        "a parenthesized requires_dist line must parse and resolve, not be dropped",
-    );
+    let graph = search(&table, &root_reqs)
+        .expect("a parenthesized requires_dist line must parse and resolve, not be dropped");
     assert_eq!(
         pins(&graph),
         vec!["legacyapp==1.0", "legacylib==2.5"],
@@ -687,8 +686,8 @@ mod requires_dist_unavailable {
     /// the release as a leaf.
     #[test]
     fn requires_dist_503_on_every_attempt_refuses_naming_package_version() {
-        let rt = tokio::runtime::Runtime::new()
-            .expect("fixture: build a runtime for the mock registry");
+        let rt =
+            tokio::runtime::Runtime::new().expect("fixture: build a runtime for the mock registry");
         let server = rt.block_on(async {
             let server = MockServer::start().await;
             Mock::given(method("GET"))
@@ -717,7 +716,10 @@ mod requires_dist_unavailable {
         );
 
         assert_eq!(err.kind, ResolutionErrorKind::RequiresDistUnavailable);
-        for token in [format!("{NAME}=={VERSION}"), "requires_dist could not be fetched".to_string()] {
+        for token in [
+            format!("{NAME}=={VERSION}"),
+            "requires_dist could not be fetched".to_string(),
+        ] {
             assert!(
                 err.trace.contains(&token),
                 "the refusal must name `{token}`; got {:?}",
@@ -745,8 +747,8 @@ mod requires_dist_unavailable {
     /// "declares nothing", and the release still resolves -- with no edges.
     #[test]
     fn requires_dist_404_resolves_the_node_with_no_edges() {
-        let rt = tokio::runtime::Runtime::new()
-            .expect("fixture: build a runtime for the mock registry");
+        let rt =
+            tokio::runtime::Runtime::new().expect("fixture: build a runtime for the mock registry");
         let server = rt.block_on(async {
             let server = MockServer::start().await;
             Mock::given(method("GET"))

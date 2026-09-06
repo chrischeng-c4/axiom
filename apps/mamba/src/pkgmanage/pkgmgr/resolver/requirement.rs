@@ -255,7 +255,10 @@ mod tests {
                 p.specifiers, b.specifiers,
                 "the parenthesized form must yield the same specifier set as the bare form for {parenthesized:?}"
             );
-            assert_eq!(p.marker, b.marker, "marker must match for {parenthesized:?}");
+            assert_eq!(
+                p.marker, b.marker,
+                "marker must match for {parenthesized:?}"
+            );
         }
     }
 

@@ -36,7 +36,7 @@ use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::pkgmanage::manifest::pyproject;
+use crate::pkgmanage::manifest::pyproject::{self, ManifestState, DEV_GROUP};
 use crate::pkgmanage::pkgmgr::installer::{InstallMode, InstallRequest, Installer};
 use crate::pkgmanage::pkgmgr::venv::{
     create_venv, first_python_on_path, layout_from_pyvenv_cfg, VenvCreationOutcome, VenvOptions,
@@ -110,7 +110,7 @@ fn ensure_real_venv(venv_dir: &Path) -> Result<()> {
 
 pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
     let project_dir = std::env::current_dir().context("read current directory")?;
-    pyproject::locate(&project_dir)?;
+    let manifest_path = pyproject::locate(&project_dir)?;
     let lock_path = project_dir.join(LOCKFILE_FILE);
     if !lock_path.exists() {
         bail!(
@@ -121,7 +121,14 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
 
     let lock_src =
         fs::read_to_string(&lock_path).with_context(|| format!("read {}", lock_path.display()))?;
-    let packages = parse_locked_packages(&lock_src)?;
+    if sub.get_flag("locked") {
+        let manifest_src = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read {}", manifest_path.display()))?;
+        let state = ManifestState::parse(&manifest_src)?;
+        check_lock_current(&lock_src, &state)?;
+    }
+    let selection = Selection::from_matches(sub);
+    let packages = selection.select(&parse_locked_packages(&lock_src)?);
 
     let venv_dir = project_dir.join(VENV_DIR);
 
@@ -243,6 +250,103 @@ fn resolve_jobs(sub: &ArgMatches) -> usize {
     8
 }
 
+/// Which lock entries one `mamba sync` installs, uv's defaults exactly:
+/// the `[project] dependencies` closure always, the `dev` group unless
+/// `--no-dev`, and whatever `--group`, `--all-groups`, `--extra`, and
+/// `--all-extras` add. The environment converges on exactly the selection:
+/// `plan_extraneous` runs over the selected set, so `sync --no-dev` after a
+/// full sync uninstalls the dev packages the way `uv sync --no-dev` does
+/// (uv's `--inexact` is not offered).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Selection {
+    pub(crate) dev: bool,
+    pub(crate) groups: Vec<String>,
+    pub(crate) all_groups: bool,
+    pub(crate) extras: Vec<String>,
+    pub(crate) all_extras: bool,
+}
+
+impl Default for Selection {
+    fn default() -> Self {
+        Self {
+            dev: true,
+            groups: Vec::new(),
+            all_groups: false,
+            extras: Vec::new(),
+            all_extras: false,
+        }
+    }
+}
+
+impl Selection {
+    pub(crate) fn from_matches(sub: &ArgMatches) -> Self {
+        let many = |id: &str| -> Vec<String> {
+            sub.get_many::<String>(id)
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default()
+        };
+        Self {
+            dev: !sub.get_flag("no-dev"),
+            groups: many("group"),
+            all_groups: sub.get_flag("all-groups"),
+            extras: many("extra"),
+            all_extras: sub.get_flag("all-extras"),
+        }
+    }
+
+    /// True when `pkg` is reachable from a selected list.
+    pub(crate) fn includes(&self, pkg: &LockedPkg) -> bool {
+        if pkg.project {
+            return true;
+        }
+        if self.all_groups && !pkg.groups.is_empty() {
+            return true;
+        }
+        if self.dev && pkg.groups.iter().any(|g| g == DEV_GROUP) {
+            return true;
+        }
+        if pkg.groups.iter().any(|g| self.groups.contains(g)) {
+            return true;
+        }
+        if self.all_extras && !pkg.extras.is_empty() {
+            return true;
+        }
+        pkg.extras.iter().any(|e| self.extras.contains(e))
+    }
+
+    pub(crate) fn select(&self, packages: &[LockedPkg]) -> Vec<LockedPkg> {
+        packages
+            .iter()
+            .filter(|p| self.includes(p))
+            .cloned()
+            .collect()
+    }
+}
+
+/// `sync --locked`: refuse a lock whose `input_hash` no longer matches the
+/// manifest, instead of installing from it. A lock without an `input_hash`
+/// cannot be checked and is refused the same way.
+pub(crate) fn check_lock_current(lock_src: &str, state: &ManifestState) -> Result<()> {
+    let recorded = parse_lock_input_hash(lock_src)?;
+    let expected = crate::pkgmanage::lock::compute_input_hash(&state.lock_inputs());
+    if recorded.as_deref() != Some(expected.as_str()) {
+        bail!(
+            "the lockfile at `{LOCKFILE_FILE}` needs to be updated, but `--locked` was provided; \
+             run `mamba lock` to update it"
+        );
+    }
+    Ok(())
+}
+
+/// The top-level `input_hash` a lock records, if any.
+pub(crate) fn parse_lock_input_hash(lock_src: &str) -> Result<Option<String>> {
+    let doc: toml::Value = lock_src.parse().context("parse mamba.lock")?;
+    Ok(doc
+        .get("input_hash")
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LockedPkg {
     pub(crate) name: String,
@@ -269,6 +373,15 @@ pub(crate) struct LockedPkg {
     pub(crate) compatibility: String,
     /// Provider maturity label, e.g. experimental.
     pub(crate) maturity: String,
+    /// Reachable from `[project] dependencies`; a lock written before
+    /// groups were recorded omits the key and every entry is a project
+    /// entry.
+    pub(crate) project: bool,
+    /// The `[dependency-groups]` groups whose closure reaches this entry.
+    pub(crate) groups: Vec<String>,
+    /// The `[project.optional-dependencies]` extras whose closure reaches
+    /// this entry.
+    pub(crate) extras: Vec<String>,
 }
 
 pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
@@ -329,6 +442,9 @@ pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let project = tbl.get("project").and_then(|v| v.as_bool()).unwrap_or(true);
+        let groups = string_array(tbl, "groups");
+        let extras = string_array(tbl, "extras");
         out.push(LockedPkg {
             name,
             version,
@@ -340,6 +456,9 @@ pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
             provides,
             compatibility,
             maturity,
+            project,
+            groups,
+            extras,
         });
     }
     Ok(out)
@@ -866,5 +985,139 @@ dependencies = []
     fn normalize_module() {
         assert_eq!(normalize_module_name("Foo.Bar-baz"), "foo_bar_baz");
         assert_eq!(normalize_module_name("plain"), "plain");
+    }
+
+    const GROUPED_LOCK: &str = r#"
+format_version = 1
+input_hash = "x"
+
+[[package]]
+name = "core"
+version = "1.0"
+sha256 = ""
+source = "pypi://core/1.0"
+direct = true
+dependencies = ["shared==0.1"]
+
+[[package]]
+name = "fastdep"
+version = "2.0"
+sha256 = ""
+source = "pypi://fastdep/2.0"
+direct = true
+project = false
+extras = ["fast"]
+dependencies = []
+
+[[package]]
+name = "pytest"
+version = "8.0"
+sha256 = ""
+source = "pypi://pytest/8.0"
+direct = true
+project = false
+groups = ["dev"]
+dependencies = []
+
+[[package]]
+name = "ruff"
+version = "0.5"
+sha256 = ""
+source = "pypi://ruff/0.5"
+direct = true
+project = false
+groups = ["lint"]
+dependencies = []
+
+[[package]]
+name = "shared"
+version = "0.1"
+sha256 = ""
+source = "pypi://shared/0.1"
+direct = false
+groups = ["dev"]
+dependencies = []
+"#;
+
+    fn names(pkgs: &[LockedPkg]) -> Vec<&str> {
+        pkgs.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    #[test]
+    fn parse_membership_defaults_to_project() {
+        let pkgs = parse_locked_packages(GROUPED_LOCK).unwrap();
+        let core = pkgs.iter().find(|p| p.name == "core").unwrap();
+        assert!(core.project && core.groups.is_empty() && core.extras.is_empty());
+        let pytest = pkgs.iter().find(|p| p.name == "pytest").unwrap();
+        assert!(!pytest.project);
+        assert_eq!(pytest.groups, vec!["dev"]);
+        let shared = pkgs.iter().find(|p| p.name == "shared").unwrap();
+        assert!(shared.project);
+        assert_eq!(shared.groups, vec!["dev"]);
+    }
+
+    #[test]
+    fn selection_follows_uv_defaults() {
+        let pkgs = parse_locked_packages(GROUPED_LOCK).unwrap();
+        let default = Selection::default();
+        assert_eq!(
+            names(&default.select(&pkgs)),
+            vec!["core", "pytest", "shared"]
+        );
+        let no_dev = Selection {
+            dev: false,
+            ..Selection::default()
+        };
+        assert_eq!(names(&no_dev.select(&pkgs)), vec!["core", "shared"]);
+        let lint = Selection {
+            groups: vec!["lint".into()],
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&lint.select(&pkgs)),
+            vec!["core", "pytest", "ruff", "shared"]
+        );
+        let all_groups = Selection {
+            dev: false,
+            all_groups: true,
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&all_groups.select(&pkgs)),
+            vec!["core", "pytest", "ruff", "shared"]
+        );
+        let fast = Selection {
+            extras: vec!["fast".into()],
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&fast.select(&pkgs)),
+            vec!["core", "fastdep", "pytest", "shared"]
+        );
+        let all_extras = Selection {
+            dev: false,
+            all_extras: true,
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&all_extras.select(&pkgs)),
+            vec!["core", "fastdep", "shared"]
+        );
+    }
+
+    #[test]
+    fn locked_refuses_a_stale_hash() {
+        let state = ManifestState::parse(
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\nrequires-python = \">=3.12\"\ndependencies = [\"core==1.0\"]\n",
+        )
+        .unwrap();
+        let err = check_lock_current(GROUPED_LOCK, &state).unwrap_err();
+        assert!(err.to_string().contains("--locked"), "{err}");
+        let current = format!(
+            "format_version = 1\ninput_hash = \"{}\"\n",
+            crate::pkgmanage::lock::compute_input_hash(&state.lock_inputs())
+        );
+        check_lock_current(&current, &state).unwrap();
+        assert!(check_lock_current("format_version = 1\n", &state).is_err());
     }
 }
