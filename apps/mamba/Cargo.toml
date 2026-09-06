@@ -393,3 +393,7 @@ path = "e2e/pkgmgr_validate_auth_family.rs"
 [[test]]
 name = "pkgmgr_remove_keeps_remaining_closure"
 path = "e2e/pkgmgr_remove_keeps_remaining_closure.rs"
+
+[[test]]
+name = "pkgmgr_lock_conflict_refused"
+path = "e2e/pkgmgr_lock_conflict_refused.rs"
