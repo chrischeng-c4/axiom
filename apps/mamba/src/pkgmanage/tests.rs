@@ -519,6 +519,155 @@ mod sync_prune {
             "ns/ is still owned by the surviving distribution `two` and must survive"
         );
     }
+
+    // Colocated seam tests for #4233: the installed RECORD must carry a row
+    // for the console-script wrapper `Installer::install` writes beside the
+    // interpreter, so `prune_distribution` -- the same removal path `mamba
+    // remove` + `mamba sync` take -- can act on it through the ordinary
+    // RECORD-driven uninstall loop, rather than leaving it unreachable.
+
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+
+    use crate::pkgmanage::pkgmgr::installer::{InstallMode, InstallRequest};
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
+    };
+
+    fn sha256_b64url(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(bytes))
+    }
+
+    /// Build a real, importable wheel through the product's own
+    /// `WheelBuilder`, carrying one `[console_scripts]` entry point.
+    fn build_console_script_wheel(
+        dir: &Path,
+        dist: &str,
+        version: &str,
+        script: &str,
+    ) -> std::path::PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let filename = compose_filename(dist, version, "py3", "none", "any");
+        let mut wheel_meta = WheelMetadata::new("mamba-pkgmgr-test");
+        wheel_meta.tags.push("py3-none-any".into());
+        let core_meta = CoreMetadata::new(dist, version);
+        let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+        builder.add_file(format!("{dist}/__init__.py"), String::new());
+        builder.add_file(format!("{dist}/cli.py"), "def main():\n    return 0\n".to_string());
+        builder.set_entry_points(format!("[console_scripts]\n{script} = {dist}.cli:main\n"));
+        builder.build_to_dir(dir).unwrap()
+    }
+
+    #[test]
+    fn install_records_the_console_script_wrapper_and_prune_removes_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(&site).unwrap();
+        let bin = tmp.path().join("venv").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let python = bin.join("python3");
+        std::fs::write(&python, "").unwrap();
+
+        let wheel_dir = tmp.path().join("wheels");
+        let wheel_path = build_console_script_wheel(&wheel_dir, "cliapp", "1.0", "sentinelctl");
+
+        let installer = Installer::new();
+        let result = installer
+            .install(InstallRequest {
+                artifact_path: wheel_path,
+                site_packages: site.clone(),
+                python_executable: python.clone(),
+                mode: InstallMode::Purelib,
+            })
+            .expect("install cliapp");
+        assert_eq!(result.console_scripts, vec!["sentinelctl".to_string()]);
+
+        let wrapper = bin.join("sentinelctl");
+        assert!(
+            wrapper.is_file(),
+            "wrapper must be written to {}",
+            wrapper.display()
+        );
+        let wrapper_bytes = std::fs::read(&wrapper).unwrap();
+        let wrapper_canon = wrapper.canonicalize().unwrap();
+
+        let dist_info = site.join("cliapp-1.0.dist-info");
+        let record_text = std::fs::read_to_string(dist_info.join("RECORD")).unwrap();
+        let matching: Vec<&str> = record_text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter(|line| {
+                let path = line.splitn(3, ',').next().unwrap_or("");
+                site.join(path)
+                    .canonicalize()
+                    .map(|p| p == wrapper_canon)
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "expected exactly one RECORD row for the wrapper; RECORD:\n{record_text}"
+        );
+        let mut fields = matching[0].splitn(3, ',');
+        let row_path = fields.next().unwrap();
+        assert!(
+            !Path::new(row_path).is_absolute(),
+            "the RECORD row path must be relative to site-packages: {row_path}"
+        );
+        let hash = fields.next().unwrap();
+        let size = fields.next().unwrap();
+        assert_eq!(hash, format!("sha256={}", sha256_b64url(&wrapper_bytes)));
+        assert_eq!(size, wrapper_bytes.len().to_string());
+
+        prune_distribution(&installer, &site, "cliapp").expect("prune cliapp");
+        assert!(!wrapper.exists(), "the wrapper must be removed by prune");
+        assert!(!dist_info.exists(), "the dist-info must be removed by prune");
+    }
+
+    #[test]
+    fn prune_does_not_touch_a_siblings_console_script_wrapper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = tmp.path().join("site-packages");
+        std::fs::create_dir_all(&site).unwrap();
+        let bin = tmp.path().join("venv").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let python = bin.join("python3");
+        std::fs::write(&python, "").unwrap();
+
+        let wheel_dir = tmp.path().join("wheels");
+        let cliapp_wheel = build_console_script_wheel(&wheel_dir, "cliapp", "1.0", "sentinelctl");
+        let otherapp_wheel = build_console_script_wheel(&wheel_dir, "otherapp", "1.0", "otherctl");
+
+        let installer = Installer::new();
+        for wheel in [cliapp_wheel, otherapp_wheel] {
+            installer
+                .install(InstallRequest {
+                    artifact_path: wheel,
+                    site_packages: site.clone(),
+                    python_executable: python.clone(),
+                    mode: InstallMode::Purelib,
+                })
+                .expect("install");
+        }
+
+        let survivor = bin.join("otherctl");
+        let survivor_bytes = std::fs::read(&survivor).unwrap();
+
+        prune_distribution(&installer, &site, "cliapp").expect("prune cliapp");
+
+        assert!(!bin.join("sentinelctl").exists());
+        assert!(
+            survivor.is_file(),
+            "otherapp's wrapper must survive pruning cliapp"
+        );
+        assert_eq!(
+            std::fs::read(&survivor).unwrap(),
+            survivor_bytes,
+            "the surviving wrapper must be byte-identical"
+        );
+        assert!(site.join("otherapp-1.0.dist-info").is_dir());
+    }
 }
 
 // Colocated unit tests for #4209: `--index-url` must accept the PEP 503
