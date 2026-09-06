@@ -546,13 +546,13 @@ mod tests {
         // [project.scripts] entries (gui_scripts intentionally skipped
         // by the installer in Phase 1.3, mirroring its behavior).
         let tmp = tempfile::tempdir().unwrap();
-        let names = installer::scripts::write_console_scripts(
+        let written = installer::scripts::write_console_scripts(
             &rendered,
             tmp.path(),
             std::path::Path::new("/usr/bin/python3"),
         )
         .expect("write_console_scripts");
-        let mut names_sorted = names;
+        let mut names_sorted: Vec<String> = written.into_iter().map(|(name, _)| name).collect();
         names_sorted.sort();
         assert_eq!(names_sorted, vec!["one".to_string(), "two".to_string()]);
 

@@ -413,3 +413,7 @@ path = "e2e/pkgmgr_lock_search_is_complete.rs"
 [[test]]
 name = "pkgmgr_lock_requires_dist_never_dropped"
 path = "e2e/pkgmgr_lock_requires_dist_never_dropped.rs"
+
+[[test]]
+name = "pkgmgr_remove_prunes_console_script_wrappers"
+path = "e2e/pkgmgr_remove_prunes_console_script_wrappers.rs"
