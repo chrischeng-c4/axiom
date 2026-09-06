@@ -374,10 +374,4 @@ pub use resolver::{ResolutionError, ResolutionErrorKind, ResolvedGraph, Resolved
 pub use types::{FileHash, IndexClient, IndexError, PackageMetadata, ReleaseFile};
 
 #[cfg(test)]
-mod tests {
-    mod installer;
-    mod mvp_package_manager_umbrella_gate;
-    mod pypi_index_client;
-    mod resolver;
-    mod venv_phase_gate;
-}
+mod tests;

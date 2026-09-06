@@ -26,6 +26,16 @@ pub enum InstallMode {
 }
 
 /// One install operation against a single resolved wheel artifact.
+///
+/// `python_executable` is the interpreter each console-script wrapper's
+/// shebang names, and it also decides where a wrapper is written: a console
+/// script lives beside the interpreter it invokes, in
+/// `python_executable.parent()`, never derived from `site_packages`. That
+/// derivation only holds for an absolute `python_executable`; a relative path
+/// (for example the bare `python3`, whose `parent()` is `Some("")`, not
+/// `None`) is refused by [`Installer::install`] before any file is written,
+/// rather than falling back to `site_packages.parent()/bin`, the process's
+/// working directory, or a `which` lookup.
 #[derive(Debug, Clone)]
 pub struct InstallRequest {
     pub artifact_path: PathBuf,
@@ -154,16 +164,33 @@ impl Installer {
             None
         };
 
+        // A console script lives beside the interpreter its shebang names,
+        // never beside site_packages: refuse before any file is written when
+        // that interpreter cannot be located absolutely, rather than falling
+        // back to site_packages, the working directory, or a `which` lookup.
+        if entry_points_text.is_some() && !req.python_executable.is_absolute() {
+            return Err(InstallerError::Io {
+                path: Some(req.python_executable.clone()),
+                detail: format!(
+                    "python_executable must be an absolute path to derive the console-script \
+                     directory; got {}",
+                    req.python_executable.display()
+                ),
+            });
+        }
+
         // Place files into site_packages per PEP 427 layout.
         let placed = layout::place_files(&staging, &req.site_packages, &meta)?;
 
-        // Generate console-script wrappers from entry_points.txt.
+        // Generate console-script wrappers from entry_points.txt, writing
+        // each wrapper beside the interpreter its own shebang names.
         let console_scripts = if let Some(text) = entry_points_text {
             let bin_dir = req
-                .site_packages
+                .python_executable
                 .parent()
-                .map(|p| p.join("bin"))
-                .unwrap_or_else(|| req.site_packages.join("bin"));
+                .filter(|p| !p.as_os_str().is_empty())
+                .expect("checked absolute above")
+                .to_path_buf();
             scripts::write_console_scripts(&text, &bin_dir, &req.python_executable)?
         } else {
             Vec::new()
