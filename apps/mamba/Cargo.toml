@@ -397,3 +397,7 @@ path = "e2e/pkgmgr_remove_keeps_remaining_closure.rs"
 [[test]]
 name = "pkgmgr_lock_conflict_refused"
 path = "e2e/pkgmgr_lock_conflict_refused.rs"
+
+[[test]]
+name = "pkgmgr_lock_backtracks_to_a_shared_version"
+path = "e2e/pkgmgr_lock_backtracks_to_a_shared_version.rs"
