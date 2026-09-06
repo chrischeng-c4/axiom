@@ -39,6 +39,9 @@ pub enum ResolutionErrorKind {
     MissingPackage,
     MarkerExcludesAll,
     Cycle,
+    /// A `requires_dist` line the index served does not parse as a PEP 508
+    /// requirement; see `Universe::node` in `resolver/mod.rs`.
+    UnparseableRequiresDist,
 }
 
 /// @spec .aw/tech-design/apps/mamba/pkgmgr/resolver.md#schema (ResolutionError)
@@ -127,6 +130,10 @@ mod tests {
                 "\"marker_excludes_all\"",
             ),
             (ResolutionErrorKind::Cycle, "\"cycle\""),
+            (
+                ResolutionErrorKind::UnparseableRequiresDist,
+                "\"unparseable_requires_dist\"",
+            ),
         ];
         for (kind, expected) in kinds {
             let json = serde_json::to_string(&kind).expect("serialize kind");

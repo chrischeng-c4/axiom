@@ -104,16 +104,26 @@ impl Universe for Table {
     }
 
     fn node(&self, name: &str, version: &str) -> Result<ResolvedNode, ResolutionError> {
-        let requires = self
+        let lines = self
             .edges
             .get(&(name.to_string(), version.to_string()))
-            .map(|lines| {
-                lines
-                    .iter()
-                    .filter_map(|l| parse_requirement(l).ok())
-                    .collect()
-            })
+            .cloned()
             .unwrap_or_default();
+        let mut requires = Vec::new();
+        for line in lines {
+            match parse_requirement(&line) {
+                Ok(r) => requires.push(r),
+                Err(e) => {
+                    return Err(ResolutionError {
+                        kind: ResolutionErrorKind::UnparseableRequiresDist,
+                        trace: format!(
+                            "{name}=={version} declares a requires_dist line that does not parse: {line:?}: {e}"
+                        ),
+                        involved: vec![name.to_string()],
+                    });
+                }
+            }
+        }
         Ok(ResolvedNode {
             name: name.to_string(),
             version: version.to_string(),
@@ -558,6 +568,58 @@ fn wildcard_grammar_rejects_the_shapes_pep440_does_not_define() {
         assert!(
             parse_one(spec).is_err(),
             "`{spec}` must not parse as a specifier"
+        );
+    }
+}
+
+// --------------------------------------------------------------------------
+// `requires_dist` lines a version raises must not be silently dropped
+// --------------------------------------------------------------------------
+
+/// A node whose `requires_dist` line is the PEP 508 parenthesized form
+/// resolves to the same edge the bare form would: the bounds are applied,
+/// not just the name.
+#[test]
+fn parenthesized_requires_dist_line_resolves_to_the_bounded_edge() {
+    let table = Table::new(
+        &[
+            ("legacyapp", &["1.0"]),
+            ("legacylib", &["1.0", "2.5", "3.0"]),
+        ],
+        &[("legacyapp", "1.0", &["legacylib (<3,>=1.21.1)"])],
+    );
+    let root_reqs = roots(&["legacyapp"]);
+    let graph = search(&table, &root_reqs).expect(
+        "a parenthesized requires_dist line must parse and resolve, not be dropped",
+    );
+    assert_eq!(
+        pins(&graph),
+        vec!["legacyapp==1.0", "legacylib==2.5"],
+        "the bound `(<3,>=1.21.1)` admits 1.0 and 2.5 but not 3.0; if the bound were \
+         lost the highest release 3.0 would be picked instead"
+    );
+    assert_consistent("parenthesized requires_dist", &graph, &root_reqs);
+}
+
+/// A node whose `requires_dist` line does not parse at all must not vanish
+/// from the graph unnoticed: `resolve` refuses, and the refusal names the
+/// package, the version and the offending line.
+#[test]
+fn unparseable_requires_dist_line_refuses_naming_package_version_and_line() {
+    let table = Table::new(
+        &[("brokenapp", &["1.0"])],
+        &[("brokenapp", "1.0", &["this is not a requirement"])],
+    );
+    let root_reqs = roots(&["brokenapp"]);
+    let err = search(&table, &root_reqs).expect_err(
+        "a requires_dist line that does not parse must refuse the resolution, not be dropped",
+    );
+    assert_eq!(err.kind, ResolutionErrorKind::UnparseableRequiresDist);
+    for token in ["brokenapp", "1.0", "this is not a requirement"] {
+        assert!(
+            err.trace.contains(token),
+            "the refusal must name `{token}`; got {:?}",
+            err.trace
         );
     }
 }

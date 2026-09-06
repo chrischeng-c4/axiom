@@ -298,7 +298,15 @@ impl Universe for Resolver {
         for line in raw_requires {
             let req = match parse_requirement(&line) {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(e) => {
+                    return Err(ResolutionError {
+                        kind: ResolutionErrorKind::UnparseableRequiresDist,
+                        trace: format!(
+                            "{name}=={version} declares a requires_dist line that does not parse: {line:?}: {e}"
+                        ),
+                        involved: vec![name.to_string()],
+                    });
+                }
             };
             // Marker filter: skip transitive deps whose environment marker
             // excludes the current host (e.g. `; sys_platform == "win32"` on a

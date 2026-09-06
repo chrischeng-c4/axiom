@@ -409,3 +409,7 @@ path = "e2e/pkgmgr_sync_console_scripts_land_in_venv_bin.rs"
 [[test]]
 name = "pkgmgr_lock_search_is_complete"
 path = "e2e/pkgmgr_lock_search_is_complete.rs"
+
+[[test]]
+name = "pkgmgr_lock_requires_dist_never_dropped"
+path = "e2e/pkgmgr_lock_requires_dist_never_dropped.rs"

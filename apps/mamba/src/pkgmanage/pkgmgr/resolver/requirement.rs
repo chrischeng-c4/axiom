@@ -104,7 +104,13 @@ pub fn parse(input: &str) -> Result<Requirement, ParseError> {
     let specifiers = if spec_input.is_empty() {
         Vec::new()
     } else {
-        super::specifier::parse_set(&spec_input)
+        let unwrapped = if spec_input.starts_with('(') {
+            strip_one_balanced_outer_parens(&spec_input)
+                .ok_or_else(|| ParseError::BadSpecifier(spec_input.clone()))?
+        } else {
+            spec_input.clone()
+        };
+        super::specifier::parse_set(&unwrapped)
             .map_err(|e| ParseError::BadSpecifier(e.to_string()))?
     };
 
@@ -114,6 +120,47 @@ pub fn parse(input: &str) -> Result<Requirement, ParseError> {
         extras,
         marker,
     })
+}
+
+/// Strip exactly one balanced outer pair of parentheses around a PEP 508
+/// `versionspec` — `'(' version_many ')'` — returning the trimmed interior.
+///
+/// `s` must already start with `(` and end with `)`; returns `None` (refuse)
+/// on an empty interior, an unmatched parenthesis, or any text following the
+/// close of the outer pair (the outer `)` must be the string's last byte).
+fn strip_one_balanced_outer_parens(s: &str) -> Option<String> {
+    debug_assert!(s.starts_with('('));
+    if !s.ends_with(')') {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut depth: i32 = 0;
+    for (i, b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+                if depth == 0 && i != bytes.len() - 1 {
+                    // the outer pair closed before the end of the string:
+                    // either trailing text follows, or this was never one
+                    // single outer pair.
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    let inner = s[1..s.len() - 1].trim();
+    if inner.is_empty() {
+        return None;
+    }
+    Some(inner.to_string())
 }
 
 /// PEP 503 distribution-name normalisation: lowercase, runs of `[-_.]` → `-`.
@@ -173,6 +220,76 @@ mod tests {
     #[test]
     fn empty_input_errors() {
         assert!(matches!(parse("   "), Err(ParseError::Empty)));
+    }
+
+    // ----------------------------------------------------------------
+    // PEP 508 parenthesized specifier sets — `name (specifier_set)`
+    // ----------------------------------------------------------------
+
+    /// The six `requires_dist` lines pypi.org serves for `requests==2.31.0`
+    /// verbatim: one balanced outer pair of parentheses wraps the specifier
+    /// set and must be stripped before the set is parsed. The two with a
+    /// marker keep it.
+    #[test]
+    fn parenthesized_specifier_set_matches_the_bare_form() {
+        let pairs = [
+            ("charset-normalizer (<4,>=2)", "charset-normalizer <4,>=2"),
+            ("idna (<4,>=2.5)", "idna <4,>=2.5"),
+            ("urllib3 (<3,>=1.21.1)", "urllib3 <3,>=1.21.1"),
+            ("certifi (>=2017.4.17)", "certifi >=2017.4.17"),
+            (
+                "PySocks (!=1.5.7,>=1.5.6) ; extra == 'socks'",
+                "pysocks !=1.5.7,>=1.5.6 ; extra == 'socks'",
+            ),
+            (
+                "chardet (<6,>=3.0.2) ; extra == 'use_chardet_on_py3'",
+                "chardet <6,>=3.0.2 ; extra == 'use_chardet_on_py3'",
+            ),
+        ];
+        for (parenthesized, bare) in pairs {
+            let p = parse(parenthesized)
+                .unwrap_or_else(|e| panic!("{parenthesized:?} must parse: {e}"));
+            let b = parse(bare).unwrap_or_else(|e| panic!("{bare:?} must parse: {e}"));
+            assert_eq!(p.name, b.name, "name must match for {parenthesized:?}");
+            assert_eq!(
+                p.specifiers, b.specifiers,
+                "the parenthesized form must yield the same specifier set as the bare form for {parenthesized:?}"
+            );
+            assert_eq!(p.marker, b.marker, "marker must match for {parenthesized:?}");
+        }
+    }
+
+    /// `name ()` — an empty interior — refuses.
+    #[test]
+    fn empty_parens_refuse() {
+        assert!(matches!(parse("name ()"), Err(ParseError::BadSpecifier(_))));
+    }
+
+    /// `name (>=1` — an unmatched opening parenthesis — refuses.
+    #[test]
+    fn unmatched_opening_paren_refuses() {
+        assert!(matches!(
+            parse("name (>=1"),
+            Err(ParseError::BadSpecifier(_))
+        ));
+    }
+
+    /// `name (>=1) >=2` — trailing text after the closing parenthesis —
+    /// refuses; only one balanced outer pair is unwrapped, never a prefix.
+    #[test]
+    fn trailing_text_after_closing_paren_refuses() {
+        assert!(matches!(
+            parse("name (>=1) >=2"),
+            Err(ParseError::BadSpecifier(_))
+        ));
+    }
+
+    /// The unparenthesized form is unaffected by the new unwrap step.
+    #[test]
+    fn bare_specifier_set_unchanged() {
+        let r = parse("name >=1").unwrap();
+        assert_eq!(r.name, "name");
+        assert_eq!(r.specifiers.len(), 1);
     }
 }
 // HANDWRITE-END
