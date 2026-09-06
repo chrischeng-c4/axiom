@@ -425,3 +425,7 @@ path = "e2e/pkgmgr_pip_install_defaults_to_the_venv_interpreter.rs"
 [[test]]
 name = "pkgmgr_add_accepts_a_requirement_specifier"
 path = "e2e/pkgmgr_add_accepts_a_requirement_specifier.rs"
+
+[[test]]
+name = "pkgmgr_sync_writes_the_installer_marker"
+path = "e2e/pkgmgr_sync_writes_the_installer_marker.rs"
