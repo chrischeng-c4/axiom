@@ -800,11 +800,25 @@ mod add_registry_transitive {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    const ROOT_DIST: &str = "gizmo";
-    const LEAF_DIST: &str = "sprocket";
     const VERSION: &str = "1.0";
-    const ROOT_WHEEL_FILE: &str = "gizmo-1.0-py3-none-any.whl";
-    const LEAF_WHEEL_FILE: &str = "sprocket-1.0-py3-none-any.whl";
+
+    /// Every dist name in this module carries a per-process nonce
+    /// (`std::process::id()` plus a wall-clock nanosecond timestamp,
+    /// computed once per test) so that no metadata entry written by an
+    /// earlier `cargo test` process -- which shares this developer's real
+    /// `MAMBA_CACHE_DIR`/`XDG_CACHE_HOME`/`$HOME` cache directory, keyed
+    /// only by normalized package name with a 300s TTL -- can be read back
+    /// by this run. Every filename, route, manifest dependency string and
+    /// expected lock entry below is derived from these two computed names,
+    /// never spelled as a second literal.
+    fn process_nonce() -> String {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("fixture: system clock before epoch")
+            .as_nanos();
+        format!("{pid}-{nanos}")
+    }
 
     fn sha256_bytes(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
@@ -912,8 +926,14 @@ mod add_registry_transitive {
         // `block_on` of this one.
         let rt = tokio::runtime::Runtime::new().expect("fixture: build a runtime for the registry");
 
-        let root_bytes = build_wheel(ROOT_DIST, ROOT_WHEEL_FILE);
-        let leaf_bytes = build_wheel(LEAF_DIST, LEAF_WHEEL_FILE);
+        let nonce = process_nonce();
+        let root_dist = format!("gizmo-{nonce}");
+        let leaf_dist = format!("sprocket-{nonce}");
+        let root_wheel_file = compose_filename(&root_dist, VERSION, "py3", "none", "any").to_filename();
+        let leaf_wheel_file = compose_filename(&leaf_dist, VERSION, "py3", "none", "any").to_filename();
+
+        let root_bytes = build_wheel(&root_dist, &root_wheel_file);
+        let leaf_bytes = build_wheel(&leaf_dist, &leaf_wheel_file);
         let root_digest = sha256_bytes(&root_bytes);
         let leaf_digest = sha256_bytes(&leaf_bytes);
         assert_ne!(root_digest, leaf_digest);
@@ -921,15 +941,15 @@ mod add_registry_transitive {
         let (server, root_url, leaf_url) = rt.block_on(async {
             let server = MockServer::start().await;
             let base = server.uri();
-            let root_wheel_route = format!("/files/{ROOT_WHEEL_FILE}");
-            let leaf_wheel_route = format!("/files/{LEAF_WHEEL_FILE}");
+            let root_wheel_route = format!("/files/{root_wheel_file}");
+            let leaf_wheel_route = format!("/files/{leaf_wheel_file}");
             let root_url = format!("{base}{root_wheel_route}");
             let leaf_url = format!("{base}{leaf_wheel_route}");
 
             for route in [
-                format!("/pypi/{ROOT_DIST}/json"),
-                format!("/pypi/{LEAF_DIST}/json"),
-                format!("/pypi/{LEAF_DIST}/{VERSION}/json"),
+                format!("/pypi/{root_dist}/json"),
+                format!("/pypi/{leaf_dist}/json"),
+                format!("/pypi/{leaf_dist}/{VERSION}/json"),
             ] {
                 Mock::given(method("GET"))
                     .and(path(route))
@@ -939,9 +959,9 @@ mod add_registry_transitive {
             }
 
             Mock::given(method("GET"))
-                .and(path(format!("/pypi/{ROOT_DIST}/{VERSION}/json")))
+                .and(path(format!("/pypi/{root_dist}/{VERSION}/json")))
                 .respond_with(ResponseTemplate::new(200).set_body_raw(
-                    format!("{{\"info\":{{\"requires_dist\":[\"{LEAF_DIST}\"]}}}}").into_bytes(),
+                    format!("{{\"info\":{{\"requires_dist\":[\"{leaf_dist}\"]}}}}").into_bytes(),
                     "application/json",
                 ))
                 .mount(&server)
@@ -949,12 +969,12 @@ mod add_registry_transitive {
 
             for (route, page) in [
                 (
-                    format!("/simple/{ROOT_DIST}/"),
-                    simple_page(ROOT_DIST, ROOT_WHEEL_FILE, &root_url, &root_digest),
+                    format!("/simple/{root_dist}/"),
+                    simple_page(&root_dist, &root_wheel_file, &root_url, &root_digest),
                 ),
                 (
-                    format!("/simple/{LEAF_DIST}/"),
-                    simple_page(LEAF_DIST, LEAF_WHEEL_FILE, &leaf_url, &leaf_digest),
+                    format!("/simple/{leaf_dist}/"),
+                    simple_page(&leaf_dist, &leaf_wheel_file, &leaf_url, &leaf_digest),
                 ),
             ] {
                 Mock::given(method("GET"))
@@ -985,7 +1005,7 @@ mod add_registry_transitive {
         });
 
         let index_url = format!("{}/simple", server.uri());
-        let state = manifest_state(&[&format!("{ROOT_DIST}=={VERSION}")]);
+        let state = manifest_state(&[&format!("{root_dist}=={VERSION}")]);
 
         // Called synchronously, outside any `block_on` of `rt`: the seam
         // builds its own runtime internally.
@@ -994,15 +1014,15 @@ mod add_registry_transitive {
 
         let pins = parse_lock(&body);
 
-        let root = find(&pins, ROOT_DIST);
+        let root = find(&pins, &root_dist);
         assert_eq!(root.version, VERSION);
         assert_eq!(root.direct, Some(true));
-        assert_eq!(root.dependencies, vec![format!("{LEAF_DIST}=={VERSION}")]);
+        assert_eq!(root.dependencies, vec![format!("{leaf_dist}=={VERSION}")]);
         assert!(!root.sha256.is_empty() && !root.url.is_empty());
         assert_eq!(root.url, root_url);
         assert_eq!(root.sha256, root_digest);
 
-        let leaf = find(&pins, LEAF_DIST);
+        let leaf = find(&pins, &leaf_dist);
         assert_eq!(leaf.version, VERSION);
         assert_eq!(leaf.direct, Some(false));
         assert!(leaf.dependencies.is_empty());
@@ -1436,12 +1456,24 @@ mod conflict_refused {
     // Same shape as `add_registry_transitive` above: real wheels through the
     // product's own `WheelBuilder`, served by an in-process `wiremock`
     // server with PEP 503 anchor pages, so the Simple-API version scraper
-    // has real filenames to parse. Each test uses its own dist names so the
-    // on-disk metadata cache (keyed only by package name, shared with the
-    // real `$HOME` this process runs under) can never let one test observe
-    // the other's registry.
+    // has real filenames to parse. Each test builds its dist names from a
+    // per-process nonce (`std::process::id()` plus a wall-clock nanosecond
+    // timestamp, computed once per test) so that neither the other test in
+    // this same run nor an earlier `cargo test` process -- within the
+    // on-disk metadata cache's 300s TTL, keyed only by normalized package
+    // name and shared with the real `$HOME`/`MAMBA_CACHE_DIR` this process
+    // runs under -- can read a stale entry back for these names.
 
     use crate::pkgmanage::pkgmgr::wheel_build::{compose_filename, CoreMetadata, WheelBuilder, WheelMetadata};
+
+    fn process_nonce() -> String {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("fixture: system clock before epoch")
+            .as_nanos();
+        format!("{pid}-{nanos}")
+    }
 
     fn build_registry_wheel(dist: &str, version: &str) -> (String, Vec<u8>) {
         let dir = tempfile::tempdir().expect("fixture: create a temp dir for the wheel");
@@ -1590,21 +1622,20 @@ mod conflict_refused {
     #[test]
     fn registry_conflicting_transitive_requirements_are_refused() {
         let rt = tokio::runtime::Runtime::new().expect("fixture: build a runtime for the registry");
-        let server = start_registry(
-            &rt,
-            "wi4225-conflict-app",
-            "wi4225-conflict-other",
-            "wi4225-conflict-lib",
-            "wi4225-conflict-lib<2",
-        );
+        let nonce = process_nonce();
+        let app_dist = format!("wi4225-conflict-app-{nonce}");
+        let other_dist = format!("wi4225-conflict-other-{nonce}");
+        let lib_dist = format!("wi4225-conflict-lib-{nonce}");
+        let other_requires = format!("{lib_dist}<2");
+        let server = start_registry(&rt, &app_dist, &other_dist, &lib_dist, &other_requires);
         let index_url = format!("{}/simple", server.uri());
-        let state = manifest_with(&["wi4225-conflict-app==1.0", "wi4225-conflict-other==1.0"]);
+        let state = manifest_with(&[&format!("{app_dist}==1.0"), &format!("{other_dist}==1.0")]);
 
         let err = resolve_and_render_via_registry(&state, &index_url)
             .expect_err("a graph with no satisfying version of `lib` must be refused");
         let msg = err.to_string();
         assert!(
-            msg.contains("wi4225-conflict-lib"),
+            msg.contains(&lib_dist),
             "error must name the contested package: {msg}"
         );
         let squeezed = squeeze(&msg);
@@ -1616,15 +1647,14 @@ mod conflict_refused {
     #[test]
     fn registry_still_pins_a_name_two_requirements_agree_on() {
         let rt = tokio::runtime::Runtime::new().expect("fixture: build a runtime for the registry");
-        let server = start_registry(
-            &rt,
-            "wi4225-agree-app",
-            "wi4225-agree-other",
-            "wi4225-agree-lib",
-            "wi4225-agree-lib>=1",
-        );
+        let nonce = process_nonce();
+        let app_dist = format!("wi4225-agree-app-{nonce}");
+        let other_dist = format!("wi4225-agree-other-{nonce}");
+        let lib_dist = format!("wi4225-agree-lib-{nonce}");
+        let other_requires = format!("{lib_dist}>=1");
+        let server = start_registry(&rt, &app_dist, &other_dist, &lib_dist, &other_requires);
         let index_url = format!("{}/simple", server.uri());
-        let state = manifest_with(&["wi4225-agree-app==1.0", "wi4225-agree-other==1.0"]);
+        let state = manifest_with(&[&format!("{app_dist}==1.0"), &format!("{other_dist}==1.0")]);
 
         let body = resolve_and_render_via_registry(&state, &index_url)
             .expect("a graph both edges of which `lib==3.0` satisfies must still lock");
@@ -1635,7 +1665,7 @@ mod conflict_refused {
             .expect("[[package]] array");
         let lib_entries: Vec<&toml::Value> = packages
             .iter()
-            .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some("wi4225-agree-lib"))
+            .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(lib_dist.as_str()))
             .collect();
         assert_eq!(
             lib_entries.len(),
