@@ -638,6 +638,15 @@ fn probe_auth(bin: &Path) -> FamilyResult {
     .with_paths(Some(project), None, Some(creds))
 }
 
+/// Serve the auth family's loopback JSON index for the whole probe.
+///
+/// The resolver makes more than one request per `add`: the project route
+/// (`/pypi/auth-demo/json`) selects the release and the per-version route
+/// (`/pypi/auth-demo/1.0.0/json`) fetches its `requires_dist`. A one-shot
+/// listener answered only the first and then dropped, so the second call
+/// failed at transport level; since #4235 the resolver refuses that instead
+/// of treating it as a leaf, so the listener serves every connection until
+/// the validator exits. Every route still demands the stored credential.
 fn spawn_auth_index(expected_auth: String) -> Result<String> {
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -645,46 +654,63 @@ fn spawn_auth_index(expected_auth: String) -> Result<String> {
     let listener = TcpListener::bind("127.0.0.1:0").context("bind auth index")?;
     let addr = listener.local_addr().context("read auth index addr")?;
     std::thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        let mut buf = [0u8; 8192];
-        let n = stream.read(&mut buf).unwrap_or(0);
-        let request = String::from_utf8_lossy(&buf[..n]);
-        let authorized = request.lines().any(|line| {
-            let Some((name, value)) = line.split_once(':') else {
-                return false;
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                break;
             };
-            name.eq_ignore_ascii_case("authorization") && value.trim() == expected_auth
-        });
-        let on_path = request.starts_with("GET /pypi/auth-demo/json ");
-        let (status, body) = if authorized && on_path {
-            (
-                "200 OK",
-                serde_json::json!({
-                    "info": { "name": "auth_demo", "version": "1.0.0" },
-                    "releases": {
-                        "1.0.0": [{
-                            "filename": "auth_demo-1.0.0-py3-none-any.whl",
-                            "url": "https://example.invalid/auth_demo-1.0.0-py3-none-any.whl",
-                            "digests": { "sha256": "6666666666666666666666666666666666666666666666666666666666666666" },
-                            "yanked": false
-                        }]
-                    }
-                })
-                .to_string(),
-            )
-        } else {
-            (
-                "401 Unauthorized",
-                "{\"error\":\"missing auth\"}".to_string(),
-            )
-        };
-        let response = format!(
-            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        let _ = stream.write_all(response.as_bytes());
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let authorized = request.lines().any(|line| {
+                let Some((name, value)) = line.split_once(':') else {
+                    return false;
+                };
+                name.eq_ignore_ascii_case("authorization") && value.trim() == expected_auth
+            });
+            let on_project = request.starts_with("GET /pypi/auth-demo/json ");
+            let on_version = request.starts_with("GET /pypi/auth-demo/1.0.0/json ");
+            let (status, body) = if !authorized {
+                (
+                    "401 Unauthorized",
+                    "{\"error\":\"missing auth\"}".to_string(),
+                )
+            } else if on_project {
+                (
+                    "200 OK",
+                    serde_json::json!({
+                        "info": { "name": "auth_demo", "version": "1.0.0" },
+                        "releases": {
+                            "1.0.0": [{
+                                "filename": "auth_demo-1.0.0-py3-none-any.whl",
+                                "url": "https://example.invalid/auth_demo-1.0.0-py3-none-any.whl",
+                                "digests": { "sha256": "6666666666666666666666666666666666666666666666666666666666666666" },
+                                "yanked": false
+                            }]
+                        }
+                    })
+                    .to_string(),
+                )
+            } else if on_version {
+                (
+                    "200 OK",
+                    serde_json::json!({
+                        "info": {
+                            "name": "auth_demo",
+                            "version": "1.0.0",
+                            "requires_dist": []
+                        }
+                    })
+                    .to_string(),
+                )
+            } else {
+                ("404 Not Found", "{\"error\":\"no such route\"}".to_string())
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
     });
     Ok(format!("http://{addr}"))
 }
