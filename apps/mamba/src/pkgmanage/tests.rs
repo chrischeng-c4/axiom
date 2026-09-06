@@ -92,7 +92,7 @@ mod sync_pip_run_real_install {
         compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
     };
     use crate::pkgmanage::pkgmgr::toolchain::PythonVersion;
-    use crate::pkgmanage::pip::resolve_default_site_packages;
+    use crate::pkgmanage::pip::{resolve_default_python, resolve_default_site_packages};
     use crate::pkgmanage::run::{configure_command_environment, Mode};
     use crate::pkgmanage::sync::{resolve_artifact_path, resolve_site_packages, LockedPkg};
 
@@ -274,6 +274,32 @@ mod sync_pip_run_real_install {
             "must not default to the flat .venv/site-packages layout"
         );
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn pip_default_python_uses_the_venv_layout_interpreter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path();
+        let venv_dir = cwd.join(".venv");
+        std::fs::create_dir_all(&venv_dir).unwrap();
+        std::fs::write(venv_dir.join("pyvenv.cfg"), "version = 3.11.9\n").unwrap();
+
+        let expected =
+            VenvLayout::for_current_platform(&venv_dir, &PythonVersion::new(3, 11, 9))
+                .python_executable;
+        let got = resolve_default_python(cwd);
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn pip_default_python_falls_back_to_relative_python3_without_a_venv() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path();
+
+        let got = resolve_default_python(cwd);
+
+        assert_eq!(got, std::path::PathBuf::from("python3"));
     }
 }
 
