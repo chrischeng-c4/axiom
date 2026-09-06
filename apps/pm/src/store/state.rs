@@ -5,7 +5,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    Feature, FeatureStatus, Prd, Project, Task, TaskStatus, TechDesign,
+    Defect, DefectSeverity, DefectStatus, Feature, FeatureStatus, GateRun, Prd, Project,
+    ReviewComment, ReviewSeverity, Task, TaskStatus, TechDesign,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -20,6 +21,12 @@ pub struct PmState {
     pub features: BTreeMap<String, Feature>,
     #[serde(default)]
     pub tasks: BTreeMap<String, Task>,
+    #[serde(default)]
+    pub defects: BTreeMap<String, Defect>,
+    #[serde(default)]
+    pub gate_runs: BTreeMap<String, Vec<GateRun>>,
+    #[serde(default)]
+    pub review_comments: BTreeMap<String, ReviewComment>,
 }
 
 impl PmState {
@@ -137,12 +144,81 @@ impl PmState {
             .collect()
     }
 
+    // Defects (Bug Tracking)
+    pub fn upsert_defect(&mut self, defect: Defect) {
+        self.defects.insert(defect.id.clone(), defect);
+    }
+
+    pub fn get_defect(&self, id: &str) -> Option<&Defect> {
+        self.defects.get(id)
+    }
+
+    pub fn list_defects(
+        &self,
+        project_id: &str,
+        status: Option<DefectStatus>,
+        severity: Option<DefectSeverity>,
+    ) -> Vec<&Defect> {
+        self.defects
+            .values()
+            .filter(|d| {
+                d.project_id == project_id
+                    && status.map_or(true, |st| d.status == st)
+                    && severity.map_or(true, |sev| d.severity == sev)
+            })
+            .collect()
+    }
+
+    // Gate Runs (Pre-merge test verification receipts)
+    pub fn record_gate_run(&mut self, run: GateRun) {
+        self.gate_runs
+            .entry(run.task_id.clone())
+            .or_default()
+            .push(run);
+    }
+
+    pub fn get_gate_runs(&self, task_id: &str) -> Vec<&GateRun> {
+        self.gate_runs
+            .get(task_id)
+            .map(|list| list.iter().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn get_latest_gate_run(&self, task_id: &str) -> Option<&GateRun> {
+        self.gate_runs
+            .get(task_id)
+            .and_then(|list| list.last())
+    }
+
+    // Review Comments (Pre-merge review comments)
+    pub fn upsert_review_comment(&mut self, comment: ReviewComment) {
+        self.review_comments.insert(comment.id.clone(), comment);
+    }
+
+    pub fn get_review_comment(&self, id: &str) -> Option<&ReviewComment> {
+        self.review_comments.get(id)
+    }
+
+    pub fn list_review_comments(&self, task_id: &str, unresolved_only: bool) -> Vec<&ReviewComment> {
+        self.review_comments
+            .values()
+            .filter(|c| c.task_id == task_id && (!unresolved_only || !c.resolved))
+            .collect()
+    }
+
+    pub fn has_unresolved_blocking_reviews(&self, task_id: &str) -> bool {
+        self.review_comments
+            .values()
+            .any(|c| c.task_id == task_id && c.severity == ReviewSeverity::Blocking && !c.resolved)
+    }
+
     pub fn get_project_summary(&self, project_id: &str) -> serde_json::Value {
         let project = self.get_project(project_id);
         let prds: Vec<&Prd> = self.list_prds(project_id);
         let tds: Vec<&TechDesign> = self.list_tech_designs(project_id);
         let features: Vec<&Feature> = self.list_features(project_id, None);
         let tasks: Vec<&Task> = self.list_tasks(project_id, None, None, None);
+        let defects: Vec<&Defect> = self.list_defects(project_id, None, None);
 
         let mut task_counts = BTreeMap::new();
         task_counts.insert("todo", 0);
@@ -174,6 +250,17 @@ impl PmState {
             *feature_counts.entry(key).or_insert(0) += 1;
         }
 
+        let mut defect_counts = BTreeMap::new();
+        for defect in &defects {
+            let key = match defect.status {
+                DefectStatus::Open => "open",
+                DefectStatus::InProgress => "in_progress",
+                DefectStatus::Resolved => "resolved",
+                DefectStatus::WontFix => "wont_fix",
+            };
+            *defect_counts.entry(key).or_insert(0) += 1;
+        }
+
         serde_json::json!({
             "project": project,
             "counts": {
@@ -183,6 +270,8 @@ impl PmState {
                 "tasks_total": tasks.len(),
                 "tasks_by_status": task_counts,
                 "features_by_status": feature_counts,
+                "defects_total": defects.len(),
+                "defects_by_status": defect_counts,
             },
             "recent_prds": prds.iter().map(|p| serde_json::json!({
                 "id": p.id,

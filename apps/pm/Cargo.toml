@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Lightweight, space-saving local Project Management MCP Server for AI Agents"
+autotests = false
 
 [lib]
 name = "pm"
@@ -25,6 +26,14 @@ path = "tests/test_mcp.rs"
 [[test]]
 name = "e2e_http_mcp"
 path = "e2e/http_mcp_e2e.rs"
+
+[[test]]
+name = "test_gate_and_defects"
+path = "tests/test_gate_and_defects.rs"
+
+[[test]]
+name = "local_gate_merge_e2e"
+path = "e2e/local_gate_merge_e2e.rs"
 
 [dependencies]
 tokio = { workspace = true, features = ["full"] }

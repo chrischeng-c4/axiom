@@ -44,6 +44,15 @@ pub async fn list_resources(store: &PmStore) -> Vec<Value> {
                 }));
             }
 
+            for defect in s.defects.values() {
+                resources.push(json!({
+                    "uri": format!("pm://defects/{}", defect.id),
+                    "name": format!("Defect: {} [{}]", defect.title, defect.status),
+                    "mimeType": "application/json",
+                    "description": format!("Severity: {} for project {}", defect.severity, defect.project_id),
+                }));
+            }
+
             resources
         })
         .await
@@ -106,6 +115,29 @@ pub async fn read_resource(store: &PmStore, uri: &str) -> Result<Value> {
                     "uri": uri,
                     "mimeType": "text/markdown",
                     "text": context,
+                }]
+            }))
+        }
+        "defects" => {
+            let defect = store.read(|s| s.get_defect(id).cloned()).await;
+            match defect {
+                Some(d) => Ok(json!({
+                    "contents": [{
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": serde_json::to_string_pretty(&d)?,
+                    }]
+                })),
+                None => bail!("Defect '{}' not found", id),
+            }
+        }
+        "gates" => {
+            let runs = store.read(|s| s.get_gate_runs(id).into_iter().cloned().collect::<Vec<_>>()).await;
+            Ok(json!({
+                "contents": [{
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": serde_json::to_string_pretty(&runs)?,
                 }]
             }))
         }
