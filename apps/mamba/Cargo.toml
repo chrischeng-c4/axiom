@@ -401,3 +401,7 @@ path = "e2e/pkgmgr_lock_conflict_refused.rs"
 [[test]]
 name = "pkgmgr_lock_backtracks_to_a_shared_version"
 path = "e2e/pkgmgr_lock_backtracks_to_a_shared_version.rs"
+
+[[test]]
+name = "pkgmgr_lock_requires_dist_never_dropped"
+path = "e2e/pkgmgr_lock_requires_dist_never_dropped.rs"
