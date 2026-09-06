@@ -5,6 +5,12 @@
         "@playwright/mcp@latest"
       ],
       "command": "npx"
+    },
+    "pm": {
+      "command": "pm",
+      "args": [
+        "serve"
+      ]
     }
   }
 }

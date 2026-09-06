@@ -1,0 +1,39 @@
+[package]
+name = "pm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Lightweight, space-saving local Project Management MCP Server for AI Agents"
+
+[lib]
+name = "pm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pm"
+path = "src/main.rs"
+
+[[test]]
+name = "test_store"
+path = "tests/test_store.rs"
+
+[[test]]
+name = "test_mcp"
+path = "tests/test_mcp.rs"
+
+[[test]]
+name = "e2e_http_mcp"
+path = "e2e/http_mcp_e2e.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+axum = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
