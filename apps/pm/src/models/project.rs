@@ -6,6 +6,8 @@ pub struct Project {
     pub name: String,
     pub description: String,
     pub root_path: String,
+    #[serde(default)]
+    pub default_gate_cmd: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

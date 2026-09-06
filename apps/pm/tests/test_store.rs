@@ -18,6 +18,7 @@ async fn test_store_crud_and_atomic_persistence() {
         name: "Test Project".to_string(),
         description: "A test project".to_string(),
         root_path: ".".to_string(),
+        default_gate_cmd: None,
         created_at: "2026-09-06T00:00:00Z".to_string(),
         updated_at: "2026-09-06T00:00:00Z".to_string(),
     };
@@ -137,6 +138,7 @@ fn test_task_context_aggregation() {
         name: "Axiom".to_string(),
         description: "Monorepo".to_string(),
         root_path: ".".to_string(),
+        default_gate_cmd: None,
         created_at: "2026-09-06T00:00:00Z".to_string(),
         updated_at: "2026-09-06T00:00:00Z".to_string(),
     });

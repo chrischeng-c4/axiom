@@ -3,10 +3,13 @@ use chrono::Utc;
 use serde_json::{json, Value};
 
 use crate::models::{
-    Feature, FeatureStatus, Prd, PrdStatus, Priority, Project, Task, TaskStatus,
-    TechDesign, TechDesignStatus,
+    Defect, DefectSeverity, DefectStatus, Feature, FeatureStatus, Prd, PrdStatus,
+    Priority, Project, ReviewComment, ReviewSeverity, Task, TaskStatus, TechDesign,
+    TechDesignStatus,
 };
-use crate::store::{get_next_actionable_task, get_task_context, PmStore};
+use crate::store::{
+    execute_gate, get_next_actionable_task, get_task_context, verify_and_merge_task, PmStore,
+};
 
 fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value {
     json!({
@@ -30,13 +33,14 @@ pub fn tool_definitions() -> Vec<Value> {
                 "id": { "type": "string", "description": "Unique identifier for the project (e.g. 'proj_axiom')" },
                 "name": { "type": "string", "description": "Human-readable name of the project" },
                 "description": { "type": "string", "description": "High level description of project purpose" },
-                "root_path": { "type": "string", "description": "Root workspace path (default: current directory)" }
+                "root_path": { "type": "string", "description": "Root workspace path (default: current directory)" },
+                "default_gate_cmd": { "type": "string", "description": "Default test verification command for this project (e.g. 'cap cargo test -p pm')" }
             }),
             &["id", "name", "description"],
         ),
         tool(
             "pm_get_project_summary",
-            "Retrieve an executive dashboard summary of project metrics, active features, PRDs, and task distribution",
+            "Retrieve an executive dashboard summary of project metrics, active features, PRDs, task distribution, and defects",
             json!({
                 "project_id": { "type": "string", "description": "Project ID" }
             }),
@@ -189,7 +193,6 @@ pub fn tool_definitions() -> Vec<Value> {
             }),
             &["project_id"],
         ),
-        // Agent Special Tools
         tool(
             "pm_get_next_actionable_task",
             "Autonomous Agent Dispatcher: Finds the highest-priority 'todo' task whose prerequisites ('blocked_by') are all 'done'",
@@ -207,6 +210,103 @@ pub fn tool_definitions() -> Vec<Value> {
             }),
             &["task_id"],
         ),
+        // Local Gate & Merge (Replacing gh pr create & gh pr merge)
+        tool(
+            "pm_verify_gate",
+            "Execute local test verification gate for a task, recording immutable output, exit code, and commit hash receipt",
+            json!({
+                "task_id": { "type": "string", "description": "Task ID being verified" },
+                "command": { "type": "string", "description": "Verification command to execute (e.g. 'cap cargo test -p pm'). If omitted, uses project's default_gate_cmd." }
+            }),
+            &["task_id"],
+        ),
+        tool(
+            "pm_get_gate_history",
+            "Retrieve verification gate history and receipts for a task",
+            json!({
+                "task_id": { "type": "string", "description": "Task ID" }
+            }),
+            &["task_id"],
+        ),
+        tool(
+            "pm_merge_change",
+            "Local Auto-Merge: Verifies passing gate run and zero blocking review comments, then merges local working branch into target branch, advances task to 'done', and unblocks downstream tasks",
+            json!({
+                "task_id": { "type": "string", "description": "Task ID to merge" },
+                "target_branch": { "type": "string", "description": "Target branch to merge into (default: 'main')" },
+                "strategy": { "type": "string", "enum": ["squash", "merge"], "description": "Merge strategy (default: 'squash')" }
+            }),
+            &["task_id"],
+        ),
+        // Defect Tracking (Replacing gh issue)
+        tool(
+            "pm_report_defect",
+            "Report a bug or defect, optionally auto-creating a high-priority blocker task for resolution",
+            json!({
+                "project_id": { "type": "string", "description": "Project ID" },
+                "title": { "type": "string", "description": "Defect summary" },
+                "description": { "type": "string", "description": "Detailed explanation of defect" },
+                "severity": { "type": "string", "enum": ["critical", "major", "minor", "cosmetic"], "description": "Defect severity (default: major)" },
+                "feature_id": { "type": "string", "description": "Optional associated feature ID" },
+                "task_id": { "type": "string", "description": "Optional associated task ID" },
+                "reproduction_steps": { "type": "string", "description": "Steps to reproduce the bug" },
+                "error_log": { "type": "string", "description": "Error logs or stack trace" },
+                "auto_create_task": { "type": "boolean", "description": "Automatically spawn an actionable task to fix this defect (default: true)" }
+            }),
+            &["project_id", "title", "description"],
+        ),
+        tool(
+            "pm_resolve_defect",
+            "Mark a defect as resolved or won't fix with resolution notes",
+            json!({
+                "defect_id": { "type": "string", "description": "Defect ID" },
+                "status": { "type": "string", "enum": ["resolved", "wont_fix"], "description": "Resolution status (default: resolved)" },
+                "resolution_notes": { "type": "string", "description": "Explanation of fix or reasoning" }
+            }),
+            &["defect_id"],
+        ),
+        tool(
+            "pm_list_defects",
+            "List defects for a project with optional status and severity filters",
+            json!({
+                "project_id": { "type": "string", "description": "Project ID" },
+                "status": { "type": "string", "enum": ["open", "in_progress", "resolved", "wont_fix"], "description": "Optional status filter" },
+                "severity": { "type": "string", "enum": ["critical", "major", "minor", "cosmetic"], "description": "Optional severity filter" }
+            }),
+            &["project_id"],
+        ),
+        // Code Review System (Replacing gh pr review)
+        tool(
+            "pm_add_review_comment",
+            "Add a structured code review comment to a task. If severity is 'blocking', prevents pm_merge_change until resolved.",
+            json!({
+                "task_id": { "type": "string", "description": "Task ID under review" },
+                "reviewer": { "type": "string", "description": "Reviewer identity (e.g. 'qa-agent', 'human')" },
+                "content": { "type": "string", "description": "Review comment, suggestion, or requested change" },
+                "severity": { "type": "string", "enum": ["blocking", "suggestion", "praise"], "description": "Comment severity (default: blocking)" },
+                "file_path": { "type": "string", "description": "Optional target file path" },
+                "line_number": { "type": "integer", "description": "Optional target line number" }
+            }),
+            &["task_id", "reviewer", "content"],
+        ),
+        tool(
+            "pm_resolve_review_comment",
+            "Mark a review comment as resolved",
+            json!({
+                "comment_id": { "type": "string", "description": "Review comment ID" },
+                "resolution_note": { "type": "string", "description": "Optional resolution note" }
+            }),
+            &["comment_id"],
+        ),
+        tool(
+            "pm_list_review_comments",
+            "List review comments attached to a task",
+            json!({
+                "task_id": { "type": "string", "description": "Task ID" },
+                "unresolved_only": { "type": "boolean", "description": "Filter only unresolved comments (default: false)" }
+            }),
+            &["task_id"],
+        ),
     ]
 }
 
@@ -219,12 +319,14 @@ pub async fn call_tool(store: &PmStore, name: &str, args: &Value) -> Result<Valu
             let name = get_str(args, "name")?;
             let description = get_str(args, "description")?;
             let root_path = args.get("root_path").and_then(Value::as_str).unwrap_or(".").to_string();
+            let default_gate_cmd = args.get("default_gate_cmd").and_then(Value::as_str).map(ToString::to_string);
 
             let proj = Project {
                 id: id.clone(),
                 name,
                 description,
                 root_path,
+                default_gate_cmd,
                 created_at: now.clone(),
                 updated_at: now,
             };
@@ -534,6 +636,244 @@ pub async fn call_tool(store: &PmStore, name: &str, args: &Value) -> Result<Valu
             let task_id = get_str(args, "task_id")?;
             let context_md = store.read(|s| get_task_context(s, &task_id)).await?;
             text_response(context_md)
+        }
+
+        // Local Gate & Merge
+        "pm_verify_gate" => {
+            let task_id = get_str(args, "task_id")?;
+            let (default_cmd, root_path) = store.read(|s| {
+                let t = s.get_task(&task_id);
+                let p = t.and_then(|task| s.get_project(&task.project_id));
+                (
+                    p.and_then(|proj| proj.default_gate_cmd.clone()),
+                    p.map(|proj| proj.root_path.clone()).unwrap_or_else(|| ".".to_string()),
+                )
+            }).await;
+
+            let cmd = args.get("command")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or(default_cmd)
+                .ok_or_else(|| anyhow::anyhow!("No gate command provided and no project default_gate_cmd configured for task '{}'", task_id))?;
+
+            let work_dir = std::path::PathBuf::from(root_path);
+            let run = execute_gate(&task_id, &cmd, &work_dir).await?;
+            let passed = run.passed;
+            let run_clone = run.clone();
+
+            store.write(|s| {
+                s.record_gate_run(run_clone);
+                Ok(())
+            }).await?;
+
+            let status_str = if passed { "PASSED" } else { "FAILED" };
+            text_response(format!(
+                "Gate run '{}' {} in {}ms (exit code: {}).\nCommand: {}\nStdout:\n{}\nStderr:\n{}",
+                run.id, status_str, run.duration_ms, run.exit_code, run.command, run.stdout.trim(), run.stderr.trim()
+            ))
+        }
+
+        "pm_get_gate_history" => {
+            let task_id = get_str(args, "task_id")?;
+            let runs = store.read(|s| s.get_gate_runs(&task_id).into_iter().cloned().collect::<Vec<_>>()).await;
+            text_response(serde_json::to_string_pretty(&runs)?)
+        }
+
+        "pm_merge_change" => {
+            let task_id = get_str(args, "task_id")?;
+            let target_branch = args.get("target_branch").and_then(Value::as_str).unwrap_or("main");
+            let strategy = args.get("strategy").and_then(Value::as_str).unwrap_or("squash");
+
+            let root_path = store.read(|s| {
+                let t = s.get_task(&task_id);
+                t.and_then(|task| s.get_project(&task.project_id)).map(|p| p.root_path.clone()).unwrap_or_else(|| ".".to_string())
+            }).await;
+            let work_dir = std::path::PathBuf::from(root_path);
+
+            let commit = verify_and_merge_task(
+                store,
+                &task_id,
+                target_branch,
+                strategy,
+                &work_dir,
+            ).await?;
+
+            text_response(format!(
+                "Task '{}' successfully merged into '{}' (strategy: {}, commit: {}). Task status set to 'done'.",
+                task_id, target_branch, strategy, commit
+            ))
+        }
+
+        // Defect Tracking
+        "pm_report_defect" => {
+            let project_id = get_str(args, "project_id")?;
+            let title = get_str(args, "title")?;
+            let description = get_str(args, "description")?;
+            let severity_str = args.get("severity").and_then(Value::as_str).unwrap_or("major");
+            let severity = DefectSeverity::parse_str(severity_str).unwrap_or(DefectSeverity::Major);
+            let feature_id = args.get("feature_id").and_then(Value::as_str).map(ToString::to_string);
+            let task_id = args.get("task_id").and_then(Value::as_str).map(ToString::to_string);
+            let reproduction_steps = args.get("reproduction_steps").and_then(Value::as_str).map(ToString::to_string);
+            let error_log = args.get("error_log").and_then(Value::as_str).map(ToString::to_string);
+            let auto_create_task = args.get("auto_create_task").and_then(Value::as_bool).unwrap_or(true);
+
+            let defect_id = format!("def_{}", Utc::now().timestamp_micros());
+            let mut created_task_id = None;
+
+            store.write(|s| {
+                if auto_create_task {
+                    let tid = format!("task_fix_{}", Utc::now().timestamp_micros());
+                    let prio = match severity {
+                        DefectSeverity::Critical => Priority::Critical,
+                        DefectSeverity::Major => Priority::High,
+                        DefectSeverity::Minor => Priority::Medium,
+                        DefectSeverity::Cosmetic => Priority::Low,
+                    };
+                    let task_desc = format!(
+                        "Fix Defect: {}\n\n## Description\n{}\n\n## Reproduction Steps\n{}\n\n## Error Log\n{}",
+                        title,
+                        description,
+                        reproduction_steps.as_deref().unwrap_or("N/A"),
+                        error_log.as_deref().unwrap_or("N/A")
+                    );
+                    let t = Task {
+                        id: tid.clone(),
+                        project_id: project_id.clone(),
+                        feature_id: feature_id.clone(),
+                        title: format!("Fix: {}", title),
+                        description: task_desc,
+                        status: TaskStatus::Todo,
+                        priority: prio,
+                        assignee: None,
+                        blocked_by: vec![],
+                        result_summary: None,
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                    };
+                    s.upsert_task(t);
+                    created_task_id = Some(tid);
+                }
+
+                let defect = Defect {
+                    id: defect_id.clone(),
+                    project_id,
+                    feature_id,
+                    task_id,
+                    title,
+                    description,
+                    severity,
+                    status: DefectStatus::Open,
+                    reproduction_steps,
+                    error_log,
+                    created_task_id: created_task_id.clone(),
+                    created_at: now.clone(),
+                    updated_at: now,
+                };
+                s.upsert_defect(defect);
+                Ok(())
+            }).await?;
+
+            let mut msg = format!("Defect '{}' reported successfully.", defect_id);
+            if let Some(ref tid) = created_task_id {
+                msg.push_str(&format!(" Actionable fix task '{}' created automatically.", tid));
+            }
+            text_response(msg)
+        }
+
+        "pm_resolve_defect" => {
+            let defect_id = get_str(args, "defect_id")?;
+            let status_str = args.get("status").and_then(Value::as_str).unwrap_or("resolved");
+            let status = match status_str {
+                "wont_fix" | "wontfix" => DefectStatus::WontFix,
+                _ => DefectStatus::Resolved,
+            };
+            let resolution_notes = args.get("resolution_notes").and_then(Value::as_str);
+
+            store.write(|s| {
+                let mut defect = match s.get_defect(&defect_id).cloned() {
+                    Some(d) => d,
+                    None => bail!("Defect '{}' not found", defect_id),
+                };
+                defect.status = status;
+                if let Some(notes) = resolution_notes {
+                    let updated_desc = format!("{}\n\n### Resolution Notes\n{}", defect.description, notes);
+                    defect.description = updated_desc;
+                }
+                defect.updated_at = now;
+                s.upsert_defect(defect);
+                Ok(())
+            }).await?;
+
+            text_response(format!("Defect '{}' marked as '{}'.", defect_id, status))
+        }
+
+        "pm_list_defects" => {
+            let project_id = get_str(args, "project_id")?;
+            let status = args.get("status").and_then(Value::as_str).and_then(DefectStatus::parse_str);
+            let severity = args.get("severity").and_then(Value::as_str).and_then(DefectSeverity::parse_str);
+
+            let list = store.read(|s| s.list_defects(&project_id, status, severity).into_iter().cloned().collect::<Vec<_>>()).await;
+            text_response(serde_json::to_string_pretty(&list)?)
+        }
+
+        // Code Review System
+        "pm_add_review_comment" => {
+            let task_id = get_str(args, "task_id")?;
+            let reviewer = get_str(args, "reviewer")?;
+            let content = get_str(args, "content")?;
+            let severity_str = args.get("severity").and_then(Value::as_str).unwrap_or("blocking");
+            let severity = ReviewSeverity::parse_str(severity_str).unwrap_or(ReviewSeverity::Blocking);
+            let file_path = args.get("file_path").and_then(Value::as_str).map(ToString::to_string);
+            let line_number = args.get("line_number").and_then(Value::as_u64).map(|n| n as usize);
+
+            let comment_id = format!("rev_{}", Utc::now().timestamp_micros());
+            let comment = ReviewComment {
+                id: comment_id.clone(),
+                task_id,
+                reviewer,
+                file_path,
+                line_number,
+                severity,
+                content,
+                resolved: false,
+                resolution_note: None,
+                created_at: now.clone(),
+                updated_at: now,
+            };
+
+            store.write(|s| {
+                s.upsert_review_comment(comment);
+                Ok(())
+            }).await?;
+
+            text_response(format!("Review comment '{}' added successfully.", comment_id))
+        }
+
+        "pm_resolve_review_comment" => {
+            let comment_id = get_str(args, "comment_id")?;
+            let resolution_note = args.get("resolution_note").and_then(Value::as_str).map(ToString::to_string);
+
+            store.write(|s| {
+                let mut comment = match s.get_review_comment(&comment_id).cloned() {
+                    Some(c) => c,
+                    None => bail!("Review comment '{}' not found", comment_id),
+                };
+                comment.resolved = true;
+                comment.resolution_note = resolution_note;
+                comment.updated_at = now;
+                s.upsert_review_comment(comment);
+                Ok(())
+            }).await?;
+
+            text_response(format!("Review comment '{}' resolved.", comment_id))
+        }
+
+        "pm_list_review_comments" => {
+            let task_id = get_str(args, "task_id")?;
+            let unresolved_only = args.get("unresolved_only").and_then(Value::as_bool).unwrap_or(false);
+
+            let list = store.read(|s| s.list_review_comments(&task_id, unresolved_only).into_iter().cloned().collect::<Vec<_>>()).await;
+            text_response(serde_json::to_string_pretty(&list)?)
         }
 
         unknown => bail!("Unknown tool '{}'", unknown),

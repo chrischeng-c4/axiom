@@ -75,6 +75,21 @@ Or when using the compiled release binary for maximum speed:
 - `pm_get_next_actionable_task(project_id, assignee)`: **Autonomous Dispatcher**. Finds the highest-priority `todo` task whose prerequisites are all `done`.
 - `pm_get_task_context(task_id)`: **Context Aggregator**. Packages Task spec + Feature spec + PRD + Tech Design into a single markdown block for prompt injection.
 
+### Local Gate Check & Auto-Merge Engine (Replacing `gh pr`)
+- `pm_verify_gate(task_id, command)`: Executes a local verification/test gate command for a task, records exit code, duration, stdout/stderr, and current HEAD commit hash.
+- `pm_get_gate_history(task_id)`: Retrieves all historical verification runs for a task.
+- `pm_merge_change(task_id, target_branch, strategy)`: **Zero-Network PR Replacement**. Ensures latest gate run passed and all blocking review comments are resolved, then merges changes locally into target branch and transitions task to `done`.
+
+### Local Defect Tracking (Replacing `gh issue`)
+- `pm_report_defect(project_id, title, description, severity, reproduction_steps, auto_create_task)`: File a defect (`critical`, `major`, `minor`, `trivial`). If `auto_create_task=true`, automatically spawns a high-priority actionable fix task.
+- `pm_resolve_defect(defect_id, resolution_note)`: Mark a defect as resolved with an explanatory note.
+- `pm_list_defects(project_id, status, severity)`: Query defects for a project.
+
+### Local Review Comments (Replacing `gh pr review`)
+- `pm_add_review_comment(task_id, reviewer, content, severity, file_path, line_number)`: Add inline/blocking review feedback (`blocking`, `suggestion`, `nitpick`). Blocking comments prevent `pm_merge_change` until resolved.
+- `pm_resolve_review_comment(comment_id, resolution_note)`: Resolve a review comment.
+- `pm_list_review_comments(task_id, unresolved_only)`: List review feedback on a task.
+
 ---
 
 ## MCP Resources
@@ -83,8 +98,8 @@ Or when using the compiled release binary for maximum speed:
 - `pm://prds/{prd_id}`: Raw Markdown PRD.
 - `pm://tech-designs/{td_id}`: Raw Markdown Tech Design.
 - `pm://tasks/{task_id}`: Complete Task context and execution logs.
-
----
+- `pm://defects/{defect_id}`: JSON defect details and associated fix task link.
+- `pm://gates/{task_id}`: History of local gate runs and verification proofs.
 
 ---
 
@@ -109,9 +124,13 @@ curl -X POST http://127.0.0.1:3200/mcp \
 
 ## E2E Testing
 
-An end-to-end integration test suite is available under [`apps/pm/e2e/http_mcp_e2e.rs`](e2e/http_mcp_e2e.rs). It launches an ephemeral Axum HTTP server and drives an AI agent through the entire project lifecycle via HTTP JSON-RPC calls:
+Comprehensive integration test suites test the entire agent lifecycle end-to-end:
 
 ```bash
+# E2E test driving HTTP MCP JSON-RPC agent flow
 cargo test -p pm --test e2e_http_mcp
+
+# E2E test driving Local Gate verification, Review comments, and Merge engine
+cargo test -p pm --test local_gate_merge_e2e
 ```
 

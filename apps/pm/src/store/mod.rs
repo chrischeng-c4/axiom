@@ -1,3 +1,4 @@
+pub mod gate;
 pub mod scheduler;
 pub mod state;
 
@@ -6,6 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::RwLock;
 
+pub use gate::{execute_gate, verify_and_merge_task};
 pub use scheduler::{get_next_actionable_task, get_task_context};
 pub use state::PmState;
 
