@@ -405,3 +405,7 @@ path = "e2e/pkgmgr_lock_backtracks_to_a_shared_version.rs"
 [[test]]
 name = "pkgmgr_sync_console_scripts_land_in_venv_bin"
 path = "e2e/pkgmgr_sync_console_scripts_land_in_venv_bin.rs"
+
+[[test]]
+name = "pkgmgr_remove_prunes_console_script_wrappers"
+path = "e2e/pkgmgr_remove_prunes_console_script_wrappers.rs"
