@@ -163,6 +163,50 @@ fn ac1_install_synthetic_purelib_wheel_extracts_files_and_verifies_record() {
         .any(|p| p == Path::new("demo/__init__.py")));
 }
 
+#[test]
+fn ac1_install_writes_installer_marker_and_record_row() {
+    let tmp = TempDir::new().unwrap();
+    let wheels = tmp.path().join("wheels");
+    fs::create_dir_all(&wheels).unwrap();
+    let site_packages = tmp.path().join("venv/lib/python3.12/site-packages");
+
+    let wheel = build_wheel(
+        &wheels,
+        "demo",
+        "1.0.0",
+        &[
+            ("demo/__init__.py", b"VERSION = '1.0.0'\n"),
+            ("demo/util.py", b"def add(a, b): return a + b\n"),
+        ],
+        None,
+    );
+
+    let installer = Installer::new();
+    installer
+        .install(make_request(&wheel, &site_packages))
+        .expect("install should succeed");
+
+    let dist_info = site_packages.join("demo-1.0.0.dist-info");
+    let installer_marker = dist_info.join("INSTALLER");
+    let bytes = fs::read(&installer_marker).expect("INSTALLER must be written");
+    assert_eq!(bytes, b"mamba\n", "INSTALLER must hold exactly b\"mamba\\n\"");
+
+    let record = fs::read_to_string(dist_info.join("RECORD")).unwrap();
+    let expected_row =
+        "demo-1.0.0.dist-info/INSTALLER,sha256=Kp3AVDOCkkOUcOc4jNDrHOwS2eECHeFZCXmKLfmRhDc,6";
+    assert_eq!(
+        record.lines().filter(|l| *l == expected_row).count(),
+        1,
+        "RECORD must contain the exact INSTALLER row exactly once, got:\n{record}"
+    );
+
+    installer.uninstall("demo", &site_packages).unwrap();
+    assert!(
+        !dist_info.exists(),
+        "dist-info directory must not survive uninstall"
+    );
+}
+
 /// Build the `httpie` wheel this file's wrapper-writing tests share.
 fn build_httpie_wheel(wheels: &Path) -> PathBuf {
     build_wheel(

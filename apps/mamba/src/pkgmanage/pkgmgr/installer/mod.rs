@@ -221,14 +221,34 @@ impl Installer {
         }
         let console_scripts = written_scripts.into_iter().map(|(name, _)| name).collect();
 
-        // Write RECORD (with self-entry blanked) under the installed dist-info.
+        // PEP 376's `INSTALLER` marker: the tool that placed this
+        // distribution, one line, no version. pip and uv both write it as
+        // `<tool>\n`; mamba writes `mamba\n`. The dist-info directory must
+        // exist before it (and RECORD) can be written, and its own row is
+        // pushed through the same `RecordEntry`/`render_record` writer as
+        // the wrapper rows above -- RECORD gains no second writer.
         let installed_dist_info = req.site_packages.join(&meta.dist_info_dir);
-        let installed_record = installed_dist_info.join("RECORD");
-        let record_text = render_record(&entries, &meta.dist_info_dir);
         fs::create_dir_all(&installed_dist_info).map_err(|e| InstallerError::Io {
             path: Some(installed_dist_info.clone()),
             detail: e.to_string(),
         })?;
+        let installer_marker = installed_dist_info.join("INSTALLER");
+        let installer_bytes: &[u8] = b"mamba\n";
+        fs::write(&installer_marker, installer_bytes).map_err(|e| InstallerError::Io {
+            path: Some(installer_marker.clone()),
+            detail: e.to_string(),
+        })?;
+        let installer_sha256_b64url =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(installer_bytes));
+        entries.push(record::RecordEntry {
+            path: format!("{}/INSTALLER", meta.dist_info_dir.trim_end_matches('/')),
+            sha256_b64url: Some(installer_sha256_b64url),
+            size: Some(installer_bytes.len() as u64),
+        });
+
+        // Write RECORD (with self-entry blanked) under the installed dist-info.
+        let installed_record = installed_dist_info.join("RECORD");
+        let record_text = render_record(&entries, &meta.dist_info_dir);
         fs::write(&installed_record, record_text).map_err(|e| InstallerError::Io {
             path: Some(installed_record.clone()),
             detail: e.to_string(),
