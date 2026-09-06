@@ -110,6 +110,7 @@ members = [
     "apps/beam",
     "apps/mesh",
     "apps/workbench",
+    "apps/pm",
 ]
 resolver = "2"
 
@@ -234,6 +235,11 @@ codegen-units = 1
 strip = true
 
 [profile.bench.package.cap]
+opt-level = "z"
+codegen-units = 1
+strip = true
+
+[profile.release.package.pm]
 opt-level = "z"
 codegen-units = 1
 strip = true
