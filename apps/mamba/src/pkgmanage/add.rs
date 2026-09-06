@@ -22,6 +22,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::pkgmanage::pkgmgr::resolver::specifier::{all_match, Op, VersionSpecifier};
+use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Requirement};
+
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
@@ -98,10 +101,20 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+/// A parsed `mamba add` argument. `raw` is the trimmed text exactly as the
+/// user typed it; `name` is the leading name run, case preserved, so every
+/// existing lookup path (frozen index, `--offline`, PyPI fetch) keeps
+/// reading the spelling it always did. `version` is `Some` only for the
+/// narrower `NAME==VERSION` grammar the frozen index and `--offline` paths
+/// still require; `specifiers` is the full PEP 508 specifier set parsed from
+/// `raw` (empty for a bare name), which the PyPI path uses to pick a release
+/// for anything `version` does not cover.
 #[derive(Debug, Clone)]
 struct DepSpec {
+    raw: String,
     name: String,
     version: Option<String>,
+    specifiers: Vec<VersionSpecifier>,
 }
 
 impl DepSpec {
@@ -110,22 +123,54 @@ impl DepSpec {
         if raw.is_empty() {
             bail!("empty dependency spec");
         }
-        if let Some((name, version)) = raw.split_once("==") {
-            let name = name.trim();
-            let version = version.trim();
-            if name.is_empty() || version.is_empty() {
-                bail!("malformed spec `{raw}` (expected NAME==VERSION)");
-            }
-            return Ok(DepSpec {
-                name: name.to_string(),
-                version: Some(version.to_string()),
-            });
+        let req = parse_requirement(raw)
+            .map_err(|e| anyhow::anyhow!("malformed spec `{raw}`: {e}"))?;
+        let name = raw_name(raw);
+        if name.is_empty() {
+            bail!("malformed spec `{raw}` (expected NAME or NAME==VERSION)");
         }
+        let version = exact_pin_version(&req);
         Ok(DepSpec {
-            name: raw.to_string(),
-            version: None,
+            raw: raw.to_string(),
+            name,
+            version,
+            specifiers: req.specifiers,
         })
     }
+
+    /// True for anything that is neither a bare name nor an exact
+    /// `NAME==VERSION` pin -- a range, a wildcard, a compatible release, or
+    /// a spec carrying extras/a marker. The frozen `--index DIR` and
+    /// `--offline` paths refuse these; the PyPI path resolves them against
+    /// `specifiers`.
+    fn is_range(&self) -> bool {
+        self.version.is_none() && !self.specifiers.is_empty()
+    }
+}
+
+/// The name text as the user spelled it: the leading run before any
+/// specifier operator, extras bracket, whitespace, or marker separator.
+/// Case is kept -- identity comparison is `dep_name` + `normalize_name`'s
+/// job, not this parser's.
+fn raw_name(raw: &str) -> String {
+    let end = raw
+        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '=' | '!' | '~' | '[' | ';'))
+        .unwrap_or(raw.len());
+    raw[..end].trim().to_string()
+}
+
+/// `Some(version)` only when `req` is exactly `NAME==VERSION`: one
+/// specifier, `==`, no wildcard, no extras, no marker. Every other shape
+/// (bare name, range, wildcard, compatible release, extras, marker) is
+/// `None`, so the caller falls through to the specifier-set path.
+fn exact_pin_version(req: &Requirement) -> Option<String> {
+    if req.extras.is_empty() && req.marker.is_none() && req.specifiers.len() == 1 {
+        let s = &req.specifiers[0];
+        if s.op == Op::Eq && !s.version.ends_with(".*") {
+            return Some(s.version.clone());
+        }
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -138,11 +183,19 @@ struct ResolvedDep {
     /// local-frozen / --offline paths where we don't know the URL.
     url: Option<String>,
     source: SourceMeta,
+    /// The exact text to write to `mamba.toml`'s dependency line. `None`
+    /// means the default `name==version` pin (bare name, exact pin, local
+    /// wheel, `--provider`, frozen index); `Some(raw)` is a user-supplied
+    /// range/wildcard/compatible-release requirement, kept verbatim so a
+    /// range is never narrowed into a pin behind the user's back.
+    manifest_line: Option<String>,
 }
 
 impl ResolvedDep {
     fn dep_string(&self) -> String {
-        format!("{}=={}", self.name, self.version)
+        self.manifest_line
+            .clone()
+            .unwrap_or_else(|| format!("{}=={}", self.name, self.version))
     }
 }
 
@@ -185,12 +238,33 @@ fn resolve_dep(
     offline: bool,
     index_url: Option<&str>,
 ) -> Result<ResolvedDep> {
-    // Local frozen index path — always wins when configured.
+    // Local frozen index path — always wins when configured. Its grammar is
+    // narrower than the registry path's: a range, a wildcard, a compatible
+    // release, extras or a marker are refused before the filesystem is even
+    // touched, because a frozen index carries no release list a range could
+    // be evaluated against.
     if let Some(idx) = index_dir {
+        if spec.is_range() {
+            bail!(
+                "`mamba add {}` against a frozen --index DIR only accepts \
+                 NAME or NAME==VERSION; pass --index-url to resolve a \
+                 version range, wildcard, or compatible-release spec \
+                 against a registry",
+                spec.raw
+            );
+        }
         return resolve_with_local_index(spec, idx);
     }
-    // Offline + pinned: trust the user.
+    // Offline + pinned: trust the user. Same narrower grammar as the frozen
+    // index: there is no index to evaluate a range against.
     if offline {
+        if spec.is_range() {
+            bail!(
+                "`mamba add {}` with --offline only accepts NAME==VERSION; \
+                 pass an exact pin or drop --offline",
+                spec.raw
+            );
+        }
         return match spec.version.as_deref() {
             Some(v) => Ok(ResolvedDep {
                 name: spec.name.clone(),
@@ -198,6 +272,7 @@ fn resolve_dep(
                 sha256: None,
                 url: None,
                 source: SourceMeta::Default,
+                manifest_line: None,
             }),
             None => bail!(
                 "version required for `mamba add {}` in --offline mode \
@@ -240,6 +315,7 @@ fn resolve_with_provider(raw: &str, provider: &str) -> Result<ResolvedDep> {
             compatibility: pkg.compatibility,
             maturity: pkg.maturity,
         },
+        manifest_line: None,
     })
 }
 
@@ -290,6 +366,7 @@ fn resolve_with_local_index(spec: &DepSpec, idx: &Path) -> Result<ResolvedDep> {
         },
         url: None,
         source,
+        manifest_line: None,
     })
 }
 
@@ -333,8 +410,14 @@ fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
             }
             v.to_string()
         }
-        None => pick_pypi_latest(&meta.versions)
+        None if spec.specifiers.is_empty() => pick_pypi_latest(&meta.versions)
             .with_context(|| format!("no releases for `{}` on {}", spec.name, index_url))?,
+        None => pick_pypi_matching(&meta.versions, &spec.specifiers).with_context(|| {
+            format!(
+                "package `{}` has no release satisfying `{}` on {}",
+                spec.name, spec.raw, index_url
+            )
+        })?,
     };
 
     let pick = pick_best_wheel(&meta, &version);
@@ -349,6 +432,11 @@ fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
         sha256,
         url,
         source: SourceMeta::Default,
+        manifest_line: if spec.is_range() {
+            Some(spec.raw.clone())
+        } else {
+            None
+        },
     })
 }
 
@@ -390,6 +478,7 @@ fn resolve_with_local_wheel(raw: &str, project_dir: &Path) -> Result<ResolvedDep
         source: SourceMeta::DirectFile {
             path: lockfile_path(raw_path, &abs_path, project_dir)?,
         },
+        manifest_line: None,
     })
 }
 
@@ -496,6 +585,42 @@ fn pick_pypi_latest(versions: &[String]) -> Option<String> {
     }
     stable.sort_by(|a, b| pep440_lite_cmp(a, b));
     stable.last().map(|s| (*s).clone())
+}
+
+/// Pick the newest release in `versions` that satisfies every specifier in
+/// `specs`, applying `pick_pypi_latest`'s same prerelease rule: a stable
+/// release wins over any matching prerelease, and a prerelease is returned
+/// only when nothing stable matches. `None` means no release satisfies the
+/// set at all -- the caller turns that into a refusal naming the package and
+/// the bound, never a panic.
+fn pick_pypi_matching(versions: &[String], specs: &[VersionSpecifier]) -> Option<String> {
+    let matching: Vec<&String> = versions
+        .iter()
+        .filter(|v| all_match(specs, v))
+        .collect();
+    if matching.is_empty() {
+        return None;
+    }
+    let mut stable: Vec<&String> = matching.iter().copied().filter(|v| !is_prerelease(v)).collect();
+    if stable.is_empty() {
+        stable = matching;
+    }
+    stable.sort_by(|a, b| pep440_full_cmp(a, b));
+    stable.last().map(|s| (*s).clone())
+}
+
+/// Full PEP 440 ordering via `pkgmgr::pep440`, falling back to the coarse
+/// numeric comparator only when a candidate does not parse under it -- which
+/// should not happen for anything `all_match` already accepted, since
+/// `VersionSpecifier::matches` itself requires `pep440::parse` to succeed.
+fn pep440_full_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    match (
+        crate::pkgmanage::pkgmgr::pep440::parse(a),
+        crate::pkgmanage::pkgmgr::pep440::parse(b),
+    ) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        _ => pep440_lite_cmp(a, b),
+    }
 }
 
 fn is_prerelease(v: &str) -> bool {
@@ -636,9 +761,14 @@ impl ManifestState {
         })
     }
 
+    /// One package keeps one identity across every spelling it is written
+    /// with: `AddApp`, `addapp`, `addapp==3.0` and `addapp>=2,<3` all
+    /// normalize to the same PEP 503 name, so a later spelling replaces the
+    /// earlier entry instead of standing beside it.
     pub(crate) fn upsert_dependency(&mut self, spec: &str) {
-        let new_name = dep_name(spec);
-        self.dependencies.retain(|d| dep_name(d) != new_name);
+        let new_name = normalize_name(dep_name(spec));
+        self.dependencies
+            .retain(|d| normalize_name(dep_name(d)) != new_name);
         self.dependencies.push(spec.to_string());
         self.dependencies.sort();
         self.dependencies.dedup();
@@ -646,8 +776,11 @@ impl ManifestState {
 
     pub(crate) fn remove_dependency(&mut self, name: &str) {
         let name = name.trim();
-        self.dependencies.retain(|d| dep_name(d) != name);
-        self.dev_dependencies.retain(|d| dep_name(d) != name);
+        let normalized = normalize_name(name);
+        self.dependencies
+            .retain(|d| normalize_name(dep_name(d)) != normalized);
+        self.dev_dependencies
+            .retain(|d| normalize_name(dep_name(d)) != normalized);
         self.source_overrides.remove(name);
     }
 
@@ -778,10 +911,20 @@ fn escape_toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// The name slice at the head of a manifest dependency entry, whatever
+/// grammar wrote it: a bare name, `NAME==VERSION`, or a PEP 508 range like
+/// `NAME>=2,<3`. The name ends at the first specifier operator, extras
+/// bracket, whitespace, or marker separator -- the same boundary
+/// `DepSpec::parse` uses on `add`'s own argument, so `mamba.toml`'s stored
+/// text and a freshly typed argument agree on where the name stops. Callers
+/// compare this through `normalize_name` for identity; the slice itself
+/// keeps whatever case the manifest recorded.
 pub(crate) fn dep_name(spec: &str) -> &str {
-    spec.split_once("==")
-        .map(|(n, _)| n.trim())
-        .unwrap_or(spec.trim())
+    let spec = spec.trim();
+    let end = spec
+        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '=' | '!' | '~' | '[' | ';'))
+        .unwrap_or(spec.len());
+    spec[..end].trim()
 }
 
 #[cfg(test)]
@@ -1078,6 +1221,43 @@ mod tests {
         assert!(DepSpec::parse("==1.0").is_err());
         assert!(DepSpec::parse("foo==").is_err());
         assert!(DepSpec::parse("").is_err());
+        assert!(DepSpec::parse("!!!not a spec!!!").is_err());
+    }
+
+    #[test]
+    fn parse_range_keeps_raw_text_and_no_exact_version() {
+        let s = DepSpec::parse("addapp>=2,<3").unwrap();
+        assert_eq!(s.raw, "addapp>=2,<3");
+        assert_eq!(s.name, "addapp");
+        assert_eq!(s.version, None);
+        assert_eq!(s.specifiers.len(), 2);
+        assert!(s.is_range());
+    }
+
+    #[test]
+    fn parse_wildcard_and_compatible_release_are_ranges_not_exact_pins() {
+        let wildcard = DepSpec::parse("addapp==2.*").unwrap();
+        assert_eq!(wildcard.version, None);
+        assert!(wildcard.is_range());
+        assert_eq!(wildcard.specifiers.len(), 1);
+
+        let compatible = DepSpec::parse("addapp~=2.0").unwrap();
+        assert_eq!(compatible.version, None);
+        assert!(compatible.is_range());
+    }
+
+    #[test]
+    fn parse_extras_are_not_an_exact_pin() {
+        let s = DepSpec::parse("addapp[extra]>=2").unwrap();
+        assert_eq!(s.name, "addapp");
+        assert_eq!(s.version, None);
+        assert!(s.is_range());
+    }
+
+    #[test]
+    fn parse_bare_name_and_exact_pin_are_not_ranges() {
+        assert!(!DepSpec::parse("addapp").unwrap().is_range());
+        assert!(!DepSpec::parse("addapp==2.0").unwrap().is_range());
     }
 
     #[test]
@@ -1099,6 +1279,119 @@ mod tests {
         };
         s.upsert_dependency("a==1.1");
         assert_eq!(s.dependencies, vec!["a==1.1", "b==2.0"]);
+    }
+
+    #[test]
+    fn dep_name_stops_at_the_first_specifier_operator() {
+        assert_eq!(dep_name("addapp"), "addapp");
+        assert_eq!(dep_name("addapp==3.0"), "addapp");
+        assert_eq!(dep_name("addapp>=2,<3"), "addapp");
+        assert_eq!(dep_name("addapp==2.*"), "addapp");
+        assert_eq!(dep_name("addapp~=2.0"), "addapp");
+        assert_eq!(dep_name("AddApp==3.0"), "AddApp");
+    }
+
+    #[test]
+    fn upsert_dependency_normalizes_identity_across_capitalisation() {
+        let mut s = ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: vec!["AddApp==3.0".into()],
+            dev_dependencies: vec![],
+            source_overrides: BTreeMap::new(),
+        };
+        s.upsert_dependency("addapp==3.0");
+        assert_eq!(
+            s.dependencies,
+            vec!["addapp==3.0"],
+            "`AddApp` and `addapp` are one dependency under PEP 503 \
+             normalization, so the second add replaces the first entry \
+             instead of standing beside it"
+        );
+    }
+
+    #[test]
+    fn upsert_dependency_replaces_one_range_with_another_over_the_same_name() {
+        let mut s = ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: vec!["addapp>=2,<3".into()],
+            dev_dependencies: vec![],
+            source_overrides: BTreeMap::new(),
+        };
+        s.upsert_dependency("addapp<3");
+        assert_eq!(s.dependencies, vec!["addapp<3"]);
+    }
+
+    #[test]
+    fn remove_dependency_finds_a_handwritten_range_entry() {
+        let mut s = ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: vec!["addapp>=2,<3".into()],
+            dev_dependencies: vec![],
+            source_overrides: BTreeMap::new(),
+        };
+        s.remove_dependency("addapp");
+        assert!(
+            s.dependencies.is_empty(),
+            "`remove_dependency(\"addapp\")` must find an entry spelled \
+             `addapp>=2,<3`; identity is the name at the head of the \
+             requirement, and comparing raw text against a bare name can \
+             never match a range\n{:?}",
+            s.dependencies
+        );
+    }
+
+    #[test]
+    fn pick_pypi_matching_picks_the_newest_stable_release_that_satisfies_every_specifier() {
+        let versions = vec![
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            "2.5.0".to_string(),
+            "2.6.0a1".to_string(),
+            "3.0.0".to_string(),
+        ];
+        let specs = crate::pkgmanage::pkgmgr::resolver::specifier::parse_set(">=2.0,<3.0").unwrap();
+        assert_eq!(
+            pick_pypi_matching(&versions, &specs),
+            Some("2.5.0".to_string()),
+            "the newest release below `3.0.0` and at or above `2.0.0` is \
+             `2.5.0`; the prerelease `2.6.0a1` also falls in range but must \
+             lose to a stable release, matching `pick_pypi_latest`'s rule"
+        );
+    }
+
+    #[test]
+    fn pick_pypi_matching_returns_none_when_nothing_satisfies() {
+        let versions = vec!["1.0.0".to_string(), "2.0.0".to_string()];
+        let specs = crate::pkgmanage::pkgmgr::resolver::specifier::parse_set(">=9").unwrap();
+        assert_eq!(pick_pypi_matching(&versions, &specs), None);
+    }
+
+    #[test]
+    fn frozen_index_refuses_a_range_before_touching_the_filesystem() {
+        let spec = DepSpec::parse("addapp>=2").unwrap();
+        let err = resolve_dep(&spec, Some(Path::new("/does/not/exist")), false, None)
+            .expect_err("a range against a frozen --index DIR must be refused");
+        let message = format!("{err}");
+        assert!(
+            message.contains("addapp>=2"),
+            "the refusal must name the spec it could not evaluate: {message}"
+        );
+    }
+
+    #[test]
+    fn offline_refuses_a_range() {
+        let spec = DepSpec::parse("addapp>=2,<3").unwrap();
+        assert!(
+            resolve_dep(&spec, None, true, None).is_err(),
+            "--offline only accepts NAME==VERSION; a range has no index to \
+             evaluate it against"
+        );
     }
 
     #[test]
@@ -1137,6 +1430,7 @@ mod tests {
             sha256: None,
             url: None,
             source: SourceMeta::Default,
+            manifest_line: None,
         };
         let deps = vec!["foo==1.0".to_string()];
         let a = render_lockfile_with_hashes(&deps, &r);
@@ -1152,6 +1446,7 @@ mod tests {
             sha256: Some("deadbeef".repeat(8)),
             url: Some("https://example.invalid/foo-1.0.whl".into()),
             source: SourceMeta::Default,
+            manifest_line: None,
         };
         let deps = vec!["foo==1.0".to_string()];
         let body = render_lockfile_with_hashes(&deps, &r);

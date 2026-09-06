@@ -421,3 +421,7 @@ path = "e2e/pkgmgr_remove_prunes_console_script_wrappers.rs"
 [[test]]
 name = "pkgmgr_pip_install_defaults_to_the_venv_interpreter"
 path = "e2e/pkgmgr_pip_install_defaults_to_the_venv_interpreter.rs"
+
+[[test]]
+name = "pkgmgr_add_accepts_a_requirement_specifier"
+path = "e2e/pkgmgr_add_accepts_a_requirement_specifier.rs"

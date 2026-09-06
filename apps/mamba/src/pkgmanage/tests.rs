@@ -1854,3 +1854,277 @@ mod conflict_refused {
         drop(server);
     }
 }
+
+// #4232: `mamba add` must read a PEP 508 range/wildcard/compatible-release
+// requirement verbatim, write it verbatim to `mamba.toml`, and resolve it
+// through the same registry seam `mamba lock` uses -- so the manifest keeps
+// the user's stated intent and the lock still names one release chosen
+// among real alternatives.
+mod add_range_requirement_seam {
+    use crate::pkgmanage::add::ManifestState;
+    use crate::pkgmanage::lock::resolve_and_render_via_registry;
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
+    };
+    use sha2::{Digest, Sha256};
+    use std::collections::BTreeMap;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Per-process nonce, same discipline as `add_registry_transitive`
+    /// above: no fixture name here may collide with a metadata cache entry
+    /// an earlier `cargo test` process left on this developer's real
+    /// `MAMBA_CACHE_DIR`.
+    fn process_nonce() -> String {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("fixture: system clock before epoch")
+            .as_nanos();
+        format!("{pid}-{nanos}")
+    }
+
+    fn sha256_bytes(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn build_wheel(dist: &str, version: &str, expected_file: &str) -> Vec<u8> {
+        let dir = tempfile::tempdir().expect("fixture: create a temp dir for the wheel");
+        let filename = compose_filename(dist, version, "py3", "none", "any");
+        let mut wheel_meta = WheelMetadata::new("mamba-unit-add-range-requirement-seam");
+        wheel_meta.tags.push("py3-none-any".into());
+        let core_meta = CoreMetadata::new(dist, version);
+        let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+        builder.add_file(format!("{dist}/__init__.py"), format!("V = {version:?}\n"));
+        let wheel = builder
+            .build_to_dir(dir.path())
+            .unwrap_or_else(|e| panic!("fixture: build wheel {dist}-{version}: {e:?}"));
+        assert_eq!(
+            wheel.file_name().and_then(|n| n.to_str()),
+            Some(expected_file)
+        );
+        std::fs::read(&wheel).unwrap_or_else(|e| panic!("read {}: {e}", wheel.display()))
+    }
+
+    fn simple_page(dist: &str, releases: &[(&str, &str, &str)]) -> String {
+        let anchors: String = releases
+            .iter()
+            .map(|(file, url, digest)| {
+                format!("<a href=\"{url}#sha256={digest}\">{file}</a><br/>\n")
+            })
+            .collect();
+        format!(
+            "<!DOCTYPE html>\n\
+             <html><head><title>Links for {dist}</title></head>\n\
+             <body>\n{anchors}</body></html>\n"
+        )
+    }
+
+    fn manifest_state(deps: &[&str]) -> ManifestState {
+        ManifestState {
+            project_name: "unit-fixture".to_string(),
+            project_version: "0.1.0".to_string(),
+            python_requires: ">=3.12".to_string(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            dev_dependencies: Vec::new(),
+            source_overrides: BTreeMap::new(),
+        }
+    }
+
+    struct Pin {
+        name: String,
+        version: String,
+        sha256: String,
+        url: String,
+        direct: Option<bool>,
+    }
+
+    fn parse_lock(body: &str) -> Vec<Pin> {
+        let doc: toml::Value = body
+            .parse()
+            .unwrap_or_else(|e| panic!("parse lock body: {e}\n--- body ---\n{body}"));
+        let packages = doc
+            .get("package")
+            .and_then(|v| v.as_array())
+            .unwrap_or_else(|| panic!("lock body has no [[package]] array\n--- body ---\n{body}"));
+        let string_at = |t: &toml::Value, key: &str| -> String {
+            t.get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        packages
+            .iter()
+            .map(|t| Pin {
+                name: string_at(t, "name"),
+                version: string_at(t, "version"),
+                sha256: string_at(t, "sha256"),
+                url: string_at(t, "url"),
+                direct: t.get("direct").and_then(|v| v.as_bool()),
+            })
+            .collect()
+    }
+
+    fn find<'a>(pins: &'a [Pin], name: &str) -> &'a Pin {
+        pins.iter()
+            .find(|p| p.name == name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no pin named `{name}` in {:?}",
+                    pins.iter().map(|p| &p.name).collect::<Vec<_>>()
+                )
+            })
+    }
+
+    #[test]
+    fn manifest_keeps_a_range_verbatim_and_the_registry_seam_locks_the_release_it_admits() {
+        let rt = tokio::runtime::Runtime::new().expect("fixture: build a runtime for the registry");
+
+        let nonce = process_nonce();
+        let dist = format!("gizmo-{nonce}");
+        const V1: &str = "1.0";
+        const V2: &str = "2.0";
+        let range = format!("{dist}>=1.5");
+
+        let file_v1 = compose_filename(&dist, V1, "py3", "none", "any").to_filename();
+        let file_v2 = compose_filename(&dist, V2, "py3", "none", "any").to_filename();
+        let bytes_v1 = build_wheel(&dist, V1, &file_v1);
+        let bytes_v2 = build_wheel(&dist, V2, &file_v2);
+        let digest_v1 = sha256_bytes(&bytes_v1);
+        let digest_v2 = sha256_bytes(&bytes_v2);
+        assert_ne!(digest_v1, digest_v2);
+
+        let (server, url_v1, url_v2) = rt.block_on(async {
+            let server = MockServer::start().await;
+            let base = server.uri();
+            let route_v1 = format!("/files/{file_v1}");
+            let route_v2 = format!("/files/{file_v2}");
+            let url_v1 = format!("{base}{route_v1}");
+            let url_v2 = format!("{base}{route_v2}");
+
+            Mock::given(method("GET"))
+                .and(path(format!("/pypi/{dist}/json")))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(&server)
+                .await;
+            for version in [V1, V2] {
+                Mock::given(method("GET"))
+                    .and(path(format!("/pypi/{dist}/{version}/json")))
+                    .respond_with(ResponseTemplate::new(200).set_body_raw(
+                        b"{\"info\":{\"requires_dist\":[]}}".to_vec(),
+                        "application/json",
+                    ))
+                    .mount(&server)
+                    .await;
+            }
+            let page = simple_page(
+                &dist,
+                &[
+                    (file_v1.as_str(), url_v1.as_str(), digest_v1.as_str()),
+                    (file_v2.as_str(), url_v2.as_str(), digest_v2.as_str()),
+                ],
+            );
+            Mock::given(method("GET"))
+                .and(path(format!("/simple/{dist}/")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(page.into_bytes(), "text/html; charset=utf-8"),
+                )
+                .mount(&server)
+                .await;
+            for (route, bytes) in [
+                (route_v1.clone(), bytes_v1.clone()),
+                (route_v2.clone(), bytes_v2.clone()),
+            ] {
+                Mock::given(method("GET"))
+                    .and(path(route))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_raw(bytes, "application/octet-stream"),
+                    )
+                    .mount(&server)
+                    .await;
+            }
+            (server, url_v1, url_v2)
+        });
+
+        let index_url = format!("{}/simple", server.uri());
+
+        // `add`'s own identity path: the range is what would land in
+        // `mamba.toml`, verbatim.
+        let mut state = manifest_state(&[]);
+        state.upsert_dependency(&range);
+        assert_eq!(
+            state.dependencies,
+            vec![range.clone()],
+            "a range requirement must be recorded verbatim, not narrowed \
+             into a pin"
+        );
+
+        // Called synchronously, outside any `block_on` of `rt`: the seam
+        // builds its own runtime internally.
+        let body = resolve_and_render_via_registry(&state, &index_url)
+            .unwrap_or_else(|e| panic!("resolve_and_render_via_registry: {e}"));
+        let pins = parse_lock(&body);
+        let pin = find(&pins, &dist);
+        assert_eq!(
+            pin.version, V2,
+            "`>=1.5` admits only {V2} of the two releases the registry \
+             serves\n--- lock body ---\n{body}"
+        );
+        assert_eq!(pin.direct, Some(true));
+        assert!(!pin.sha256.is_empty() && !pin.url.is_empty());
+        assert_eq!(pin.url, url_v2);
+        assert_eq!(pin.sha256, digest_v2);
+
+        drop(server);
+    }
+}
+
+// #4232: the manifest identity of a dependency is its PEP 503 name, read up
+// to the first specifier operator -- not the text up to a literal `==`. A
+// handwritten range line and a `mamba add NAME==VERSION` pin for the same
+// distribution are one entry, and `mamba remove NAME` finds either.
+mod add_dependency_identity_is_the_name_before_the_operator {
+    use crate::pkgmanage::add::{dep_name, ManifestState};
+    use std::collections::BTreeMap;
+
+    fn manifest_state(dependencies: Vec<String>) -> ManifestState {
+        ManifestState {
+            project_name: "demo".to_string(),
+            project_version: "0.1.0".to_string(),
+            python_requires: ">=3.12".to_string(),
+            dependencies,
+            dev_dependencies: Vec::new(),
+            source_overrides: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn dep_name_stops_at_the_first_specifier_operator() {
+        assert_eq!(dep_name("gizmo>=1.5"), "gizmo");
+        assert_eq!(dep_name("gizmo~=1.4"), "gizmo");
+        assert_eq!(dep_name("gizmo==1.*"), "gizmo");
+        assert_eq!(dep_name("gizmo"), "gizmo");
+        assert_eq!(dep_name("gizmo==1.0"), "gizmo");
+    }
+
+    #[test]
+    fn upsert_replaces_a_handwritten_range_for_the_same_name() {
+        let mut state = manifest_state(vec!["gizmo>=1.5".to_string()]);
+        state.upsert_dependency("gizmo==2.0");
+        assert_eq!(state.dependencies, vec!["gizmo==2.0".to_string()]);
+    }
+
+    #[test]
+    fn remove_finds_a_handwritten_range_entry_by_name() {
+        let mut state = manifest_state(vec![
+            "keep==1.0".to_string(),
+            "gizmo>=1.5".to_string(),
+        ]);
+        state.remove_dependency("gizmo");
+        assert_eq!(state.dependencies, vec!["keep==1.0".to_string()]);
+    }
+}
