@@ -346,6 +346,100 @@ fn search_terminates_on_a_chain_that_forces_every_decision_down() {
 }
 
 // --------------------------------------------------------------------------
+// #4231: the search must be complete, not just able to undo a decided name
+// --------------------------------------------------------------------------
+
+/// The conflict lands on a name nothing has decided yet: two roots reach it
+/// directly, one narrowing it before the other has even been considered. The
+/// old `?` at the candidate-selection call site ended the search here even
+/// though the decision above it (the other root) has another candidate to
+/// try. Both root orders must reach the same answer, since `search` always
+/// walks undecided names alphabetically regardless of root order.
+#[test]
+fn search_resolves_a_conflict_on_a_name_nothing_has_decided_yet() {
+    for order in [["lateapp>=2", "latelib<2"], ["latelib<2", "lateapp>=2"]] {
+        let table = Table::new(
+            &[("lateapp", &["2.0", "3.0"]), ("latelib", &["1.5", "2.5"])],
+            &[
+                ("lateapp", "3.0", &["latelib>=2"]),
+                ("lateapp", "2.0", &["latelib>=1"]),
+            ],
+        );
+        let root_reqs = roots(&order);
+        let graph = search(&table, &root_reqs).expect(
+            "lateapp==2.0 with latelib==1.5 satisfies every requirement, so the \
+             search must reach it instead of refusing on the undecided name",
+        );
+        assert_eq!(
+            pins(&graph),
+            vec!["lateapp==2.0", "latelib==1.5"],
+            "order {order:?}: the eager `lateapp==3.0` pick raises `latelib>=2`, \
+             which nothing satisfies under the root's `latelib<2` — the decision \
+             that must move is `lateapp`, since nothing has decided `latelib` yet"
+        );
+        assert_consistent("undecided-name conflict", &graph, &root_reqs);
+    }
+}
+
+/// The only remedy is a decision *above* the one the conflict surfaces on:
+/// the dependant that raised the offending requirement has another release
+/// available, and only that release resolves the conflict. Popping it and
+/// retaking it from scratch — the old behavior — reissues the same
+/// requirement forever; the fix must advance it to its next candidate.
+#[test]
+fn search_moves_a_decision_above_the_conflict_when_that_is_the_only_remedy() {
+    let table = Table::new(
+        &[
+            ("chainapp", &["2.0", "3.0"]),
+            ("chainmid", &["1.0", "2.0"]),
+            ("chainlib", &["1.5", "2.5"]),
+        ],
+        &[
+            ("chainapp", "3.0", &["chainmid>=2"]),
+            ("chainapp", "2.0", &["chainmid>=1"]),
+            ("chainmid", "2.0", &["chainlib>=2"]),
+            ("chainmid", "1.0", &["chainlib>=1"]),
+        ],
+    );
+    let root_reqs = roots(&["chainapp>=1", "chainlib<2"]);
+    let graph = search(&table, &root_reqs).expect(
+        "chainapp==2.0 -> chainmid==1.0 -> chainlib==1.5 satisfies every \
+         requirement in the graph",
+    );
+    assert_eq!(
+        pins(&graph),
+        vec!["chainapp==2.0", "chainlib==1.5", "chainmid==1.0"],
+        "chainmid cannot pick any release that admits both chainlib bounds on \
+         its own — the decision that has to move is chainapp, above it"
+    );
+    assert_consistent("decision above the conflict", &graph, &root_reqs);
+}
+
+/// Backing decisions off is not the same as always finding a solution: a
+/// graph where the conflict lands on a name nothing has decided yet, and no
+/// assignment of the graph is consistent, still empties the stack and
+/// refuses — carrying the original candidate-selection error, not a
+/// synthesized one, since no decision was ever pinned to name the conflict
+/// against.
+#[test]
+fn search_still_refuses_when_the_undecided_name_conflict_has_no_solution() {
+    let table = Table::new(
+        &[("deadapp", &["1.0"]), ("deadlib", &["1.5", "2.5"])],
+        &[("deadapp", "1.0", &["deadlib>=2"])],
+    );
+    let root_reqs = roots(&["deadapp>=1", "deadlib<2"]);
+    let err = search(&table, &root_reqs)
+        .expect_err("no release of `deadlib` satisfies both `>=2` and `<2`");
+    assert_eq!(err.kind, ResolutionErrorKind::EmptyIntersection);
+    assert_eq!(err.involved, vec!["deadlib".to_string()]);
+    assert!(
+        err.trace.contains("deadlib"),
+        "the refusal must name `deadlib`; got {:?}",
+        err.trace
+    );
+}
+
+// --------------------------------------------------------------------------
 // candidate ordering
 // --------------------------------------------------------------------------
 
