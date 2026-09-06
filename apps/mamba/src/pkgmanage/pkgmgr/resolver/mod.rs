@@ -1,27 +1,48 @@
 // HANDWRITE-BEGIN gap="missing-generator:hand-written:fe294a5d" tracker="standardize-gap-projects-mamba-src-pkgmgr-resolver-mod-rs" reason="Public API: Resolver::resolve(roots: &amp;[Requirement]) -> Result<ResolvedGraph, ResolutionError>. Wires PubGrub state machine to IndexClient."
-//! Mamba dependency resolver — Phase-1.2.
-//!
-//! Spec source: `.aw/tech-design/apps/mamba/pkgmgr/resolver.md`.
+//! Mamba dependency resolver.
 //!
 //! Public API: [`Resolver::resolve`].
 //!
-//! ## Implementation note
+//! ## The algorithm
 //!
-//! The spec calls for a PubGrub-backed solver. The full
-//! `impl pubgrub::DependencyProvider for IndexClientProvider` lands together
-//! with the `pubgrub = "0.2"` dependency (final fire of this lifecycle). Until
-//! then, [`Resolver::resolve`] runs a simple eager BFS over the requirement
-//! graph that satisfies AC1 (greenfield resolution), AC3 (yanked filter), AC5
-//! (marker exclusion), and AC4 (byte-stable output via name-sorted nodes).
-//! Backtracking conflicts (AC2) emit a `ResolutionError` with kind
-//! `no_compatible_version` rather than the rich PubGrub trace — that gap is
-//! tracked by the upcoming PubGrub-wiring follow-up and is the only AC behind
-//! the trait-impl gate.
+//! Chronological backtracking over the requirement graph, written here over
+//! the calls [`IndexClientProvider`] already offers. There is no solver crate:
+//! [`Universe`] is the whole of what the search may ask the world, and
+//! [`search`] is the whole of the search.
+//!
+//! One name at a time, alphabetically among the undecided names anything has
+//! raised a requirement on, the search takes the head of that name's
+//! preference-ordered candidate list — the versions the index offers, minus
+//! yanked and marker-excluded ones, narrowed by every requirement raised on
+//! the name so far, filtered by the `--prerelease` policy and ordered by the
+//! `--resolution` strategy. Deciding a name raises the requirements that
+//! version declares, which is how the closure grows.
+//!
+//! A requirement raised on a name that is already decided is the interesting
+//! case, and it is the one #4225 got wrong by refusing outright. Here the
+//! search **takes the pick back**: it discards every decision made after the
+//! contested one, withdrawing the requirements those decisions raised, then
+//! advances the contested name to its next candidate that satisfies everything
+//! still raised on it. When that name has nothing left to try, its own
+//! decision is discarded too and the decision below it moves the same way.
+//! When the stack empties, the graph really has no consistent pin set and the
+//! search refuses it with `NoCompatibleVersion` naming the contested package
+//! and the requirements that cannot hold together.
+//!
+//! Two properties follow, and the colocated tests state both. Every backtrack
+//! strictly advances one decision's position and throws away everything after
+//! it, so the walk is a depth-first traversal of a finite tree and terminates.
+//! And a name first reached with no conflict is decided exactly as it was
+//! before this existed, so a graph that never conflicts renders the bytes it
+//! always did.
 
 pub mod graph;
 pub mod pubgrub_glue;
 pub mod requirement;
 pub mod specifier;
+
+#[cfg(test)]
+mod tests;
 
 use std::collections::BTreeMap;
 
@@ -101,11 +122,12 @@ impl Resolver {
         self
     }
 
-    /// @spec .aw/tech-design/apps/mamba/pkgmgr/resolver.md#logic (resolve-flow)
+    /// Resolve `roots` into a pin set every requirement in the closure
+    /// admits, or refuse the graph with a [`ResolutionError`].
     ///
-    /// Execute the full flowchart (parse_roots → init → pick_pkg → fetch_meta
-    /// → filter_yanked → intersect → solved/build_graph), collapsing the
-    /// PubGrub backtracking step into eager pick-latest-matching for now.
+    /// The algorithm lives in [`search`]; this method rejects a malformed
+    /// root and then hands the search the [`Universe`] it asks its two
+    /// questions of.
     pub fn resolve(&self, roots: &[Requirement]) -> Result<ResolvedGraph, ResolutionError> {
         if roots.iter().any(|r| r.name.is_empty()) {
             return Err(ResolutionError {
@@ -114,196 +136,466 @@ impl Resolver {
                 involved: vec![],
             });
         }
+        search(self, roots)
+    }
+}
 
-        // Worklist: name → most-restrictive Requirement seen so far. We merge
-        // specifier sets by concatenation (conjunctive AND); duplicates are
-        // de-duplicated downstream.
-        let mut pending: BTreeMap<String, Requirement> = BTreeMap::new();
-        for r in roots {
-            merge_requirement(&mut pending, r.clone());
+/// The two questions the search asks of the world, and the only two.
+///
+/// Lifting them off [`Resolver`] is what makes the search judgeable without
+/// an index: the resolver answers them from a live [`IndexClientProvider`],
+/// and a colocated test answers them from a table.
+pub(crate) trait Universe {
+    /// Every version of `name` that `req` admits, in preference order: the
+    /// head is what a first pick takes and the tail is what a backtrack walks
+    /// into. Never `Ok` with an empty list — an exhausted list is one of the
+    /// `Err` variants instead, because the caller distinguishes "nothing on
+    /// offer" from "nothing left to try".
+    fn ordered_candidates(
+        &self,
+        name: &str,
+        req: &Requirement,
+        is_direct: bool,
+    ) -> Result<Vec<String>, ResolutionError>;
+
+    /// The node one pick becomes: the artifact hashes for that version and
+    /// the requirements it raises, already marker-filtered.
+    fn node(&self, name: &str, version: &str) -> Result<ResolvedNode, ResolutionError>;
+}
+
+impl Universe for Resolver {
+    /// @spec .aw/tech-design/apps/mamba/pkgmgr/resolver.md#logic (fetch_meta
+    /// → filter_yanked → intersect → pick_pkg)
+    fn ordered_candidates(
+        &self,
+        name: &str,
+        req: &Requirement,
+        is_direct: bool,
+    ) -> Result<Vec<String>, ResolutionError> {
+        // fetch_meta
+        let candidates = match self
+            .provider
+            .candidate_versions(name, |v| (self.marker_excludes)(v, &req.marker))
+        {
+            Ok(v) => v,
+            Err(IndexError::NotFound { .. }) => {
+                return Err(ResolutionError {
+                    kind: ResolutionErrorKind::MissingPackage,
+                    trace: format!("index has no record of {name}"),
+                    involved: vec![name.to_string()],
+                });
+            }
+            Err(other) => {
+                return Err(ResolutionError {
+                    kind: ResolutionErrorKind::MissingPackage,
+                    trace: format!("index error fetching {name}: {other}"),
+                    involved: vec![name.to_string()],
+                });
+            }
+        };
+
+        if candidates.is_empty() {
+            return Err(ResolutionError {
+                kind: ResolutionErrorKind::MarkerExcludesAll,
+                trace: format!("no non-yanked, marker-eligible versions for {name}"),
+                involved: vec![name.to_string()],
+            });
         }
 
-        let root_names: Vec<String> = roots.iter().map(|r| r.name.clone()).collect();
-        let mut decided: BTreeMap<String, ResolvedNode> = BTreeMap::new();
-        // The requirement whose specifiers decided each name's version, kept
-        // alongside `decided` so a later-arriving requirement on the same
-        // name can be compared against the version already picked, and named
-        // in the error, instead of being silently discarded (#4225).
-        let mut deciding_requirement: BTreeMap<String, Requirement> = BTreeMap::new();
+        // intersect specifiers
+        let kept = IndexClientProvider::intersect_specifiers(req, &candidates);
+        if kept.is_empty() {
+            return Err(ResolutionError {
+                kind: ResolutionErrorKind::EmptyIntersection,
+                trace: format!(
+                    "no version of {name} satisfies {} specifier(s)",
+                    req.specifiers.len()
+                ),
+                involved: vec![name.to_string()],
+            });
+        }
 
-        while let Some((name, req)) = pop_first(&mut pending) {
-            if let Some(node) = decided.get(&name) {
-                if !specifier::all_match(&req.specifiers, &node.version) {
-                    let prior_spec = deciding_requirement
-                        .get(&name)
-                        .map(|r| spell_specifiers(&r.specifiers))
-                        .unwrap_or_default();
-                    let arriving_spec = spell_specifiers(&req.specifiers);
-                    return Err(ResolutionError {
-                        kind: ResolutionErrorKind::NoCompatibleVersion,
-                        trace: format!(
-                            "conflicting requirements on {name}: `{name}{prior_spec}` decided \
-                             {name}=={} but a later requirement needs `{name}{arriving_spec}`, \
-                             which that version does not satisfy",
-                            node.version
-                        ),
-                        involved: vec![name],
-                    });
-                }
+        // Apply --prerelease policy (Tick 141 integration).
+        let policy_filtered = apply_prerelease_policy(&kept, req, self.prerelease_policy);
+        if policy_filtered.is_empty() {
+            return Err(ResolutionError {
+                kind: ResolutionErrorKind::EmptyIntersection,
+                trace: format!(
+                    "no non-prerelease version of {name} satisfies the constraints under --prerelease={}",
+                    self.prerelease_policy.cli_name()
+                ),
+                involved: vec![name.to_string()],
+            });
+        }
+
+        // Apply --resolution strategy (Tick 143 integration).
+        // `policy_filtered` is newest-first; ResolutionStrategy expects
+        // ascending. Reverse once at the boundary so we can keep the policy
+        // module's contract clean.
+        let mut ascending: Vec<String> = policy_filtered;
+        ascending.reverse();
+        Ok(order_by_strategy(
+            self.resolution_strategy,
+            is_direct,
+            ascending,
+        ))
+    }
+
+    fn node(&self, name: &str, version: &str) -> Result<ResolvedNode, ResolutionError> {
+        let meta = self
+            .provider
+            .fetch_metadata_blocking(name)
+            .map_err(|e| ResolutionError {
+                kind: ResolutionErrorKind::MissingPackage,
+                trace: format!("metadata for {name} disappeared: {e}"),
+                involved: vec![name.to_string()],
+            })?;
+
+        // Apply yanked + --exclude-newer file filters (Tick 144 integration).
+        // Files past the cutoff are dropped as if they had been yanked: uv's
+        // "pin the world at this moment" semantics.
+        let cutoff = self.exclude_newer;
+        let release_files: Vec<&ReleaseFile> = meta
+            .releases
+            .get(version)
+            .map(|v| {
+                v.iter()
+                    .filter(|f| !f.yanked)
+                    .filter(|f| match cutoff {
+                        Some(c) => !c.excludes_file(f),
+                        None => true,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if release_files.is_empty() && cutoff.is_some() {
+            return Err(ResolutionError {
+                kind: ResolutionErrorKind::EmptyIntersection,
+                trace: format!(
+                    "every release file for {name}=={version} is newer than the --exclude-newer cutoff"
+                ),
+                involved: vec![name.to_string()],
+            });
+        }
+        let files = release_files.iter().map(|rf| rf.hash.clone()).collect();
+
+        // Tick 13.5: pull transitive deps via per-version
+        // `/pypi/{name}/{version}/json`. Parse each `requires_dist` entry as a
+        // Requirement and drop the ones the marker policy excludes (e.g.
+        // extras-gated, OS-gated).
+        let raw_requires = self
+            .provider
+            .fetch_version_requires_blocking(name, version)
+            .unwrap_or_default();
+        let mut requires: Vec<Requirement> = Vec::new();
+        for line in raw_requires {
+            let req = match parse_requirement(&line) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            // Marker filter: skip transitive deps whose environment marker
+            // excludes the current host (e.g. `; sys_platform == "win32"` on a
+            // non-Windows host, or `; extra == "foo"` since we are not yet
+            // driving extras).
+            if (self.marker_excludes)("", &req.marker) {
                 continue;
             }
-
-            // fetch_meta
-            let candidates = match self
-                .provider
-                .candidate_versions(&name, |v| (self.marker_excludes)(v, &req.marker))
-            {
-                Ok(v) => v,
-                Err(IndexError::NotFound { .. }) => {
-                    return Err(ResolutionError {
-                        kind: ResolutionErrorKind::MissingPackage,
-                        trace: format!("index has no record of {name}"),
-                        involved: vec![name],
-                    });
-                }
-                Err(other) => {
-                    return Err(ResolutionError {
-                        kind: ResolutionErrorKind::MissingPackage,
-                        trace: format!("index error fetching {name}: {other}"),
-                        involved: vec![name],
-                    });
-                }
-            };
-
-            if candidates.is_empty() {
-                return Err(ResolutionError {
-                    kind: ResolutionErrorKind::MarkerExcludesAll,
-                    trace: format!("no non-yanked, marker-eligible versions for {name}"),
-                    involved: vec![name],
-                });
-            }
-
-            // intersect specifiers
-            let kept = IndexClientProvider::intersect_specifiers(&req, &candidates);
-            if kept.is_empty() {
-                return Err(ResolutionError {
-                    kind: ResolutionErrorKind::EmptyIntersection,
-                    trace: format!(
-                        "no version of {name} satisfies {} specifier(s)",
-                        req.specifiers.len()
-                    ),
-                    involved: vec![name],
-                });
-            }
-
-            // Apply --prerelease policy (Tick 141 integration).
-            let policy_filtered = apply_prerelease_policy(&kept, &req, self.prerelease_policy);
-            if policy_filtered.is_empty() {
-                return Err(ResolutionError {
-                    kind: ResolutionErrorKind::EmptyIntersection,
-                    trace: format!(
-                        "no non-prerelease version of {name} satisfies the constraints under --prerelease={}",
-                        self.prerelease_policy.cli_name()
-                    ),
-                    involved: vec![name],
-                });
-            }
-
-            // Apply --resolution strategy (Tick 143 integration).
-            // `policy_filtered` is newest-first; ResolutionStrategy
-            // expects ascending. Reverse once at the boundary so we
-            // can keep the policy module's contract clean.
-            let is_direct = root_names.iter().any(|n| n == &name);
-            let mut ascending: Vec<String> = policy_filtered;
-            ascending.reverse();
-            let chosen = self
-                .resolution_strategy
-                .pick_candidate(is_direct, &ascending)
-                .cloned()
-                .expect("non-empty after prerelease filter — checked above");
-            let meta =
-                self.provider
-                    .fetch_metadata_blocking(&name)
-                    .map_err(|e| ResolutionError {
-                        kind: ResolutionErrorKind::MissingPackage,
-                        trace: format!("metadata for {name} disappeared: {e}"),
-                        involved: vec![name.clone()],
-                    })?;
-
-            // Apply yanked + --exclude-newer file filters (Tick 144
-            // integration). Files past the cutoff are dropped as if
-            // they had been yanked: uv's "pin the world at this
-            // moment" semantics.
-            let cutoff = self.exclude_newer;
-            let release_files: Vec<&ReleaseFile> = meta
-                .releases
-                .get(&chosen)
-                .map(|v| {
-                    v.iter()
-                        .filter(|f| !f.yanked)
-                        .filter(|f| match cutoff {
-                            Some(c) => !c.excludes_file(f),
-                            None => true,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            if release_files.is_empty() && cutoff.is_some() {
-                return Err(ResolutionError {
-                    kind: ResolutionErrorKind::EmptyIntersection,
-                    trace: format!(
-                        "every release file for {name}=={chosen} is newer than the --exclude-newer cutoff"
-                    ),
-                    involved: vec![name.clone()],
-                });
-            }
-            let files = release_files.iter().map(|rf| rf.hash.clone()).collect();
-
-            // Tick 13.5: pull transitive deps via per-version
-            // `/pypi/{name}/{version}/json`. Parse each `requires_dist`
-            // entry as a Requirement, drop ones the marker policy excludes
-            // (e.g. extras-gated, OS-gated), merge into pending, and
-            // record on this node.
-            let raw_requires = self
-                .provider
-                .fetch_version_requires_blocking(&name, &chosen)
-                .unwrap_or_default();
-            let mut requires: Vec<Requirement> = Vec::new();
-            for line in raw_requires {
-                let req = match parse_requirement(&line) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-                // Marker filter: skip transitive deps whose environment
-                // marker excludes the current host (e.g. `; sys_platform
-                // == "win32"` on a non-Windows host, or `; extra == "foo"`
-                // since we're not yet driving extras).
-                if (self.marker_excludes)("", &req.marker) {
-                    continue;
-                }
-                merge_requirement(&mut pending, req.clone());
-                requires.push(req);
-            }
-
-            decided.insert(
-                name.clone(),
-                ResolvedNode {
-                    name: name.clone(),
-                    version: chosen,
-                    files,
-                    requires,
-                },
-            );
-            deciding_requirement.insert(name, req);
+            requires.push(req);
         }
 
-        // build_graph: nodes sorted by name (BTreeMap iteration), roots in input order.
-        let nodes = decided.into_values().collect::<Vec<_>>();
-        Ok(ResolvedGraph {
-            nodes,
-            roots: root_names,
+        Ok(ResolvedNode {
+            name: name.to_string(),
+            version: version.to_string(),
+            files,
+            requires,
         })
     }
+}
+
+/// Project an ascending candidate list into the order the strategy prefers,
+/// head first.
+///
+/// The order is derived from [`ResolutionStrategy::pick_candidate`] rather
+/// than restated here: whatever that method picks out of the ascending list is
+/// what this function puts at the head, so the search's first pick is the pick
+/// the strategy would have made and the two cannot drift apart.
+pub(crate) fn order_by_strategy(
+    strategy: ResolutionStrategy,
+    is_direct: bool,
+    ascending: Vec<String>,
+) -> Vec<String> {
+    let Some(picked) = strategy.pick_candidate(is_direct, &ascending).cloned() else {
+        return ascending;
+    };
+    let mut ordered = ascending;
+    if ordered.first() != Some(&picked) {
+        ordered.reverse();
+    }
+    ordered
+}
+
+/// The refusal a graph earns when no version of `name` satisfies everything
+/// raised on it. `decided_with` is the requirement set that selected
+/// `version`; `arriving` is what contradicts it.
+fn conflict_error(
+    name: &str,
+    decided_with: Option<&Requirement>,
+    arriving: &[VersionSpecifier],
+    version: &str,
+) -> ResolutionError {
+    let prior_spec = decided_with
+        .map(|r| spell_specifiers(&r.specifiers))
+        .unwrap_or_default();
+    let arriving_spec = spell_specifiers(arriving);
+    ResolutionError {
+        kind: ResolutionErrorKind::NoCompatibleVersion,
+        trace: format!(
+            "conflicting requirements on {name}: `{name}{prior_spec}` decided \
+             {name}=={version} but a later requirement needs `{name}{arriving_spec}`, \
+             which that version does not satisfy"
+        ),
+        involved: vec![name.to_string()],
+    }
+}
+
+/// One requirement in force, and the decision that raised it.
+///
+/// The raiser is what makes a decision undoable: withdrawing a pick means
+/// withdrawing exactly the requirements that pick put into the world, and
+/// nothing else. A root's requirement has no raiser and is never withdrawn.
+struct Raise {
+    by: Option<String>,
+    req: Requirement,
+}
+
+/// One decision the search has made and can still take back.
+struct Decision {
+    name: String,
+    /// The preference-ordered candidate list the pick came from, frozen when
+    /// the name was first decided. Backtracking walks *this* list, so a
+    /// re-pick can never reach a version the first pick was not offered.
+    candidates: Vec<String>,
+    /// Index into `candidates` of the version currently pinned.
+    pos: usize,
+    /// The requirement set that selected `candidates`, kept so a refusal can
+    /// spell what decided the version it is refusing.
+    decided_with: Requirement,
+}
+
+/// The conjunction of every requirement currently raised on one name, folded
+/// into the single [`Requirement`] the candidate narrowing consumes. The first
+/// raise supplies the name, extras and marker; the rest contribute specifiers.
+fn merged(raises: &[Raise]) -> Requirement {
+    let mut out = raises[0].req.clone();
+    for r in &raises[1..] {
+        out.specifiers.extend(r.req.specifiers.clone());
+    }
+    out
+}
+
+/// Every specifier currently raised on one name, flattened.
+fn constraints(raises: &[Raise]) -> Vec<VersionSpecifier> {
+    raises
+        .iter()
+        .flat_map(|r| r.req.specifiers.iter().cloned())
+        .collect()
+}
+
+/// Put the requirements `node` declares into force, attributed to `node`.
+fn raise_for(raised: &mut BTreeMap<String, Vec<Raise>>, node: &ResolvedNode) {
+    for req in &node.requires {
+        raised.entry(req.name.clone()).or_default().push(Raise {
+            by: Some(node.name.clone()),
+            req: req.clone(),
+        });
+    }
+}
+
+/// Take one decision back: its node stops being a pin, and every requirement
+/// it raised stops being in force.
+fn undo(
+    raised: &mut BTreeMap<String, Vec<Raise>>,
+    decided: &mut BTreeMap<String, ResolvedNode>,
+    name: &str,
+) {
+    decided.remove(name);
+    for raises in raised.values_mut() {
+        raises.retain(|r| r.by.as_deref() != Some(name));
+    }
+    raised.retain(|_, raises| !raises.is_empty());
+}
+
+/// The first decided name — alphabetically, so the answer does not depend on
+/// the order a conflict happened to be discovered in — whose pinned version
+/// something raised on it forbids, together with the specifiers it fails.
+fn first_violation(
+    raised: &BTreeMap<String, Vec<Raise>>,
+    decided: &BTreeMap<String, ResolvedNode>,
+) -> Option<(String, Vec<VersionSpecifier>)> {
+    for (name, raises) in raised {
+        let Some(node) = decided.get(name) else {
+            continue;
+        };
+        let offending: Vec<VersionSpecifier> = raises
+            .iter()
+            .flat_map(|r| r.req.specifiers.iter())
+            .filter(|s| !s.matches(&node.version))
+            .cloned()
+            .collect();
+        if !offending.is_empty() {
+            return Some((name.clone(), offending));
+        }
+    }
+    None
+}
+
+/// Undo back to a decision that can move, and move it.
+///
+/// `conflict_name` is decided at a version `offending` forbids. Everything
+/// decided after it goes first; then that name itself is advanced to the next
+/// candidate that everything still raised on it — plus `offending`, whose
+/// raiser has just been withdrawn but whose demand is what sent us here —
+/// admits. A name with nothing left to try is dropped and the decision below
+/// it moves instead, at which point `offending` is out of the picture: the
+/// decision that raised it will be retaken from scratch.
+///
+/// Returns the refusal when the stack empties: nothing is left to move, so no
+/// assignment of this graph satisfies itself.
+fn backtrack(
+    universe: &dyn Universe,
+    raised: &mut BTreeMap<String, Vec<Raise>>,
+    decided: &mut BTreeMap<String, ResolvedNode>,
+    stack: &mut Vec<Decision>,
+    conflict_name: &str,
+    offending: Vec<VersionSpecifier>,
+) -> Result<(), ResolutionError> {
+    let idx = stack
+        .iter()
+        .position(|d| d.name == conflict_name)
+        .expect("a decided name has a decision on the stack");
+    let refusal = conflict_error(
+        conflict_name,
+        Some(&stack[idx].decided_with),
+        &offending,
+        &decided[conflict_name].version,
+    );
+
+    while stack.len() > idx + 1 {
+        let dropped = stack.pop().expect("length checked");
+        undo(raised, decided, &dropped.name);
+    }
+
+    let mut extra = offending;
+    loop {
+        let Some(decision) = stack.last_mut() else {
+            return Err(refusal);
+        };
+        undo(raised, decided, &decision.name);
+
+        let mut wanted = raised
+            .get(&decision.name)
+            .map(|raises| constraints(raises))
+            .unwrap_or_default();
+        wanted.extend(extra.iter().cloned());
+
+        let next = decision
+            .candidates
+            .iter()
+            .enumerate()
+            .skip(decision.pos + 1)
+            .find(|(_, v)| specifier::all_match(&wanted, v))
+            .map(|(i, v)| (i, v.clone()));
+
+        match next {
+            Some((i, version)) => {
+                decision.pos = i;
+                let name = decision.name.clone();
+                let node = universe.node(&name, &version)?;
+                raise_for(raised, &node);
+                decided.insert(name, node);
+                return Ok(());
+            }
+            None => {
+                stack.pop();
+                // Below the contested name the arriving requirement no longer
+                // applies: the decision that raised it has been withdrawn and
+                // will raise it again, or not, when it is retaken.
+                extra.clear();
+            }
+        }
+    }
+}
+
+/// Walk the requirement graph and return one pin per reachable name, or refuse
+/// the graph.
+///
+/// @spec .aw/tech-design/apps/mamba/pkgmgr/resolver.md#logic (resolve-flow)
+pub(crate) fn search(
+    universe: &dyn Universe,
+    roots: &[Requirement],
+) -> Result<ResolvedGraph, ResolutionError> {
+    let root_names: Vec<String> = roots.iter().map(|r| r.name.clone()).collect();
+
+    // Every requirement currently in force, by the name it constrains. This is
+    // the search's whole memory: the worklist is "names in here that nothing
+    // has decided yet", and undoing a decision is deleting its rows.
+    let mut raised: BTreeMap<String, Vec<Raise>> = BTreeMap::new();
+    for r in roots {
+        raised.entry(r.name.clone()).or_default().push(Raise {
+            by: None,
+            req: r.clone(),
+        });
+    }
+
+    let mut decided: BTreeMap<String, ResolvedNode> = BTreeMap::new();
+    let mut stack: Vec<Decision> = Vec::new();
+
+    loop {
+        // A pin something now forbids is settled before anything else is
+        // decided on top of it.
+        if let Some((name, offending)) = first_violation(&raised, &decided) {
+            backtrack(
+                universe,
+                &mut raised,
+                &mut decided,
+                &mut stack,
+                &name,
+                offending,
+            )?;
+            continue;
+        }
+
+        let Some(name) = raised.keys().find(|n| !decided.contains_key(*n)).cloned() else {
+            break;
+        };
+
+        let req = merged(&raised[&name]);
+        let is_direct = root_names.iter().any(|n| n == &name);
+        let candidates = universe.ordered_candidates(&name, &req, is_direct)?;
+        let Some(chosen) = candidates.first().cloned() else {
+            return Err(ResolutionError {
+                kind: ResolutionErrorKind::EmptyIntersection,
+                trace: format!("no candidate version of {name} is left to try"),
+                involved: vec![name],
+            });
+        };
+        let node = universe.node(&name, &chosen)?;
+        raise_for(&mut raised, &node);
+        decided.insert(name.clone(), node);
+        stack.push(Decision {
+            name,
+            candidates,
+            pos: 0,
+            decided_with: req,
+        });
+    }
+
+    // build_graph: nodes sorted by name (BTreeMap iteration), roots in input
+    // order.
+    Ok(ResolvedGraph {
+        nodes: decided.into_values().collect::<Vec<_>>(),
+        roots: root_names,
+    })
 }
 
 /// Spell one specifier's operator + version, e.g. `>=2` — `VersionSpecifier`
@@ -326,18 +618,6 @@ fn spell_specifier(s: &VersionSpecifier) -> String {
 /// Spell a conjunctive specifier set, comma-joined, e.g. `>=2,<3`.
 fn spell_specifiers(specs: &[VersionSpecifier]) -> String {
     specs.iter().map(spell_specifier).collect::<Vec<_>>().join(",")
-}
-
-fn merge_requirement(pending: &mut BTreeMap<String, Requirement>, req: Requirement) {
-    pending
-        .entry(req.name.clone())
-        .and_modify(|prev| prev.specifiers.extend(req.specifiers.clone()))
-        .or_insert(req);
-}
-
-fn pop_first(pending: &mut BTreeMap<String, Requirement>) -> Option<(String, Requirement)> {
-    let key = pending.keys().next().cloned()?;
-    pending.remove_entry(&key)
 }
 
 /// Apply the `--prerelease` policy to a newest-first specifier-filtered
