@@ -1323,3 +1323,329 @@ dependencies = []
         assert!(prune_lock_for_remaining_roots(&state, "not valid toml {{{").is_none());
     }
 }
+
+// #4225: `mamba lock` must refuse a dependency graph whose own declared
+// constraints cannot both hold, on both index kinds, rather than silently
+// drop the later-arriving constraint and write a lock that violates it.
+//
+// `app` requires `lib>=2`, `other` requires `lib<2`; `lib` exists at `1.0`
+// (fails `>=2`) and `3.0` (fails `<2`) so no version satisfies both edges.
+// Each half also carries a control graph -- `other` requires `lib>=1`
+// instead -- where `3.0` satisfies both edges and the graph must keep
+// locking exactly as it does today.
+mod conflict_refused {
+    use crate::pkgmanage::add::ManifestState;
+    use crate::pkgmanage::index::render_metadata_toml;
+    use crate::pkgmanage::lock::{resolve_and_render_via_index, resolve_and_render_via_registry};
+    use std::collections::BTreeMap;
+    use std::path::Path;
+    use wiremock::matchers::{method, path as wire_path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn manifest_with(deps: &[&str]) -> ManifestState {
+        ManifestState {
+            project_name: "unit-fixture".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            dev_dependencies: Vec::new(),
+            source_overrides: BTreeMap::new(),
+        }
+    }
+
+    /// Squeeze whitespace out so `lib >= 2` and `lib>=2` both count, matching
+    /// the e2e case's own comparison (`pkgmgr_lock_conflict_refused.rs`).
+    fn squeeze(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    fn assert_names_conflict(msg: &str) {
+        assert!(msg.contains("lib"), "error must name `lib`: {msg}");
+        let squeezed = squeeze(msg);
+        assert!(
+            squeezed.contains(">=2"),
+            "error must name the `lib>=2` requirement: {msg}"
+        );
+        assert!(
+            squeezed.contains("<2"),
+            "error must name the `lib<2` requirement: {msg}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // frozen index half
+    // ---------------------------------------------------------------
+
+    fn write_frozen_entry(index: &Path, name: &str, version: &str, requires: &[&str]) {
+        let dir = index.join(name).join(version);
+        std::fs::create_dir_all(&dir).expect("fixture: create index version dir");
+        let requires: Vec<String> = requires.iter().map(|s| s.to_string()).collect();
+        let filename = format!("{name}-{version}-py3-none-any.whl");
+        let toml = render_metadata_toml(name, version, &filename, "deadbeefdeadbeef", &requires);
+        std::fs::write(dir.join("metadata.toml"), toml).expect("fixture: write metadata.toml");
+    }
+
+    fn frozen_index(other_requires: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("fixture: create frozen index dir");
+        write_frozen_entry(tmp.path(), "app", "1.0", &["lib>=2"]);
+        write_frozen_entry(tmp.path(), "other", "1.0", &[other_requires]);
+        write_frozen_entry(tmp.path(), "lib", "1.0", &[]);
+        write_frozen_entry(tmp.path(), "lib", "3.0", &[]);
+        tmp
+    }
+
+    #[test]
+    fn frozen_index_conflicting_transitive_requirements_are_refused() {
+        let index = frozen_index("lib<2");
+        let state = manifest_with(&["app==1.0", "other==1.0"]);
+        let err = resolve_and_render_via_index(&state, index.path())
+            .expect_err("a graph with no satisfying version of `lib` must be refused");
+        assert_names_conflict(&err.to_string());
+    }
+
+    #[test]
+    fn frozen_index_still_pins_a_name_two_requirements_agree_on() {
+        let index = frozen_index("lib>=1");
+        let state = manifest_with(&["app==1.0", "other==1.0"]);
+        let body = resolve_and_render_via_index(&state, index.path())
+            .expect("a graph both edges of which `lib==3.0` satisfies must still lock");
+        let doc: toml::Value = body.parse().expect("parse mamba.lock");
+        let packages = doc
+            .get("package")
+            .and_then(|v| v.as_array())
+            .expect("[[package]] array");
+        let lib_entries: Vec<&toml::Value> = packages
+            .iter()
+            .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some("lib"))
+            .collect();
+        assert_eq!(
+            lib_entries.len(),
+            1,
+            "a compatible graph must still pin `lib` exactly once: {body}"
+        );
+        assert_eq!(
+            lib_entries[0].get("version").and_then(|v| v.as_str()),
+            Some("3.0")
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // registry (live-PyPI-shaped) half
+    // ---------------------------------------------------------------
+    //
+    // Same shape as `add_registry_transitive` above: real wheels through the
+    // product's own `WheelBuilder`, served by an in-process `wiremock`
+    // server with PEP 503 anchor pages, so the Simple-API version scraper
+    // has real filenames to parse. Each test uses its own dist names so the
+    // on-disk metadata cache (keyed only by package name, shared with the
+    // real `$HOME` this process runs under) can never let one test observe
+    // the other's registry.
+
+    use crate::pkgmanage::pkgmgr::wheel_build::{compose_filename, CoreMetadata, WheelBuilder, WheelMetadata};
+
+    fn build_registry_wheel(dist: &str, version: &str) -> (String, Vec<u8>) {
+        let dir = tempfile::tempdir().expect("fixture: create a temp dir for the wheel");
+        let filename = compose_filename(dist, version, "py3", "none", "any");
+        let mut wheel_meta = WheelMetadata::new("mamba-unit-conflict-refused");
+        wheel_meta.tags.push("py3-none-any".into());
+        let core_meta = CoreMetadata::new(dist, version);
+        let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+        builder.add_file(format!("{dist}/__init__.py"), "ORIGIN = 1\n".to_string());
+        let wheel = builder
+            .build_to_dir(dir.path())
+            .unwrap_or_else(|e| panic!("fixture: build wheel {dist}-{version}: {e:?}"));
+        let file = wheel
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| panic!("fixture: the wheel builder named {}", wheel.display()))
+            .to_string();
+        let bytes = std::fs::read(&wheel).unwrap_or_else(|e| panic!("read {}: {e}", wheel.display()));
+        (file, bytes)
+    }
+
+    fn registry_simple_page(dist: &str, entries: &[(&str, &str, &str)]) -> String {
+        let mut body = format!(
+            "<!DOCTYPE html>\n<html><head><title>Links for {dist}</title></head>\n<body>\n"
+        );
+        for (file, url, digest) in entries {
+            body.push_str(&format!("<a href=\"{url}#sha256={digest}\">{file}</a><br/>\n"));
+        }
+        body.push_str("</body></html>\n");
+        body
+    }
+
+    /// Mount a registry serving `app_dist`/`other_dist`/`lib_dist` with
+    /// `app_dist` requiring `{lib_dist}>=2` and `other_dist` requiring
+    /// `other_requires` (naming `lib_dist`), and `lib_dist` visible at both
+    /// `1.0` and `3.0`.
+    fn start_registry(
+        rt: &tokio::runtime::Runtime,
+        app_dist: &str,
+        other_dist: &str,
+        lib_dist: &str,
+        other_requires: &str,
+    ) -> MockServer {
+        let app_wheel = build_registry_wheel(app_dist, "1.0");
+        let other_wheel = build_registry_wheel(other_dist, "1.0");
+        let lib_1_wheel = build_registry_wheel(lib_dist, "1.0");
+        let lib_3_wheel = build_registry_wheel(lib_dist, "3.0");
+        let app_dist = app_dist.to_string();
+        let other_dist = other_dist.to_string();
+        let lib_dist = lib_dist.to_string();
+        let other_requires = other_requires.to_string();
+
+        rt.block_on(async move {
+            let server = MockServer::start().await;
+            let base = server.uri();
+
+            let sha256 = |bytes: &[u8]| -> String {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(bytes);
+                format!("{:x}", hasher.finalize())
+            };
+
+            let wheels = [
+                (&app_dist, &app_wheel),
+                (&other_dist, &other_wheel),
+                (&lib_dist, &lib_1_wheel),
+                (&lib_dist, &lib_3_wheel),
+            ];
+            let mut pages: std::collections::BTreeMap<String, Vec<(String, String, String)>> =
+                std::collections::BTreeMap::new();
+            for (dist, (file, bytes)) in wheels {
+                let url = format!("{base}/files/{file}");
+                let digest = sha256(bytes);
+                pages
+                    .entry(dist.clone())
+                    .or_default()
+                    .push((file.clone(), url.clone(), digest));
+
+                Mock::given(method("GET"))
+                    .and(wire_path(format!("/files/{file}")))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_raw(bytes.clone(), "application/octet-stream"),
+                    )
+                    .mount(&server)
+                    .await;
+            }
+
+            for (dist, entries) in &pages {
+                let refs: Vec<(&str, &str, &str)> = entries
+                    .iter()
+                    .map(|(f, u, d)| (f.as_str(), u.as_str(), d.as_str()))
+                    .collect();
+                Mock::given(method("GET"))
+                    .and(wire_path(format!("/simple/{dist}/")))
+                    .respond_with(
+                        ResponseTemplate::new(200).set_body_raw(
+                            registry_simple_page(dist, &refs).into_bytes(),
+                            "text/html; charset=utf-8",
+                        ),
+                    )
+                    .mount(&server)
+                    .await;
+            }
+
+            for dist in [&app_dist, &other_dist, &lib_dist] {
+                Mock::given(method("GET"))
+                    .and(wire_path(format!("/pypi/{dist}/json")))
+                    .respond_with(ResponseTemplate::new(404))
+                    .mount(&server)
+                    .await;
+            }
+
+            Mock::given(method("GET"))
+                .and(wire_path(format!("/pypi/{app_dist}/1.0/json")))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    format!("{{\"info\":{{\"requires_dist\":[\"{lib_dist}>=2\"]}}}}").into_bytes(),
+                    "application/json",
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(wire_path(format!("/pypi/{other_dist}/1.0/json")))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    format!("{{\"info\":{{\"requires_dist\":[\"{other_requires}\"]}}}}").into_bytes(),
+                    "application/json",
+                ))
+                .mount(&server)
+                .await;
+            for v in ["1.0", "3.0"] {
+                Mock::given(method("GET"))
+                    .and(wire_path(format!("/pypi/{lib_dist}/{v}/json")))
+                    .respond_with(ResponseTemplate::new(200).set_body_raw(
+                        b"{\"info\":{\"requires_dist\":[]}}".to_vec(),
+                        "application/json",
+                    ))
+                    .mount(&server)
+                    .await;
+            }
+
+            server
+        })
+    }
+
+    #[test]
+    fn registry_conflicting_transitive_requirements_are_refused() {
+        let rt = tokio::runtime::Runtime::new().expect("fixture: build a runtime for the registry");
+        let server = start_registry(
+            &rt,
+            "wi4225-conflict-app",
+            "wi4225-conflict-other",
+            "wi4225-conflict-lib",
+            "wi4225-conflict-lib<2",
+        );
+        let index_url = format!("{}/simple", server.uri());
+        let state = manifest_with(&["wi4225-conflict-app==1.0", "wi4225-conflict-other==1.0"]);
+
+        let err = resolve_and_render_via_registry(&state, &index_url)
+            .expect_err("a graph with no satisfying version of `lib` must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("wi4225-conflict-lib"),
+            "error must name the contested package: {msg}"
+        );
+        let squeezed = squeeze(&msg);
+        assert!(squeezed.contains(">=2"), "error must name `>=2`: {msg}");
+        assert!(squeezed.contains("<2"), "error must name `<2`: {msg}");
+        drop(server);
+    }
+
+    #[test]
+    fn registry_still_pins_a_name_two_requirements_agree_on() {
+        let rt = tokio::runtime::Runtime::new().expect("fixture: build a runtime for the registry");
+        let server = start_registry(
+            &rt,
+            "wi4225-agree-app",
+            "wi4225-agree-other",
+            "wi4225-agree-lib",
+            "wi4225-agree-lib>=1",
+        );
+        let index_url = format!("{}/simple", server.uri());
+        let state = manifest_with(&["wi4225-agree-app==1.0", "wi4225-agree-other==1.0"]);
+
+        let body = resolve_and_render_via_registry(&state, &index_url)
+            .expect("a graph both edges of which `lib==3.0` satisfies must still lock");
+        let doc: toml::Value = body.parse().expect("parse mamba.lock");
+        let packages = doc
+            .get("package")
+            .and_then(|v| v.as_array())
+            .expect("[[package]] array");
+        let lib_entries: Vec<&toml::Value> = packages
+            .iter()
+            .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some("wi4225-agree-lib"))
+            .collect();
+        assert_eq!(
+            lib_entries.len(),
+            1,
+            "a compatible graph must still pin `lib` exactly once: {body}"
+        );
+        assert_eq!(
+            lib_entries[0].get("version").and_then(|v| v.as_str()),
+            Some("3.0")
+        );
+        drop(server);
+    }
+}

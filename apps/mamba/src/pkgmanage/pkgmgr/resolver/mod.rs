@@ -125,9 +125,31 @@ impl Resolver {
 
         let root_names: Vec<String> = roots.iter().map(|r| r.name.clone()).collect();
         let mut decided: BTreeMap<String, ResolvedNode> = BTreeMap::new();
+        // The requirement whose specifiers decided each name's version, kept
+        // alongside `decided` so a later-arriving requirement on the same
+        // name can be compared against the version already picked, and named
+        // in the error, instead of being silently discarded (#4225).
+        let mut deciding_requirement: BTreeMap<String, Requirement> = BTreeMap::new();
 
         while let Some((name, req)) = pop_first(&mut pending) {
-            if decided.contains_key(&name) {
+            if let Some(node) = decided.get(&name) {
+                if !specifier::all_match(&req.specifiers, &node.version) {
+                    let prior_spec = deciding_requirement
+                        .get(&name)
+                        .map(|r| spell_specifiers(&r.specifiers))
+                        .unwrap_or_default();
+                    let arriving_spec = spell_specifiers(&req.specifiers);
+                    return Err(ResolutionError {
+                        kind: ResolutionErrorKind::NoCompatibleVersion,
+                        trace: format!(
+                            "conflicting requirements on {name}: `{name}{prior_spec}` decided \
+                             {name}=={} but a later requirement needs `{name}{arriving_spec}`, \
+                             which that version does not satisfy",
+                            node.version
+                        ),
+                        involved: vec![name],
+                    });
+                }
                 continue;
             }
 
@@ -272,6 +294,7 @@ impl Resolver {
                     requires,
                 },
             );
+            deciding_requirement.insert(name, req);
         }
 
         // build_graph: nodes sorted by name (BTreeMap iteration), roots in input order.
@@ -281,6 +304,28 @@ impl Resolver {
             roots: root_names,
         })
     }
+}
+
+/// Spell one specifier's operator + version, e.g. `>=2` — `VersionSpecifier`
+/// has no `Display` impl (that grammar belongs to the PubGrub work item, see
+/// `resolver/specifier.rs`'s module header) and a `{:?}` dump does not spell
+/// the operator, so a conflict error carries this instead.
+fn spell_specifier(s: &VersionSpecifier) -> String {
+    let op = match s.op {
+        specifier::Op::Eq => "==",
+        specifier::Op::NotEq => "!=",
+        specifier::Op::Lt => "<",
+        specifier::Op::Le => "<=",
+        specifier::Op::Gt => ">",
+        specifier::Op::Ge => ">=",
+        specifier::Op::Compatible => "~=",
+    };
+    format!("{op}{}", s.version)
+}
+
+/// Spell a conjunctive specifier set, comma-joined, e.g. `>=2,<3`.
+fn spell_specifiers(specs: &[VersionSpecifier]) -> String {
+    specs.iter().map(spell_specifier).collect::<Vec<_>>().join(",")
 }
 
 fn merge_requirement(pending: &mut BTreeMap<String, Requirement>, req: Requirement) {

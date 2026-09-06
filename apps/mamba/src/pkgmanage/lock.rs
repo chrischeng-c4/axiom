@@ -406,16 +406,68 @@ pub(crate) fn resolve_and_render_via_registry(
     Ok(render_lockfile(&state.dependencies, &resolved))
 }
 
+/// The bare package name a raw requirement string (`name`, `name>=1`,
+/// `name==1.0`, `name>=1,<3`) names, without resolving it against any index.
+fn requirement_name(raw: &str) -> Result<String> {
+    use crate::pkgmanage::pkgmgr::requirements_parse::{parse_one_line, RequirementLine};
+    match parse_one_line(raw) {
+        Ok(RequirementLine::Package(p)) => Ok(p.name),
+        _ => bail!("malformed dependency requirement `{raw}`"),
+    }
+}
+
+/// Whether `candidate` (a PEP 440 version) satisfies every specifier in the
+/// raw requirement string `raw`. Used to detect a name reached by two
+/// requirements whose specifier sets disagree (#4225), via the same
+/// `specifier::all_match` predicate the registry-path resolver
+/// (`resolver/mod.rs`) already applies to its own already-decided branch.
+fn requirement_matches_version(raw: &str, candidate: &str) -> Result<bool> {
+    use crate::pkgmanage::pkgmgr::requirements_parse::{parse_one_line, RequirementLine};
+    use crate::pkgmanage::pkgmgr::resolver::specifier;
+    let req = match parse_one_line(raw) {
+        Ok(RequirementLine::Package(p)) => p,
+        _ => bail!("malformed dependency requirement `{raw}`"),
+    };
+    let specs: Vec<specifier::VersionSpecifier> = req
+        .specifiers
+        .iter()
+        .map(|s| specifier::parse_one(s))
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(specifier::all_match(&specs, candidate))
+}
+
 fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
     let direct_keys: BTreeSet<String> = direct.iter().map(|p| p.key()).collect();
+    // Keyed by name (not `name==version`, #4225): two requirements on one
+    // name must be compared against the version already picked, not treated
+    // as two independent, never-intersecting resolutions.
     let mut seen: BTreeMap<String, Resolved> = BTreeMap::new();
+    // The requirement text that decided each name, so a later-arriving
+    // requirement that disagrees can be named in the refusal alongside it.
+    let mut deciding_requirement: BTreeMap<String, String> = BTreeMap::new();
     let mut queue: VecDeque<String> = direct.iter().map(|p| p.key()).collect();
     while let Some(raw) = queue.pop_front() {
-        let (pin, meta) = load_metadata(&raw, index)?;
-        let key = pin.key();
-        if seen.contains_key(&key) {
+        let name_key = normalize_name(&requirement_name(&raw)?);
+        if let Some(prior) = seen.get(&name_key) {
+            if !requirement_matches_version(&raw, &prior.pin.version)? {
+                let prior_req = deciding_requirement
+                    .get(&name_key)
+                    .cloned()
+                    .unwrap_or_default();
+                bail!(
+                    "conflicting requirements on {}: `{prior_req}` decided {}=={} but a \
+                     later requirement needs `{raw}`, which that version does not satisfy",
+                    prior.pin.name,
+                    prior.pin.name,
+                    prior.pin.version
+                );
+            }
             continue;
         }
+
+        let (pin, meta) = load_metadata(&raw, index)?;
+        let key = pin.key();
         let is_direct = direct_keys.contains(&key);
         let filtered_requires: Vec<String> = meta
             .requires
@@ -436,7 +488,7 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
             }
         };
         seen.insert(
-            key,
+            name_key.clone(),
             Resolved {
                 pin: pin.clone(),
                 direct: is_direct,
@@ -450,6 +502,7 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
                 source,
             },
         );
+        deciding_requirement.insert(name_key, raw.clone());
         for req in filtered_requires {
             queue.push_back(req);
         }
