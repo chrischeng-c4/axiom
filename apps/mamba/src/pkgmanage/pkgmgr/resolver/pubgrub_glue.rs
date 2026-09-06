@@ -62,8 +62,9 @@ impl IndexClientProvider {
     ///
     /// Hits `{index}/pypi/{name}/{version}/json` and returns the raw PEP
     /// 508 requirement strings. Caches indefinitely within one provider
-    /// lifetime (one resolve). On error returns the raw IndexError —
-    /// callers may choose to swallow and treat the node as leaf.
+    /// lifetime (one resolve). On error returns the raw `IndexError`; the
+    /// caller (`Universe::node` in `resolver/mod.rs`) refuses the
+    /// resolution rather than treat the node as a leaf.
     pub fn fetch_version_requires_blocking(
         &self,
         name: &str,

@@ -623,3 +623,164 @@ fn unparseable_requires_dist_line_refuses_naming_package_version_and_line() {
         );
     }
 }
+
+// --------------------------------------------------------------------------
+// a `requires_dist` fetch that the index cannot answer at all must not be
+// swallowed into a leaf node -- `Universe::node` for the real,
+// `IndexClientProvider`-backed `Resolver`, driven against a `wiremock`
+// registry (see `apps/mamba/src/pkgmanage/tests.rs` for the construction
+// shape this copies: `IndexClientProvider::new` + `Resolver::new` over an
+// `IndexClient` pointed at a loopback `MockServer`).
+// --------------------------------------------------------------------------
+mod requires_dist_unavailable {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::pkgmanage::pkgmgr::http::index_client_for_url;
+    use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
+    use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, ResolutionErrorKind, Resolver};
+
+    const NAME: &str = "flaky";
+    const VERSION: &str = "1.0";
+
+    /// Minimal PyPI JSON-API metadata body: one release, one file, no
+    /// `requires_dist` at the top level (that lives on the per-version
+    /// route, which each test below mounts separately).
+    fn metadata_body() -> String {
+        format!(
+            "{{\"info\":{{\"name\":\"{NAME}\"}},\"releases\":{{\"{VERSION}\":[{{\
+             \"filename\":\"{NAME}-{VERSION}-py3-none-any.whl\",\
+             \"url\":\"https://example.invalid/{NAME}-{VERSION}-py3-none-any.whl\"\
+             }}]}}}}"
+        )
+    }
+
+    /// A throwaway, per-call cache directory so no two test runs -- and no
+    /// real developer cache -- can share a memoised metadata entry.
+    fn scratch_cache_dir() -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "mamba-resolver-unit-cache-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or_default()
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Build an `IndexClientProvider` + `Resolver` pointed at `server`, with
+    /// `retry_max = 3` (the product default `resolve_via_pypi` uses) so the
+    /// 503 case below actually exercises the client's retry loop. `handle`
+    /// is the `Handle` of the runtime `server` and its mocks were mounted
+    /// on; the resolver's blocking calls run through it via `block_on`.
+    fn resolver_against(server: &MockServer, handle: tokio::runtime::Handle) -> Resolver {
+        let client = index_client_for_url(&server.uri(), scratch_cache_dir(), 4, 5, 3, None);
+        let provider = IndexClientProvider::new(client, handle);
+        Resolver::new(provider)
+    }
+
+    /// `/pypi/{NAME}/{VERSION}/json` answers 503 on every request: the
+    /// client exhausts its retries and `node` must refuse rather than treat
+    /// the release as a leaf.
+    #[test]
+    fn requires_dist_503_on_every_attempt_refuses_naming_package_version() {
+        let rt = tokio::runtime::Runtime::new()
+            .expect("fixture: build a runtime for the mock registry");
+        let server = rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path(format!("/pypi/{NAME}/json")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(metadata_body().into_bytes(), "application/json"),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path(format!("/pypi/{NAME}/{VERSION}/json")))
+                .respond_with(ResponseTemplate::new(503))
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let resolver = resolver_against(&server, rt.handle().clone());
+        let roots = vec![parse_requirement(&format!("{NAME}=={VERSION}"))
+            .expect("fixture: root requirement must parse")];
+
+        let err = resolver.resolve(&roots).expect_err(
+            "a requires_dist fetch that returns 503 on every attempt must refuse \
+             the resolution, not resolve the release as a leaf",
+        );
+
+        assert_eq!(err.kind, ResolutionErrorKind::RequiresDistUnavailable);
+        for token in [format!("{NAME}=={VERSION}"), "requires_dist could not be fetched".to_string()] {
+            assert!(
+                err.trace.contains(&token),
+                "the refusal must name `{token}`; got {:?}",
+                err.trace
+            );
+        }
+        assert!(
+            err.involved.iter().any(|n| n == NAME),
+            "the refusal must involve `{NAME}`; got {:?}",
+            err.involved
+        );
+
+        let received = rt.block_on(server.received_requests()).unwrap_or_default();
+        let hits = received
+            .iter()
+            .filter(|r| r.url.path() == format!("/pypi/{NAME}/{VERSION}/json"))
+            .count();
+        assert!(
+            hits > 1,
+            "the client must have retried the 503 route more than once; saw {hits} request(s)"
+        );
+    }
+
+    /// `/pypi/{NAME}/{VERSION}/json` answers 404: the client reads this as
+    /// "declares nothing", and the release still resolves -- with no edges.
+    #[test]
+    fn requires_dist_404_resolves_the_node_with_no_edges() {
+        let rt = tokio::runtime::Runtime::new()
+            .expect("fixture: build a runtime for the mock registry");
+        let server = rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path(format!("/pypi/{NAME}/json")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(metadata_body().into_bytes(), "application/json"),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path(format!("/pypi/{NAME}/{VERSION}/json")))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let resolver = resolver_against(&server, rt.handle().clone());
+        let roots = vec![parse_requirement(&format!("{NAME}=={VERSION}"))
+            .expect("fixture: root requirement must parse")];
+
+        let graph = resolver.resolve(&roots).unwrap_or_else(|e| {
+            panic!("a 404 on the per-version route must still resolve, not refuse: {e}")
+        });
+
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].name, NAME);
+        assert_eq!(graph.nodes[0].version, VERSION);
+        assert!(
+            graph.nodes[0].requires.is_empty(),
+            "a 404 per-version route declares nothing, so the node must carry no \
+             edges; got {:?}",
+            graph.nodes[0].requires
+        );
+    }
+}
