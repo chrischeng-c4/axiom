@@ -460,8 +460,8 @@ impl Project {
             render(&init_args, &out)
         );
         assert!(
-            project.join("mamba.toml").is_file(),
-            "fixture: `mamba init` wrote no mamba.toml in {}",
+            project.join("pyproject.toml").is_file(),
+            "fixture: `mamba init` wrote no pyproject.toml in {}",
             project.display()
         );
         Project {

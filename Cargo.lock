@@ -8198,6 +8198,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
  "unicode-normalization",
  "unicode-properties",
  "unicode-xid",

@@ -291,8 +291,8 @@ impl Case {
         let out = run(&project, &home, &init_args);
         expect_ok("init", &init_args, &out);
         assert!(
-            project.join("mamba.toml").is_file(),
-            "fixture: `mamba init` wrote no mamba.toml in {}",
+            project.join("pyproject.toml").is_file(),
+            "fixture: `mamba init` wrote no pyproject.toml in {}",
             project.display()
         );
 
@@ -510,9 +510,9 @@ fn run_file_outside_a_project_uses_the_path_interpreter() {
         std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("create {}: {e}", dir.display()));
     }
     assert!(
-        !loose.join("mamba.toml").exists(),
-        "fixture: {} must hold no mamba.toml",
-        loose.join("mamba.toml").display()
+        !loose.join("pyproject.toml").exists(),
+        "fixture: {} must hold no pyproject.toml",
+        loose.join("pyproject.toml").display()
     );
 
     let python = resolve_python3();

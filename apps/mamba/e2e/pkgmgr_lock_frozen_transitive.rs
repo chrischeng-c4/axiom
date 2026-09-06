@@ -257,8 +257,8 @@ fn frozen_index_lock_pins_transitive_dependency_with_verifiable_digest() {
     let out = run(&project, &home, &init_args);
     expect_ok("init", &init_args, &out);
     assert!(
-        project.join("mamba.toml").is_file(),
-        "fixture: `mamba init` wrote no mamba.toml in {}",
+        project.join("pyproject.toml").is_file(),
+        "fixture: `mamba init` wrote no pyproject.toml in {}",
         project.display()
     );
 

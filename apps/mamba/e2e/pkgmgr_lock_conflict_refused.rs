@@ -11,7 +11,7 @@
 //! product's own `WheelBuilder`, the registry serves PEP 503 anchor pages plus
 //! per-version `requires_dist` documents, and the frozen index is whatever
 //! `mamba index build` stages from those same wheels. The one thing the case
-//! authors is `mamba.toml`'s `dependencies` line — the manifest is user input
+//! authors is `pyproject.toml`'s `dependencies` line — the manifest is user input
 //! in this workflow, and `mamba lock` is precisely the command that reads a
 //! hand-edited manifest. Every artifact the case *judges* is one the product
 //! produced.
@@ -312,8 +312,8 @@ impl Project {
             render(&init_args, &out)
         );
         assert!(
-            dir.join("mamba.toml").is_file(),
-            "fixture: `mamba init` wrote no mamba.toml in {}",
+            dir.join("pyproject.toml").is_file(),
+            "fixture: `mamba init` wrote no pyproject.toml in {}",
             dir.display()
         );
         Project {
@@ -331,7 +331,7 @@ impl Project {
     /// byte `mamba init` wrote in place. This is the case's only authored
     /// input; `dev-dependencies` is a different key and is never touched.
     fn set_dependencies(&self, deps: &[&str]) {
-        let manifest = self.dir.join("mamba.toml");
+        let manifest = self.dir.join("pyproject.toml");
         let body = std::fs::read_to_string(&manifest)
             .unwrap_or_else(|e| panic!("fixture: read {}: {e}", manifest.display()));
         let rendered = format!(

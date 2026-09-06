@@ -1856,7 +1856,7 @@ mod conflict_refused {
 }
 
 // #4232: `mamba add` must read a PEP 508 range/wildcard/compatible-release
-// requirement verbatim, write it verbatim to `mamba.toml`, and resolve it
+// requirement verbatim, write it verbatim to `pyproject.toml`, and resolve it
 // through the same registry seam `mamba lock` uses -- so the manifest keeps
 // the user's stated intent and the lock still names one release chosen
 // among real alternatives.
@@ -2053,7 +2053,7 @@ mod add_range_requirement_seam {
         let index_url = format!("{}/simple", server.uri());
 
         // `add`'s own identity path: the range is what would land in
-        // `mamba.toml`, verbatim.
+        // `pyproject.toml`, verbatim.
         let mut state = manifest_state(&[]);
         state.upsert_dependency(&range);
         assert_eq!(

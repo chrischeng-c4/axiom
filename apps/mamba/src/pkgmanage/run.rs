@@ -30,23 +30,22 @@ use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::pkgmanage::manifest::pyproject::{self, PYPROJECT_FILE};
 use crate::pkgmanage::sync::{parse_locked_packages, resolve_site_packages};
-
-const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const VENV_DIR: &str = ".venv";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// No mamba.toml here — caller should run the file with legacy
+    /// No pyproject.toml here — caller should run the file with legacy
     /// semantics (no env contract).
     Legacy,
-    /// mamba.toml present; venv is in sync with the lockfile. The
+    /// pyproject.toml present; venv is in sync with the lockfile. The
     /// venv's own `bin` (or `Scripts`) directory goes first on the
     /// child's `PATH` so its own interpreter resolves its own
     /// site-packages through `site`, never `PYTHONPATH`.
     Project { site_packages: PathBuf },
-    /// mamba.toml present, lockfile has zero packages, so no env
+    /// pyproject.toml present, lockfile has zero packages, so no env
     /// is required.
     EmptyLock,
 }
@@ -57,13 +56,20 @@ pub enum Mode {
 /// `configure_command_environment` scopes every change to the spawned
 /// child.
 pub fn preflight(project_dir: &Path) -> Result<Mode> {
-    let manifest = project_dir.join(MANIFEST_FILE);
+    let manifest = project_dir.join(PYPROJECT_FILE);
+    let lock_path = project_dir.join(LOCKFILE_FILE);
     if !manifest.exists() {
+        // A retired `mamba.toml` beside a lockfile is a project that was
+        // never migrated: refuse with the converter's name rather than run
+        // the file as if no project existed. A bare `mamba.toml` with no
+        // lockfile is the compiler's own config, which `run` never gated.
+        if lock_path.exists() && pyproject::has_legacy_manifest_only(project_dir) {
+            pyproject::locate(project_dir)?;
+        }
         return Ok(Mode::Legacy);
     }
-    let lock_path = project_dir.join(LOCKFILE_FILE);
     if !lock_path.exists() {
-        // mamba.toml without a lockfile is a still-initializing
+        // pyproject.toml without a lockfile is a still-initializing
         // project. Don't gate run on it; treat as legacy.
         return Ok(Mode::Legacy);
     }
@@ -131,7 +137,7 @@ pub fn venv_python_path(project_dir: &Path) -> PathBuf {
 
 /// Select the interpreter `mamba run <file>` should spawn for the given
 /// preflight `Mode`. Never re-derives project state (no second
-/// `mamba.toml`/lockfile read) — `mode` already carries every decision this
+/// `pyproject.toml`/lockfile read) — `mode` already carries every decision this
 /// needs, which is what lets the negative control that pins `Mode::Legacy`
 /// unconditionally prove this function actually reads it.
 ///
@@ -223,17 +229,37 @@ mod tests {
     fn legacy_when_no_lockfile() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("mamba.toml"),
-            "[project]\nname = \"x\"\nversion = \"0.1.0\"\npython-requires = \">=3.12\"\ndependencies = []\ndev-dependencies = []\n",
+            tmp.path().join("pyproject.toml"),
+            "[project]\nname = \"x\"\nversion = \"0.1.0\"\nrequires-python = \">=3.12\"\ndependencies = []\n\n[dependency-groups]\ndev = []\n",
         )
         .unwrap();
         assert_eq!(preflight(tmp.path()).unwrap(), Mode::Legacy);
     }
 
     #[test]
-    fn empty_lock_does_not_require_venv() {
+    fn legacy_manifest_beside_a_lockfile_names_migrate() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("mamba.toml"), "[project]\n").unwrap();
+        std::fs::write(
+            tmp.path().join("mamba.lock"),
+            "format_version = 1\ninput_hash = \"x\"\n",
+        )
+        .unwrap();
+        let msg = format!("{}", preflight(tmp.path()).unwrap_err());
+        assert!(msg.contains("mamba migrate"), "{msg}");
+    }
+
+    #[test]
+    fn legacy_manifest_alone_is_the_compiler_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("mamba.toml"), "entry_point = \"a.py\"\n").unwrap();
+        assert_eq!(preflight(tmp.path()).unwrap(), Mode::Legacy);
+    }
+
+    #[test]
+    fn empty_lock_does_not_require_venv() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("pyproject.toml"), "[project]\n").unwrap();
         std::fs::write(
             tmp.path().join("mamba.lock"),
             "format_version = 1\ninput_hash = \"x\"\n",
@@ -245,7 +271,7 @@ mod tests {
     #[test]
     fn non_empty_lock_without_venv_bails() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("mamba.toml"), "[project]\n").unwrap();
+        std::fs::write(tmp.path().join("pyproject.toml"), "[project]\n").unwrap();
         std::fs::write(
             tmp.path().join("mamba.lock"),
             "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"foo\"\nversion = \"1.0\"\nsha256 = \"\"\nsource = \"pypi://foo/1.0\"\ndependencies = []\n",

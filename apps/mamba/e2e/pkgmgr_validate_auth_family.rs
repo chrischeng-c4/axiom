@@ -16,7 +16,7 @@
 //! # The observation point
 //!
 //! Two runs of the binary, each from its own freshly created temporary
-//! directory that holds no `mamba.toml` (and has no `mamba.toml` in any
+//! directory that holds no `pyproject.toml` (and has no `pyproject.toml` in any
 //! ancestor), with `HOME`, the mamba cache directory, and the mamba credential
 //! directory pointed at temporary paths of their own:
 //!
@@ -262,7 +262,7 @@ fn read_lossy(path: &Path) -> String {
 /// manifest would let an unrelated tree answer for them.
 fn assert_no_project_manifest(cwd: &Path) {
     for ancestor in cwd.ancestors() {
-        let manifest = ancestor.join("mamba.toml");
+        let manifest = ancestor.join("pyproject.toml");
         assert!(
             !manifest.exists(),
             "this case runs `mamba pkgmgr-validate` from a directory with no project above it, \

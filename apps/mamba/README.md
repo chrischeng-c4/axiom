@@ -29,7 +29,7 @@ is the one `mamba <verb> --help` prints.
 
 1. Build the binary from the repository root with `cargo build -p mamba`; the
    steps below run `./target/debug/mamba` as `mamba`.
-2. Scaffold a project and enter it: `mamba init demo` writes `mamba.toml`,
+2. Scaffold a project and enter it: `mamba init demo` writes a PEP 621 `pyproject.toml`,
    `.python-version`, `.gitignore`, `README.md`, and `src/__init__.py`; then
    `cd demo`.
 3. Create the environment: `mamba venv` seeds `.venv` from the first `python`
@@ -38,7 +38,7 @@ is the one `mamba <verb> --help` prints.
    takes a local wheel, `mamba add --index <DIR> foo` resolves a bare name
    from an index built by `mamba index build --out <DIR> <WHEEL_OR_DIR>...`,
    and `mamba add --index-url <URL> foo` resolves it from a registry base or
-   its `…/simple` URL; each updates `mamba.toml` and `mamba.lock`, pinning
+   its `…/simple` URL; each updates `pyproject.toml` and `mamba.lock`, pinning
    the transitive closure with a `sha256` per package.
 5. Converge the environment: `mamba sync` installs the locked wheels into
    `.venv`'s `lib/pythonX.Y/site-packages`, removes what the lock no longer

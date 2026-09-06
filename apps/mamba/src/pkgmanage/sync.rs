@@ -36,13 +36,13 @@ use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::pkgmanage::manifest::pyproject;
 use crate::pkgmanage::pkgmgr::installer::{InstallMode, InstallRequest, Installer};
 use crate::pkgmanage::pkgmgr::venv::{
     create_venv, first_python_on_path, layout_from_pyvenv_cfg, VenvCreationOutcome, VenvOptions,
 };
 use crate::pkgmanage::provider;
 
-const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const VENV_DIR: &str = ".venv";
 const SITE_PACKAGES: &str = "site-packages";
@@ -110,12 +110,7 @@ fn ensure_real_venv(venv_dir: &Path) -> Result<()> {
 
 pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
     let project_dir = std::env::current_dir().context("read current directory")?;
-    if !project_dir.join(MANIFEST_FILE).exists() {
-        bail!(
-            "no {MANIFEST_FILE} in {} — run `mamba init` first",
-            project_dir.display()
-        );
-    }
+    pyproject::locate(&project_dir)?;
     let lock_path = project_dir.join(LOCKFILE_FILE);
     if !lock_path.exists() {
         bail!(

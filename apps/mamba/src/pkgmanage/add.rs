@@ -3,10 +3,10 @@
 // Acceptance (tests/governance/gates/pkgmgr/add/manifest.toml, schema gate
 // pkgmgr_add_fixture_2681.rs):
 //
-//   - Records the requested dep in mamba.toml deterministically.
+//   - Records the requested dep in pyproject.toml deterministically.
 //   - Records a pinned entry in mamba.lock deterministically.
 //   - Replaying the same `add` against the same setup yields byte-identical
-//     mamba.toml and mamba.lock.
+//     pyproject.toml and mamba.lock.
 //   - Missing package against a configured frozen index fails exit 1 with
 //     "not found" in stderr, and does NOT mutate the manifest or lockfile.
 //   - Offline: no network, no $HOME / global cache reads.
@@ -22,10 +22,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::pkgmanage::manifest::pyproject;
 use crate::pkgmanage::pkgmgr::resolver::specifier::{all_match, Op, VersionSpecifier};
 use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Requirement};
 
-const MANIFEST_FILE: &str = "mamba.toml";
+pub(crate) use crate::pkgmanage::manifest::pyproject::{ManifestSource, ManifestState};
+
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
@@ -35,13 +37,7 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
         .get_one::<String>("spec")
         .context("missing required argument <spec>")?;
     let project_dir = std::env::current_dir().context("read current directory")?;
-    let manifest_path = project_dir.join(MANIFEST_FILE);
-    if !manifest_path.exists() {
-        bail!(
-            "no {MANIFEST_FILE} in {} — run `mamba init` first",
-            project_dir.display()
-        );
-    }
+    let manifest_path = pyproject::locate(&project_dir)?;
 
     let mut index_used: Option<PathBuf> = None;
     let mut registry_used: Option<String> = None;
@@ -79,7 +75,7 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
             state.remove_source(&resolved.name);
         }
     }
-    let new_manifest = state.render();
+    let new_manifest = state.render_into(&manifest_src)?;
 
     // A local-index add and a registry (`--index-url`) add both render the
     // same transitive closure `mamba lock` would, through the same resolver
@@ -123,8 +119,8 @@ impl DepSpec {
         if raw.is_empty() {
             bail!("empty dependency spec");
         }
-        let req = parse_requirement(raw)
-            .map_err(|e| anyhow::anyhow!("malformed spec `{raw}`: {e}"))?;
+        let req =
+            parse_requirement(raw).map_err(|e| anyhow::anyhow!("malformed spec `{raw}`: {e}"))?;
         let name = raw_name(raw);
         if name.is_empty() {
             bail!("malformed spec `{raw}` (expected NAME or NAME==VERSION)");
@@ -183,7 +179,7 @@ struct ResolvedDep {
     /// local-frozen / --offline paths where we don't know the URL.
     url: Option<String>,
     source: SourceMeta,
-    /// The exact text to write to `mamba.toml`'s dependency line. `None`
+    /// The exact text to write to `pyproject.toml`'s dependency line. `None`
     /// means the default `name==version` pin (bare name, exact pin, local
     /// wheel, `--provider`, frozen index); `Some(raw)` is a user-supplied
     /// range/wildcard/compatible-release requirement, kept verbatim so a
@@ -594,14 +590,15 @@ fn pick_pypi_latest(versions: &[String]) -> Option<String> {
 /// set at all -- the caller turns that into a refusal naming the package and
 /// the bound, never a panic.
 fn pick_pypi_matching(versions: &[String], specs: &[VersionSpecifier]) -> Option<String> {
-    let matching: Vec<&String> = versions
-        .iter()
-        .filter(|v| all_match(specs, v))
-        .collect();
+    let matching: Vec<&String> = versions.iter().filter(|v| all_match(specs, v)).collect();
     if matching.is_empty() {
         return None;
     }
-    let mut stable: Vec<&String> = matching.iter().copied().filter(|v| !is_prerelease(v)).collect();
+    let mut stable: Vec<&String> = matching
+        .iter()
+        .copied()
+        .filter(|v| !is_prerelease(v))
+        .collect();
     if stable.is_empty() {
         stable = matching;
     }
@@ -672,7 +669,7 @@ fn pypi_cache_dir() -> PathBuf {
 }
 
 /// PEP 503 normalize: lowercase + collapse `-`, `_`, `.` runs to a single `-`.
-fn normalize_name(name: &str) -> String {
+pub(crate) fn normalize_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut prev_was_sep = false;
     for c in name.chars() {
@@ -711,178 +708,6 @@ fn pick_latest_version(pkg_dir: &Path) -> Result<String> {
     Ok(versions.pop().unwrap())
 }
 
-pub(crate) struct ManifestState {
-    pub(crate) project_name: String,
-    pub(crate) project_version: String,
-    pub(crate) python_requires: String,
-    pub(crate) dependencies: Vec<String>,
-    pub(crate) dev_dependencies: Vec<String>,
-    pub(crate) source_overrides: BTreeMap<String, ManifestSource>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ManifestSource {
-    MambaProvider { provider: String },
-}
-
-impl ManifestState {
-    pub(crate) fn parse(src: &str) -> Result<Self> {
-        let doc: toml::Value = src.parse().context("parse mamba.toml")?;
-        let project = doc
-            .get("project")
-            .and_then(|v| v.as_table())
-            .context("mamba.toml missing [project] table")?;
-        let project_name = project
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("mamba-project")
-            .to_string();
-        let project_version = project
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("0.1.0")
-            .to_string();
-        let python_requires = project
-            .get("python-requires")
-            .and_then(|v| v.as_str())
-            .unwrap_or(">=3.12")
-            .to_string();
-        let dependencies = extract_string_list(project, "dependencies");
-        let dev_dependencies = extract_string_list(project, "dev-dependencies");
-        let source_overrides = extract_source_overrides(&doc)?;
-
-        Ok(ManifestState {
-            project_name,
-            project_version,
-            python_requires,
-            dependencies,
-            dev_dependencies,
-            source_overrides,
-        })
-    }
-
-    /// One package keeps one identity across every spelling it is written
-    /// with: `AddApp`, `addapp`, `addapp==3.0` and `addapp>=2,<3` all
-    /// normalize to the same PEP 503 name, so a later spelling replaces the
-    /// earlier entry instead of standing beside it.
-    pub(crate) fn upsert_dependency(&mut self, spec: &str) {
-        let new_name = normalize_name(dep_name(spec));
-        self.dependencies
-            .retain(|d| normalize_name(dep_name(d)) != new_name);
-        self.dependencies.push(spec.to_string());
-        self.dependencies.sort();
-        self.dependencies.dedup();
-    }
-
-    pub(crate) fn remove_dependency(&mut self, name: &str) {
-        let name = name.trim();
-        let normalized = normalize_name(name);
-        self.dependencies
-            .retain(|d| normalize_name(dep_name(d)) != normalized);
-        self.dev_dependencies
-            .retain(|d| normalize_name(dep_name(d)) != normalized);
-        self.source_overrides.remove(name);
-    }
-
-    pub(crate) fn upsert_source(&mut self, name: &str, source: ManifestSource) {
-        self.source_overrides.insert(name.to_string(), source);
-    }
-
-    pub(crate) fn remove_source(&mut self, name: &str) {
-        self.source_overrides.remove(name);
-    }
-
-    pub(crate) fn render(&self) -> String {
-        let mut out = String::with_capacity(256);
-        out.push_str("[project]\n");
-        out.push_str(&format!("name = \"{}\"\n", self.project_name));
-        out.push_str(&format!("version = \"{}\"\n", self.project_version));
-        out.push_str(&format!("python-requires = \"{}\"\n", self.python_requires));
-        out.push_str(&format!(
-            "dependencies = {}\n",
-            render_string_list(&self.dependencies)
-        ));
-        out.push_str(&format!(
-            "dev-dependencies = {}\n",
-            render_string_list(&self.dev_dependencies)
-        ));
-        if !self.source_overrides.is_empty() {
-            out.push('\n');
-            out.push_str("[tool.mamba.sources]\n");
-            for (name, source) in &self.source_overrides {
-                match source {
-                    ManifestSource::MambaProvider { provider } => {
-                        out.push_str(&format!(
-                            "{} = {{ provider = \"{}\" }}\n",
-                            render_toml_key(name),
-                            escape_toml_string(provider)
-                        ));
-                    }
-                }
-            }
-        }
-        out
-    }
-}
-
-fn extract_source_overrides(doc: &toml::Value) -> Result<BTreeMap<String, ManifestSource>> {
-    let mut out = BTreeMap::new();
-    let Some(sources) = doc
-        .get("tool")
-        .and_then(|t| t.get("mamba"))
-        .and_then(|m| m.get("sources"))
-    else {
-        return Ok(out);
-    };
-    let sources = sources
-        .as_table()
-        .context("[tool.mamba.sources] must be a table")?;
-    for (name, value) in sources {
-        let entry = value
-            .as_table()
-            .with_context(|| format!("[tool.mamba.sources] `{name}` must be an inline table"))?;
-        let provider = entry
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .with_context(|| format!("[tool.mamba.sources] `{name}` missing provider"))?;
-        if provider != "mamba" {
-            bail!("[tool.mamba.sources] `{name}` uses unsupported provider `{provider}`");
-        }
-        out.insert(
-            name.clone(),
-            ManifestSource::MambaProvider {
-                provider: provider.to_string(),
-            },
-        );
-    }
-    Ok(out)
-}
-
-fn extract_string_list(tbl: &toml::value::Table, key: &str) -> Vec<String> {
-    tbl.get(key)
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn render_string_list(items: &[String]) -> String {
-    if items.is_empty() {
-        return "[]".to_string();
-    }
-    let mut out = String::from("[\n");
-    for item in items {
-        out.push_str("    \"");
-        out.push_str(item);
-        out.push_str("\",\n");
-    }
-    out.push(']');
-    out
-}
-
 fn render_inline_string_list(items: &[String]) -> String {
     if items.is_empty() {
         return "[]".to_string();
@@ -903,10 +728,6 @@ fn render_inline_string_list(items: &[String]) -> String {
     out
 }
 
-fn render_toml_key(key: &str) -> String {
-    format!("\"{}\"", escape_toml_string(key))
-}
-
 fn escape_toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -915,7 +736,7 @@ fn escape_toml_string(value: &str) -> String {
 /// grammar wrote it: a bare name, `NAME==VERSION`, or a PEP 508 range like
 /// `NAME>=2,<3`. The name ends at the first specifier operator, extras
 /// bracket, whitespace, or marker separator -- the same boundary
-/// `DepSpec::parse` uses on `add`'s own argument, so `mamba.toml`'s stored
+/// `DepSpec::parse` uses on `add`'s own argument, so `pyproject.toml`'s stored
 /// text and a freshly typed argument agree on where the name stops. Callers
 /// compare this through `normalize_name` for identity; the slice itself
 /// keeps whatever case the manifest recorded.

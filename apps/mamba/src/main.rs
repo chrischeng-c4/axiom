@@ -14,6 +14,7 @@ use mamba::pkgmanage::index as pkg_index;
 use mamba::pkgmanage::init as pkg_init;
 use mamba::pkgmanage::install as pkg_install;
 use mamba::pkgmanage::lock as pkg_lock;
+use mamba::pkgmanage::migrate as pkg_migrate;
 use mamba::pkgmanage::package as pkg_package;
 use mamba::pkgmanage::pip as pkg_pip;
 use mamba::pkgmanage::python as pkg_python;
@@ -55,8 +56,8 @@ fn cli() -> Command {
         .subcommand(
             Command::new("build")
                 .about("Compile a Mamba source file or project")
-                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from mamba.toml"))
-                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml"))
+                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from pyproject.toml [tool.mamba] (or a legacy mamba.toml)"))
+                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to a compiler config file (legacy mamba.toml layout)"))
                 .arg(Arg::new("backend").short('b').long("backend").default_value("cranelift").help("Codegen backend: cranelift, llvm, wasm"))
                 .arg(Arg::new("emit").long("emit").help("Dump intermediate: ast, hir, mir"))
                 .arg(Arg::new("output").short('o').long("output").help("Output file path"))
@@ -75,8 +76,8 @@ fn cli() -> Command {
         .subcommand(
             Command::new("run")
                 .about("Run a Mamba source file/project, or run a command inside the project env after --")
-                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from mamba.toml"))
-                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml"))
+                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from pyproject.toml [tool.mamba] (or a legacy mamba.toml)"))
+                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to a compiler config file (legacy mamba.toml layout)"))
                 .arg(
                     Arg::new("compile")
                         .long("compile")
@@ -144,7 +145,12 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("init")
-                .about("Scaffold a new mamba project (mamba.toml, .python-version, .gitignore, README.md, src/__init__.py)")
+                .about("Scaffold a new mamba project (pyproject.toml, .python-version, .gitignore, README.md, src/__init__.py)")
+                .arg(Arg::new("path").help("Project directory; defaults to current working directory")),
+        )
+        .subcommand(
+            Command::new("migrate")
+                .about("Convert a retired mamba.toml into PEP 621 pyproject.toml (one-shot; removes mamba.toml)")
                 .arg(Arg::new("path").help("Project directory; defaults to current working directory")),
         )
         .subcommand(
@@ -180,7 +186,7 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("add")
-                .about("Add a dependency to mamba.toml and update mamba.lock")
+                .about("Add a dependency to pyproject.toml and update mamba.lock")
                 .arg(Arg::new("spec").required(true).help("Dependency spec or local wheel path, e.g. foo==1.2.3 or ./wheels/foo-1.2.3-py3-none-any.whl (bare names require --index or explicit --index-url)"))
                 .arg(Arg::new("provider").long("provider").value_name("PROVIDER").help("Explicit first-party provider for mamba-owned replacement packages, e.g. --provider mamba mamba-httpx-compat"))
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
@@ -189,12 +195,12 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("remove")
-                .about("Remove a dependency from mamba.toml and update mamba.lock")
+                .about("Remove a dependency from pyproject.toml and update mamba.lock")
                 .arg(Arg::new("name").required(true).help("Dependency name (no version pin)")),
         )
         .subcommand(
             Command::new("lock")
-                .about("Regenerate mamba.lock from mamba.toml; resolves transitive deps via a frozen index or explicit registry URL")
+                .about("Regenerate mamba.lock from pyproject.toml; resolves transitive deps via a frozen index or explicit registry URL")
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
                 .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL or its /simple URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index"))
@@ -661,6 +667,7 @@ fn main() -> Result<()> {
         Some(("surface-report", sub)) => cmd_surface_report(sub),
         Some(("pytest", sub)) => cmd_pytest(sub),
         Some(("init", sub)) => pkg_init::cmd_init(sub),
+        Some(("migrate", sub)) => pkg_migrate::cmd_migrate(sub),
         Some(("auth", sub)) => pkg_auth::cmd_auth(sub),
         Some(("add", sub)) => pkg_add::cmd_add(sub),
         Some(("remove", sub)) => pkg_remove::cmd_remove(sub),
@@ -1143,7 +1150,7 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
         (Some(f), _) => f.clone(),
         (None, Some(ep)) => ep,
         (None, None) => anyhow::bail!(
-            "no source file specified and no mamba.toml found; pass a file or cd into a project directory"
+            "no source file specified and no pyproject.toml [tool.mamba] or mamba.toml found; pass a file or cd into a project directory"
         ),
     };
 

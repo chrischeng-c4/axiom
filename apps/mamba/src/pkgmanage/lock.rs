@@ -1,4 +1,4 @@
-// `mamba lock` — regenerate mamba.lock from mamba.toml against a frozen
+// `mamba lock` — regenerate mamba.lock from pyproject.toml against a frozen
 // local index, resolving transitive deps.
 //
 // Acceptance (tests/governance/gates/pkgmgr/lock/manifest.toml, schema gate
@@ -30,22 +30,16 @@ use crate::pkgmanage::add::{
     append_lock_source_fields, atomic_write, dep_name, source_meta_from_manifest, ManifestState,
     SourceMeta,
 };
+use crate::pkgmanage::manifest::pyproject;
 use crate::pkgmanage::pkgmgr::pip_install::is_extra_marker;
 
-const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
 
 pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     let project_dir = std::env::current_dir().context("read current directory")?;
-    let manifest_path = project_dir.join(MANIFEST_FILE);
-    if !manifest_path.exists() {
-        bail!(
-            "no {MANIFEST_FILE} in {} — run `mamba init` first",
-            project_dir.display()
-        );
-    }
+    let manifest_path = pyproject::locate(&project_dir)?;
 
     let manifest_src = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -602,11 +596,14 @@ pub(crate) fn load_metadata(requirement: &str, index: &Path) -> Result<(Pin, Ind
         name: req.name,
         version,
     };
-    Ok((pin, IndexMetadata {
-        sha256,
-        path,
-        requires,
-    }))
+    Ok((
+        pin,
+        IndexMetadata {
+            sha256,
+            path,
+            requires,
+        },
+    ))
 }
 
 /// The one `.whl` file staged in a version directory, if any — the fallback

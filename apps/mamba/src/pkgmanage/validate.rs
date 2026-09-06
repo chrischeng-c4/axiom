@@ -471,10 +471,10 @@ fn probe_init(bin: &Path) -> FamilyResult {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    if !proj.join("mamba.toml").exists() {
-        return FamilyResult::fail("init did not create mamba.toml");
+    if !proj.join("pyproject.toml").exists() {
+        return FamilyResult::fail("init did not create pyproject.toml");
     }
-    FamilyResult::pass("init created mamba.toml + scaffolding").with_paths(Some(proj), None, None)
+    FamilyResult::pass("init created pyproject.toml + scaffolding").with_paths(Some(proj), None, None)
 }
 
 /// True when `lock`'s `[[package]]` table names `requested` (compared
@@ -799,7 +799,7 @@ fn probe_add(bin: &Path) -> FamilyResult {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let manifest = std::fs::read_to_string(proj.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(proj.join("pyproject.toml")).unwrap();
     if !manifest.contains("frozen-demo-pkg==0.1.0") {
         return FamilyResult::fail("manifest missing dep after add");
     }

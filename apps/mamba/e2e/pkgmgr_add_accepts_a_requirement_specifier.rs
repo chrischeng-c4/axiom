@@ -1,6 +1,6 @@
 //! Black-box contract: `mamba add` must read its argument as the PEP 508
 //! requirement a `uv` user types — a range, a wildcard, a compatible release —
-//! record that requirement in `mamba.toml` verbatim, resolve it against the
+//! record that requirement in `pyproject.toml` verbatim, resolve it against the
 //! index into the same `mamba.lock` body `mamba lock` renders for that same
 //! manifest, and keep **one identity per dependency** so a second spelling of
 //! the same package replaces the first instead of standing beside it.
@@ -8,7 +8,7 @@
 //! # What this case owns
 //!
 //! The case drives the built `mamba` binary over throwaway directory trees and
-//! reads only what the binary wrote: the bytes of `mamba.toml`, the bytes of
+//! reads only what the binary wrote: the bytes of `pyproject.toml`, the bytes of
 //! `mamba.lock`, the exit code, and stderr. It never links the spec parser,
 //! the resolver, or the lock renderer — the three things under judgement here
 //! — and it never hand-writes a `mamba.lock`. The one piece of product code it
@@ -87,7 +87,7 @@
 //! - **Security**: two boundaries. *Fail closed*:
 //!   `add_refuses_an_unsatisfiable_range_and_writes_nothing` pins that a
 //!   refusal leaves the project exactly as it was — the manifest byte for
-//!   byte, no `mamba.lock`, and no `mamba.lock.tmp`/`mamba.toml.tmp` half-write
+//!   byte, no `mamba.lock`, and no `mamba.lock.tmp`/`pyproject.toml.tmp` half-write
 //!   left behind for a later command to read as state — and that the refusal
 //!   is a diagnosis naming the package and the bound, not a panic. The same
 //!   assertion is made on the frozen `--index DIR` path, whose narrower
@@ -355,7 +355,7 @@ impl Project {
             "dependencies = []",
             "fixture: `mamba init` must scaffold an empty dependency list, \
              which is the state every assertion below is measured against\n\
-             --- mamba.toml ---\n{}",
+             --- pyproject.toml ---\n{}",
             project.manifest_text()
         );
         assert!(
@@ -377,7 +377,7 @@ impl Project {
     }
 
     fn manifest_path(&self) -> PathBuf {
-        self.dir.join("mamba.toml")
+        self.dir.join("pyproject.toml")
     }
 
     fn lock_path(&self) -> PathBuf {
@@ -404,15 +404,15 @@ impl Project {
         let body = self.manifest_text();
         let doc: toml::Value = body
             .parse()
-            .unwrap_or_else(|e| panic!("parse mamba.toml: {e}\n--- mamba.toml ---\n{body}"));
+            .unwrap_or_else(|e| panic!("parse pyproject.toml: {e}\n--- pyproject.toml ---\n{body}"));
         let items = doc
             .get("project")
             .and_then(|p| p.get("dependencies"))
             .and_then(|d| d.as_array())
             .unwrap_or_else(|| {
                 panic!(
-                    "mamba.toml has no `[project] dependencies` array\n\
-                     --- mamba.toml ---\n{body}"
+                    "pyproject.toml has no `[project] dependencies` array\n\
+                     --- pyproject.toml ---\n{body}"
                 )
             });
         let rendered: Vec<String> = items
@@ -420,8 +420,8 @@ impl Project {
             .map(|v| {
                 let s = v.as_str().unwrap_or_else(|| {
                     panic!(
-                        "mamba.toml records a non-string dependency {v:?}\n\
-                         --- mamba.toml ---\n{body}"
+                        "pyproject.toml records a non-string dependency {v:?}\n\
+                         --- pyproject.toml ---\n{body}"
                     )
                 });
                 format!("{s:?}")
@@ -433,7 +433,7 @@ impl Project {
     /// Rewrite the manifest's one `dependencies` line, leaving every other
     /// byte `mamba init` wrote in place. Used only where this work item's own
     /// premise was measured that way — a requirement string a user hand-wrote
-    /// into `mamba.toml`, which `mamba remove` must still recognise.
+    /// into `pyproject.toml`, which `mamba remove` must still recognise.
     fn set_dependencies(&self, deps: &[&str]) {
         let manifest = self.manifest_path();
         let body = self.manifest_text();
@@ -961,9 +961,9 @@ fn add_records_the_range_spec_and_locks_the_release_it_admits() {
         project.dependencies_line(),
         format!("dependencies = [{RANGE:?}]"),
         "`mamba add {RANGE}` must record the requirement verbatim in \
-         mamba.toml: the range is the user's stated intent and belongs in the \
+         pyproject.toml: the range is the user's stated intent and belongs in the \
          manifest, while the pin it currently resolves to belongs in \
-         mamba.lock\n--- mamba.toml ---\n{}",
+         mamba.lock\n--- pyproject.toml ---\n{}",
         project.manifest_text()
     );
 
@@ -1021,7 +1021,7 @@ fn add_accepts_a_wildcard_and_a_compatible_release_spec() {
             format!("dependencies = [{spec:?}]"),
             "`mamba add {spec}` must record the requirement verbatim; today the \
              argument is split on `==`, so `{spec}` is looked up as a version \
-             string rather than as a specifier\n--- mamba.toml ---\n{}",
+             string rather than as a specifier\n--- pyproject.toml ---\n{}",
             project.manifest_text()
         );
 
@@ -1107,13 +1107,13 @@ fn add_refuses_an_unsatisfiable_range_and_writes_nothing() {
     assert_eq!(
         project.manifest_bytes(),
         before,
-        "a refused `mamba add` must leave mamba.toml byte for byte as it was; \
+        "a refused `mamba add` must leave pyproject.toml byte for byte as it was; \
          a manifest carrying a requirement the command refused is a project \
          whose next `mamba lock` fails for a reason nobody recorded\n\
-         --- mamba.toml now ---\n{}",
+         --- pyproject.toml now ---\n{}",
         project.manifest_text()
     );
-    for leftover in ["mamba.lock", "mamba.lock.tmp", "mamba.toml.tmp"] {
+    for leftover in ["mamba.lock", "mamba.lock.tmp", "pyproject.toml.tmp"] {
         let stray = project.dir.join(leftover);
         assert!(
             !stray.exists(),
@@ -1175,9 +1175,9 @@ fn add_writes_the_lock_that_lock_writes_for_the_same_range_manifest() {
     assert_eq!(
         project.dependencies_line(),
         format!("dependencies = [{RANGE:?}]"),
-        "`mamba lock` must not rewrite the requirement in mamba.toml; the \
+        "`mamba lock` must not rewrite the requirement in pyproject.toml; the \
          manifest is the user's input to the lock, not the lock's output\n\
-         --- mamba.toml ---\n{}",
+         --- pyproject.toml ---\n{}",
         project.manifest_text()
     );
 }
@@ -1235,14 +1235,14 @@ fn one_dependency_keeps_one_identity_across_its_spellings() {
              entry. Two entries here are two pins of one package that a later \
              resolve has to reconcile, and whichever spelling was written last \
              silently wins.\n  expected: {folded_expected}\n  actual:   \
-             {folded_line}\n--- mamba.toml ---\n{}",
+             {folded_line}\n--- pyproject.toml ---\n{}",
             folded.manifest_text()
         ),
     );
 
     // ---- `remove` finds an entry that carries a specifier ---------------
     // The manifest is hand-written here, exactly as this work item's premise
-    // measured it: `mamba.toml` already stores PEP 508 strings, so a user who
+    // measured it: `pyproject.toml` already stores PEP 508 strings, so a user who
     // typed one into the file must be able to remove it by name. This is the
     // one sub-case that needs no working `add`, so the no-op regression is
     // observable on its own.
@@ -1277,7 +1277,7 @@ fn one_dependency_keeps_one_identity_across_its_spellings() {
         format!(
             "`mamba remove {APP}` must remove the entry spelled `{RANGE}`\n  \
              expected: dependencies = []\n  actual:   {handwritten_line}\n\
-             --- mamba.toml ---\n{}",
+             --- pyproject.toml ---\n{}",
             handwritten.manifest_text()
         ),
     );
@@ -1312,7 +1312,7 @@ fn one_dependency_keeps_one_identity_across_its_spellings() {
              requirements on one name in a manifest is a project whose lock \
              has to satisfy both without anyone having said so.\n  expected: \
              dependencies = [{RANGE_OPEN:?}]\n  actual:   {ranged_line}\n\
-             --- mamba.toml ---\n{}",
+             --- pyproject.toml ---\n{}",
             ranged.manifest_text()
         ),
     );
@@ -1360,7 +1360,7 @@ fn one_dependency_keeps_one_identity_across_its_spellings() {
         format!(
             "`mamba remove {APP}` must remove the entry `mamba add {RANGE}` \
              wrote\n  expected: dependencies = []\n  actual:   {added_line}\n\
-             --- mamba.toml ---\n{}",
+             --- pyproject.toml ---\n{}",
             added.manifest_text()
         ),
     );
@@ -1399,7 +1399,7 @@ fn add_keeps_the_bare_name_and_exact_pin_grammars_it_already_had() {
         format!("dependencies = [{:?}]", format!("{APP}=={APP_3_0}")),
         "`mamba add {APP}` must keep writing an exact pin at the newest \
          release; teaching `add` to read specifiers must not turn a bare name \
-         into an unpinned entry\n--- mamba.toml ---\n{}",
+         into an unpinned entry\n--- pyproject.toml ---\n{}",
         bare.manifest_text()
     );
     let (body, entries) = bare.lock();
@@ -1421,7 +1421,7 @@ fn add_keeps_the_bare_name_and_exact_pin_grammars_it_already_had() {
         format!("dependencies = [{EXACT_PIN_2_0:?}]"),
         "`mamba add {EXACT_PIN_2_0}` must record that exact pin; an `==` \
          requirement read as a range would let a later resolve move off the \
-         version the user named\n--- mamba.toml ---\n{}",
+         version the user named\n--- pyproject.toml ---\n{}",
         pinned.manifest_text()
     );
     let (body, entries) = pinned.lock();
@@ -1492,8 +1492,8 @@ fn add_keeps_the_bare_name_and_exact_pin_grammars_it_already_had() {
     assert_eq!(
         frozen_refused.manifest_bytes(),
         before,
-        "a refused `mamba add --index <DIR>` must leave mamba.toml byte for \
-         byte as it was\n--- mamba.toml now ---\n{}",
+        "a refused `mamba add --index <DIR>` must leave pyproject.toml byte for \
+         byte as it was\n--- pyproject.toml now ---\n{}",
         frozen_refused.manifest_text()
     );
     assert!(

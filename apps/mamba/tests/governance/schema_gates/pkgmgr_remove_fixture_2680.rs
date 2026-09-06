@@ -169,8 +169,8 @@ fn pkgmgr_remove_metadata_assertion_drops_dependency() {
 
     assert_eq!(
         meta.get("file").and_then(|v| v.as_str()),
-        Some("mamba.toml"),
-        "`[metadata_assertion].file` must be `mamba.toml`"
+        Some("pyproject.toml"),
+        "`[metadata_assertion].file` must be `pyproject.toml`"
     );
 
     let dropped = meta

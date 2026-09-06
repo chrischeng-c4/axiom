@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MambaError;
 
-/// Top-level mamba.toml configuration (#250, #251, #1134).
+/// Compiler configuration: `[tool.mamba]` in `pyproject.toml`, or the
+/// legacy top-level `mamba.toml` (#250, #251, #1134).
 ///
 /// Supports two formats:
 ///
@@ -195,7 +196,13 @@ impl Default for BuildConfig {
 }
 
 impl MambaConfig {
-    /// Walk up from `start_dir` looking for `mamba.toml`.
+    /// Walk up from `start_dir` looking for the compiler configuration.
+    ///
+    /// At each directory a `pyproject.toml` whose `[tool.mamba]` table is
+    /// present wins; otherwise a legacy `mamba.toml` beside it is read as
+    /// before (`mamba migrate` moves its contents under `[tool.mamba]`).
+    /// A `pyproject.toml` without `[tool.mamba]` is not a compiler config
+    /// and the walk continues past it.
     ///
     /// Returns `(config, config_path)` for the first file found, or `None` if
     /// the filesystem root is reached without finding one.
@@ -204,6 +211,13 @@ impl MambaConfig {
     pub fn discover(start_dir: &Path) -> Option<(Self, PathBuf)> {
         let mut dir = start_dir;
         loop {
+            let pyproject = dir.join("pyproject.toml");
+            if pyproject.is_file() {
+                let text = std::fs::read_to_string(&pyproject).ok()?;
+                if let Ok(Some(cfg)) = Self::from_pyproject_str(&text) {
+                    return Some((cfg, pyproject));
+                }
+            }
             let candidate = dir.join("mamba.toml");
             if candidate.exists() {
                 let text = std::fs::read_to_string(&candidate).ok()?;
@@ -216,7 +230,41 @@ impl MambaConfig {
         }
     }
 
-    /// Parse a mamba.toml file (#251).
+    /// The compiler configuration a `pyproject.toml` carries under
+    /// `[tool.mamba]`, or `None` when that table is absent.
+    ///
+    /// `[tool.mamba]` holds the same keys the flat `mamba.toml` format did
+    /// (`entry_point`, `crates`, `expose`, `build`, `paths`); the project's
+    /// `name` and `version` are read from PEP 621 `[project]` unless
+    /// `[tool.mamba.project]` overrides them.
+    pub fn from_pyproject_str(content: &str) -> crate::error::Result<Option<Self>> {
+        let doc: toml::Value = toml::from_str(content)
+            .map_err(|e| MambaError::Other(format!("config parse error: {e}")))?;
+        let Some(tool_mamba) = doc.get("tool").and_then(|t| t.get("mamba")) else {
+            return Ok(None);
+        };
+        let mut tool_mamba = tool_mamba.clone();
+        if let (Some(table), Some(project)) = (
+            tool_mamba.as_table_mut(),
+            doc.get("project").and_then(|p| p.as_table()),
+        ) {
+            if !table.contains_key("project") {
+                let mut inherited = toml::value::Table::new();
+                for key in ["name", "version"] {
+                    if let Some(v) = project.get(key) {
+                        inherited.insert(key.to_string(), v.clone());
+                    }
+                }
+                table.insert("project".to_string(), toml::Value::Table(inherited));
+            }
+        }
+        let config: Self = tool_mamba
+            .try_into()
+            .map_err(|e| MambaError::Other(format!("[tool.mamba] parse error: {e}")))?;
+        Ok(Some(config))
+    }
+
+    /// Parse a legacy mamba.toml file (#251).
     // @spec .aw/changes/1134-mamba-dual-config/groups/unify-mamba-config/specs/1134-mamba-dual-config-spec.md#R2
     // @spec .aw/changes/1134-mamba-dual-config/groups/unify-mamba-config/specs/1134-mamba-dual-config-spec.md#R3
     pub fn from_file(path: &Path) -> crate::error::Result<Self> {
@@ -637,6 +685,51 @@ entry_point = "project.py"
 "#;
         let config = MambaConfig::from_str(toml).unwrap();
         assert_eq!(config.entry_point(), Some("project.py"));
+    }
+
+    // ── pyproject.toml [tool.mamba] ──────────────────────────────────────────
+
+    #[test]
+    fn discover_prefers_pyproject_tool_mamba() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"app\"\nversion = \"1.2.3\"\n\n[tool.mamba]\nentry_point = \"src/main.py\"\n\n[tool.mamba.crates]\ncclab-schema-mamba = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mamba.toml"),
+            "entry_point = \"stale.py\"\n",
+        )
+        .unwrap();
+        let (cfg, found) = MambaConfig::discover(dir.path()).expect("pyproject wins");
+        assert_eq!(found, dir.path().join("pyproject.toml"));
+        assert_eq!(cfg.entry_point(), Some("src/main.py"));
+        assert_eq!(cfg.project.name, "app");
+        assert_eq!(cfg.project.version, "1.2.3");
+        assert!(cfg.crates.contains_key("cclab-schema-mamba"));
+    }
+
+    #[test]
+    fn discover_walks_past_a_pyproject_without_tool_mamba() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("mamba.toml"), "entry_point = \"app.py\"\n").unwrap();
+        let sub = dir.path().join("pkg");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            sub.join("pyproject.toml"),
+            "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        )
+        .unwrap();
+        let (cfg, found) = MambaConfig::discover(&sub).expect("legacy parent found");
+        assert_eq!(found, dir.path().join("mamba.toml"));
+        assert_eq!(cfg.entry_point(), Some("app.py"));
+    }
+
+    #[test]
+    fn from_pyproject_str_is_none_without_tool_mamba() {
+        let cfg = MambaConfig::from_pyproject_str("[project]\nname = \"x\"\n").unwrap();
+        assert!(cfg.is_none());
     }
 
     // ── #1134 regression: Conductor mamba.toml format ────────────────────────

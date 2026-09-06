@@ -3,7 +3,7 @@
 //!
 //! Pinned acceptance:
 //!
-//!   1. Removed dep no longer appears in mamba.toml.
+//!   1. Removed dep no longer appears in pyproject.toml.
 //!   2. mamba.lock is updated deterministically (byte-identical on replay).
 //!   3. Other deps and the project's name/version/python-requires are
 //!      preserved.
@@ -40,7 +40,7 @@ fn remove_strips_dep_from_manifest_and_lockfile() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         !manifest.contains("frozen_demo_pkg"),
         "manifest must not contain removed dep: {manifest}"
@@ -69,7 +69,7 @@ fn remove_preserves_other_deps_and_project_fields() {
     let out = run(&pdir, &["remove", "foo"]);
     assert!(out.status.success());
 
-    let manifest = std::fs::read_to_string(pdir.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(pdir.join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("name = \"widget\""),
         "project name preserved: {manifest}"
@@ -79,8 +79,8 @@ fn remove_preserves_other_deps_and_project_fields() {
         "project version preserved: {manifest}"
     );
     assert!(
-        manifest.contains("python-requires = \">=3.12\""),
-        "python-requires preserved: {manifest}"
+        manifest.contains("requires-python = \">=3.12\""),
+        "requires-python preserved: {manifest}"
     );
     assert!(
         manifest.contains("\"bar==2.0.0\""),
@@ -100,13 +100,13 @@ fn remove_is_byte_identical_on_replay() {
     init_with_one_dep(&pdir, "frozen_demo_pkg==0.1.0");
 
     assert!(run(&pdir, &["remove", "frozen_demo_pkg"]).status.success());
-    let m_a = std::fs::read(pdir.join("mamba.toml")).unwrap();
+    let m_a = std::fs::read(pdir.join("pyproject.toml")).unwrap();
     let l_a = std::fs::read(pdir.join("mamba.lock")).unwrap();
 
     // Replaying remove against the now-stripped state must be a no-op
     // with byte-identical files.
     assert!(run(&pdir, &["remove", "frozen_demo_pkg"]).status.success());
-    let m_b = std::fs::read(pdir.join("mamba.toml")).unwrap();
+    let m_b = std::fs::read(pdir.join("pyproject.toml")).unwrap();
     let l_b = std::fs::read(pdir.join("mamba.lock")).unwrap();
 
     assert_eq!(m_a, m_b, "manifest byte-identical on replay");
@@ -117,7 +117,7 @@ fn remove_is_byte_identical_on_replay() {
 fn remove_unknown_dep_is_a_soft_noop() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run(tmp.path(), &["init"]).status.success());
-    let m_before = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let m_before = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
 
     let out = run(tmp.path(), &["remove", "not_installed_pkg"]);
     assert!(
@@ -131,7 +131,7 @@ fn remove_unknown_dep_is_a_soft_noop() {
     );
 
     // Manifest dep list stays empty, so byte-content is stable.
-    let m_after = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let m_after = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
     assert_eq!(m_before, m_after);
 }
 

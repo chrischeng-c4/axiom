@@ -10,11 +10,14 @@ nothing reaches PyPI implicitly.
 - Problem: none open as shipped.
 - Who: a Python developer keeping a project's dependencies, environment, and
   interpreter pin reproducible from a checkout.
-- Promise: `mamba init` scaffolds `mamba.toml`; `add`, `remove`, `lock`,
-  `export`, `tree`, and `workspace` keep `mamba.toml` and `mamba.lock`
-  consistent from a frozen `--index <DIR>`, a local wheel path, or an explicit
-  `--index-url` (a registry base or its `…/simple` URL), pinning the
-  transitive closure with a paired `sha256` and `url` or `path` per package;
+- Promise: `mamba init` scaffolds a PEP 621 `pyproject.toml` (with a PEP
+  735 `[dependency-groups].dev`); `add`, `remove`, `lock`, `export`, `tree`,
+  and `workspace` keep `pyproject.toml` and `mamba.lock` consistent, editing
+  the manifest in place so every other table and comment survives, and
+  `migrate` converts a retired `mamba.toml` once; they resolve from a
+  frozen `--index <DIR>`, a local wheel path, or an explicit `--index-url`
+  (a registry base or its `…/simple` URL), pinning the transitive closure
+  with a paired `sha256` and `url` or `path` per package;
   `venv` seeds `.venv` from the first `python` on `PATH` or from `--python`;
   `sync` installs the locked wheels into `.venv`'s
   `lib/pythonX.Y/site-packages`, removes what the lock no longer pins, and is
@@ -24,11 +27,12 @@ nothing reaches PyPI implicitly.
   `auth`, `audit`, and `pip` cover the rest of the workflow. Every verb is
   driven offline by the `pkgmgr` test target.
 - Limits today: a bare `add <name>` needs `--index`, `--index-url`, or
-  `MAMBA_FROZEN_INDEX` / `MAMBA_INDEX_URL`, and `mamba.toml` records no
+  `MAMBA_FROZEN_INDEX` / `MAMBA_INDEX_URL`, and `pyproject.toml` records no
   index, so the source is repeated on every `add` and `lock`. `sync` compares
-  `.venv` to `mamba.lock`, never `mamba.lock` to `mamba.toml`, so an edited
-  manifest needs `lock` first. `version` reads `pyproject.toml`, not
-  `mamba.toml`. `tool install` resolves only from a frozen index. `publish`
+  `.venv` to `mamba.lock`, never `mamba.lock` to `pyproject.toml`, so an
+  edited manifest needs `lock` first. A `mamba.toml` beside a `mamba.lock`
+  is refused until `mamba migrate` converts it. `tool install` resolves only
+  from a frozen index. `publish`
   validates payloads with `--dry-run` and has no upload case; `auth login`
   stores plaintext credentials.
 - Non-goals: `uv.lock` byte compatibility; building C extensions from sdist;
@@ -71,10 +75,9 @@ nothing reaches PyPI implicitly.
   only for the verbs those cases drive (`add`, `remove`, `lock`, `sync`,
   `run`, `index`, and `pkgmgr-validate`); `init`, `venv`, `python`, `tool`,
   `version`, `tree`, and `export` are measured by the `pkgmgr` target alone.
-  The manifest is `mamba.toml`, not `pyproject.toml`, and `version` reads
-  `pyproject.toml` only. `tool install` resolves only from a frozen index. A
-  bare `add <name>` needs a source flag or variable and `mamba.toml` records
-  none; `sync` never compares `mamba.lock` to `mamba.toml`.
+  `tool install` resolves only from a frozen index. A bare `add <name>`
+  needs a source flag or variable and `pyproject.toml` records none; `sync`
+  never compares `mamba.lock` to `pyproject.toml`.
 - Non-goals: `uv.lock` byte compatibility; resolver speed parity; every `pip`
   option that `uv pip` does not expose; sdist C-extension builds.
 - Neighbours: rewrote the `run` limit in

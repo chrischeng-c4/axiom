@@ -3,7 +3,7 @@
 // Acceptance (tests/governance/gates/pkgmgr/remove/manifest.toml, schema gate
 // pkgmgr_remove_fixture_2680.rs):
 //
-//   - Removed dep no longer appears in mamba.toml.
+//   - Removed dep no longer appears in pyproject.toml.
 //   - mamba.lock is updated deterministically (byte-identical on replay).
 //   - Other deps and project metadata fields are preserved.
 //   - Offline.
@@ -17,8 +17,8 @@ use std::fs;
 
 use crate::pkgmanage::add::{atomic_write, render_lockfile_for_manifest, ManifestState};
 use crate::pkgmanage::lock::prune_lock_for_remaining_roots;
+use crate::pkgmanage::manifest::pyproject;
 
-const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 
 pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
@@ -30,13 +30,7 @@ pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
     }
 
     let project_dir = std::env::current_dir().context("read current directory")?;
-    let manifest_path = project_dir.join(MANIFEST_FILE);
-    if !manifest_path.exists() {
-        bail!(
-            "no {MANIFEST_FILE} in {} — run `mamba init` first",
-            project_dir.display()
-        );
-    }
+    let manifest_path = pyproject::locate(&project_dir)?;
 
     let manifest_src = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -46,7 +40,7 @@ pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
     state.remove_dependency(name);
     let removed = before.len() != state.dependencies.len();
 
-    let new_manifest = state.render();
+    let new_manifest = state.render_into(&manifest_src)?;
 
     // Prune the lock already on disk down to the closure the remaining
     // manifest roots still reach, carrying every surviving pin's sha256/url

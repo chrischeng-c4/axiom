@@ -105,7 +105,7 @@ fn add_records_dep_in_manifest_and_lockfile() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"frozen_demo_pkg==0.1.0\""),
         "manifest must record dep: {manifest}"
@@ -132,7 +132,7 @@ fn add_is_byte_identical_on_replay() {
             .status
             .success()
     );
-    let m_after_first = std::fs::read(project_dir.join("mamba.toml")).unwrap();
+    let m_after_first = std::fs::read(project_dir.join("pyproject.toml")).unwrap();
     let l_after_first = std::fs::read(project_dir.join("mamba.lock")).unwrap();
 
     // Replay: identical args, identical project state already on disk.
@@ -141,12 +141,12 @@ fn add_is_byte_identical_on_replay() {
             .status
             .success()
     );
-    let m_after_second = std::fs::read(project_dir.join("mamba.toml")).unwrap();
+    let m_after_second = std::fs::read(project_dir.join("pyproject.toml")).unwrap();
     let l_after_second = std::fs::read(project_dir.join("mamba.lock")).unwrap();
 
     assert_eq!(
         m_after_first, m_after_second,
-        "mamba.toml replay must be byte-identical"
+        "pyproject.toml replay must be byte-identical"
     );
     assert_eq!(
         l_after_first, l_after_second,
@@ -161,7 +161,7 @@ fn add_missing_package_against_frozen_index_fails_cleanly() {
 
     let index = frozen_index_with("frozen_demo_pkg", &["0.1.0"]);
 
-    let manifest_before = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let manifest_before = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
     let lock_path = tmp.path().join("mamba.lock");
     assert!(!lock_path.exists(), "no lockfile before");
 
@@ -181,7 +181,7 @@ fn add_missing_package_against_frozen_index_fails_cleanly() {
         "stderr must contain 'not found', got: {stderr:?}"
     );
 
-    let manifest_after = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let manifest_after = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
     assert_eq!(
         manifest_before, manifest_after,
         "manifest must not mutate on missing-package failure"
@@ -204,7 +204,7 @@ fn add_resolves_against_frozen_index_when_version_omitted() {
     );
     assert!(out.status.success());
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"frozen_demo_pkg==0.2.0\""),
         "must pick highest version: {manifest}"
@@ -223,7 +223,7 @@ fn add_upserts_existing_dep_in_place() {
         .status
         .success());
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"foo==1.1.0\""),
         "must record upgraded version: {manifest}"
@@ -268,7 +268,7 @@ fn add_offline_requires_explicit_version() {
 fn add_no_source_requires_explicit_registry() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
-    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_path = tmp.path().join("pyproject.toml");
     let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
 
     let out = run_add(tmp.path(), &["bare_name"]);
@@ -286,7 +286,7 @@ fn add_no_source_requires_explicit_registry() {
     assert_eq!(
         manifest_before,
         std::fs::read_to_string(&manifest_path).unwrap(),
-        "failed no-source add must not mutate mamba.toml"
+        "failed no-source add must not mutate pyproject.toml"
     );
     assert!(
         !tmp.path().join("mamba.lock").exists(),
@@ -325,7 +325,7 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let manifest_a = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let manifest_a = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
     let lock_a = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
     assert!(
         String::from_utf8_lossy(&manifest_a).contains("\"frozen_local_wheel==0.1.0\""),
@@ -350,7 +350,7 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
     );
     assert_eq!(
         manifest_a,
-        std::fs::read(tmp.path().join("mamba.toml")).unwrap(),
+        std::fs::read(tmp.path().join("pyproject.toml")).unwrap(),
         "direct local wheel manifest must be byte-identical on replay"
     );
     assert_eq!(
@@ -426,7 +426,7 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
 fn add_missing_direct_local_wheel_fails_without_mutation() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
-    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_path = tmp.path().join("pyproject.toml");
     let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
 
     let out = run_add(
@@ -447,7 +447,7 @@ fn add_missing_direct_local_wheel_fails_without_mutation() {
     assert_eq!(
         manifest_before,
         std::fs::read_to_string(&manifest_path).unwrap(),
-        "failed missing-wheel add must not mutate mamba.toml"
+        "failed missing-wheel add must not mutate pyproject.toml"
     );
     assert!(
         !tmp.path().join("mamba.lock").exists(),
@@ -518,7 +518,7 @@ fn add_against_pypi_mock_records_real_sha256() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"mock_pkg==1.2.3\""),
         "must record highest version: {manifest}"
@@ -695,7 +695,7 @@ fn add_mamba_provider_records_manifest_and_lock_metadata() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"mamba-httpx-compat==0.1.0\""),
         "manifest must pin mamba-owned distribution: {manifest}"
@@ -724,7 +724,7 @@ fn add_mamba_provider_records_manifest_and_lock_metadata() {
 fn add_mamba_provider_rejects_upstream_import_alias_without_mutation() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
-    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_path = tmp.path().join("pyproject.toml");
     let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
 
     let out = run_add(tmp.path(), &["httpx", "--provider", "mamba"]);
@@ -740,7 +740,7 @@ fn add_mamba_provider_rejects_upstream_import_alias_without_mutation() {
     assert_eq!(
         manifest_before,
         std::fs::read_to_string(&manifest_path).unwrap(),
-        "failed provider add must not mutate mamba.toml"
+        "failed provider add must not mutate pyproject.toml"
     );
     assert!(
         !tmp.path().join("mamba.lock").exists(),

@@ -9,7 +9,7 @@
 //!   2. `mamba run <file>` AFTER `mamba sync` proceeds past the
 //!      preflight (it may then succeed or fail for unrelated compile
 //!      reasons, but never with "environment is not synced").
-//!   3. `mamba run <file>` outside a mamba project (no mamba.toml)
+//!   3. `mamba run <file>` outside a mamba project (no pyproject.toml)
 //!      proceeds straight through legacy mode.
 
 use std::path::{Path, PathBuf};
@@ -142,7 +142,7 @@ fn run_outside_mamba_project_is_legacy() {
     .unwrap();
 
     let out = run(tmp.path(), &["run", "solo.py"]);
-    // No mamba.toml here, so preflight is bypassed entirely. The
+    // No pyproject.toml here, so preflight is bypassed entirely. The
     // command must NOT fail with the env-not-synced diagnostic.
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(

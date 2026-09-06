@@ -14,7 +14,7 @@
 //! `Requires-Dist`, so every dependency edge below exists in exactly one
 //! place — the registry's own `/pypi/<name>/<version>/json` — and a lock that
 //! knows about an edge is a lock that asked for it. The one thing the case
-//! authors is `mamba.toml`'s `dependencies` line, which is user input in this
+//! authors is `pyproject.toml`'s `dependencies` line, which is user input in this
 //! workflow and precisely what `mamba lock` reads.
 //!
 //! # The three graphs
@@ -325,8 +325,8 @@ impl Project {
             render(&init_args, &out)
         );
         assert!(
-            dir.join("mamba.toml").is_file(),
-            "fixture: `mamba init` wrote no mamba.toml in {}",
+            dir.join("pyproject.toml").is_file(),
+            "fixture: `mamba init` wrote no pyproject.toml in {}",
             dir.display()
         );
         Project {
@@ -344,7 +344,7 @@ impl Project {
     /// byte `mamba init` wrote in place. This is the case's only authored
     /// input; `dev-dependencies` is a different key and is never touched.
     fn set_dependencies(&self, deps: &[&str]) {
-        let manifest = self.dir.join("mamba.toml");
+        let manifest = self.dir.join("pyproject.toml");
         let body = std::fs::read_to_string(&manifest)
             .unwrap_or_else(|e| panic!("fixture: read {}: {e}", manifest.display()));
         let rendered = format!(

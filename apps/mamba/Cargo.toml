@@ -76,6 +76,7 @@ mongokit-binding = { path = "mambalibs/mongokit/binding", optional = true }
 
 # Config parsing
 toml = "0.8"
+toml_edit = "0.22"
 semver = "1"
 # Process-internal fast hasher for the GC's pointer-keyed `HashSet<usize>` /
 # `HashMap<usize, i64>` (mitigation 2A for #2100). Already in the dep tree
