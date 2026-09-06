@@ -417,3 +417,7 @@ path = "e2e/pkgmgr_lock_requires_dist_never_dropped.rs"
 [[test]]
 name = "pkgmgr_remove_prunes_console_script_wrappers"
 path = "e2e/pkgmgr_remove_prunes_console_script_wrappers.rs"
+
+[[test]]
+name = "pkgmgr_pip_install_defaults_to_the_venv_interpreter"
+path = "e2e/pkgmgr_pip_install_defaults_to_the_venv_interpreter.rs"

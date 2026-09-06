@@ -301,7 +301,7 @@ fn cli() -> Command {
                         .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
                         .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
-                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to python3")),
+                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to the project's .venv interpreter, else python3")),
                 )
                 .subcommand(
                     Command::new("sync")
@@ -310,7 +310,7 @@ fn cli() -> Command {
                         .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
                         .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
-                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to python3")),
+                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to the project's .venv interpreter, else python3")),
                 )
                 .subcommand(
                     Command::new("uninstall")
