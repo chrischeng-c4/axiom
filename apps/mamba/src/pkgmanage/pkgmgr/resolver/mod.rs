@@ -293,7 +293,13 @@ impl Universe for Resolver {
         let raw_requires = self
             .provider
             .fetch_version_requires_blocking(name, version)
-            .unwrap_or_default();
+            .map_err(|e| ResolutionError {
+                kind: ResolutionErrorKind::RequiresDistUnavailable,
+                trace: format!(
+                    "{name}=={version}: requires_dist could not be fetched: {e}"
+                ),
+                involved: vec![name.to_string()],
+            })?;
         let mut requires: Vec<Requirement> = Vec::new();
         for line in raw_requires {
             let req = match parse_requirement(&line) {

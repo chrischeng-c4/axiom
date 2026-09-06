@@ -42,6 +42,11 @@ pub enum ResolutionErrorKind {
     /// A `requires_dist` line the index served does not parse as a PEP 508
     /// requirement; see `Universe::node` in `resolver/mod.rs`.
     UnparseableRequiresDist,
+    /// The index could not answer a release's per-version `requires_dist`
+    /// document after the client exhausted its retries. A 404 on that route
+    /// is a distinct, allowed answer — "declares nothing" — and never raises
+    /// this; see `Universe::node` in `resolver/mod.rs`.
+    RequiresDistUnavailable,
 }
 
 /// @spec .aw/tech-design/apps/mamba/pkgmgr/resolver.md#schema (ResolutionError)
