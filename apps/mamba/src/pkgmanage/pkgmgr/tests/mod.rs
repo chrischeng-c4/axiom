@@ -4,6 +4,8 @@
 // gate can see the phase wrote a colocated test, without renaming any test's
 // own module path -- each `mod` below matches the module names this crate's
 // suite has always run.
+// wi-4236: installer.rs gained a colocated unit test asserting the PEP 376
+// `INSTALLER` marker and its `RECORD` row.
 mod installer;
 mod mvp_package_manager_umbrella_gate;
 mod pypi_index_client;
