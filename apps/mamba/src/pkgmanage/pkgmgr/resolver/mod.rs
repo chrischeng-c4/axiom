@@ -20,21 +20,28 @@
 //!
 //! A requirement raised on a name that is already decided is the interesting
 //! case, and it is the one #4225 got wrong by refusing outright. Here the
-//! search **takes the pick back**: it discards every decision made after the
-//! contested one, withdrawing the requirements those decisions raised, then
-//! advances the contested name to its next candidate that satisfies everything
-//! still raised on it. When that name has nothing left to try, its own
-//! decision is discarded too and the decision below it moves the same way.
-//! When the stack empties, the graph really has no consistent pin set and the
-//! search refuses it with `NoCompatibleVersion` naming the contested package
-//! and the requirements that cannot hold together.
+//! search **takes a pick back** on conflict — but #4225's version of that
+//! only ever retargeted the conflicting name's own decision, which #4231
+//! found incomplete two ways: a conflict on a name *nothing* has decided yet
+//! (two roots, or a root and an edge, contradicting each other before either
+//! side is pinned) never reached the retargeting logic at all, and a
+//! conflict whose only remedy is a decision *above* the contested name — a
+//! dependant with another release available — was popped and immediately
+//! retaken at the same eager pick, forever. `backtrack` now always
+//! retargets the most recent decision still on the stack, regardless of
+//! which name a conflict is reported against: undo it, advance it to its own
+//! name's next candidate under whatever is currently raised on that name,
+//! and drop it entirely only once nothing is left to try. When the stack
+//! empties, the graph really has no consistent pin set and the search
+//! refuses with the error that justified the last backtrack — `NoCompatibleVersion`
+//! naming a decided-name conflict, or the original candidate-selection error
+//! when the conflict was on a name nothing had pinned.
 //!
 //! Two properties follow, and the colocated tests state both. Every backtrack
-//! strictly advances one decision's position and throws away everything after
-//! it, so the walk is a depth-first traversal of a finite tree and terminates.
-//! And a name first reached with no conflict is decided exactly as it was
-//! before this existed, so a graph that never conflicts renders the bytes it
-//! always did.
+//! strictly advances one decision's position or discards it outright, over a
+//! finite tree of finite candidate lists, so the walk terminates. And a name
+//! first reached with no conflict is decided exactly as it was before this
+//! existed, so a graph that never conflicts renders the bytes it always did.
 
 pub mod graph;
 pub mod pubgrub_glue;
@@ -449,54 +456,53 @@ fn first_violation(
     None
 }
 
-/// Undo back to a decision that can move, and move it.
+/// Undo back to a decision that can move, and move it — chronologically,
+/// always starting from the most recent decision still on the stack.
 ///
-/// `conflict_name` is decided at a version `offending` forbids. Everything
-/// decided after it goes first; then that name itself is advanced to the next
-/// candidate that everything still raised on it — plus `offending`, whose
-/// raiser has just been withdrawn but whose demand is what sent us here —
-/// admits. A name with nothing left to try is dropped and the decision below
-/// it moves instead, at which point `offending` is out of the picture: the
-/// decision that raised it will be retaken from scratch.
+/// This is what makes the search complete. A conflict does not always land
+/// on a name with its own decision to retarget: two roots can contradict
+/// each other on a name nothing has decided yet, in which case the decision
+/// that must move is whichever raised the losing side. And even when the
+/// conflict does land on a decided name, the decision that has to move can
+/// be *above* it — a dependant with another release available that would
+/// stop raising the offending requirement in the first place. Popping that
+/// dependant and letting the ordinary search loop retake it from scratch
+/// finds nothing: it has no memory of the conflict and picks the same
+/// eager candidate again.
 ///
-/// Returns the refusal when the stack empties: nothing is left to move, so no
-/// assignment of this graph satisfies itself.
+/// So this always retargets the top of the stack first: undo it, and look
+/// for its own name's next candidate among everything currently raised on
+/// that name (the conflict's contribution disappears with the undo of
+/// whichever decision raised it). A name with nothing left to try is
+/// dropped entirely and the decision below it is tried the same way. The
+/// walk still terminates — each step either strictly advances a decision's
+/// position or discards a decision outright, over a finite tree of finite
+/// candidate lists — and it reaches a decision `search`'s next lap could
+/// never have started at.
+///
+/// Returns `refusal` when the stack empties: nothing is left to move, so no
+/// assignment of this graph satisfies itself. `refusal` is the error that
+/// justified this call — either `conflict_error` for a decided-name
+/// violation, or the exact error a candidate-selection call raised for a
+/// name nothing has decided yet — so an unsatisfiable graph still fails with
+/// the message that names what it could not reconcile.
 fn backtrack(
     universe: &dyn Universe,
     raised: &mut BTreeMap<String, Vec<Raise>>,
     decided: &mut BTreeMap<String, ResolvedNode>,
     stack: &mut Vec<Decision>,
-    conflict_name: &str,
-    offending: Vec<VersionSpecifier>,
+    refusal: ResolutionError,
 ) -> Result<(), ResolutionError> {
-    let idx = stack
-        .iter()
-        .position(|d| d.name == conflict_name)
-        .expect("a decided name has a decision on the stack");
-    let refusal = conflict_error(
-        conflict_name,
-        Some(&stack[idx].decided_with),
-        &offending,
-        &decided[conflict_name].version,
-    );
-
-    while stack.len() > idx + 1 {
-        let dropped = stack.pop().expect("length checked");
-        undo(raised, decided, &dropped.name);
-    }
-
-    let mut extra = offending;
     loop {
         let Some(decision) = stack.last_mut() else {
             return Err(refusal);
         };
         undo(raised, decided, &decision.name);
 
-        let mut wanted = raised
+        let wanted = raised
             .get(&decision.name)
             .map(|raises| constraints(raises))
             .unwrap_or_default();
-        wanted.extend(extra.iter().cloned());
 
         let next = decision
             .candidates
@@ -517,10 +523,6 @@ fn backtrack(
             }
             None => {
                 stack.pop();
-                // Below the contested name the arriving requirement no longer
-                // applies: the decision that raised it has been withdrawn and
-                // will raise it again, or not, when it is retaken.
-                extra.clear();
             }
         }
     }
@@ -554,14 +556,13 @@ pub(crate) fn search(
         // A pin something now forbids is settled before anything else is
         // decided on top of it.
         if let Some((name, offending)) = first_violation(&raised, &decided) {
-            backtrack(
-                universe,
-                &mut raised,
-                &mut decided,
-                &mut stack,
-                &name,
-                offending,
-            )?;
+            let decided_with = stack
+                .iter()
+                .find(|d| d.name == name)
+                .map(|d| &d.decided_with)
+                .expect("a decided name has a decision on the stack");
+            let refusal = conflict_error(&name, Some(decided_with), &offending, &decided[&name].version);
+            backtrack(universe, &mut raised, &mut decided, &mut stack, refusal)?;
             continue;
         }
 
@@ -571,13 +572,28 @@ pub(crate) fn search(
 
         let req = merged(&raised[&name]);
         let is_direct = root_names.iter().any(|n| n == &name);
-        let candidates = universe.ordered_candidates(&name, &req, is_direct)?;
+        let candidates = match universe.ordered_candidates(&name, &req, is_direct) {
+            Ok(candidates) => candidates,
+            // No candidate satisfies everything currently raised on `name` —
+            // MarkerExcludesAll, the two EmptyIntersection cases and the
+            // exclude-newer variant from `ordered_candidates` all say exactly
+            // this. That does not end the search while a decision remains on
+            // the stack: some earlier decision may be what is over-narrowing
+            // `name`, and backing it off can free `name` up. `err` becomes
+            // the refusal only if the stack truly empties.
+            Err(err) => {
+                backtrack(universe, &mut raised, &mut decided, &mut stack, err)?;
+                continue;
+            }
+        };
         let Some(chosen) = candidates.first().cloned() else {
-            return Err(ResolutionError {
+            let err = ResolutionError {
                 kind: ResolutionErrorKind::EmptyIntersection,
                 trace: format!("no candidate version of {name} is left to try"),
                 involved: vec![name],
-            });
+            };
+            backtrack(universe, &mut raised, &mut decided, &mut stack, err)?;
+            continue;
         };
         let node = universe.node(&name, &chosen)?;
         raise_for(&mut raised, &node);
