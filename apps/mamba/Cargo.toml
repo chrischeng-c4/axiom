@@ -17,7 +17,11 @@ autotests = false
 # `apps/mamba/src/`. One entry per kit: a root that is not listed is refused,
 # so the list grows with the kits rather than widening to `mambalibs/`.
 [package.metadata.aw]
-impl-roots = ["mambalibs/arraykit/pyo3", "mambalibs/scikit/pyo3"]
+impl-roots = [
+    "mambalibs/arraykit/pyo3",
+    "mambalibs/scikit/pyo3",
+    "mambalibs/plotkit/pyo3",
+]
 impl-repo-paths = ["Cargo.toml", "Cargo.lock"]
 
 [features]
@@ -457,3 +461,7 @@ path = "e2e/mambalibs_array_wheel.rs"
 [[test]]
 name = "mambalibs_sci_wheel"
 path = "e2e/mambalibs_sci_wheel.rs"
+
+[[test]]
+name = "mambalibs_plot_wheel"
+path = "e2e/mambalibs_plot_wheel.rs"
