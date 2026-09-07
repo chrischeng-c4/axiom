@@ -8,42 +8,42 @@ wheel's Python API is the contract the runtime carrier must match.
 
 ## mambalibs CPython wheels (Milestone #129)
 
-- Problem: no kit reaches a CPython user today. The workspace declares no `pyo3`
-  dependency and no maturin `pyproject.toml`; the package manager parses
-  `[tool.maturin]` (`src/pkgmanage/pkgmgr/maturin_compat.rs`) but never runs
-  maturin; the `native-modules` feature that links the `MambaModule` bindings is
-  outside every release build; and `cargo test -p mamba --test mambalibs` parses
-  kit manifests without importing a kit. Six kits — arraykit, cryptokit,
-  mediakit, mongokit, plotkit, scikit — have an empty binding, so the data stack
-  the README names as the numpy chokepoint has no Python surface at all.
+- Problem: none open as shipped; the limits below are where the remaining
+  kits and the runtime carrier start.
 - Who: a Python developer on CPython 3.12 with a project `.venv` who wants the
   data-science kits (arrays, scientific routines, plotting) without a mamba
   runtime.
-- Promise: each promised kit ships as its own standard wheel, `mambalibs-<kit>`,
-  built with PyO3 and maturin from the kit's existing core crate and sharing the
-  `mambalibs` namespace package. The wheel is published through `mamba publish`,
-  served from a `mamba index` frozen index, and installed by
-  `mamba add mambalibs-<kit>` followed by `mamba sync`; after that,
-  `import mambalibs.<name>` works under the `.venv` interpreter and the kit's
-  Python cases pass under pytest there. The data-science kits go first —
-  arraykit (`mambalibs.array`), scikit, plotkit; every other kit follows the same
-  route. The wheel's Python API is the contract the later `MambaModule` carrier
-  must match.
+- Promise: the three data-science kits ship as standard wheels built with PyO3
+  and maturin from each kit's existing core crate: `mambalibs-arraykit`
+  (`import mambalibs.array`), `mambalibs-scikit` (`import mambalibs.sci`, with
+  `sci.stats`, `sci.fft`, `sci.signal`, `sci.interpolate`, `sci.optimize`,
+  `sci.ts`, `sci.spatial`, `sci.sparse`, and `sci.integrate` as attributes),
+  and `mambalibs-plotkit` (`import mambalibs.plot`). Each is one `cp312-abi3`
+  wheel per platform, so a single build serves CPython 3.12 and later, and
+  the `mambalibs` package is a PEP 420 namespace — no wheel ships
+  `mambalibs/__init__.py` — so the three install side by side in one `.venv`.
+  A wheel built by `maturin build` is frozen by `mamba index build`, installed
+  by `mamba add mambalibs-<kit>` followed by `mamba sync`, and the kit's
+  Python cases pass under pytest on the `.venv` interpreter. Each kit is one
+  black-box `[[test]]` under `apps/mamba/e2e/`: `mambalibs_array_wheel`,
+  `mambalibs_sci_wheel`, and `mambalibs_plot_wheel`. The wheel's Python API is
+  the contract the later `MambaModule` carrier must match.
+- Limits today: the wheels are served only from a `mamba index` frozen index;
+  publication to PyPI has no case. The host running the gates needs `maturin`
+  on `PATH` and a `python3.12` that can `import pytest`; a missing tool fails
+  the case rather than skipping it. Only arraykit, scikit, and plotkit have a
+  wheel; cryptokit, mediakit, and mongokit still have no Python surface.
+  `mamba package` does not build these wheels — the cases drive
+  `maturin build` themselves.
 - Non-goals: a `MambaModule` carrier for the same kit in this outcome (that is
   `cpython-runtime-replacement`); a CPython C-API emulation layer or a bridged
   CPython as a carrier (`cpython-c-api-emulation`); building a kit from an sdist
   on the user's machine (`sdist-c-extension-builds`).
-- Open: `abi3-py312` or one wheel per CPython minor. Whether the wheels also go
-  to PyPI or only to a mamba-managed index. How much of the numpy API
-  `mambalibs.array` covers in the first Milestone, and the Python module names
-  for scikit and plotkit. Whether the six empty `MambaModule` bindings are
-  removed or kept until the runtime carrier round. Whether `mamba package`
-  learns to drive maturin or maturin builds the wheel directly.
 - Neighbours: after [package-manager.md](package-manager.md) § uv workflow
   parity, whose `mamba add`, `mamba sync` and `.venv` path is the install
   route; before [runtime.md](runtime.md) § CPython runtime replacement, whose
   `MambaModule` carrier must match this wheel's Python API.
-- Outcome: `mambalibs-cpython-wheels`. Tracking: [Milestone #129](https://github.com/chrischeng-c4/axiom/milestone/129).
+- Status rows: `mambalibs-cpython-wheels`.
 
 ## Non-goals in this area
 

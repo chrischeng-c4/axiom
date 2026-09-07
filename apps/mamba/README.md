@@ -10,8 +10,9 @@ mambalibs kits reach CPython users second, as PyO3 extension wheels installed
 through that package manager; the CPython runtime replacement (tiers T1 to T7
 under [Runtime replacement order](#runtime-replacement-order)) comes third,
 and its `MambaModule` carrier for a kit matches the wheel's Python API.
-[STATUS.md](STATUS.md) records what the package manager supports today and
-[ROADMAP.md](ROADMAP.md) orders the two remaining outcomes.
+[STATUS.md](STATUS.md) records what the package manager and the mambalibs
+wheels support today and [ROADMAP.md](ROADMAP.md) orders the one remaining
+outcome.
 
 For implementation map, see [llms.txt](llms.txt).
 
@@ -53,7 +54,8 @@ is the one `mamba <verb> --help` prints.
 
 The compiler and runtime work, ordered T1 to T7. This order is the ROADMAP
 outcome [cpython-runtime-replacement](ROADMAP.md#cpython-runtime-replacement)
-and starts after the shipped uv workflow parity and `mambalibs-cpython-wheels`. Each
+and starts after the shipped uv workflow parity and the shipped mambalibs
+CPython wheels ([STATUS](STATUS.md) `mambalibs-cpython-wheels`). Each
 tier's exit gate is still to be written, so no tier below is claimed; the
 capabilities that are claimed, with their gates, are under
 [Capabilities](#capabilities).
@@ -906,7 +908,7 @@ Layer order is **managed → semantic → regenerable** — you cannot specify w
 
 ## Non-goals
 
-- A third carrier for a mambalibs kit. A kit ships as a PyO3 CPython wheel first ([ROADMAP](ROADMAP.md#mambalibs-cpython-wheels)) and as a `MambaModule` inside the mamba runtime second; no CPython C-API emulation layer and no bridged CPython carries a kit.
+- A third carrier for a mambalibs kit. A kit ships as a PyO3 CPython wheel first ([STATUS](STATUS.md) `mambalibs-cpython-wheels`) and as a `MambaModule` inside the mamba runtime second; no CPython C-API emulation layer and no bridged CPython carries a kit.
 - "Issues closed per week" or any proxy metric. The capability gates and standardization layers above are the only completion signal.
 
 ## Status
@@ -917,7 +919,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 |-------|------|------------------|
 | Capability      | C1 Py3.12 parity            | No — ① type **74.1%** enforced (auto-measured) + **100%** sound · ② ~18% run-correct |
 | Capability      | C2 Perf > CPython           | No — compute median ~13× faster, but object/float slower **and** memory regresses; the boxed value model is the keystone |
-| Capability      | C3 mambalibs end-to-end     | No — most kits stub-only; the first carrier is the PyO3 wheels, ROADMAP `mambalibs-cpython-wheels` |
+| Capability      | C3 mambalibs end-to-end     | No — arraykit, scikit, and plotkit ship as PyO3 wheels (STATUS `mambalibs-cpython-wheels`); the other kits are stub-only and no kit has a runtime carrier |
 | Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/auth/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache; `sync` installs real wheels, `lock` pins the transitive closure, `run <file>` executes on `.venv` |
 | Runtime         | core substrate stability    | **99.1%** — sound; only edge crashes (deep recursion, gen-nesting cap, MRO, async-gen hang) |
 | Ceiling         | match Golang (`mamba/go`)   | ~4× behind Go on compute today (Go ~50× vs CPython, mamba ~13×); gap = value model + codegen, not JIT-vs-AOT |
@@ -955,8 +957,10 @@ executable gates that verify it; every gate is a `[[test]]` target declared in
 [Cargo.toml](Cargo.toml) and runs unfiltered. The first three capabilities are
 the runtime side, whose tier order is under
 [Runtime replacement order](#runtime-replacement-order) and whose ROADMAP
-outcome is `cpython-runtime-replacement`. The fourth is the package manager,
-whose rows are in [STATUS.md](STATUS.md) and whose shipped outcome
+outcome is `cpython-runtime-replacement`; the third also carries the shipped
+mambalibs CPython wheels, whose STATUS row `mambalibs-cpython-wheels` is
+measured by the `mambalibs_*_wheel` gates below. The fourth is the package
+manager, whose rows are in [STATUS.md](STATUS.md) and whose shipped outcome
 `uv-workflow-parity` is measured by the `pkgmgr_*` gates below.
 
 ### Capability index
@@ -1004,12 +1008,20 @@ whose rows are in [STATUS.md](STATUS.md) and whose shipped outcome
   end-to-end cases, including the HTTP/2 client. A kit reaches a Python
   program as a PyO3 CPython wheel first and as a `MambaModule` inside the
   mamba runtime second; the wheel's Python API is the contract the runtime
-  carrier matches ([ROADMAP](ROADMAP.md#mambalibs-cpython-wheels)).
+  carrier matches. arraykit, scikit, and plotkit ship that wheel today —
+  `mambalibs-arraykit`, `mambalibs-scikit`, `mambalibs-plotkit`, one
+  `cp312-abi3` wheel each, installed through `mamba add` and `mamba sync`
+  and imported as `mambalibs.array`, `mambalibs.sci`, `mambalibs.plot`
+  ([STATUS](STATUS.md) `mambalibs-cpython-wheels`).
 - Sources:
-  - [`apps/mamba`](./) owns the `mambalibs/` workspace members and the
-    `mambalibs` end-to-end target that drives them.
+  - [`apps/mamba`](./) owns the `mambalibs/` workspace members, the
+    `mambalibs` end-to-end target that drives them, and the three
+    `mambalibs_*_wheel` targets that build, install, and import a wheel.
 - Gate: `cargo test -p mamba --test mambalibs`
 - Gate: `cargo test -p mambalibs-http --test client_http2_test`
+- Gate: `cargo test -p mamba --test mambalibs_array_wheel`
+- Gate: `cargo test -p mamba --test mambalibs_sci_wheel`
+- Gate: `cargo test -p mamba --test mambalibs_plot_wheel`
 
 ### uv-style package manager
 

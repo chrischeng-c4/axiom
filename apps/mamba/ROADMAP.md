@@ -10,32 +10,6 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
 
 ## Near-term outcomes
 
-### mambalibs CPython wheels
-
-- ID: `mambalibs-cpython-wheels`
-- Outcome: A Python developer on CPython 3.12 installs a mambalibs kit into a
-  project `.venv` as a standard wheel, `mambalibs-<kit>`, built with PyO3 and
-  maturin from the kit's existing core crate, published through
-  `mamba publish`, served from a `mamba index` frozen index, and installed by
-  `mamba add mambalibs-<kit>` followed by `mamba sync`; `import mambalibs.<name>`
-  then works under the `.venv` interpreter and the kit's Python cases pass
-  under pytest there. The data-science kits go first — arraykit, scikit,
-  plotkit — and every other kit follows the same route. The wheel's Python API
-  is the contract the later `MambaModule` carrier must match.
-- Boundary: The PyO3 binding crate, the maturin manifest, and the wheel build,
-  publish, index, install, import, and pytest path for each promised kit,
-  starting with the data-science kits. The `MambaModule` carrier for the same
-  kit, a CPython C-API emulation layer, and sdist builds on the user's machine
-  stay outside it. It starts after the shipped uv workflow parity
-  ([STATUS](STATUS.md) `environment-and-run`) and does not change the
-  package manager's contract.
-- Completion evidence: A `[[test]]` target under `apps/mamba/e2e/` builds a
-  kit wheel with maturin, serves it through `mamba index`, installs it with
-  `mamba add` and `mamba sync` into a fresh `.venv`, and runs the kit's pytest
-  cases on that interpreter, exiting zero for each promised kit; and
-  `cargo test -p mamba --test mambalibs` stays green.
-- Tracking: [Milestone #129](https://github.com/chrischeng-c4/axiom/milestone/129).
-
 ### CPython runtime replacement
 
 - ID: `cpython-runtime-replacement`
@@ -44,11 +18,11 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
   in the tier order T1 to T7 recorded in the README section
   [Runtime replacement order](README.md#runtime-replacement-order).
 - Boundary: The compiler and runtime work the tiers describe, plus the
-  `MambaModule` carrier for each kit that already ships as a wheel under
-  `mambalibs-cpython-wheels`, matching that wheel's Python API. It starts
-  after the shipped uv workflow parity ([STATUS](STATUS.md)
-  `environment-and-run`) and `mambalibs-cpython-wheels` and does not change
-  the package manager's contract.
+  `MambaModule` carrier for each kit that already ships as a wheel
+  ([STATUS](STATUS.md) `mambalibs-cpython-wheels`), matching that wheel's
+  Python API. It starts after the shipped uv workflow parity
+  ([STATUS](STATUS.md) `environment-and-run`) and the shipped mambalibs
+  CPython wheels, and does not change the package manager's contract.
 - Completion evidence: `cargo test -p mamba --test conformance_contract` and
   `cargo test -p mamba --release --test perf_pin` exit zero over the tier's
   fixture set, with the tier's exit gate written and named in the README
