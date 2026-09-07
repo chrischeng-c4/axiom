@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,44 @@ def leg_root(repo: Path, project: str, leg: str) -> Path:
 def is_test_file(rel: str) -> bool:
     """Whether `rel` is a colocated test file rather than implementation."""
     return any(rel == name or rel.endswith("/" + name) for name in TEST_FILES)
+
+
+def impl_extra_roots(repo: Path, project: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The `impl` write-root declaration from `apps/<project>/Cargo.toml`.
+
+    A project that carries a sibling crate outside `src/` -- a Rust crate
+    embedded in an otherwise different-language project, say -- names it
+    itself rather than `leg.py` growing a second root nobody outside that
+    project asked for. The declaration lives under `[package.metadata.aw]`
+    in the project's own manifest: `impl-roots`, a list of project-relative
+    directory prefixes matched as `apps/<project>/<prefix>/`, and
+    `impl-repo-paths`, a list of exact repo-relative files (for a root
+    manifest such as `Cargo.toml`/`Cargo.lock` that sits above every
+    project's own directory).
+
+    Read from **HEAD**, never the working tree: `c0_scope` measures the dirty
+    set against HEAD, so a phase widening its own scope from an uncommitted
+    edit to this table would be grading its own homework. An absent manifest,
+    an absent table, or a manifest that fails to parse all resolve to `((),
+    ())` -- no widening -- so a project that never declares this keeps
+    exactly today's behavior.
+    """
+    proc = subprocess.run(
+        [*GIT, "show", f"HEAD:apps/{project}/Cargo.toml"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return (), ()
+    try:
+        data = tomllib.loads(proc.stdout)
+    except tomllib.TOMLDecodeError:
+        return (), ()
+    aw_meta = data.get("package", {}).get("metadata", {}).get("aw", {})
+    if not isinstance(aw_meta, dict):
+        return (), ()
+    roots = tuple(str(r) for r in aw_meta.get("impl-roots", []) or ())
+    paths = tuple(str(p) for p in aw_meta.get("impl-repo-paths", []) or ())
+    return roots, paths
 
 
 def phase_command(phase: str, project: str, verb: str, wi: int | str) -> str:
@@ -697,12 +736,25 @@ def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> 
     # by nothing that merely starts with one of their names.
     allowed = {f"{root.parent.relative_to(repo)}/{name}"
                for name in LEG_EXTRA_PATHS.get(leg, ())}
+    # See `impl_extra_roots`: a project's own `Cargo.toml` (as of HEAD) may
+    # declare additional prefixes and exact files the `impl` phase may write,
+    # for a sibling crate outside `src/`. Empty for every project that never
+    # declares this, and for every leg but `impl`, so this changes nothing by
+    # default.
+    extra_prefixes: set[str] = set()
+    if leg == "impl":
+        project = root.parent.name
+        impl_roots, impl_repo_paths = impl_extra_roots(repo, project)
+        extra_prefixes = {f"apps/{project}/{name}/" for name in impl_roots}
+        allowed |= set(impl_repo_paths)
     if not dirty:
         chk.add("FAIL", "C0 scope",
                 f"nothing differs from HEAD; there is no {leg.upper()} change to verify")
         return
     outside = [p for p in dirty
-               if not p.startswith(prefix) and p not in allowed]
+               if not p.startswith(prefix)
+               and not any(p.startswith(ep) for ep in extra_prefixes)
+               and p not in allowed]
     if outside:
         detail = f"changed outside {prefix}:\n" + "\n".join(f"  {p}" for p in outside)
         if allowed:
