@@ -23,7 +23,7 @@ pub fn cmd_build(sub: &ArgMatches) -> Result<()> {
         (Some(f), _) => f.clone(),
         (None, Some(ep)) => ep,
         (None, None) => anyhow::bail!(
-            "no source file specified and no mamba.toml found; pass a file or use --config"
+            "no source file specified and no pyproject.toml [tool.mamba] or mamba.toml found; pass a file or use --config"
         ),
     };
 

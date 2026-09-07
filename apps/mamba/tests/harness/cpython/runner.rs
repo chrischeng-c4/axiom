@@ -285,7 +285,7 @@ fn spawn_mamba(path: &Path) -> Result<Output, String> {
     let sandbox = temp_sandbox(path)?;
     let mut command = Command::new(mamba_bin());
     command
-        .arg("run")
+        .arg("run").arg("--compile")
         .arg(&fixture)
         .current_dir(sandbox.path())
         .env("TMPDIR", sandbox.path())

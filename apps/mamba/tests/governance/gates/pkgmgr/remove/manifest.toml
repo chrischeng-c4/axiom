@@ -51,7 +51,7 @@ expected_exit_code = 0
 # Acceptance: "Removed dependency no longer appears in project
 # metadata."
 [metadata_assertion]
-file = "mamba.toml"
+file = "pyproject.toml"
 must_not_contain_dependency = "frozen_demo_pkg"
 # Other deps (if any) must survive — `must_preserve_other_deps`
 # names the gate behavior, not a specific list (the setup adds one

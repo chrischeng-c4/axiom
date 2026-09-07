@@ -27,54 +27,18 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn mamba")
 }
 
-fn normalize_pep503(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut prev_sep = false;
-    for c in name.chars() {
-        let is_sep = c == '-' || c == '_' || c == '.';
-        if is_sep {
-            if !prev_sep && !out.is_empty() {
-                out.push('-');
-            }
-            prev_sep = true;
-        } else {
-            out.push(c.to_ascii_lowercase());
-            prev_sep = false;
-        }
-    }
-    if out.ends_with('-') {
-        out.pop();
-    }
-    out
-}
-
-fn stake_pkg(index: &Path, name: &str, version: &str, requires: &[&str]) {
-    let pkg_dir = index.join(normalize_pep503(name));
-    let ver_dir = pkg_dir.join(version);
-    std::fs::create_dir_all(&ver_dir).unwrap();
-    let meta = if requires.is_empty() {
-        "requires = []\n".to_string()
-    } else {
-        let arr = requires
-            .iter()
-            .map(|r| format!("\"{r}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("requires = [{arr}]\n")
-    };
-    std::fs::write(ver_dir.join("metadata.toml"), meta).unwrap();
-}
+use crate::fixtures::fixture_pkg;
 
 fn build_index() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     // frozen_demo_pkg 0.1.0 -> frozen_demo_transitive 0.2.0
-    stake_pkg(
+    fixture_pkg(
         dir.path(),
         "frozen_demo_pkg",
         "0.1.0",
         &["frozen_demo_transitive==0.2.0"],
     );
-    stake_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
+    fixture_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
     dir
 }
 
@@ -148,9 +112,13 @@ fn lock_does_not_create_venv_or_site_packages() {
     );
 
     assert!(!proj.join(".venv").exists(), "lock must not create .venv");
+    let probe = run(
+        &proj,
+        &["run", "--", "python3", "-c", "import frozen_demo_pkg"],
+    );
     assert!(
-        !proj.join("site-packages").exists(),
-        "lock must not create site-packages"
+        !probe.status.success(),
+        "lock alone must not materialize an importable environment"
     );
 }
 
@@ -163,12 +131,12 @@ fn lock_unresolvable_dep_fails_cleanly() {
     assert!(run(&proj, &["init"]).status.success());
     // Use --index that has frozen_demo_pkg but NOT package_that_does_not_exist.
     // We bypass the `add --index` validation by hand-editing manifest.
-    let manifest = std::fs::read_to_string(proj.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(proj.join("pyproject.toml")).unwrap();
     let edited = manifest.replace(
         "dependencies = []",
         "dependencies = [\n    \"package_that_does_not_exist==0.0.1\",\n]",
     );
-    std::fs::write(proj.join("mamba.toml"), edited).unwrap();
+    std::fs::write(proj.join("pyproject.toml"), edited).unwrap();
 
     let out = run(&proj, &["lock", "--index", index.path().to_str().unwrap()]);
     assert!(!out.status.success(), "must exit non-zero");
@@ -194,7 +162,7 @@ fn lock_no_source_requires_explicit_registry() {
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
 
-    let manifest_path = proj.join("mamba.toml");
+    let manifest_path = proj.join("pyproject.toml");
     let manifest = std::fs::read_to_string(&manifest_path).unwrap();
     let edited = manifest.replace(
         "dependencies = []",
@@ -217,7 +185,7 @@ fn lock_no_source_requires_explicit_registry() {
     assert_eq!(
         edited,
         std::fs::read_to_string(&manifest_path).unwrap(),
-        "failed no-source lock must not mutate mamba.toml"
+        "failed no-source lock must not mutate pyproject.toml"
     );
     assert!(
         !proj.join("mamba.lock").exists(),
@@ -350,7 +318,7 @@ fn lock_check_fails_without_mutating_stale_lockfile() {
 #[test]
 fn lock_against_pypi_mock_records_sha256() {
     // wiremock stakes a fake PyPI JSON endpoint; `mamba lock` must:
-    //   1. Hit /pypi/<pep503-name>/json for each dep in mamba.toml.
+    //   1. Hit /pypi/<pep503-name>/json for each dep in pyproject.toml.
     //   2. Resolve through the real PubGrub-backed Resolver.
     //   3. Carry the wheel's sha256 into mamba.lock (no more empty placeholder).
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -392,12 +360,12 @@ fn lock_against_pypi_mock_records_sha256() {
 
     // Edit manifest to declare the dep without running `add` (which would
     // also touch the index). This keeps the test scoped to `mamba lock`.
-    let manifest = std::fs::read_to_string(proj.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(proj.join("pyproject.toml")).unwrap();
     let edited = manifest.replace(
         "dependencies = []",
         "dependencies = [\n    \"lock_mock_pkg==2.0.0\",\n]",
     );
-    std::fs::write(proj.join("mamba.toml"), edited).unwrap();
+    std::fs::write(proj.join("pyproject.toml"), edited).unwrap();
 
     let out = Command::new(mamba_bin())
         .args(["lock", "--index-url", &server_url])
@@ -510,12 +478,12 @@ fn lock_resolves_transitive_requires_dist_against_pypi_mock() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    let manifest = std::fs::read_to_string(proj.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(proj.join("pyproject.toml")).unwrap();
     let edited = manifest.replace(
         "dependencies = []",
         "dependencies = [\n    \"trans_root==1.0.0\",\n]",
     );
-    std::fs::write(proj.join("mamba.toml"), edited).unwrap();
+    std::fs::write(proj.join("pyproject.toml"), edited).unwrap();
 
     let out = Command::new(mamba_bin())
         .args(["lock", "--index-url", &server_url])
@@ -644,12 +612,12 @@ fn lock_index_url_uses_stored_auth_credentials_for_resolver() {
         "auth login must succeed: {}",
         String::from_utf8_lossy(&login.stderr)
     );
-    let manifest = std::fs::read_to_string(proj.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(proj.join("pyproject.toml")).unwrap();
     let edited = manifest.replace(
         "dependencies = []",
         "dependencies = [\n    \"auth_root==1.0.0\",\n]",
     );
-    std::fs::write(proj.join("mamba.toml"), edited).unwrap();
+    std::fs::write(proj.join("pyproject.toml"), edited).unwrap();
 
     let out = Command::new(mamba_bin())
         .args(["lock", "--index-url", &server_url])

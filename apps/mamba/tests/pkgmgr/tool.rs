@@ -15,23 +15,12 @@ fn run(tools_dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn mamba")
 }
 
-fn normalize_pep503(name: &str) -> String {
-    name.chars()
-        .map(|c| if matches!(c, '_' | '.') { '-' } else { c })
-        .collect::<String>()
-        .to_ascii_lowercase()
-}
-
-fn stake_pkg(index: &Path, name: &str, version: &str) {
-    let ver_dir = index.join(normalize_pep503(name)).join(version);
-    std::fs::create_dir_all(&ver_dir).unwrap();
-    std::fs::write(ver_dir.join("metadata.toml"), "requires = []\n").unwrap();
-}
+use crate::fixtures::fixture_pkg;
 
 fn build_index() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
-    stake_pkg(dir.path(), "frozen_demo_pkg", "0.1.0");
-    stake_pkg(dir.path(), "frozen_demo_pkg", "0.2.0");
+    fixture_pkg(dir.path(), "frozen_demo_pkg", "0.1.0", &[]);
+    fixture_pkg(dir.path(), "frozen_demo_pkg", "0.2.0", &[]);
     dir
 }
 

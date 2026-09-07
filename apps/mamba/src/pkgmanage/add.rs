@@ -3,10 +3,10 @@
 // Acceptance (tests/governance/gates/pkgmgr/add/manifest.toml, schema gate
 // pkgmgr_add_fixture_2681.rs):
 //
-//   - Records the requested dep in mamba.toml deterministically.
+//   - Records the requested dep in pyproject.toml deterministically.
 //   - Records a pinned entry in mamba.lock deterministically.
 //   - Replaying the same `add` against the same setup yields byte-identical
-//     mamba.toml and mamba.lock.
+//     pyproject.toml and mamba.lock.
 //   - Missing package against a configured frozen index fails exit 1 with
 //     "not found" in stderr, and does NOT mutate the manifest or lockfile.
 //   - Offline: no network, no $HOME / global cache reads.
@@ -22,56 +22,97 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const MANIFEST_FILE: &str = "mamba.toml";
+use crate::pkgmanage::manifest::pyproject;
+use crate::pkgmanage::pkgmgr::resolver::specifier::{all_match, Op, VersionSpecifier};
+use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Requirement};
+
+use crate::pkgmanage::manifest::pyproject::DepTarget;
+pub(crate) use crate::pkgmanage::manifest::pyproject::{ManifestSource, ManifestState};
+
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
 
 pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
-    let spec_raw = sub
-        .get_one::<String>("spec")
-        .context("missing required argument <spec>")?;
     let project_dir = std::env::current_dir().context("read current directory")?;
-    let manifest_path = project_dir.join(MANIFEST_FILE);
-    if !manifest_path.exists() {
-        bail!(
-            "no {MANIFEST_FILE} in {} — run `mamba init` first",
-            project_dir.display()
-        );
+    let manifest_path = pyproject::locate(&project_dir)?;
+    let target = DepTarget::from_flags(
+        sub.get_flag("dev"),
+        sub.get_one::<String>("group").map(String::as_str),
+        sub.get_one::<String>("optional").map(String::as_str),
+    );
+
+    let mut specs: Vec<String> = sub
+        .get_many::<String>("spec")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    for file in sub.get_many::<String>("requirements").into_iter().flatten() {
+        let path = project_dir.join(file);
+        specs.extend(read_requirements_file(&path)?);
+    }
+    if specs.is_empty() {
+        bail!("nothing to add: pass a requirement, a wheel path, or `-r FILE`");
     }
 
-    let resolved = if let Some(provider) = sub.get_one::<String>("provider") {
-        resolve_with_provider(spec_raw, provider)?
-    } else if looks_like_wheel_path(spec_raw) {
-        resolve_with_local_wheel(spec_raw, &project_dir)?
-    } else {
-        let spec = DepSpec::parse(spec_raw)?;
-        let index_dir = resolve_index_dir(sub);
-        let offline = sub.get_flag("offline");
-        let index_url = resolve_index_url(sub);
-        resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?
-    };
+    let mut index_used: Option<PathBuf> = None;
+    let mut registry_used: Option<String> = None;
+    let mut resolved_all: Vec<ResolvedDep> = Vec::with_capacity(specs.len());
+    for spec_raw in &specs {
+        let resolved = if let Some(provider) = sub.get_one::<String>("provider") {
+            resolve_with_provider(spec_raw, provider)?
+        } else if looks_like_wheel_path(spec_raw) {
+            resolve_with_local_wheel(spec_raw, &project_dir)?
+        } else {
+            let spec = DepSpec::parse(spec_raw)?;
+            let index_dir = resolve_index_dir(sub);
+            let offline = sub.get_flag("offline");
+            let index_url = resolve_index_url(sub);
+            if let Some(idx) = &index_dir {
+                index_used = Some(idx.clone());
+            } else if !offline {
+                registry_used = index_url.clone();
+            }
+            resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?
+        };
+        resolved_all.push(resolved);
+    }
 
     let manifest_src = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let mut state = ManifestState::parse(&manifest_src)?;
-    state.upsert_dependency(&resolved.dep_string());
-    match &resolved.source {
-        SourceMeta::MambaProvider { provider, .. } => {
-            state.upsert_source(
-                &resolved.name,
-                ManifestSource::MambaProvider {
-                    provider: provider.clone(),
-                },
-            );
-        }
-        SourceMeta::Default | SourceMeta::DirectFile { .. } => {
-            state.remove_source(&resolved.name);
+    for resolved in &resolved_all {
+        state.upsert_dependency_in(&resolved.dep_string(), &target);
+        match &resolved.source {
+            SourceMeta::MambaProvider { provider, .. } => {
+                state.upsert_source(
+                    &resolved.name,
+                    ManifestSource::MambaProvider {
+                        provider: provider.clone(),
+                    },
+                );
+            }
+            SourceMeta::Default | SourceMeta::DirectFile { .. } | SourceMeta::Index { .. } => {
+                state.remove_source(&resolved.name);
+            }
         }
     }
-    let new_manifest = state.render();
+    let new_manifest = state.render_into(&manifest_src)?;
+    // The pins the existing lock carries stay put; only the package being
+    // added may move, the way `uv add` leaves the rest of `uv.lock` alone.
+    let prefs = crate::pkgmanage::lock::lock_preferences(&project_dir, false, &[]);
 
-    let new_lockfile = render_lockfile_for_manifest_with_resolved(&state, &resolved)?;
+    // A local-index add and a registry (`--index-url`) add both render the
+    // same transitive closure `mamba lock` would, through the same resolver
+    // and writer, so `add`/`lock` agree byte for byte. Every other source
+    // (offline pin, direct file, `--provider`, no source configured) keeps
+    // the single-package renderer.
+    let new_lockfile = if let Some(idx) = &index_used {
+        crate::pkgmanage::lock::resolve_and_render_via_index(&state, idx, &prefs)?
+    } else if let Some(url) = &registry_used {
+        crate::pkgmanage::lock::resolve_and_render_via_registry(&state, url, &prefs)?
+    } else {
+        render_lockfile_for_manifest_with_resolved(&state, &resolved_all)?
+    };
 
     let lock_path = project_dir.join(LOCKFILE_FILE);
     atomic_write(&manifest_path, new_manifest.as_bytes())?;
@@ -80,10 +121,79 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+/// The requirements `mamba add -r FILE` reads: pip's requirements format
+/// as far as `uv add -r` honours it for a project. Blank lines and `#`
+/// comments are dropped, a trailing `\` continues the line, and a nested
+/// `-r` / `--requirement` is read relative to the file naming it. Every
+/// other `-`-prefixed option (`-e`, `-c`, `--index-url`, …) is refused by
+/// name rather than silently skipped, so a file that needs it is never
+/// half-added.
+pub(crate) fn read_requirements_file(path: &Path) -> Result<Vec<String>> {
+    let src = fs::read_to_string(path)
+        .with_context(|| format!("read requirements file {}", path.display()))?;
+    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut out = Vec::new();
+    let mut pending = String::new();
+    for raw_line in src.lines() {
+        let line = strip_requirements_comment(raw_line);
+        if let Some(cont) = line.trim_end().strip_suffix('\\') {
+            pending.push_str(cont);
+            continue;
+        }
+        pending.push_str(line);
+        let logical = std::mem::take(&mut pending);
+        let logical = logical.trim();
+        if logical.is_empty() {
+            continue;
+        }
+        if let Some(nested) = logical
+            .strip_prefix("-r ")
+            .or_else(|| logical.strip_prefix("--requirement "))
+            .or_else(|| logical.strip_prefix("--requirement="))
+        {
+            out.extend(read_requirements_file(&base.join(nested.trim()))?);
+            continue;
+        }
+        if logical.starts_with('-') {
+            let option = logical.split_whitespace().next().unwrap_or(logical);
+            bail!(
+                "unsupported requirements option `{option}` in {}: `mamba add -r` accepts \
+                 requirement lines and nested `-r` only",
+                path.display()
+            );
+        }
+        out.push(logical.to_string());
+    }
+    Ok(out)
+}
+
+/// Drop a `#` comment: one that starts the line, or one preceded by
+/// whitespace, the way pip does — `foo==1.0 # pinned` keeps `foo==1.0`,
+/// while a `#` inside a URL fragment with no space before it survives.
+fn strip_requirements_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'#' && (i == 0 || bytes[i - 1].is_ascii_whitespace()) {
+            return &line[..i];
+        }
+    }
+    line
+}
+
+/// A parsed `mamba add` argument. `raw` is the trimmed text exactly as the
+/// user typed it; `name` is the leading name run, case preserved, so every
+/// existing lookup path (frozen index, `--offline`, PyPI fetch) keeps
+/// reading the spelling it always did. `version` is `Some` only for the
+/// narrower `NAME==VERSION` grammar the frozen index and `--offline` paths
+/// still require; `specifiers` is the full PEP 508 specifier set parsed from
+/// `raw` (empty for a bare name), which the PyPI path uses to pick a release
+/// for anything `version` does not cover.
 #[derive(Debug, Clone)]
 struct DepSpec {
+    raw: String,
     name: String,
     version: Option<String>,
+    specifiers: Vec<VersionSpecifier>,
 }
 
 impl DepSpec {
@@ -92,22 +202,54 @@ impl DepSpec {
         if raw.is_empty() {
             bail!("empty dependency spec");
         }
-        if let Some((name, version)) = raw.split_once("==") {
-            let name = name.trim();
-            let version = version.trim();
-            if name.is_empty() || version.is_empty() {
-                bail!("malformed spec `{raw}` (expected NAME==VERSION)");
-            }
-            return Ok(DepSpec {
-                name: name.to_string(),
-                version: Some(version.to_string()),
-            });
+        let req =
+            parse_requirement(raw).map_err(|e| anyhow::anyhow!("malformed spec `{raw}`: {e}"))?;
+        let name = raw_name(raw);
+        if name.is_empty() {
+            bail!("malformed spec `{raw}` (expected NAME or NAME==VERSION)");
         }
+        let version = exact_pin_version(&req);
         Ok(DepSpec {
-            name: raw.to_string(),
-            version: None,
+            raw: raw.to_string(),
+            name,
+            version,
+            specifiers: req.specifiers,
         })
     }
+
+    /// True for anything that is neither a bare name nor an exact
+    /// `NAME==VERSION` pin -- a range, a wildcard, a compatible release, or
+    /// a spec carrying extras/a marker. The frozen `--index DIR` and
+    /// `--offline` paths refuse these; the PyPI path resolves them against
+    /// `specifiers`.
+    fn is_range(&self) -> bool {
+        self.version.is_none() && !self.specifiers.is_empty()
+    }
+}
+
+/// The name text as the user spelled it: the leading run before any
+/// specifier operator, extras bracket, whitespace, or marker separator.
+/// Case is kept -- identity comparison is `dep_name` + `normalize_name`'s
+/// job, not this parser's.
+fn raw_name(raw: &str) -> String {
+    let end = raw
+        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '=' | '!' | '~' | '[' | ';'))
+        .unwrap_or(raw.len());
+    raw[..end].trim().to_string()
+}
+
+/// `Some(version)` only when `req` is exactly `NAME==VERSION`: one
+/// specifier, `==`, no wildcard, no extras, no marker. Every other shape
+/// (bare name, range, wildcard, compatible release, extras, marker) is
+/// `None`, so the caller falls through to the specifier-set path.
+fn exact_pin_version(req: &Requirement) -> Option<String> {
+    if req.extras.is_empty() && req.marker.is_none() && req.specifiers.len() == 1 {
+        let s = &req.specifiers[0];
+        if s.op == Op::Eq && !s.version.ends_with(".*") {
+            return Some(s.version.clone());
+        }
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -120,11 +262,19 @@ struct ResolvedDep {
     /// local-frozen / --offline paths where we don't know the URL.
     url: Option<String>,
     source: SourceMeta,
+    /// The exact text to write to `pyproject.toml`'s dependency line. `None`
+    /// means the default `name==version` pin (bare name, exact pin, local
+    /// wheel, `--provider`, frozen index); `Some(raw)` is a user-supplied
+    /// range/wildcard/compatible-release requirement, kept verbatim so a
+    /// range is never narrowed into a pin behind the user's back.
+    manifest_line: Option<String>,
 }
 
 impl ResolvedDep {
     fn dep_string(&self) -> String {
-        format!("{}=={}", self.name, self.version)
+        self.manifest_line
+            .clone()
+            .unwrap_or_else(|| format!("{}=={}", self.name, self.version))
     }
 }
 
@@ -139,6 +289,13 @@ pub(crate) enum SourceMeta {
         provides: Vec<String>,
         compatibility: String,
         maturity: String,
+    },
+    /// Resolved against a frozen local `mamba index build` output. Carries
+    /// the absolute path to the staged wheel; `lockfile/mod.rs` maps
+    /// `source_kind = "index"` to no source ref, exactly as `Default` does
+    /// today (frozen decision).
+    Index {
+        path: String,
     },
 }
 
@@ -160,12 +317,33 @@ fn resolve_dep(
     offline: bool,
     index_url: Option<&str>,
 ) -> Result<ResolvedDep> {
-    // Local frozen index path — always wins when configured.
+    // Local frozen index path — always wins when configured. Its grammar is
+    // narrower than the registry path's: a range, a wildcard, a compatible
+    // release, extras or a marker are refused before the filesystem is even
+    // touched, because a frozen index carries no release list a range could
+    // be evaluated against.
     if let Some(idx) = index_dir {
+        if spec.is_range() {
+            bail!(
+                "`mamba add {}` against a frozen --index DIR only accepts \
+                 NAME or NAME==VERSION; pass --index-url to resolve a \
+                 version range, wildcard, or compatible-release spec \
+                 against a registry",
+                spec.raw
+            );
+        }
         return resolve_with_local_index(spec, idx);
     }
-    // Offline + pinned: trust the user.
+    // Offline + pinned: trust the user. Same narrower grammar as the frozen
+    // index: there is no index to evaluate a range against.
     if offline {
+        if spec.is_range() {
+            bail!(
+                "`mamba add {}` with --offline only accepts NAME==VERSION; \
+                 pass an exact pin or drop --offline",
+                spec.raw
+            );
+        }
         return match spec.version.as_deref() {
             Some(v) => Ok(ResolvedDep {
                 name: spec.name.clone(),
@@ -173,6 +351,7 @@ fn resolve_dep(
                 sha256: None,
                 url: None,
                 source: SourceMeta::Default,
+                manifest_line: None,
             }),
             None => bail!(
                 "version required for `mamba add {}` in --offline mode \
@@ -215,6 +394,7 @@ fn resolve_with_provider(raw: &str, provider: &str) -> Result<ResolvedDep> {
             compatibility: pkg.compatibility,
             maturity: pkg.maturity,
         },
+        manifest_line: None,
     })
 }
 
@@ -243,27 +423,45 @@ fn resolve_with_local_index(spec: &DepSpec, idx: &Path) -> Result<ResolvedDep> {
         }
         None => pick_latest_version(&pkg_dir)?,
     };
+    // Read the digest and staged path through the same reader `mamba lock`
+    // uses, so a single-package `add` and the transitive-closure render both
+    // agree on what the frozen index says about this exact pin.
+    let requirement = format!("{}=={}", spec.name, version);
+    let (pin, meta) = crate::pkgmanage::lock::load_metadata(&requirement, idx)?;
+    let source = if meta.path.is_empty() {
+        SourceMeta::Default
+    } else {
+        SourceMeta::Index {
+            path: meta.path.clone(),
+        }
+    };
     Ok(ResolvedDep {
-        name: spec.name.clone(),
-        version,
-        sha256: None,
+        name: pin.name,
+        version: pin.version,
+        sha256: if meta.sha256.is_empty() {
+            None
+        } else {
+            Some(meta.sha256)
+        },
         url: None,
-        source: SourceMeta::Default,
+        source,
+        manifest_line: None,
     })
 }
 
 fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
-    use crate::pkgmanage::pkgmgr::{IndexClient, IndexError};
+    use crate::pkgmanage::pkgmgr::http::index_client_for_url;
+    use crate::pkgmanage::pkgmgr::IndexError;
 
     let cache_dir = pypi_cache_dir();
-    let client = IndexClient {
-        index_url: index_url.trim_end_matches('/').to_string(),
-        cache_dir: cache_dir.to_string_lossy().into_owned(),
-        max_concurrent: 8,
-        timeout_secs: 30,
-        retry_max: 3,
-        auth_header: crate::pkgmanage::auth::authorization_for_url(index_url)?,
-    };
+    let client = index_client_for_url(
+        index_url,
+        cache_dir.to_string_lossy().into_owned(),
+        8,
+        30,
+        3,
+        crate::pkgmanage::auth::authorization_for_url(index_url)?,
+    );
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -291,8 +489,14 @@ fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
             }
             v.to_string()
         }
-        None => pick_pypi_latest(&meta.versions)
+        None if spec.specifiers.is_empty() => pick_pypi_latest(&meta.versions)
             .with_context(|| format!("no releases for `{}` on {}", spec.name, index_url))?,
+        None => pick_pypi_matching(&meta.versions, &spec.specifiers).with_context(|| {
+            format!(
+                "package `{}` has no release satisfying `{}` on {}",
+                spec.name, spec.raw, index_url
+            )
+        })?,
     };
 
     let pick = pick_best_wheel(&meta, &version);
@@ -307,6 +511,11 @@ fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
         sha256,
         url,
         source: SourceMeta::Default,
+        manifest_line: if spec.is_range() {
+            Some(spec.raw.clone())
+        } else {
+            None
+        },
     })
 }
 
@@ -348,6 +557,7 @@ fn resolve_with_local_wheel(raw: &str, project_dir: &Path) -> Result<ResolvedDep
         source: SourceMeta::DirectFile {
             path: lockfile_path(raw_path, &abs_path, project_dir)?,
         },
+        manifest_line: None,
     })
 }
 
@@ -456,6 +666,43 @@ fn pick_pypi_latest(versions: &[String]) -> Option<String> {
     stable.last().map(|s| (*s).clone())
 }
 
+/// Pick the newest release in `versions` that satisfies every specifier in
+/// `specs`, applying `pick_pypi_latest`'s same prerelease rule: a stable
+/// release wins over any matching prerelease, and a prerelease is returned
+/// only when nothing stable matches. `None` means no release satisfies the
+/// set at all -- the caller turns that into a refusal naming the package and
+/// the bound, never a panic.
+fn pick_pypi_matching(versions: &[String], specs: &[VersionSpecifier]) -> Option<String> {
+    let matching: Vec<&String> = versions.iter().filter(|v| all_match(specs, v)).collect();
+    if matching.is_empty() {
+        return None;
+    }
+    let mut stable: Vec<&String> = matching
+        .iter()
+        .copied()
+        .filter(|v| !is_prerelease(v))
+        .collect();
+    if stable.is_empty() {
+        stable = matching;
+    }
+    stable.sort_by(|a, b| pep440_full_cmp(a, b));
+    stable.last().map(|s| (*s).clone())
+}
+
+/// Full PEP 440 ordering via `pkgmgr::pep440`, falling back to the coarse
+/// numeric comparator only when a candidate does not parse under it -- which
+/// should not happen for anything `all_match` already accepted, since
+/// `VersionSpecifier::matches` itself requires `pep440::parse` to succeed.
+fn pep440_full_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    match (
+        crate::pkgmanage::pkgmgr::pep440::parse(a),
+        crate::pkgmanage::pkgmgr::pep440::parse(b),
+    ) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        _ => pep440_lite_cmp(a, b),
+    }
+}
+
 fn is_prerelease(v: &str) -> bool {
     let lower = v.to_lowercase();
     ["a", "b", "rc", "dev", "alpha", "beta", "pre", "post"]
@@ -505,7 +752,7 @@ fn pypi_cache_dir() -> PathBuf {
 }
 
 /// PEP 503 normalize: lowercase + collapse `-`, `_`, `.` runs to a single `-`.
-fn normalize_name(name: &str) -> String {
+pub(crate) fn normalize_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut prev_was_sep = false;
     for c in name.chars() {
@@ -544,170 +791,6 @@ fn pick_latest_version(pkg_dir: &Path) -> Result<String> {
     Ok(versions.pop().unwrap())
 }
 
-pub(crate) struct ManifestState {
-    pub(crate) project_name: String,
-    pub(crate) project_version: String,
-    pub(crate) python_requires: String,
-    pub(crate) dependencies: Vec<String>,
-    pub(crate) dev_dependencies: Vec<String>,
-    pub(crate) source_overrides: BTreeMap<String, ManifestSource>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ManifestSource {
-    MambaProvider { provider: String },
-}
-
-impl ManifestState {
-    pub(crate) fn parse(src: &str) -> Result<Self> {
-        let doc: toml::Value = src.parse().context("parse mamba.toml")?;
-        let project = doc
-            .get("project")
-            .and_then(|v| v.as_table())
-            .context("mamba.toml missing [project] table")?;
-        let project_name = project
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("mamba-project")
-            .to_string();
-        let project_version = project
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("0.1.0")
-            .to_string();
-        let python_requires = project
-            .get("python-requires")
-            .and_then(|v| v.as_str())
-            .unwrap_or(">=3.12")
-            .to_string();
-        let dependencies = extract_string_list(project, "dependencies");
-        let dev_dependencies = extract_string_list(project, "dev-dependencies");
-        let source_overrides = extract_source_overrides(&doc)?;
-
-        Ok(ManifestState {
-            project_name,
-            project_version,
-            python_requires,
-            dependencies,
-            dev_dependencies,
-            source_overrides,
-        })
-    }
-
-    pub(crate) fn upsert_dependency(&mut self, spec: &str) {
-        let new_name = dep_name(spec);
-        self.dependencies.retain(|d| dep_name(d) != new_name);
-        self.dependencies.push(spec.to_string());
-        self.dependencies.sort();
-        self.dependencies.dedup();
-    }
-
-    pub(crate) fn remove_dependency(&mut self, name: &str) {
-        let name = name.trim();
-        self.dependencies.retain(|d| dep_name(d) != name);
-        self.dev_dependencies.retain(|d| dep_name(d) != name);
-        self.source_overrides.remove(name);
-    }
-
-    pub(crate) fn upsert_source(&mut self, name: &str, source: ManifestSource) {
-        self.source_overrides.insert(name.to_string(), source);
-    }
-
-    pub(crate) fn remove_source(&mut self, name: &str) {
-        self.source_overrides.remove(name);
-    }
-
-    pub(crate) fn render(&self) -> String {
-        let mut out = String::with_capacity(256);
-        out.push_str("[project]\n");
-        out.push_str(&format!("name = \"{}\"\n", self.project_name));
-        out.push_str(&format!("version = \"{}\"\n", self.project_version));
-        out.push_str(&format!("python-requires = \"{}\"\n", self.python_requires));
-        out.push_str(&format!(
-            "dependencies = {}\n",
-            render_string_list(&self.dependencies)
-        ));
-        out.push_str(&format!(
-            "dev-dependencies = {}\n",
-            render_string_list(&self.dev_dependencies)
-        ));
-        if !self.source_overrides.is_empty() {
-            out.push('\n');
-            out.push_str("[tool.mamba.sources]\n");
-            for (name, source) in &self.source_overrides {
-                match source {
-                    ManifestSource::MambaProvider { provider } => {
-                        out.push_str(&format!(
-                            "{} = {{ provider = \"{}\" }}\n",
-                            render_toml_key(name),
-                            escape_toml_string(provider)
-                        ));
-                    }
-                }
-            }
-        }
-        out
-    }
-}
-
-fn extract_source_overrides(doc: &toml::Value) -> Result<BTreeMap<String, ManifestSource>> {
-    let mut out = BTreeMap::new();
-    let Some(sources) = doc
-        .get("tool")
-        .and_then(|t| t.get("mamba"))
-        .and_then(|m| m.get("sources"))
-    else {
-        return Ok(out);
-    };
-    let sources = sources
-        .as_table()
-        .context("[tool.mamba.sources] must be a table")?;
-    for (name, value) in sources {
-        let entry = value
-            .as_table()
-            .with_context(|| format!("[tool.mamba.sources] `{name}` must be an inline table"))?;
-        let provider = entry
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .with_context(|| format!("[tool.mamba.sources] `{name}` missing provider"))?;
-        if provider != "mamba" {
-            bail!("[tool.mamba.sources] `{name}` uses unsupported provider `{provider}`");
-        }
-        out.insert(
-            name.clone(),
-            ManifestSource::MambaProvider {
-                provider: provider.to_string(),
-            },
-        );
-    }
-    Ok(out)
-}
-
-fn extract_string_list(tbl: &toml::value::Table, key: &str) -> Vec<String> {
-    tbl.get(key)
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn render_string_list(items: &[String]) -> String {
-    if items.is_empty() {
-        return "[]".to_string();
-    }
-    let mut out = String::from("[\n");
-    for item in items {
-        out.push_str("    \"");
-        out.push_str(item);
-        out.push_str("\",\n");
-    }
-    out.push(']');
-    out
-}
-
 fn render_inline_string_list(items: &[String]) -> String {
     if items.is_empty() {
         return "[]".to_string();
@@ -728,22 +811,35 @@ fn render_inline_string_list(items: &[String]) -> String {
     out
 }
 
-fn render_toml_key(key: &str) -> String {
-    format!("\"{}\"", escape_toml_string(key))
-}
-
 fn escape_toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// The name slice at the head of a manifest dependency entry, whatever
+/// grammar wrote it: a bare name, `NAME==VERSION`, or a PEP 508 range like
+/// `NAME>=2,<3`. The name ends at the first specifier operator, extras
+/// bracket, whitespace, or marker separator -- the same boundary
+/// `DepSpec::parse` uses on `add`'s own argument, so `pyproject.toml`'s stored
+/// text and a freshly typed argument agree on where the name stops. Callers
+/// compare this through `normalize_name` for identity; the slice itself
+/// keeps whatever case the manifest recorded.
 pub(crate) fn dep_name(spec: &str) -> &str {
-    spec.split_once("==")
-        .map(|(n, _)| n.trim())
-        .unwrap_or(spec.trim())
+    let spec = spec.trim();
+    let end = spec
+        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '=' | '!' | '~' | '[' | ';'))
+        .unwrap_or(spec.len());
+    spec[..end].trim()
 }
 
 #[cfg(test)]
 fn render_lockfile_with_hashes(deps: &[String], just_added: &ResolvedDep) -> String {
+    let mut state = ManifestState::parse(
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\nrequires-python = \">=3.12\"\ndependencies = []\n",
+    )
+    .unwrap();
+    for d in deps {
+        state.upsert_dependency(d);
+    }
     let mut hashes = std::collections::BTreeMap::new();
     let mut urls = std::collections::BTreeMap::new();
     let mut sources = std::collections::BTreeMap::new();
@@ -759,59 +855,61 @@ fn render_lockfile_with_hashes(deps: &[String], just_added: &ResolvedDep) -> Str
             SourceMeta::DirectFile { path: path.clone() },
         );
     }
-    render_lockfile_with_known_hashes(deps, &hashes, &urls, &sources)
+    render_lockfile_with_known_hashes(&state, &hashes, &urls, &sources)
 }
 
 fn render_lockfile_for_manifest_with_resolved(
     state: &ManifestState,
-    just_added: &ResolvedDep,
+    just_added: &[ResolvedDep],
 ) -> Result<String> {
     let mut hashes = BTreeMap::new();
     let mut urls = BTreeMap::new();
     let mut sources = collect_manifest_sources(state)?;
-    if let Some(h) = just_added.sha256.as_deref() {
-        hashes.insert(just_added.name.clone(), h.to_string());
-    }
-    if let Some(u) = just_added.url.as_deref() {
-        urls.insert(just_added.name.clone(), u.to_string());
-    }
-    match &just_added.source {
-        SourceMeta::Default => {}
-        SourceMeta::DirectFile { path } => {
-            sources.insert(
-                just_added.name.clone(),
-                SourceMeta::DirectFile { path: path.clone() },
-            );
+    for added in just_added {
+        if let Some(h) = added.sha256.as_deref() {
+            hashes.insert(added.name.clone(), h.to_string());
         }
-        SourceMeta::MambaProvider {
-            provider,
-            provides,
-            compatibility,
-            maturity,
-        } => {
-            sources.insert(
-                just_added.name.clone(),
-                SourceMeta::MambaProvider {
-                    provider: provider.clone(),
-                    provides: provides.clone(),
-                    compatibility: compatibility.clone(),
-                    maturity: maturity.clone(),
-                },
-            );
+        if let Some(u) = added.url.as_deref() {
+            urls.insert(added.name.clone(), u.to_string());
+        }
+        match &added.source {
+            SourceMeta::Default => {}
+            SourceMeta::DirectFile { path } => {
+                sources.insert(
+                    added.name.clone(),
+                    SourceMeta::DirectFile { path: path.clone() },
+                );
+            }
+            SourceMeta::MambaProvider {
+                provider,
+                provides,
+                compatibility,
+                maturity,
+            } => {
+                sources.insert(
+                    added.name.clone(),
+                    SourceMeta::MambaProvider {
+                        provider: provider.clone(),
+                        provides: provides.clone(),
+                        compatibility: compatibility.clone(),
+                        maturity: maturity.clone(),
+                    },
+                );
+            }
+            SourceMeta::Index { path } => {
+                sources.insert(added.name.clone(), SourceMeta::Index { path: path.clone() });
+            }
         }
     }
     Ok(render_lockfile_with_known_hashes(
-        &state.dependencies,
-        &hashes,
-        &urls,
-        &sources,
+        state, &hashes, &urls, &sources,
     ))
 }
 
 pub(crate) fn render_lockfile_for_manifest(state: &ManifestState) -> Result<String> {
     let sources = collect_manifest_sources(state)?;
     Ok(render_lockfile_with_known_hashes(
-        &state.dependencies,
+        state,
         &BTreeMap::new(),
         &BTreeMap::new(),
         &sources,
@@ -820,7 +918,7 @@ pub(crate) fn render_lockfile_for_manifest(state: &ManifestState) -> Result<Stri
 
 fn collect_manifest_sources(state: &ManifestState) -> Result<BTreeMap<String, SourceMeta>> {
     let mut sources = BTreeMap::new();
-    for dep in &state.dependencies {
+    for dep in state.all_dependency_specs() {
         let Some((name, version)) = dep.split_once("==") else {
             continue;
         };
@@ -857,14 +955,19 @@ pub(crate) fn source_meta_from_manifest(
     }
 }
 
+/// The single-package lock shape (`dependencies = []`, no `direct` key)
+/// `add` writes when no index resolved a closure: one entry per exact
+/// `==` requirement across the project list, every group, and every extra,
+/// each tagged with the lists that name it.
 pub(crate) fn render_lockfile_with_known_hashes(
-    deps: &[String],
+    state: &ManifestState,
     hashes: &std::collections::BTreeMap<String, String>,
     urls: &std::collections::BTreeMap<String, String>,
     sources: &std::collections::BTreeMap<String, SourceMeta>,
 ) -> String {
-    let input_hash = compute_input_hash(deps);
-    let mut entries: Vec<(String, String)> = deps
+    let input_hash = compute_input_hash(&state.lock_inputs());
+    let mut entries: Vec<(String, String)> = state
+        .all_dependency_specs()
         .iter()
         .filter_map(|d| {
             let (n, v) = d.split_once("==")?;
@@ -873,11 +976,19 @@ pub(crate) fn render_lockfile_with_known_hashes(
         .collect();
     entries.sort();
     entries.dedup_by(|a, b| a.0 == b.0);
+    let name_index: BTreeMap<String, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (n, _))| (normalize_name(n), i))
+        .collect();
+    let no_edges: Vec<Vec<usize>> = vec![Vec::new(); entries.len()];
+    let membership =
+        crate::pkgmanage::lock::compute_membership(&no_edges, &name_index, &state.lock_roots());
 
     let mut out = String::with_capacity(256);
     out.push_str("format_version = 1\n");
     out.push_str(&format!("input_hash = \"{input_hash}\"\n"));
-    for (name, version) in &entries {
+    for (i, (name, version)) in entries.iter().enumerate() {
         let sha = hashes.get(name).map(String::as_str).unwrap_or("");
         let url = urls.get(name).map(String::as_str).unwrap_or("");
         out.push('\n');
@@ -895,13 +1006,15 @@ pub(crate) fn render_lockfile_with_known_hashes(
                     &SourceMeta::DirectFile { path: path.clone() },
                 );
             }
-            Some(SourceMeta::MambaProvider { .. }) => {
+            Some(SourceMeta::MambaProvider { .. }) | Some(SourceMeta::Index { .. }) => {
                 append_lock_source_fields(&mut out, name, version, "", sources.get(name).unwrap());
             }
             Some(SourceMeta::Default) | None => {
                 append_lock_source_fields(&mut out, name, version, url, &SourceMeta::Default);
             }
         }
+        let m = &membership[i];
+        crate::pkgmanage::lock::append_membership_fields(&mut out, m.project, &m.groups, &m.extras);
         out.push_str("dependencies = []\n");
     }
     out
@@ -931,6 +1044,11 @@ pub(crate) fn append_lock_source_fields(
                 "source = \"direct-file://{}\"\n",
                 escape_toml_string(path)
             ));
+        }
+        SourceMeta::Index { path } => {
+            out.push_str("url = \"\"\n");
+            out.push_str("source_kind = \"index\"\n");
+            out.push_str(&format!("path = \"{}\"\n", escape_toml_string(path)));
         }
         SourceMeta::MambaProvider {
             provider,
@@ -966,22 +1084,7 @@ pub(crate) fn append_lock_source_fields(
     }
 }
 
-fn compute_input_hash(deps: &[String]) -> String {
-    let mut sorted = deps.to_vec();
-    sorted.sort();
-    sorted.dedup();
-    let mut hasher = Sha256::new();
-    for d in &sorted {
-        hasher.update(d.as_bytes());
-        hasher.update(b"\n");
-    }
-    let bytes = hasher.finalize();
-    let mut hex = String::with_capacity(64);
-    for b in bytes {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    hex
-}
+pub(crate) use crate::pkgmanage::lock::compute_input_hash;
 
 pub(crate) fn atomic_write(dest: &Path, body: &[u8]) -> Result<()> {
     let tmp = dest.with_extension({
@@ -1025,6 +1128,43 @@ mod tests {
         assert!(DepSpec::parse("==1.0").is_err());
         assert!(DepSpec::parse("foo==").is_err());
         assert!(DepSpec::parse("").is_err());
+        assert!(DepSpec::parse("!!!not a spec!!!").is_err());
+    }
+
+    #[test]
+    fn parse_range_keeps_raw_text_and_no_exact_version() {
+        let s = DepSpec::parse("addapp>=2,<3").unwrap();
+        assert_eq!(s.raw, "addapp>=2,<3");
+        assert_eq!(s.name, "addapp");
+        assert_eq!(s.version, None);
+        assert_eq!(s.specifiers.len(), 2);
+        assert!(s.is_range());
+    }
+
+    #[test]
+    fn parse_wildcard_and_compatible_release_are_ranges_not_exact_pins() {
+        let wildcard = DepSpec::parse("addapp==2.*").unwrap();
+        assert_eq!(wildcard.version, None);
+        assert!(wildcard.is_range());
+        assert_eq!(wildcard.specifiers.len(), 1);
+
+        let compatible = DepSpec::parse("addapp~=2.0").unwrap();
+        assert_eq!(compatible.version, None);
+        assert!(compatible.is_range());
+    }
+
+    #[test]
+    fn parse_extras_are_not_an_exact_pin() {
+        let s = DepSpec::parse("addapp[extra]>=2").unwrap();
+        assert_eq!(s.name, "addapp");
+        assert_eq!(s.version, None);
+        assert!(s.is_range());
+    }
+
+    #[test]
+    fn parse_bare_name_and_exact_pin_are_not_ranges() {
+        assert!(!DepSpec::parse("addapp").unwrap().is_range());
+        assert!(!DepSpec::parse("addapp==2.0").unwrap().is_range());
     }
 
     #[test]
@@ -1041,11 +1181,132 @@ mod tests {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: vec!["a==1.0".into(), "b==2.0".into()],
-            dev_dependencies: vec![],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         };
         s.upsert_dependency("a==1.1");
         assert_eq!(s.dependencies, vec!["a==1.1", "b==2.0"]);
+    }
+
+    #[test]
+    fn dep_name_stops_at_the_first_specifier_operator() {
+        assert_eq!(dep_name("addapp"), "addapp");
+        assert_eq!(dep_name("addapp==3.0"), "addapp");
+        assert_eq!(dep_name("addapp>=2,<3"), "addapp");
+        assert_eq!(dep_name("addapp==2.*"), "addapp");
+        assert_eq!(dep_name("addapp~=2.0"), "addapp");
+        assert_eq!(dep_name("AddApp==3.0"), "AddApp");
+    }
+
+    #[test]
+    fn upsert_dependency_normalizes_identity_across_capitalisation() {
+        let mut s = ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: vec!["AddApp==3.0".into()],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
+            source_overrides: BTreeMap::new(),
+        };
+        s.upsert_dependency("addapp==3.0");
+        assert_eq!(
+            s.dependencies,
+            vec!["addapp==3.0"],
+            "`AddApp` and `addapp` are one dependency under PEP 503 \
+             normalization, so the second add replaces the first entry \
+             instead of standing beside it"
+        );
+    }
+
+    #[test]
+    fn upsert_dependency_replaces_one_range_with_another_over_the_same_name() {
+        let mut s = ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: vec!["addapp>=2,<3".into()],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
+            source_overrides: BTreeMap::new(),
+        };
+        s.upsert_dependency("addapp<3");
+        assert_eq!(s.dependencies, vec!["addapp<3"]);
+    }
+
+    #[test]
+    fn remove_dependency_finds_a_handwritten_range_entry() {
+        let mut s = ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: vec!["addapp>=2,<3".into()],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
+            source_overrides: BTreeMap::new(),
+        };
+        s.remove_dependency("addapp");
+        assert!(
+            s.dependencies.is_empty(),
+            "`remove_dependency(\"addapp\")` must find an entry spelled \
+             `addapp>=2,<3`; identity is the name at the head of the \
+             requirement, and comparing raw text against a bare name can \
+             never match a range\n{:?}",
+            s.dependencies
+        );
+    }
+
+    #[test]
+    fn pick_pypi_matching_picks_the_newest_stable_release_that_satisfies_every_specifier() {
+        let versions = vec![
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            "2.5.0".to_string(),
+            "2.6.0a1".to_string(),
+            "3.0.0".to_string(),
+        ];
+        let specs = crate::pkgmanage::pkgmgr::resolver::specifier::parse_set(">=2.0,<3.0").unwrap();
+        assert_eq!(
+            pick_pypi_matching(&versions, &specs),
+            Some("2.5.0".to_string()),
+            "the newest release below `3.0.0` and at or above `2.0.0` is \
+             `2.5.0`; the prerelease `2.6.0a1` also falls in range but must \
+             lose to a stable release, matching `pick_pypi_latest`'s rule"
+        );
+    }
+
+    #[test]
+    fn pick_pypi_matching_returns_none_when_nothing_satisfies() {
+        let versions = vec!["1.0.0".to_string(), "2.0.0".to_string()];
+        let specs = crate::pkgmanage::pkgmgr::resolver::specifier::parse_set(">=9").unwrap();
+        assert_eq!(pick_pypi_matching(&versions, &specs), None);
+    }
+
+    #[test]
+    fn frozen_index_refuses_a_range_before_touching_the_filesystem() {
+        let spec = DepSpec::parse("addapp>=2").unwrap();
+        let err = resolve_dep(&spec, Some(Path::new("/does/not/exist")), false, None)
+            .expect_err("a range against a frozen --index DIR must be refused");
+        let message = format!("{err}");
+        assert!(
+            message.contains("addapp>=2"),
+            "the refusal must name the spec it could not evaluate: {message}"
+        );
+    }
+
+    #[test]
+    fn offline_refuses_a_range() {
+        let spec = DepSpec::parse("addapp>=2,<3").unwrap();
+        assert!(
+            resolve_dep(&spec, None, true, None).is_err(),
+            "--offline only accepts NAME==VERSION; a range has no index to \
+             evaluate it against"
+        );
     }
 
     #[test]
@@ -1055,7 +1316,9 @@ mod tests {
             project_version: "0.1.0".into(),
             python_requires: ">=3.12".into(),
             dependencies: vec!["mamba-httpx-compat==0.1.0".into()],
-            dev_dependencies: vec![],
+            groups: BTreeMap::new(),
+            group_includes: BTreeMap::new(),
+            extras: BTreeMap::new(),
             source_overrides: BTreeMap::new(),
         };
         s.upsert_source(
@@ -1084,6 +1347,7 @@ mod tests {
             sha256: None,
             url: None,
             source: SourceMeta::Default,
+            manifest_line: None,
         };
         let deps = vec!["foo==1.0".to_string()];
         let a = render_lockfile_with_hashes(&deps, &r);
@@ -1099,6 +1363,7 @@ mod tests {
             sha256: Some("deadbeef".repeat(8)),
             url: Some("https://example.invalid/foo-1.0.whl".into()),
             source: SourceMeta::Default,
+            manifest_line: None,
         };
         let deps = vec!["foo==1.0".to_string()];
         let body = render_lockfile_with_hashes(&deps, &r);
@@ -1106,6 +1371,30 @@ mod tests {
             body.contains(&format!("sha256 = \"{}\"", "deadbeef".repeat(8))),
             "lockfile must carry sha256 for just-added pkg: {body}"
         );
+    }
+
+    #[test]
+    fn requirements_file_honours_comments_continuations_and_nesting() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("sub");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("more.txt"),
+            "# nested\nthird>=3 # trailing comment\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("req.txt"),
+            "first==1.0\n\n  # comment line\nsecond \\\n  >=2,<3\n-r sub/more.txt\n",
+        )
+        .unwrap();
+        let specs = read_requirements_file(&dir.path().join("req.txt")).unwrap();
+        assert_eq!(specs, vec!["first==1.0", "second   >=2,<3", "third>=3"]);
+
+        fs::write(dir.path().join("bad.txt"), "-e .\n").unwrap();
+        let err = read_requirements_file(&dir.path().join("bad.txt")).unwrap_err();
+        assert!(err.to_string().contains("`-e`"), "{err}");
+        assert!(read_requirements_file(&dir.path().join("missing.txt")).is_err());
     }
 
     #[test]

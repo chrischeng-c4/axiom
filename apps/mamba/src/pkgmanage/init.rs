@@ -3,19 +3,28 @@
 // Acceptance (tests/governance/gates/pkgmgr/init/manifest.toml, schema gate
 // pkgmgr_init_fixture_2679.rs):
 //
-//   - First run in an empty directory creates: mamba.toml, .python-version,
-//     .gitignore, README.md, src/__init__.py.
+//   - First run in an empty directory creates: pyproject.toml,
+//     .python-version, .gitignore, README.md, src/__init__.py.
 //   - Re-running is idempotent: keep-existing policy, exit 0, stderr says
-//     "already initialized", and mamba.toml / src/__init__.py / README.md
-//     are preserved byte-for-byte.
+//     "already initialized", and pyproject.toml / src/__init__.py /
+//     README.md are preserved byte-for-byte.
 //   - Offline; no $HOME or global-cache reads.
+//
+// The manifest is PEP 621 `pyproject.toml` (`requires-python`,
+// `dependencies`) with a PEP 735 `[dependency-groups] dev` group — the
+// same file `uv init` writes, so `uv` and every build backend read it
+// unchanged. A directory that still carries the retired `mamba.toml` is
+// refused with the `mamba migrate` hint instead of being scaffolded twice.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_PYTHON_REQUIRES: &str = ">=3.12";
+use crate::pkgmanage::manifest::pyproject::{
+    self, DEFAULT_REQUIRES_PYTHON, LEGACY_MANIFEST_FILE, PYPROJECT_FILE,
+};
+
 const DEFAULT_PYTHON_VERSION_FILE: &str = "3.12\n";
 
 pub fn cmd_init(sub: &ArgMatches) -> Result<()> {
@@ -30,10 +39,16 @@ pub fn cmd_init(sub: &ArgMatches) -> Result<()> {
             .with_context(|| format!("create project directory {}", project_dir.display()))?;
     }
 
-    let manifest_path = project_dir.join("mamba.toml");
+    let manifest_path = project_dir.join(PYPROJECT_FILE);
     if manifest_path.exists() {
         eprintln!("mamba: already initialized at {}", project_dir.display());
         return Ok(());
+    }
+    if pyproject::has_legacy_manifest_only(&project_dir) {
+        bail!(
+            "{} already holds a {LEGACY_MANIFEST_FILE} — run `mamba migrate` to convert it to {PYPROJECT_FILE}",
+            project_dir.display()
+        );
     }
 
     let project_name = project_name_from_dir(&project_dir);
@@ -72,9 +87,11 @@ fn render_manifest(name: &str) -> String {
         "[project]\n\
          name = \"{name}\"\n\
          version = \"0.1.0\"\n\
-         python-requires = \"{DEFAULT_PYTHON_REQUIRES}\"\n\
+         requires-python = \"{DEFAULT_REQUIRES_PYTHON}\"\n\
          dependencies = []\n\
-         dev-dependencies = []\n"
+         \n\
+         [dependency-groups]\n\
+         dev = []\n"
     )
 }
 
@@ -85,7 +102,6 @@ fn render_readme(name: &str) -> String {
 const DEFAULT_GITIGNORE: &str = "\
 # mamba
 .venv/
-mamba.lock.lock
 
 # python
 __pycache__/

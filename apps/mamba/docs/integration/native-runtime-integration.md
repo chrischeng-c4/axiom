@@ -136,9 +136,15 @@ example.
   runtime manages refcount via `MbObject::header.rc`.
 - Return `MbValue::none()` for Python `None`.
 
-## `mamba.toml` Reference
+## Compiler configuration reference
 
-Located at project root. `mamba` walks up from CWD to find it.
+The compiler settings live under `[tool.mamba]` in the project's PEP 621
+`pyproject.toml` (`[tool.mamba.crates.<key>]`, `[tool.mamba.expose]`,
+`[tool.mamba.build]`, `[tool.mamba.paths]`, `entry_point`), which `mamba`
+walks up from CWD to find. A legacy `mamba.toml` with the same tables at top
+level is still read when no `pyproject.toml` is present; `mamba migrate`
+converts it once. The schema below is written in the legacy spelling; prefix
+every table with `tool.mamba.` inside `pyproject.toml`.
 
 ### Schema
 
@@ -183,7 +189,8 @@ $ mamba build
 ```
 
 Steps:
-1. Read `mamba.toml` (walks up from CWD).
+1. Read `[tool.mamba]` from `pyproject.toml`, or a legacy `mamba.toml`
+   (walks up from CWD).
 2. For each `[crates.<key>]`:
    - `path`: use in place
    - `git`: `git clone` into `.mamba/build/<key>/`, checkout `rev`/`branch`/`tag`

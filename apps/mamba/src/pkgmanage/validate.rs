@@ -420,9 +420,33 @@ fn setup_locked_project(bin: &Path, project: &Path, index: &Path) -> Option<Fami
     None
 }
 
+/// Stage a real, importable wheel for `normalized_name`/`version` beside a
+/// `metadata.toml` naming `requires` — #4207's real `Installer::install`
+/// path needs a real wheel archive on disk (a metadata-only fixture fails
+/// with "malformed wheel ... invalid Zip archive" once `sync` stops
+/// stubbing installs). Built through the product's own `WheelBuilder`, the
+/// same recipe `apps/mamba/tests/pkgmgr/fixtures.rs::fixture_pkg` uses.
 fn stake_pkg(index: &Path, normalized_name: &str, version: &str, requires: &[&str]) {
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
+    };
+
     let ver_dir = index.join(normalized_name).join(version);
     std::fs::create_dir_all(&ver_dir).unwrap();
+
+    let filename = compose_filename(normalized_name, version, "py3", "none", "any");
+    let mut wheel_meta = WheelMetadata::new("mamba-pkgmgr-validate");
+    wheel_meta.tags.push("py3-none-any".into());
+    let mut core_meta = CoreMetadata::new(normalized_name, version);
+    core_meta.requires_dist = requires.iter().map(|r| r.to_string()).collect();
+    let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+    let module = normalized_name.replace(['-', '.'], "_").to_ascii_lowercase();
+    builder.add_file(
+        format!("{module}/__init__.py"),
+        format!("__mamba_fixture__ = {normalized_name:?}\n__version__ = {version:?}\n"),
+    );
+    builder.build_to_dir(&ver_dir).unwrap();
+
     let meta = if requires.is_empty() {
         "requires = []\n".to_string()
     } else {
@@ -447,10 +471,64 @@ fn probe_init(bin: &Path) -> FamilyResult {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    if !proj.join("mamba.toml").exists() {
-        return FamilyResult::fail("init did not create mamba.toml");
+    if !proj.join("pyproject.toml").exists() {
+        return FamilyResult::fail("init did not create pyproject.toml");
     }
-    FamilyResult::pass("init created mamba.toml + scaffolding").with_paths(Some(proj), None, None)
+    FamilyResult::pass("init created pyproject.toml + scaffolding").with_paths(Some(proj), None, None)
+}
+
+/// True when `lock`'s `[[package]]` table names `requested` (compared
+/// PEP 503-canonically, since the registry resolver pins the canonical
+/// form -- `auth_demo` -> `auth-demo` -- while the probe still requests
+/// the underscored name) at exactly `version`, within the same entry.
+///
+/// Parses `name = "..."` / `version = "..."` lines in order, closing an
+/// entry whenever a new `name =` line starts (or at end of input), so a
+/// name from one entry can never pair with a version from another.
+pub(crate) fn lock_pins_package(lock: &str, requested: &str, version: &str) -> bool {
+    let wanted = crate::pkgmanage::pkgmgr::resolver::requirement::normalize_name(requested);
+
+    let mut current_name: Option<String> = None;
+    let mut matched = false;
+
+    for line in lock.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name") {
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix('=') {
+                if let Some(value) = extract_quoted(rest) {
+                    current_name =
+                        Some(crate::pkgmanage::pkgmgr::resolver::requirement::normalize_name(
+                            &value,
+                        ));
+                    matched = current_name.as_deref() == Some(wanted.as_str());
+                    continue;
+                }
+            }
+        }
+        if matched {
+            if let Some(rest) = line.strip_prefix("version") {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix('=') {
+                    if let Some(value) = extract_quoted(rest) {
+                        if value == version {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Extracts the first `"..."`-quoted value from a TOML value fragment,
+/// e.g. `" \"auth-demo\""` -> `Some("auth-demo")`.
+fn extract_quoted(rest: &str) -> Option<String> {
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 fn probe_auth(bin: &Path) -> FamilyResult {
@@ -550,7 +628,7 @@ fn probe_auth(bin: &Path) -> FamilyResult {
         ));
     }
     let lock = std::fs::read_to_string(project.join("mamba.lock")).unwrap_or_default();
-    if !lock.contains("name = \"auth_demo\"") || !lock.contains("version = \"1.0.0\"") {
+    if !lock_pins_package(&lock, "auth_demo", "1.0.0") {
         return FamilyResult::fail(format!("authenticated add did not lock auth_demo: {lock}"));
     }
 
@@ -560,6 +638,15 @@ fn probe_auth(bin: &Path) -> FamilyResult {
     .with_paths(Some(project), None, Some(creds))
 }
 
+/// Serve the auth family's loopback JSON index for the whole probe.
+///
+/// The resolver makes more than one request per `add`: the project route
+/// (`/pypi/auth-demo/json`) selects the release and the per-version route
+/// (`/pypi/auth-demo/1.0.0/json`) fetches its `requires_dist`. A one-shot
+/// listener answered only the first and then dropped, so the second call
+/// failed at transport level; since #4235 the resolver refuses that instead
+/// of treating it as a leaf, so the listener serves every connection until
+/// the validator exits. Every route still demands the stored credential.
 fn spawn_auth_index(expected_auth: String) -> Result<String> {
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -567,46 +654,63 @@ fn spawn_auth_index(expected_auth: String) -> Result<String> {
     let listener = TcpListener::bind("127.0.0.1:0").context("bind auth index")?;
     let addr = listener.local_addr().context("read auth index addr")?;
     std::thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        let mut buf = [0u8; 8192];
-        let n = stream.read(&mut buf).unwrap_or(0);
-        let request = String::from_utf8_lossy(&buf[..n]);
-        let authorized = request.lines().any(|line| {
-            let Some((name, value)) = line.split_once(':') else {
-                return false;
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                break;
             };
-            name.eq_ignore_ascii_case("authorization") && value.trim() == expected_auth
-        });
-        let on_path = request.starts_with("GET /pypi/auth-demo/json ");
-        let (status, body) = if authorized && on_path {
-            (
-                "200 OK",
-                serde_json::json!({
-                    "info": { "name": "auth_demo", "version": "1.0.0" },
-                    "releases": {
-                        "1.0.0": [{
-                            "filename": "auth_demo-1.0.0-py3-none-any.whl",
-                            "url": "https://example.invalid/auth_demo-1.0.0-py3-none-any.whl",
-                            "digests": { "sha256": "6666666666666666666666666666666666666666666666666666666666666666" },
-                            "yanked": false
-                        }]
-                    }
-                })
-                .to_string(),
-            )
-        } else {
-            (
-                "401 Unauthorized",
-                "{\"error\":\"missing auth\"}".to_string(),
-            )
-        };
-        let response = format!(
-            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        let _ = stream.write_all(response.as_bytes());
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let authorized = request.lines().any(|line| {
+                let Some((name, value)) = line.split_once(':') else {
+                    return false;
+                };
+                name.eq_ignore_ascii_case("authorization") && value.trim() == expected_auth
+            });
+            let on_project = request.starts_with("GET /pypi/auth-demo/json ");
+            let on_version = request.starts_with("GET /pypi/auth-demo/1.0.0/json ");
+            let (status, body) = if !authorized {
+                (
+                    "401 Unauthorized",
+                    "{\"error\":\"missing auth\"}".to_string(),
+                )
+            } else if on_project {
+                (
+                    "200 OK",
+                    serde_json::json!({
+                        "info": { "name": "auth_demo", "version": "1.0.0" },
+                        "releases": {
+                            "1.0.0": [{
+                                "filename": "auth_demo-1.0.0-py3-none-any.whl",
+                                "url": "https://example.invalid/auth_demo-1.0.0-py3-none-any.whl",
+                                "digests": { "sha256": "6666666666666666666666666666666666666666666666666666666666666666" },
+                                "yanked": false
+                            }]
+                        }
+                    })
+                    .to_string(),
+                )
+            } else if on_version {
+                (
+                    "200 OK",
+                    serde_json::json!({
+                        "info": {
+                            "name": "auth_demo",
+                            "version": "1.0.0",
+                            "requires_dist": []
+                        }
+                    })
+                    .to_string(),
+                )
+            } else {
+                ("404 Not Found", "{\"error\":\"no such route\"}".to_string())
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
     });
     Ok(format!("http://{addr}"))
 }
@@ -695,7 +799,7 @@ fn probe_add(bin: &Path) -> FamilyResult {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let manifest = std::fs::read_to_string(proj.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(proj.join("pyproject.toml")).unwrap();
     if !manifest.contains("frozen-demo-pkg==0.1.0") {
         return FamilyResult::fail("manifest missing dep after add");
     }

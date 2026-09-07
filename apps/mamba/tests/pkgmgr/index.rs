@@ -108,7 +108,7 @@ fn index_build_materializes_layout_and_feeds_add_lock() {
         "generated index must feed add; stderr: {}",
         String::from_utf8_lossy(&add.stderr)
     );
-    let manifest = std::fs::read_to_string(project.join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(project.join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"frozen-index-demo==0.2.0\""),
         "add must pick latest generated version: {manifest}"

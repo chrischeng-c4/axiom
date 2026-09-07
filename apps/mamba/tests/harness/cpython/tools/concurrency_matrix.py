@@ -173,7 +173,7 @@ def build_matrix() -> str:
     ft = discover_free_threaded()
     if ft:
         interps["CPython3.13t (free-threaded)"] = [ft]
-    interps["mamba"] = [MAMBA_BIN, "run"]
+    interps["mamba"] = [MAMBA_BIN, "run", "--compile"]
 
     lines = [BEGIN, "", "### Concurrency capability — measured", ""]
     lines.append(

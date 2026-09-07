@@ -15,6 +15,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
+use sha2::{Digest, Sha256};
+
 use crate::pkgmanage::pkgmgr::resolver::ResolvedGraph;
 
 /// Installation strategy. `purelib` is the only fully implemented variant in
@@ -26,6 +29,16 @@ pub enum InstallMode {
 }
 
 /// One install operation against a single resolved wheel artifact.
+///
+/// `python_executable` is the interpreter each console-script wrapper's
+/// shebang names, and it also decides where a wrapper is written: a console
+/// script lives beside the interpreter it invokes, in
+/// `python_executable.parent()`, never derived from `site_packages`. That
+/// derivation only holds for an absolute `python_executable`; a relative path
+/// (for example the bare `python3`, whose `parent()` is `Some("")`, not
+/// `None`) is refused by [`Installer::install`] before any file is written,
+/// rather than falling back to `site_packages.parent()/bin`, the process's
+/// working directory, or a `which` lookup.
 #[derive(Debug, Clone)]
 pub struct InstallRequest {
     pub artifact_path: PathBuf,
@@ -138,7 +151,7 @@ impl Installer {
             path: Some(record_path.clone()),
             detail: e.to_string(),
         })?;
-        let entries = record::parse(&record_text)?;
+        let mut entries = record::parse(&record_text)?;
         record::verify(&staging, &entries)?;
 
         // Read entry_points.txt before placement (needed for scripts).
@@ -154,29 +167,88 @@ impl Installer {
             None
         };
 
+        // A console script lives beside the interpreter its shebang names,
+        // never beside site_packages: refuse before any file is written when
+        // that interpreter cannot be located absolutely, rather than falling
+        // back to site_packages, the working directory, or a `which` lookup.
+        if entry_points_text.is_some() && !req.python_executable.is_absolute() {
+            return Err(InstallerError::Io {
+                path: Some(req.python_executable.clone()),
+                detail: format!(
+                    "python_executable must be an absolute path to derive the console-script \
+                     directory; got {}",
+                    req.python_executable.display()
+                ),
+            });
+        }
+
         // Place files into site_packages per PEP 427 layout.
         let placed = layout::place_files(&staging, &req.site_packages, &meta)?;
 
-        // Generate console-script wrappers from entry_points.txt.
-        let console_scripts = if let Some(text) = entry_points_text {
+        // Generate console-script wrappers from entry_points.txt, writing
+        // each wrapper beside the interpreter its own shebang names.
+        let written_scripts = if let Some(text) = entry_points_text {
             let bin_dir = req
-                .site_packages
+                .python_executable
                 .parent()
-                .map(|p| p.join("bin"))
-                .unwrap_or_else(|| req.site_packages.join("bin"));
+                .filter(|p| !p.as_os_str().is_empty())
+                .expect("checked absolute above")
+                .to_path_buf();
             scripts::write_console_scripts(&text, &bin_dir, &req.python_executable)?
         } else {
             Vec::new()
         };
 
-        // Write RECORD (with self-entry blanked) under the installed dist-info.
+        // Record what was just written: PEP 376 and pip's RECORD writer both
+        // hold that the installer records what it wrote, and the
+        // RECORD-driven uninstall can only remove a row it can read. Each
+        // wrapper's row is relative to site_packages -- it climbs out with
+        // `..` segments, the shape pip's own script rows take -- carrying
+        // the sha256 and byte length of the bytes actually on disk.
+        for (_name, wrapper_path) in &written_scripts {
+            let bytes = fs::read(wrapper_path).map_err(|e| InstallerError::Io {
+                path: Some(wrapper_path.clone()),
+                detail: e.to_string(),
+            })?;
+            let sha256_b64url =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(&bytes));
+            let rel = scripts::relative_to_site_packages(wrapper_path, &req.site_packages);
+            entries.push(record::RecordEntry {
+                path: rel,
+                sha256_b64url: Some(sha256_b64url),
+                size: Some(bytes.len() as u64),
+            });
+        }
+        let console_scripts = written_scripts.into_iter().map(|(name, _)| name).collect();
+
+        // PEP 376's `INSTALLER` marker: the tool that placed this
+        // distribution, one line, no version. pip and uv both write it as
+        // `<tool>\n`; mamba writes `mamba\n`. The dist-info directory must
+        // exist before it (and RECORD) can be written, and its own row is
+        // pushed through the same `RecordEntry`/`render_record` writer as
+        // the wrapper rows above -- RECORD gains no second writer.
         let installed_dist_info = req.site_packages.join(&meta.dist_info_dir);
-        let installed_record = installed_dist_info.join("RECORD");
-        let record_text = render_record(&entries, &meta.dist_info_dir);
         fs::create_dir_all(&installed_dist_info).map_err(|e| InstallerError::Io {
             path: Some(installed_dist_info.clone()),
             detail: e.to_string(),
         })?;
+        let installer_marker = installed_dist_info.join("INSTALLER");
+        let installer_bytes: &[u8] = b"mamba\n";
+        fs::write(&installer_marker, installer_bytes).map_err(|e| InstallerError::Io {
+            path: Some(installer_marker.clone()),
+            detail: e.to_string(),
+        })?;
+        let installer_sha256_b64url =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(installer_bytes));
+        entries.push(record::RecordEntry {
+            path: format!("{}/INSTALLER", meta.dist_info_dir.trim_end_matches('/')),
+            sha256_b64url: Some(installer_sha256_b64url),
+            size: Some(installer_bytes.len() as u64),
+        });
+
+        // Write RECORD (with self-entry blanked) under the installed dist-info.
+        let installed_record = installed_dist_info.join("RECORD");
+        let record_text = render_record(&entries, &meta.dist_info_dir);
         fs::write(&installed_record, record_text).map_err(|e| InstallerError::Io {
             path: Some(installed_record.clone()),
             detail: e.to_string(),

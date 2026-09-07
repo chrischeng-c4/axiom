@@ -49,11 +49,11 @@ expected_exit_code = 0
 # Acceptance: "Add records the requested dependency
 # deterministically."
 [metadata_assertion]
-file = "mamba.toml"
+file = "pyproject.toml"
 must_contain_dependency = "frozen_demo_pkg"
 must_record_version = "0.1.0"
 # Determinism: running `add` twice with the same args (against the
-# same setup) must produce a byte-identical mamba.toml.
+# same setup) must produce a byte-identical pyproject.toml.
 deterministic = true
 byte_identical_on_replay = true
 

@@ -28,6 +28,9 @@ mod cache;
 #[path = "export.rs"]
 mod export;
 
+#[path = "fixtures.rs"]
+mod fixtures;
+
 #[path = "hash.rs"]
 mod hash;
 

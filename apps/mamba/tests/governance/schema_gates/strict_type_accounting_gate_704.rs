@@ -63,7 +63,7 @@ fn mamba_bin() -> PathBuf {
 
 fn run_mamba_fixture(fixture_rel: &str) -> std::process::Output {
     Command::new(mamba_bin())
-        .arg("run")
+        .arg("run").arg("--compile")
         .arg(fixture_rel)
         .current_dir(mamba_root())
         .output()

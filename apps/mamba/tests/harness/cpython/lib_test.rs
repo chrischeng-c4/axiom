@@ -134,7 +134,7 @@ const ASSERTION_PASS_MARKERS: &[&str] = &["MAMBA_ASSERTION_PASS", "[mamba-assert
 
 fn run_seed(path: &Path) -> Outcome {
     let child = Command::new(mamba_bin())
-        .args(["run", path.to_str().expect("seed path is utf8")])
+        .args(["run", "--compile", path.to_str().expect("seed path is utf8")])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();

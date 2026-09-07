@@ -162,8 +162,8 @@ fn pkgmgr_add_metadata_assertion_is_deterministic() {
 
     assert_eq!(
         meta.get("file").and_then(|v| v.as_str()),
-        Some("mamba.toml"),
-        "`[metadata_assertion].file` must be `mamba.toml`"
+        Some("pyproject.toml"),
+        "`[metadata_assertion].file` must be `pyproject.toml`"
     );
 
     let added = meta
@@ -283,7 +283,7 @@ fn pkgmgr_add_missing_package_case_fails_cleanly() {
             .and_then(|v| v.as_bool()),
         Some(true),
         "`[missing_package_case].must_not_mutate_metadata` must be true — \
-         a failed add must not partially touch mamba.toml"
+         a failed add must not partially touch pyproject.toml"
     );
     assert_eq!(
         miss.get("must_not_mutate_lockfile")

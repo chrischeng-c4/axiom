@@ -40,6 +40,44 @@ fn normalize_name(name: &str) -> String {
 /// Status codes that should trigger a retry with exponential backoff.
 const RETRYABLE_CODES: &[u16] = &[429, 500, 502, 503, 504];
 
+/// Normalize a `--index-url` (or `$MAMBA_INDEX_URL`) entry point so both the
+/// registry base URL `mamba` already builds its own paths from, and the PEP
+/// 503 `.../simple` URL a `uv` user has in their fingers, resolve to the same
+/// base. Trims trailing `/` characters, then strips exactly one trailing
+/// `/simple` (case-sensitive). Nothing else is rewritten: no host is
+/// special-cased, and a doubled `/simple/simple` keeps its inner `/simple`.
+///
+pub(crate) fn normalize_index_url(raw: &str) -> String {
+    let trimmed = raw.trim_end_matches('/');
+    match trimmed.strip_suffix("/simple") {
+        Some(base) => base.to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+/// Build an [`IndexClient`] for a PyPI-compatible URL entry point, routing
+/// the URL through [`normalize_index_url`]. `add.rs::resolve_with_pypi` and
+/// `lock.rs::resolve_via_pypi` both construct their client through this
+/// helper instead of a struct literal, so both entry points normalize
+/// identically.
+pub(crate) fn index_client_for_url(
+    index_url: &str,
+    cache_dir: String,
+    max_concurrent: u32,
+    timeout_secs: u64,
+    retry_max: u32,
+    auth_header: Option<String>,
+) -> IndexClient {
+    IndexClient {
+        index_url: normalize_index_url(index_url),
+        cache_dir,
+        max_concurrent,
+        timeout_secs,
+        retry_max,
+        auth_header,
+    }
+}
+
 impl IndexClient {
     /// Resolve the effective cache directory for this client.
     ///

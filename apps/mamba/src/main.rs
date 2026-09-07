@@ -14,6 +14,7 @@ use mamba::pkgmanage::index as pkg_index;
 use mamba::pkgmanage::init as pkg_init;
 use mamba::pkgmanage::install as pkg_install;
 use mamba::pkgmanage::lock as pkg_lock;
+use mamba::pkgmanage::migrate as pkg_migrate;
 use mamba::pkgmanage::package as pkg_package;
 use mamba::pkgmanage::pip as pkg_pip;
 use mamba::pkgmanage::python as pkg_python;
@@ -55,8 +56,8 @@ fn cli() -> Command {
         .subcommand(
             Command::new("build")
                 .about("Compile a Mamba source file or project")
-                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from mamba.toml"))
-                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml"))
+                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from pyproject.toml [tool.mamba] (or a legacy mamba.toml)"))
+                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to a compiler config file (legacy mamba.toml layout)"))
                 .arg(Arg::new("backend").short('b').long("backend").default_value("cranelift").help("Codegen backend: cranelift, llvm, wasm"))
                 .arg(Arg::new("emit").long("emit").help("Dump intermediate: ast, hir, mir"))
                 .arg(Arg::new("output").short('o').long("output").help("Output file path"))
@@ -75,8 +76,34 @@ fn cli() -> Command {
         .subcommand(
             Command::new("run")
                 .about("Run a Mamba source file/project, or run a command inside the project env after --")
-                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from mamba.toml"))
-                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml"))
+                .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from pyproject.toml [tool.mamba] (or a legacy mamba.toml)"))
+                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to a compiler config file (legacy mamba.toml layout)"))
+                .arg(
+                    Arg::new("compile")
+                        .long("compile")
+                        .action(ArgAction::SetTrue)
+                        .help("Hand the file to the Mamba compiler instead of the resolved interpreter"),
+                )
+                .arg(
+                    Arg::new("python")
+                        .long("python")
+                        .short('p')
+                        .value_name("PYTHON")
+                        .help("Interpreter to run the file with: a path, or a name looked up on PATH (overrides the project's .venv interpreter)"),
+                )
+                .arg(
+                    Arg::new("no-project")
+                        .long("no-project")
+                        .action(ArgAction::SetTrue)
+                        .help("Ignore the surrounding project: no sync preflight, no .venv on the child's PATH"),
+                )
+                .arg(
+                    Arg::new("script-args")
+                        .value_name("ARGS")
+                        .help("Arguments passed through to the script")
+                        .num_args(0..)
+                        .allow_hyphen_values(true),
+                )
                 .arg(
                     Arg::new("command")
                         .value_name("COMMAND")
@@ -131,7 +158,12 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("init")
-                .about("Scaffold a new mamba project (mamba.toml, .python-version, .gitignore, README.md, src/__init__.py)")
+                .about("Scaffold a new mamba project (pyproject.toml, .python-version, .gitignore, README.md, src/__init__.py)")
+                .arg(Arg::new("path").help("Project directory; defaults to current working directory")),
+        )
+        .subcommand(
+            Command::new("migrate")
+                .about("Convert a retired mamba.toml into PEP 621 pyproject.toml (one-shot; removes mamba.toml)")
                 .arg(Arg::new("path").help("Project directory; defaults to current working directory")),
         )
         .subcommand(
@@ -167,25 +199,34 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("add")
-                .about("Add a dependency to mamba.toml and update mamba.lock")
-                .arg(Arg::new("spec").required(true).help("Dependency spec or local wheel path, e.g. foo==1.2.3 or ./wheels/foo-1.2.3-py3-none-any.whl (bare names require --index or explicit --index-url)"))
+                .about("Add a dependency to pyproject.toml and update mamba.lock")
+                .arg(Arg::new("spec").num_args(0..).value_name("SPEC").help("Dependency specs or local wheel paths, e.g. foo==1.2.3 or ./wheels/foo-1.2.3-py3-none-any.whl (bare names require --index or explicit --index-url)"))
+                .arg(Arg::new("requirements").short('r').long("requirements").value_name("FILE").action(ArgAction::Append).help("Add every requirement listed in FILE (pip requirements format; nested -r honoured)"))
+                .arg(Arg::new("dev").long("dev").action(ArgAction::SetTrue).conflicts_with_all(["group", "optional"]).help("Add to the `dev` dependency group instead of [project] dependencies"))
+                .arg(Arg::new("group").long("group").value_name("NAME").conflicts_with("optional").help("Add to the named [dependency-groups] group"))
+                .arg(Arg::new("optional").long("optional").value_name("EXTRA").help("Add to the named [project.optional-dependencies] extra"))
                 .arg(Arg::new("provider").long("provider").value_name("PROVIDER").help("Explicit first-party provider for mamba-owned replacement packages, e.g. --provider mamba mamba-httpx-compat"))
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
-                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
+                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL or its /simple URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require pinned version or local index")),
         )
         .subcommand(
             Command::new("remove")
-                .about("Remove a dependency from mamba.toml and update mamba.lock")
-                .arg(Arg::new("name").required(true).help("Dependency name (no version pin)")),
+                .about("Remove a dependency from pyproject.toml and update mamba.lock")
+                .arg(Arg::new("name").required(true).num_args(1..).value_name("NAME").help("Dependency names (no version pin)"))
+                .arg(Arg::new("dev").long("dev").action(ArgAction::SetTrue).conflicts_with_all(["group", "optional"]).help("Remove from the `dev` dependency group only"))
+                .arg(Arg::new("group").long("group").value_name("NAME").conflicts_with("optional").help("Remove from the named [dependency-groups] group only"))
+                .arg(Arg::new("optional").long("optional").value_name("EXTRA").help("Remove from the named [project.optional-dependencies] extra only")),
         )
         .subcommand(
             Command::new("lock")
-                .about("Regenerate mamba.lock from mamba.toml; resolves transitive deps via a frozen index or explicit registry URL")
+                .about("Regenerate mamba.lock from pyproject.toml; resolves transitive deps via a frozen index or explicit registry URL")
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
-                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
+                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL or its /simple URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index"))
-                .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if mamba.lock is missing or out of date without writing it")),
+                .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if mamba.lock is missing or out of date without writing it"))
+                .arg(Arg::new("upgrade").long("upgrade").short('U').action(ArgAction::SetTrue).help("Let every package move to its newest admissible version instead of keeping the pins mamba.lock already records"))
+                .arg(Arg::new("upgrade-package").long("upgrade-package").short('P').value_name("NAME").action(ArgAction::Append).help("Let only NAME move; every other recorded pin stays (repeatable)")),
         )
         .subcommand(
             Command::new("audit")
@@ -288,7 +329,7 @@ fn cli() -> Command {
                         .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
                         .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
-                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to python3")),
+                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to the project's .venv interpreter, else python3")),
                 )
                 .subcommand(
                     Command::new("sync")
@@ -297,7 +338,7 @@ fn cli() -> Command {
                         .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
                         .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
-                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to python3")),
+                        .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to the project's .venv interpreter, else python3")),
                 )
                 .subcommand(
                     Command::new("uninstall")
@@ -500,7 +541,15 @@ fn cli() -> Command {
             Command::new("sync")
                 .about("Converge `.venv`/site-packages to mamba.lock (idempotent; second run is a no-op)")
                 .arg(Arg::new("jobs").long("jobs").short('j').value_name("N").help("Max concurrent downloads (overrides $MAMBA_JOBS; default 8)"))
-                .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if the environment is not already synchronized without mutating it")),
+                .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if the environment is not already synchronized without mutating it"))
+                .arg(Arg::new("no-dev").long("no-dev").action(ArgAction::SetTrue).conflicts_with("dev").help("Leave the `dev` dependency group out"))
+                .arg(Arg::new("dev").long("dev").action(ArgAction::SetTrue).help("Include the `dev` dependency group (the default)"))
+                .arg(Arg::new("group").long("group").value_name("NAME").action(ArgAction::Append).help("Also install the named [dependency-groups] group (repeatable)"))
+                .arg(Arg::new("all-groups").long("all-groups").action(ArgAction::SetTrue).help("Install every dependency group"))
+                .arg(Arg::new("extra").long("extra").value_name("EXTRA").action(ArgAction::Append).help("Also install the named [project.optional-dependencies] extra (repeatable)"))
+                .arg(Arg::new("all-extras").long("all-extras").action(ArgAction::SetTrue).help("Install every extra"))
+                .arg(Arg::new("locked").long("locked").action(ArgAction::SetTrue).conflicts_with("frozen").help("Refuse to sync when mamba.lock is out of date with pyproject.toml"))
+                .arg(Arg::new("frozen").long("frozen").action(ArgAction::SetTrue).help("Sync from mamba.lock exactly as it is, without checking it against pyproject.toml (mamba's default; accepted for uv parity)")),
         )
         .subcommand(
             Command::new("pkgmgr-validate")
@@ -648,6 +697,7 @@ fn main() -> Result<()> {
         Some(("surface-report", sub)) => cmd_surface_report(sub),
         Some(("pytest", sub)) => cmd_pytest(sub),
         Some(("init", sub)) => pkg_init::cmd_init(sub),
+        Some(("migrate", sub)) => pkg_migrate::cmd_migrate(sub),
         Some(("auth", sub)) => pkg_auth::cmd_auth(sub),
         Some(("add", sub)) => pkg_add::cmd_add(sub),
         Some(("remove", sub)) => pkg_remove::cmd_remove(sub),
@@ -1101,17 +1151,25 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
     // with a populated lockfile, require `.venv` to be in sync before
     // running anything. See apps/mamba/src/pkgmanage/run.rs.
     let cwd_for_preflight = std::env::current_dir().context("getcwd")?;
-    let preflight_mode = match mamba::pkgmanage::run::preflight(&cwd_for_preflight) {
-        Ok(mode) => mode,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
+    // `--no-project` is uv's: the file runs as if no project were here, so
+    // the sync preflight is skipped and the child's PATH is left alone.
+    let no_project = sub.get_flag("no-project");
+    let preflight_mode = if no_project {
+        mamba::pkgmanage::run::Mode::Legacy
+    } else {
+        match mamba::pkgmanage::run::preflight(&cwd_for_preflight) {
+            Ok(mode) => mode,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
     };
+    let python_override = sub.get_one::<String>("python").cloned();
 
     if let Some(command) = sub.get_many::<String>("command") {
         let args: Vec<String> = command.cloned().collect();
-        return cmd_run_command_mode(args, &cwd_for_preflight, &preflight_mode);
+        return cmd_run_command_mode(args, &cwd_for_preflight, &preflight_mode, no_project);
     }
 
     let project_config: Option<MambaConfig> =
@@ -1130,9 +1188,15 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
         (Some(f), _) => f.clone(),
         (None, Some(ep)) => ep,
         (None, None) => anyhow::bail!(
-            "no source file specified and no mamba.toml found; pass a file or cd into a project directory"
+            "no source file specified and no pyproject.toml [tool.mamba] or mamba.toml found; pass a file or cd into a project directory"
         ),
     };
+
+    let script_args: Vec<String> = sub
+        .get_many::<String>("script-args")
+        .map(|vals| vals.cloned().collect())
+        .unwrap_or_default();
+    let compile_flag = sub.get_flag("compile");
 
     // Resolve a relative `file` (and the `-` stdin sentinel is left as-is)
     // against the CURRENT cwd before any scratch-CWD chdir below — config
@@ -1141,6 +1205,21 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
     let file = std::fs::canonicalize(&file)
         .map(|p| p.display().to_string())
         .unwrap_or(file);
+
+    // Default route: the project's own interpreter (or the PATH interpreter
+    // outside a project) runs the file directly. `--compile` and the `-`
+    // stdin sentinel are the only ways to reach the Mamba compiler.
+    if !mamba::pkgmanage::run::routes_to_compiler(compile_flag, &file) {
+        return cmd_run_interpreter_mode(
+            &file,
+            &script_args,
+            &cwd_for_preflight,
+            &preflight_mode,
+            python_override.as_deref(),
+            no_project,
+        );
+    }
+
     maybe_enter_scratch_cwd();
 
     let config = CompilerConfig {
@@ -1186,10 +1265,63 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+/// Default route for `mamba run <file>`: spawn the resolved interpreter
+/// (the project's own `.venv` interpreter, or the `PATH` interpreter
+/// outside a project) with the file and its trailing arguments, stdio
+/// inherited, and propagate the child's exit code unchanged.
+fn cmd_run_interpreter_mode(
+    file: &str,
+    script_args: &[String],
+    project_dir: &std::path::Path,
+    preflight_mode: &mamba::pkgmanage::run::Mode,
+    python_override: Option<&str>,
+    no_project: bool,
+) -> Result<()> {
+    let path_value = std::env::var_os("PATH");
+    let interpreter = match python_override {
+        Some(request) => mamba::pkgmanage::run::resolve_python_override(
+            request,
+            project_dir,
+            path_value.as_deref(),
+        ),
+        None => mamba::pkgmanage::run::resolve_run_interpreter(
+            project_dir,
+            preflight_mode,
+            path_value.as_deref(),
+        ),
+    };
+    let interpreter = match interpreter {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut command = std::process::Command::new(&interpreter);
+    command.arg(file).args(script_args).current_dir(project_dir);
+    if !no_project {
+        mamba::pkgmanage::run::configure_command_environment(
+            &mut command,
+            project_dir,
+            preflight_mode,
+        );
+    }
+
+    let status = command
+        .status()
+        .with_context(|| format!("run `{file}` with {}", interpreter.display()))?;
+    if let Some(code) = status.code() {
+        std::process::exit(code);
+    }
+    std::process::exit(1);
+}
+
 fn cmd_run_command_mode(
     args: Vec<String>,
     project_dir: &std::path::Path,
     preflight_mode: &mamba::pkgmanage::run::Mode,
+    no_project: bool,
 ) -> Result<()> {
     if args.is_empty() {
         bail!("no command specified after --");
@@ -1197,7 +1329,13 @@ fn cmd_run_command_mode(
 
     let mut command = std::process::Command::new(&args[0]);
     command.args(&args[1..]).current_dir(project_dir);
-    mamba::pkgmanage::run::configure_command_environment(&mut command, project_dir, preflight_mode);
+    if !no_project {
+        mamba::pkgmanage::run::configure_command_environment(
+            &mut command,
+            project_dir,
+            preflight_mode,
+        );
+    }
 
     let status = command
         .status()

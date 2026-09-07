@@ -51,7 +51,10 @@ e2e work.
    uv run --project apps/aw aw impl --project <project> start <iid>
    ```
 
-   Add the implementation test or skeleton under `apps/<project>/src/`
+   Add the implementation test or skeleton under `apps/<project>/src/` (or,
+   for a project that declares `impl-roots`/`impl-repo-paths` under
+   `[package.metadata.aw]` in its own `Cargo.toml` as of HEAD, under that
+   widened root)
    without adding the behavior that makes it pass. Record the red result — it
    includes the named failure, current HEAD, and test file digest:
 

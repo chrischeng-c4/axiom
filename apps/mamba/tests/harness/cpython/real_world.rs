@@ -205,7 +205,7 @@ fn real_world_fixtures_pass_under_both_interpreters() {
         }
 
         let out = Command::new(&mamba)
-            .arg("run")
+            .arg("run").arg("--compile")
             .arg(script)
             .output()
             .expect("failed to spawn mamba");

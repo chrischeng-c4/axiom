@@ -172,16 +172,43 @@ fn site_packages_path(sub: &ArgMatches) -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
     let cwd = std::env::current_dir().context("read current directory")?;
-    Ok(cwd.join(".venv").join("site-packages"))
+    Ok(resolve_default_site_packages(&cwd))
+}
+
+/// Default site-packages for `mamba pip` when `--site-packages` is not
+/// given: the venv's own `VenvLayout` derived from its own `pyvenv.cfg`,
+/// never the flat `<cwd>/.venv/site-packages` directory. Falls back to that
+/// flat path only when `.venv/pyvenv.cfg` doesn't exist yet or can't be
+/// parsed, so a `pip list` before any venv exists still gets a stable path.
+pub(crate) fn resolve_default_site_packages(cwd: &Path) -> PathBuf {
+    crate::pkgmanage::sync::resolve_site_packages(&cwd.join(".venv"))
+}
+
+/// Default interpreter for `mamba pip install`/`pip sync` when `--python`
+/// is not given: the venv's own `VenvLayout::python_executable`, derived
+/// from `<cwd>/.venv/pyvenv.cfg` the same way `resolve_default_site_packages`
+/// derives its site-packages. Falls back to the relative `python3` — on
+/// purpose, not resolved through `PATH`/`which` — when `.venv/pyvenv.cfg`
+/// doesn't exist yet or can't be parsed, so `installer/mod.rs`'s
+/// absolute-path refusal still fires when no environment exists and a
+/// wheel carries console scripts.
+pub(crate) fn resolve_default_python(cwd: &Path) -> PathBuf {
+    crate::pkgmanage::pkgmgr::venv::layout_from_pyvenv_cfg(&cwd.join(".venv"))
+        .map(|layout| layout.python_executable)
+        .unwrap_or_else(|_| PathBuf::from("python3"))
 }
 
 fn install_options(sub: &ArgMatches) -> Result<InstallOptions> {
+    let python = match sub.get_one::<String>("python") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let cwd = std::env::current_dir().context("read current directory")?;
+            resolve_default_python(&cwd)
+        }
+    };
     Ok(InstallOptions {
         site_packages: site_packages_path(sub)?,
-        python: sub
-            .get_one::<String>("python")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("python3")),
+        python,
         index: pip_index(sub).map(|index| match index {
             CompileIndex::Frozen(path) => InstallIndex::Frozen(path),
             CompileIndex::Registry(url) => InstallIndex::Registry(url),

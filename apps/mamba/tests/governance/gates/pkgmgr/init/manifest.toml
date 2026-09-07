@@ -34,7 +34,7 @@ forbid_global_cache_writes = true
 # pins what init does NOT create on a fresh run.
 [outputs]
 must_exist = [
-    "mamba.toml",
+    "pyproject.toml",
     ".python-version",
     ".gitignore",
     "README.md",
@@ -46,24 +46,24 @@ must_not_exist = [
     "node_modules",
 ]
 
-# Default `mamba.toml` fields the gate locks in.
+# Default `pyproject.toml` fields the gate locks in.
 [outputs.manifest_defaults]
-# The created mamba.toml MUST carry these top-level keys with the
+# The created pyproject.toml MUST carry these top-level keys with the
 # given default values. Field names match the `[project]` PEP 621
 # style table; the gate accepts either an inline or split table.
 project_name_from_dir = true
 project_version = "0.1.0"
-python_requires = ">=3.12"
+requires_python = ">=3.12"
 dependencies_default = []
-dev_dependencies_default = []
+dependency_groups_dev_default = []
 
 # Acceptance: "Re-running init fails or is idempotent according to
 # documented policy."
 [reentry]
 policy = "idempotent_keep_existing"
 # When invoked a second time on the same project, the command must
-# NOT overwrite the existing mamba.toml. Touch-mtime check pins this.
-must_preserve = ["mamba.toml", "src/__init__.py", "README.md"]
+# NOT overwrite the existing pyproject.toml. Touch-mtime check pins this.
+must_preserve = ["pyproject.toml", "src/__init__.py", "README.md"]
 # Second-run exit must be a clean success — not an error — when the
 # directory is already initialized.
 expected_exit_code = 0

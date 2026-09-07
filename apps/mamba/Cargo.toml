@@ -5,6 +5,24 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Mamba - Force-typed Python compiler with native code generation"
+# Every test target is declared below. Auto-discovery is off so that the
+# manifest is the inventory: a file nobody declared does not run.
+autotests = false
+
+# The mambalibs kits are wrapped by sibling crates, not by `src/`: the PyO3
+# wheel behind `mambalibs.array` lives at `mambalibs/arraykit/pyo3` and the one
+# behind `mambalibs.sci` at `mambalibs/scikit/pyo3`, and resolving either moves
+# the workspace member list and the lock file. These keys name that write set
+# so the impl phase's C0 scope can admit it; without them the only impl root is
+# `apps/mamba/src/`. One entry per kit: a root that is not listed is refused,
+# so the list grows with the kits rather than widening to `mambalibs/`.
+[package.metadata.aw]
+impl-roots = [
+    "mambalibs/arraykit/pyo3",
+    "mambalibs/scikit/pyo3",
+    "mambalibs/plotkit/pyo3",
+]
+impl-repo-paths = ["Cargo.toml", "Cargo.lock"]
 
 [features]
 default = []
@@ -73,6 +91,7 @@ mongokit-binding = { path = "mambalibs/mongokit/binding", optional = true }
 
 # Config parsing
 toml = "0.8"
+toml_edit = "0.22"
 semver = "1"
 # Process-internal fast hasher for the GC's pointer-keyed `HashSet<usize>` /
 # `HashMap<usize, i64>` (mitigation 2A for #2100). Already in the dep tree
@@ -354,3 +373,95 @@ harness = false
 name = "cpython_ported_integration"
 path = "tests/cpython_ported_integration.rs"
 
+# e2e — black-box cases driving the built binary; one file per case.
+[[test]]
+name = "pkgmgr_lock_frozen_transitive"
+path = "e2e/pkgmgr_lock_frozen_transitive.rs"
+
+[[test]]
+name = "pkgmgr_sync_real_install"
+path = "e2e/pkgmgr_sync_real_install.rs"
+
+[[test]]
+name = "pkgmgr_sync_prune"
+path = "e2e/pkgmgr_sync_prune.rs"
+
+[[test]]
+name = "pkgmgr_index_url_simple"
+path = "e2e/pkgmgr_index_url_simple.rs"
+
+[[test]]
+name = "pkgmgr_run_file_venv"
+path = "e2e/pkgmgr_run_file_venv.rs"
+
+[[test]]
+name = "pkgmgr_lock_registry_sha_pairs_url"
+path = "e2e/pkgmgr_lock_registry_sha_pairs_url.rs"
+
+[[test]]
+name = "pkgmgr_add_registry_transitive"
+path = "e2e/pkgmgr_add_registry_transitive.rs"
+
+[[test]]
+name = "pkgmgr_validate_auth_family"
+path = "e2e/pkgmgr_validate_auth_family.rs"
+
+[[test]]
+name = "pkgmgr_remove_keeps_remaining_closure"
+path = "e2e/pkgmgr_remove_keeps_remaining_closure.rs"
+
+[[test]]
+name = "pkgmgr_lock_conflict_refused"
+path = "e2e/pkgmgr_lock_conflict_refused.rs"
+
+[[test]]
+name = "pkgmgr_lock_backtracks_to_a_shared_version"
+path = "e2e/pkgmgr_lock_backtracks_to_a_shared_version.rs"
+
+[[test]]
+name = "pkgmgr_sync_console_scripts_land_in_venv_bin"
+path = "e2e/pkgmgr_sync_console_scripts_land_in_venv_bin.rs"
+
+[[test]]
+name = "pkgmgr_lock_search_is_complete"
+path = "e2e/pkgmgr_lock_search_is_complete.rs"
+
+[[test]]
+name = "pkgmgr_lock_requires_dist_never_dropped"
+path = "e2e/pkgmgr_lock_requires_dist_never_dropped.rs"
+
+[[test]]
+name = "pkgmgr_remove_prunes_console_script_wrappers"
+path = "e2e/pkgmgr_remove_prunes_console_script_wrappers.rs"
+
+[[test]]
+name = "pkgmgr_pip_install_defaults_to_the_venv_interpreter"
+path = "e2e/pkgmgr_pip_install_defaults_to_the_venv_interpreter.rs"
+
+[[test]]
+name = "pkgmgr_add_accepts_a_requirement_specifier"
+path = "e2e/pkgmgr_add_accepts_a_requirement_specifier.rs"
+
+[[test]]
+name = "pkgmgr_lock_refuses_when_requires_dist_cannot_be_fetched"
+path = "e2e/pkgmgr_lock_refuses_when_requires_dist_cannot_be_fetched.rs"
+
+[[test]]
+name = "pkgmgr_sync_writes_the_installer_marker"
+path = "e2e/pkgmgr_sync_writes_the_installer_marker.rs"
+
+[[test]]
+name = "pkgmgr_flag_surface_uv_parity"
+path = "e2e/pkgmgr_flag_surface_uv_parity.rs"
+
+[[test]]
+name = "mambalibs_array_wheel"
+path = "e2e/mambalibs_array_wheel.rs"
+
+[[test]]
+name = "mambalibs_sci_wheel"
+path = "e2e/mambalibs_sci_wheel.rs"
+
+[[test]]
+name = "mambalibs_plot_wheel"
+path = "e2e/mambalibs_plot_wheel.rs"

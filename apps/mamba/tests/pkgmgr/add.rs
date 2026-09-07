@@ -13,6 +13,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::fixtures;
+
 fn mamba_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
 }
@@ -45,6 +47,18 @@ fn run_sync(workdir: &Path) -> std::process::Output {
         .current_dir(workdir)
         .output()
         .expect("spawn mamba sync")
+}
+
+/// `mamba run -- python3 -c <code>` — the allowed behaviour observation
+/// for a synced environment's import surface.
+fn run_python(workdir: &Path, code: &str) -> std::process::Output {
+    Command::new(mamba_bin())
+        .args(["run", "--", "python3", "-c", code])
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
+        .current_dir(workdir)
+        .output()
+        .expect("spawn mamba run -- python3")
 }
 
 /// PEP 503 normalize used by `mamba add` when keying the index dir.
@@ -91,7 +105,7 @@ fn add_records_dep_in_manifest_and_lockfile() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"frozen_demo_pkg==0.1.0\""),
         "manifest must record dep: {manifest}"
@@ -118,7 +132,7 @@ fn add_is_byte_identical_on_replay() {
             .status
             .success()
     );
-    let m_after_first = std::fs::read(project_dir.join("mamba.toml")).unwrap();
+    let m_after_first = std::fs::read(project_dir.join("pyproject.toml")).unwrap();
     let l_after_first = std::fs::read(project_dir.join("mamba.lock")).unwrap();
 
     // Replay: identical args, identical project state already on disk.
@@ -127,12 +141,12 @@ fn add_is_byte_identical_on_replay() {
             .status
             .success()
     );
-    let m_after_second = std::fs::read(project_dir.join("mamba.toml")).unwrap();
+    let m_after_second = std::fs::read(project_dir.join("pyproject.toml")).unwrap();
     let l_after_second = std::fs::read(project_dir.join("mamba.lock")).unwrap();
 
     assert_eq!(
         m_after_first, m_after_second,
-        "mamba.toml replay must be byte-identical"
+        "pyproject.toml replay must be byte-identical"
     );
     assert_eq!(
         l_after_first, l_after_second,
@@ -147,7 +161,7 @@ fn add_missing_package_against_frozen_index_fails_cleanly() {
 
     let index = frozen_index_with("frozen_demo_pkg", &["0.1.0"]);
 
-    let manifest_before = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let manifest_before = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
     let lock_path = tmp.path().join("mamba.lock");
     assert!(!lock_path.exists(), "no lockfile before");
 
@@ -167,7 +181,7 @@ fn add_missing_package_against_frozen_index_fails_cleanly() {
         "stderr must contain 'not found', got: {stderr:?}"
     );
 
-    let manifest_after = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let manifest_after = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
     assert_eq!(
         manifest_before, manifest_after,
         "manifest must not mutate on missing-package failure"
@@ -190,7 +204,7 @@ fn add_resolves_against_frozen_index_when_version_omitted() {
     );
     assert!(out.status.success());
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"frozen_demo_pkg==0.2.0\""),
         "must pick highest version: {manifest}"
@@ -209,7 +223,7 @@ fn add_upserts_existing_dep_in_place() {
         .status
         .success());
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"foo==1.1.0\""),
         "must record upgraded version: {manifest}"
@@ -254,7 +268,7 @@ fn add_offline_requires_explicit_version() {
 fn add_no_source_requires_explicit_registry() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
-    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_path = tmp.path().join("pyproject.toml");
     let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
 
     let out = run_add(tmp.path(), &["bare_name"]);
@@ -272,7 +286,7 @@ fn add_no_source_requires_explicit_registry() {
     assert_eq!(
         manifest_before,
         std::fs::read_to_string(&manifest_path).unwrap(),
-        "failed no-source add must not mutate mamba.toml"
+        "failed no-source add must not mutate pyproject.toml"
     );
     assert!(
         !tmp.path().join("mamba.lock").exists(),
@@ -287,14 +301,17 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
     let wheels_dir = tmp.path().join("wheels");
-    std::fs::create_dir(&wheels_dir).unwrap();
     let wheel_rel = "wheels/frozen_local_wheel-0.1.0-py3-none-any.whl";
-    let wheel_path = tmp.path().join(wheel_rel);
-    let wheel_bytes = b"fake-wheel-bytes-for-direct-local-wheel";
-    std::fs::write(&wheel_path, wheel_bytes).unwrap();
+    let wheel_path = fixtures::build_wheel_file(&wheels_dir, "frozen_local_wheel", "0.1.0");
+    assert_eq!(
+        wheel_path,
+        tmp.path().join(wheel_rel),
+        "fixture must write the exact wheel filename the case pins"
+    );
+    let wheel_bytes = std::fs::read(&wheel_path).unwrap();
     let expected_sha = {
         let mut hasher = Sha256::new();
-        hasher.update(wheel_bytes);
+        hasher.update(&wheel_bytes);
         format!("{:x}", hasher.finalize())
     };
 
@@ -308,7 +325,7 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let manifest_a = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let manifest_a = std::fs::read(tmp.path().join("pyproject.toml")).unwrap();
     let lock_a = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
     assert!(
         String::from_utf8_lossy(&manifest_a).contains("\"frozen_local_wheel==0.1.0\""),
@@ -333,7 +350,7 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
     );
     assert_eq!(
         manifest_a,
-        std::fs::read(tmp.path().join("mamba.toml")).unwrap(),
+        std::fs::read(tmp.path().join("pyproject.toml")).unwrap(),
         "direct local wheel manifest must be byte-identical on replay"
     );
     assert_eq!(
@@ -348,17 +365,60 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
         "sync must consume direct-file lock offline; stderr: {}",
         String::from_utf8_lossy(&synced.stderr)
     );
-    let init = std::fs::read_to_string(
-        tmp.path()
-            .join(".venv/site-packages/frozen_local_wheel/__init__.py"),
-    )
-    .unwrap();
+
+    // The synced environment must import the package — the same
+    // observation whether `sync` materializes a stub today or installs
+    // the wheel for real.
+    let imported = run_python(tmp.path(), "import frozen_local_wheel");
     assert!(
-        init.contains("__mamba_source_kind__ = \"direct_file\"")
-            && init.contains(
-                "__mamba_source_path__ = \"wheels/frozen_local_wheel-0.1.0-py3-none-any.whl\""
-            ),
-        "sync stub must preserve direct source metadata: {init}"
+        imported.status.success(),
+        "import through the synced environment must succeed; stderr: {}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+
+    // `sync` today only stub-installs (real installs land with #4207); to
+    // observe the wheel's own content — never a stub-only attribute — the
+    // same wheel `sync` consumed offline is installed for real into a
+    // fresh site-packages through the product's own strict installer, and
+    // imported directly. This never reads a marker `sync`'s stub writes.
+    let real_site = tmp.path().join("real-site-packages");
+    let installed = Command::new(mamba_bin())
+        .args([
+            "pip",
+            "install",
+            wheel_path.to_str().unwrap(),
+            "--site-packages",
+            real_site.to_str().unwrap(),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba pip install");
+    assert!(
+        installed.status.success(),
+        "pip install of the direct-file wheel must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&installed.stdout),
+        String::from_utf8_lossy(&installed.stderr)
+    );
+
+    let probe = match Command::new("python3")
+        .arg("-c")
+        .arg("import frozen_local_wheel as m; print(m.__mamba_fixture__)")
+        .env("PYTHONPATH", &real_site)
+        .current_dir(&real_site)
+        .output()
+    {
+        Ok(out) => out,
+        Err(e) => panic!("python3 not found on PATH, needed for the import probe: {e}"),
+    };
+    assert!(
+        probe.status.success(),
+        "import probe must succeed after pip install; stderr: {}",
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&probe.stdout);
+    assert!(
+        stdout.trim() == "frozen_local_wheel",
+        "installed module must carry the fixture's own name: {stdout}"
     );
 }
 
@@ -366,7 +426,7 @@ fn add_direct_local_wheel_records_source_and_syncs_offline() {
 fn add_missing_direct_local_wheel_fails_without_mutation() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
-    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_path = tmp.path().join("pyproject.toml");
     let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
 
     let out = run_add(
@@ -387,7 +447,7 @@ fn add_missing_direct_local_wheel_fails_without_mutation() {
     assert_eq!(
         manifest_before,
         std::fs::read_to_string(&manifest_path).unwrap(),
-        "failed missing-wheel add must not mutate mamba.toml"
+        "failed missing-wheel add must not mutate pyproject.toml"
     );
     assert!(
         !tmp.path().join("mamba.lock").exists(),
@@ -458,7 +518,7 @@ fn add_against_pypi_mock_records_real_sha256() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"mock_pkg==1.2.3\""),
         "must record highest version: {manifest}"
@@ -635,7 +695,7 @@ fn add_mamba_provider_records_manifest_and_lock_metadata() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    let manifest = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
     assert!(
         manifest.contains("\"mamba-httpx-compat==0.1.0\""),
         "manifest must pin mamba-owned distribution: {manifest}"
@@ -664,7 +724,7 @@ fn add_mamba_provider_records_manifest_and_lock_metadata() {
 fn add_mamba_provider_rejects_upstream_import_alias_without_mutation() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
-    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_path = tmp.path().join("pyproject.toml");
     let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
 
     let out = run_add(tmp.path(), &["httpx", "--provider", "mamba"]);
@@ -680,7 +740,7 @@ fn add_mamba_provider_rejects_upstream_import_alias_without_mutation() {
     assert_eq!(
         manifest_before,
         std::fs::read_to_string(&manifest_path).unwrap(),
-        "failed provider add must not mutate mamba.toml"
+        "failed provider add must not mutate pyproject.toml"
     );
     assert!(
         !tmp.path().join("mamba.lock").exists(),
@@ -723,37 +783,25 @@ fn add_mamba_provider_relocks_offline_and_sync_installs_import_alias() {
         "provider sync must succeed; stderr: {}",
         String::from_utf8_lossy(&synced.stderr)
     );
-    let site = tmp.path().join(".venv/site-packages");
-    let httpx_init = site.join("httpx/__init__.py");
-    let body = std::fs::read_to_string(&httpx_init).unwrap();
-    assert!(
-        body.contains("__mamba_provider_distribution__ = \"mamba-httpx-compat\"")
-            && body.contains("class Response"),
-        "httpx import alias must be a pure-Python provider file: {body}"
+    let probe = run_python(
+        tmp.path(),
+        "import httpx; \
+         print(httpx.__mamba_provider_distribution__); \
+         print(hasattr(httpx, 'Response'))",
     );
-    assert!(
-        site.join("mamba_httpx_compat-0.1.0.dist-info/METADATA")
-            .exists(),
-        "provider install must include distribution metadata"
-    );
-
-    let probe = Command::new("python3")
-        .arg("-c")
-        .arg("import httpx; print(httpx.__mamba_provider_distribution__)")
-        .env("PYTHONPATH", &site)
-        .env_remove("PYTHONHOME")
-        .current_dir(tmp.path())
-        .output()
-        .expect("spawn python3 import probe");
     assert!(
         probe.status.success(),
         "python import probe must resolve provider alias; stdout: {} stderr: {}",
         String::from_utf8_lossy(&probe.stdout),
         String::from_utf8_lossy(&probe.stderr)
     );
+    let stdout = String::from_utf8_lossy(&probe.stdout);
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next(), Some("mamba-httpx-compat"));
     assert_eq!(
-        String::from_utf8_lossy(&probe.stdout).trim(),
-        "mamba-httpx-compat"
+        lines.next(),
+        Some("True"),
+        "httpx import alias must be a pure-Python provider carrying Response: {stdout}"
     );
 }
 
@@ -761,19 +809,29 @@ fn add_mamba_provider_relocks_offline_and_sync_installs_import_alias() {
 fn add_mamba_provider_sync_refuses_existing_import_package() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
+
+    // Materialize a real, non-provider `httpx` import package through the
+    // product's own install path (no hand-staged file) so the provider
+    // alias added next collides with it.
+    let real_index = tempfile::tempdir().unwrap();
+    fixtures::fixture_pkg(real_index.path(), "httpx", "1.0.0", &[]);
+    assert!(run_add(
+        tmp.path(),
+        &[
+            "httpx==1.0.0",
+            "--index",
+            real_index.path().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
+    assert!(run_sync(tmp.path()).status.success());
+
     assert!(
         run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"])
             .status
             .success()
     );
-
-    let existing_httpx = tmp.path().join(".venv/site-packages/httpx");
-    std::fs::create_dir_all(&existing_httpx).unwrap();
-    std::fs::write(
-        existing_httpx.join("__init__.py"),
-        "# upstream placeholder\n",
-    )
-    .unwrap();
 
     let out = run_sync(tmp.path());
     assert!(
@@ -785,9 +843,19 @@ fn add_mamba_provider_sync_refuses_existing_import_package() {
         stderr.contains("overwrite existing import package") && stderr.contains("httpx"),
         "diagnostic must name import-alias collision: {stderr:?}"
     );
+
+    let probe = run_python(
+        tmp.path(),
+        "import httpx; print(getattr(httpx, '__mamba_provider_distribution__', 'NONE'))",
+    );
+    assert!(
+        probe.status.success(),
+        "original httpx import must still resolve after refused sync; stderr: {}",
+        String::from_utf8_lossy(&probe.stderr)
+    );
     assert_eq!(
-        std::fs::read_to_string(existing_httpx.join("__init__.py")).unwrap(),
-        "# upstream placeholder\n",
-        "failed provider sync must preserve existing import package"
+        String::from_utf8_lossy(&probe.stdout).trim(),
+        "NONE",
+        "failed provider sync must preserve the existing (non-provider) import package"
     );
 }

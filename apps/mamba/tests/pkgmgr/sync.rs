@@ -25,52 +25,32 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn mamba")
 }
 
-fn normalize_pep503(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut prev_sep = false;
-    for c in name.chars() {
-        let is_sep = c == '-' || c == '_' || c == '.';
-        if is_sep {
-            if !prev_sep && !out.is_empty() {
-                out.push('-');
-            }
-            prev_sep = true;
-        } else {
-            out.push(c.to_ascii_lowercase());
-            prev_sep = false;
-        }
-    }
-    if out.ends_with('-') {
-        out.pop();
-    }
-    out
-}
+use crate::fixtures::{build_wheel_file, fixture_pkg, mount_wheel};
 
-fn stake_pkg(index: &Path, name: &str, version: &str, requires: &[&str]) {
-    let ver_dir = index.join(normalize_pep503(name)).join(version);
-    std::fs::create_dir_all(&ver_dir).unwrap();
-    let meta = if requires.is_empty() {
-        "requires = []\n".to_string()
-    } else {
-        let arr = requires
-            .iter()
-            .map(|r| format!("\"{r}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("requires = [{arr}]\n")
-    };
-    std::fs::write(ver_dir.join("metadata.toml"), meta).unwrap();
+/// `mamba run -- python3 -c "import <module>"` must exit 0 — the
+/// behaviour observation that replaces reading stub markers directly.
+fn assert_import_succeeds(proj: &Path, module: &str) {
+    let out = run(
+        proj,
+        &["run", "--", "python3", "-c", &format!("import {module}")],
+    );
+    assert!(
+        out.status.success(),
+        "`import {module}` must succeed after sync; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn build_index() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
-    stake_pkg(
+    fixture_pkg(
         dir.path(),
         "frozen_demo_pkg",
         "0.1.0",
         &["frozen_demo_transitive==0.2.0"],
     );
-    stake_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
+    fixture_pkg(dir.path(), "frozen_demo_transitive", "0.2.0", &[]);
     dir
 }
 
@@ -113,15 +93,8 @@ fn sync_first_run_creates_env_and_installs_locked_deps() {
         venv.join("pyvenv.cfg").exists(),
         "pyvenv.cfg must be written"
     );
-    let site = venv.join("site-packages");
     for pkg in ["frozen_demo_pkg", "frozen_demo_transitive"] {
-        let dir = site.join(pkg);
-        assert!(
-            dir.join("__init__.py").exists(),
-            "{pkg} __init__.py missing"
-        );
-        assert!(dir.join("INSTALLER").exists(), "{pkg} INSTALLER missing");
-        assert!(dir.join("VERSION").exists(), "{pkg} VERSION missing");
+        assert_import_succeeds(&proj, pkg);
     }
 }
 
@@ -135,8 +108,17 @@ fn sync_second_run_is_a_clean_noop() {
 
     assert!(run(&proj, &["sync"]).status.success());
     let lock_a = std::fs::read(proj.join("mamba.lock")).unwrap();
-    let init_a =
-        std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
+    let probe_a = run(
+        &proj,
+        &[
+            "run",
+            "--",
+            "python3",
+            "-c",
+            "import frozen_demo_pkg; print(frozen_demo_pkg.__version__)",
+        ],
+    );
+    assert!(probe_a.status.success(), "import probe after first sync");
 
     let out = run(&proj, &["sync"]);
     assert!(out.status.success(), "second sync must succeed");
@@ -150,10 +132,22 @@ fn sync_second_run_is_a_clean_noop() {
     );
 
     let lock_b = std::fs::read(proj.join("mamba.lock")).unwrap();
-    let init_b =
-        std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
+    let probe_b = run(
+        &proj,
+        &[
+            "run",
+            "--",
+            "python3",
+            "-c",
+            "import frozen_demo_pkg; print(frozen_demo_pkg.__version__)",
+        ],
+    );
+    assert!(probe_b.status.success(), "import probe after no-op sync");
     assert_eq!(lock_a, lock_b, "lockfile byte-identical across syncs");
-    assert_eq!(init_a, init_b, "package init.py untouched on no-op");
+    assert_eq!(
+        probe_a.stdout, probe_b.stdout,
+        "package import output untouched on no-op"
+    );
 }
 
 #[test]
@@ -205,13 +199,10 @@ fn sync_import_probe_holds_after_both_runs() {
     setup_locked_project(&proj, index.path());
 
     assert!(run(&proj, &["sync"]).status.success());
-    let probe = proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py");
-    assert!(probe.exists(), "import probe present after first sync");
-    let body = std::fs::read_to_string(&probe).unwrap();
-    assert!(body.contains("__mamba_pkg__"), "stub marks itself: {body}");
+    assert_import_succeeds(&proj, "frozen_demo_pkg");
 
     assert!(run(&proj, &["sync"]).status.success());
-    assert!(probe.exists(), "import probe present after second sync");
+    assert_import_succeeds(&proj, "frozen_demo_pkg");
 }
 
 #[test]
@@ -246,21 +237,18 @@ fn sync_downloads_and_verifies_wheel_when_url_and_sha_present() {
     // `mamba sync` must stream the artifact through the sha-verifying
     // download path (uv-style). The wheel lands in the cache directory
     // alongside its .sha256 sidecar; sha256 mismatch would abort.
-    use sha2::{Digest, Sha256};
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (server_url, body_sha) = rt.block_on(async {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use wiremock::MockServer;
         let server = MockServer::start().await;
-        let body = b"tick15-fake-wheel-bytes-for-sync-sha256-test";
-        let mut hasher = Sha256::new();
-        hasher.update(body);
-        let digest = format!("{:x}", hasher.finalize());
-        Mock::given(method("GET"))
-            .and(path("/files/tick15_sync_pkg-1.0.0-py3-none-any.whl"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
-            .mount(&server)
-            .await;
+        let wheel_dir = tempfile::tempdir().unwrap();
+        let wheel = build_wheel_file(wheel_dir.path(), "tick15_sync_pkg", "1.0.0");
+        let digest = mount_wheel(
+            &server,
+            "/files/tick15_sync_pkg-1.0.0-py3-none-any.whl",
+            &wheel,
+        )
+        .await;
         let url = server.uri();
         std::mem::forget(server);
         (url, digest)
@@ -317,24 +305,22 @@ fn sync_downloads_and_verifies_wheel_when_url_and_sha_present() {
 
 #[test]
 fn sync_download_uses_stored_auth_credentials() {
-    use sha2::{Digest, Sha256};
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (server_url, body_sha) = rt.block_on(async {
+        use crate::fixtures::mount_authed_wheel;
         use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
-        use wiremock::matchers::{header, method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use wiremock::MockServer;
         let server = MockServer::start().await;
-        let body = b"auth-sync-fake-wheel-bytes";
-        let mut hasher = Sha256::new();
-        hasher.update(body);
-        let digest = format!("{:x}", hasher.finalize());
+        let wheel_dir = tempfile::tempdir().unwrap();
+        let wheel = build_wheel_file(wheel_dir.path(), "auth_sync_pkg", "1.0.0");
         let expected_auth = basic_auth("__token__", "secret-token").unwrap();
-        Mock::given(method("GET"))
-            .and(path("/files/auth_sync_pkg-1.0.0-py3-none-any.whl"))
-            .and(header("authorization", expected_auth.as_str()))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
-            .mount(&server)
-            .await;
+        let digest = mount_authed_wheel(
+            &server,
+            "/files/auth_sync_pkg-1.0.0-py3-none-any.whl",
+            &wheel,
+            &expected_auth,
+        )
+        .await;
         let url = server.uri();
         std::mem::forget(server);
         (url, digest)
@@ -392,27 +378,19 @@ fn sync_downloads_many_packages_in_parallel() {
     // every one of them when the lockfile names them all. This validates the
     // semaphore + JoinSet fan-out path — the test does not assert wall-time
     // ratios (flaky on CI) but does assert every artifact lands on disk.
-    use sha2::{Digest, Sha256};
     let rt = tokio::runtime::Runtime::new().unwrap();
     const N: usize = 6;
     let (server_url, pkgs) = rt.block_on(async {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use wiremock::MockServer;
         let server = MockServer::start().await;
+        let wheel_dir = tempfile::tempdir().unwrap();
         let mut pkgs: Vec<(String, String, String)> = Vec::with_capacity(N);
         for i in 0..N {
             let name = format!("tick16_par_{i}");
             let version = "1.0.0".to_string();
             let filename = format!("{name}-{version}-py3-none-any.whl");
-            let body = format!("tick16-parallel-body-{i}").into_bytes();
-            let mut h = Sha256::new();
-            h.update(&body);
-            let digest = format!("{:x}", h.finalize());
-            Mock::given(method("GET"))
-                .and(path(format!("/files/{filename}")))
-                .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
-                .mount(&server)
-                .await;
+            let wheel = build_wheel_file(wheel_dir.path(), &name, &version);
+            let digest = mount_wheel(&server, &format!("/files/{filename}"), &wheel).await;
             pkgs.push((name, version, digest));
         }
         let url = server.uri();
@@ -467,20 +445,13 @@ fn sync_downloads_many_packages_in_parallel() {
 fn sync_jobs_one_runs_sequentially_but_still_completes() {
     // Tick 16: `--jobs 1` collapses to a serial download pass. The
     // semaphore caps at 1 permit, but the same JoinSet machinery applies.
-    use sha2::{Digest, Sha256};
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (server_url, name, version, digest) = rt.block_on(async {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use wiremock::MockServer;
         let server = MockServer::start().await;
-        let body = b"tick16-serial-body";
-        let mut h = Sha256::new();
-        h.update(body);
-        let digest = format!("{:x}", h.finalize());
-        Mock::given(method("GET"))
-            .and(path("/files/tick16_serial-1.0.0-py3-none-any.whl"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
-            .mount(&server)
+        let wheel_dir = tempfile::tempdir().unwrap();
+        let wheel = build_wheel_file(wheel_dir.path(), "tick16_serial", "1.0.0");
+        let digest = mount_wheel(&server, "/files/tick16_serial-1.0.0-py3-none-any.whl", &wheel)
             .await;
         let url = server.uri();
         std::mem::forget(server);
@@ -532,14 +503,18 @@ fn sync_fails_on_sha256_mismatch() {
     // must surface the mismatch — uv-style safety contract.
     let rt = tokio::runtime::Runtime::new().unwrap();
     let server_url = rt.block_on(async {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use wiremock::MockServer;
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/files/tick15_sync_bad-1.0.0-py3-none-any.whl"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"different-bytes".to_vec()))
-            .mount(&server)
-            .await;
+        let wheel_dir = tempfile::tempdir().unwrap();
+        let wheel = build_wheel_file(wheel_dir.path(), "tick15_sync_bad", "1.0.0");
+        // A real wheel is served here; the lockfile below stakes a wrong
+        // sha256, so `sync` must still abort on the verify step.
+        let _served_sha = mount_wheel(
+            &server,
+            "/files/tick15_sync_bad-1.0.0-py3-none-any.whl",
+            &wheel,
+        )
+        .await;
         let url = server.uri();
         std::mem::forget(server);
         url
@@ -574,11 +549,13 @@ fn sync_fails_on_sha256_mismatch() {
         stderr.contains("hash mismatch") || stderr.contains("HashMismatch"),
         "stderr must say hash mismatch: {stderr:?}"
     );
+    let probe = run(
+        &proj,
+        &["run", "--", "python3", "-c", "import tick15_sync_bad"],
+    );
     assert!(
-        !proj
-            .join(".venv/site-packages/tick15_sync_bad/__init__.py")
-            .exists(),
-        "stub must NOT be created when verification fails"
+        !probe.status.success(),
+        "package must NOT be importable when verification fails"
     );
 }
 
@@ -591,33 +568,28 @@ fn sync_reuses_content_addressed_cache_across_package_names() {
     //
     // This is the production cache property that lets uv-style installs share
     // bytes across `extras`, sibling releases, and identical re-uploads.
-    use sha2::{Digest, Sha256};
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (server_url, body_sha) = rt.block_on(async {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
-        let body = b"tick17-cas-shared-wheel-bytes-identical-across-pkgs";
-        let mut hasher = Sha256::new();
-        hasher.update(body);
-        let digest = format!("{:x}", hasher.finalize());
+        let wheel_dir = tempfile::tempdir().unwrap();
+        let wheel = build_wheel_file(wheel_dir.path(), "tick17_pkga", "1.0.0");
 
         // Route A — first sync downloads from here.
-        Mock::given(method("GET"))
-            .and(path("/files/tick17_pkga-1.0.0-py3-none-any.whl"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
-            .expect(1)
-            .mount(&server)
-            .await;
+        let digest = mount_wheel(
+            &server,
+            "/files/tick17_pkga-1.0.0-py3-none-any.whl",
+            &wheel,
+        )
+        .await;
 
         // Route B — the second sync's lockfile points here, but CAS must
         // short-circuit the request. `expect(0)` makes the test fail if the
-        // CAS bypass regresses.
+        // CAS bypass regresses. No body: this route must never be fetched.
         Mock::given(method("GET"))
             .and(path("/files/tick17_pkgb-1.0.0-py3-none-any.whl"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_bytes(b"must-not-be-fetched".to_vec()),
-            )
+            .respond_with(ResponseTemplate::new(500))
             .expect(0)
             .mount(&server)
             .await;
@@ -661,14 +633,30 @@ fn sync_reuses_content_addressed_cache_across_package_names() {
         cas_path.display()
     );
 
-    // Second project — same wheel body, different package name + URL.
-    // The URL response is a 500: if the cache short-circuits, we never hit it.
+    // Unlink the name-addressed slot the first sync wrote; the blob under
+    // `content/` stays. Both lockfiles name the same package, so without
+    // this the second sync would be served by the name-addressed hit
+    // (`read_cached_artifact` runs first in `download_artifact`) and never
+    // reach the content-addressed path this case pins.
+    let artifacts = cache.join("artifacts/tick17-pkga");
+    let wheel_out = artifacts.join("tick17_pkga-1.0.0-py3-none-any.whl");
+    let sidecar_out = artifacts.join("tick17_pkga-1.0.0-py3-none-any.whl.sha256");
+    std::fs::remove_file(&wheel_out).unwrap();
+    std::fs::remove_file(&sidecar_out).unwrap();
+    assert!(
+        cas_path.exists(),
+        "CAS blob must survive unlinking the name-addressed slot"
+    );
+
+    // Second project — same package name + version (a wheel carries one
+    // `Name`), fetched from a second URL. That URL responds 500: if the
+    // cache short-circuits on content address, we never hit it.
     let proj_b = tmp.path().join("demo_b");
     std::fs::create_dir(&proj_b).unwrap();
     assert!(run(&proj_b, &["init"]).status.success());
     let url_b = format!("{server_url}/files/tick17_pkgb-1.0.0-py3-none-any.whl");
     let lock_b = format!(
-        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"tick17_pkgb\"\nversion = \"1.0.0\"\nsha256 = \"{body_sha}\"\nurl = \"{url_b}\"\nsource = \"pypi://tick17_pkgb/1.0.0\"\ndependencies = []\n"
+        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"tick17_pkga\"\nversion = \"1.0.0\"\nsha256 = \"{body_sha}\"\nurl = \"{url_b}\"\nsource = \"pypi://tick17_pkga/1.0.0\"\ndependencies = []\n"
     );
     std::fs::write(proj_b.join("mamba.lock"), lock_b).unwrap();
     let out_b = Command::new(mamba_bin())
@@ -683,21 +671,30 @@ fn sync_reuses_content_addressed_cache_across_package_names() {
         String::from_utf8_lossy(&out_b.stderr)
     );
 
-    // pkgb wheel must materialize in its name-addressed slot — proves the
-    // CAS-hit path also wrote the per-package artifact + sidecar.
-    let pkgb_artifacts = cache.join("artifacts/tick17-pkgb");
-    let pkgb_wheel = pkgb_artifacts.join("tick17_pkgb-1.0.0-py3-none-any.whl");
-    let pkgb_sidecar = pkgb_artifacts.join("tick17_pkgb-1.0.0-py3-none-any.whl.sha256");
+    // The CAS-hit path materializes the blob into the name-addressed slot
+    // keyed by the second URL's filename (`derive_filename` takes the URL
+    // tail) and writes a fresh sidecar; the first URL's slot stays gone.
+    let wheel_b = artifacts.join("tick17_pkgb-1.0.0-py3-none-any.whl");
+    let sidecar_b = artifacts.join("tick17_pkgb-1.0.0-py3-none-any.whl.sha256");
     assert!(
-        pkgb_wheel.exists(),
-        "pkgb wheel must be materialized from CAS at {}",
-        pkgb_wheel.display()
+        wheel_b.exists(),
+        "wheel must be materialized from CAS at {}",
+        wheel_b.display()
     );
-    assert!(pkgb_sidecar.exists(), "pkgb sha sidecar must be written");
-    let pkgb_sidecar_body = std::fs::read_to_string(&pkgb_sidecar).unwrap();
     assert_eq!(
-        pkgb_sidecar_body.trim(),
+        std::fs::read(&wheel_b).unwrap(),
+        std::fs::read(&cas_path).unwrap(),
+        "materialized wheel must carry the CAS blob's bytes"
+    );
+    assert!(sidecar_b.exists(), "sha sidecar must be written");
+    let sidecar_body = std::fs::read_to_string(&sidecar_b).unwrap();
+    assert_eq!(
+        sidecar_body.trim(),
         body_sha,
-        "pkgb sidecar must record the shared sha"
+        "sidecar must record the shared sha"
+    );
+    assert!(
+        !wheel_out.exists() && !sidecar_out.exists(),
+        "the first URL's slot must not be recreated by the second sync"
     );
 }

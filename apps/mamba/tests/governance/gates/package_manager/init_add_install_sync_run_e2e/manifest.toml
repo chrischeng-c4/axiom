@@ -53,14 +53,14 @@ order = 1
 name = "init"
 status = "supported"
 must_create_project_files = true
-expected_artifacts = ["mamba.toml"]
+expected_artifacts = ["pyproject.toml"]
 
 [[steps]]
 order = 2
 name = "add"
 status = "supported"
 must_modify_project_files = true
-expected_artifacts = ["mamba.toml"]
+expected_artifacts = ["pyproject.toml"]
 
 [[steps]]
 order = 3

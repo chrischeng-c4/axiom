@@ -355,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     cases: list[dict[str, Any]] = []
     for mutant, generated in materialized:
         oracle = run_case([args.python, str(generated)], args.timeout)
-        mamba = run_case([args.mamba_bin, "run", str(generated)], args.timeout)
+        mamba = run_case([args.mamba_bin, "run", "--compile", str(generated)], args.timeout)
         status, reason = classify(oracle, mamba)
         counts[status] = counts.get(status, 0) + 1
         cases.append(

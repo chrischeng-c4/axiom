@@ -261,6 +261,11 @@ its commit.
 | 1 `e2e` | `apps/<name>/e2e/` | The black-box case, written to fail against the current tree |
 | 2 `impl` | `apps/<name>/src/` | The skeleton, its colocated tests, and the implementation that turns them green; at least one test file is required |
 
+`impl`'s write root widens beyond `apps/<name>/src/` only by an
+`[package.metadata.aw]` declaration (`impl-roots`, `impl-repo-paths`) in the
+project's own `Cargo.toml`, read from HEAD — never from the working tree —
+so a project that never declares this keeps exactly the table above.
+
 Maintenance has one `maint` phase. Its type selects its write boundary:
 
 | Type | Allowed change |

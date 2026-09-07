@@ -31,7 +31,10 @@ Mamba's first deliverable to a Python developer is the package manager: a
 drop-in for the common `uv` workflow that needs no mamba runtime at all. The
 compiler and the CPython runtime replacement it enables come second, in the
 tier order the README records, and they never change the package manager's
-contract. This order was decided on 2026-09-03; until then the runtime tiers
+contract. Between the two, the mambalibs kits reach a CPython user as PyO3
+extension wheels installed through that package manager; the `MambaModule`
+carrier inside the mamba runtime comes after the wheel and matches its Python
+API. This order was decided on 2026-09-03; until then the runtime tiers
 came first.
 
 ## Who mamba is for
@@ -39,24 +42,27 @@ came first.
 | Reader | What they hold mamba to |
 |---|---|
 | Python developer | `mamba` behaves like `uv` for the project workflow, on the system or managed CPython they already have. |
+| Data-science Python developer | `mamba add mambalibs-<kit>` and `mamba sync` install a kit as a wheel into the project `.venv`, and `import mambalibs.<name>` works on that CPython with no mamba runtime. |
 | Compiler adopter | A compiled program gives the CPython 3.12 result with less CPU time and less memory, tier by tier. |
 
 ## Horizons
 
 | Horizon | Outcome | Section |
 |---|---|---|
-| H1 | `uv-workflow-parity` | [package-manager.md](package-manager.md) § uv workflow parity |
-| H2 | `cpython-runtime-replacement` | [runtime.md](runtime.md) § CPython runtime replacement |
+| H1 | `uv-workflow-parity` (shipped) | [package-manager.md](package-manager.md) § uv workflow parity; STATUS `environment-and-run`, `project-dependencies` |
+| H2 | `mambalibs-cpython-wheels` (shipped) | [mambalibs.md](mambalibs.md) § mambalibs CPython wheels; STATUS `mambalibs-cpython-wheels` |
+| H3 | `cpython-runtime-replacement` | [runtime.md](runtime.md) § CPython runtime replacement |
 
 ## Section index
 
 | Section | File | Kind | Owner |
 |---|---|---|---|
 | Offline project workflow | package-manager.md | shipped, limited | STATUS `project-dependencies`, `environment-and-run`, `interpreter-management`, `build-and-version`, `tooling-and-cache`, `sources-and-credentials` |
-| uv workflow parity | package-manager.md | outcome | ROADMAP `uv-workflow-parity` |
+| uv workflow parity | package-manager.md | shipped, limited | STATUS `environment-and-run`, `project-dependencies` |
+| mambalibs CPython wheels | mambalibs.md | shipped, limited | STATUS `mambalibs-cpython-wheels` |
 | CPython runtime replacement | runtime.md | outcome | ROADMAP `cpython-runtime-replacement` |
 
 Non-goals are not sections. Each file ends with the non-goals a reader of that
 area would otherwise assume, pointing at the ROADMAP entry that gives the
 reason: `sdist-c-extension-builds`, `resolver-speed-parity-with-uv`,
-`full-pip-option-surface`.
+`full-pip-option-surface`, `cpython-c-api-emulation`.

@@ -9,7 +9,7 @@
 //!   2. `mamba run <file>` AFTER `mamba sync` proceeds past the
 //!      preflight (it may then succeed or fail for unrelated compile
 //!      reasons, but never with "environment is not synced").
-//!   3. `mamba run <file>` outside a mamba project (no mamba.toml)
+//!   3. `mamba run <file>` outside a mamba project (no pyproject.toml)
 //!      proceeds straight through legacy mode.
 
 use std::path::{Path, PathBuf};
@@ -44,36 +44,11 @@ fn make_executable(path: &Path) {
     std::fs::set_permissions(path, permissions).unwrap();
 }
 
-fn normalize_pep503(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut prev_sep = false;
-    for c in name.chars() {
-        let is_sep = c == '-' || c == '_' || c == '.';
-        if is_sep {
-            if !prev_sep && !out.is_empty() {
-                out.push('-');
-            }
-            prev_sep = true;
-        } else {
-            out.push(c.to_ascii_lowercase());
-            prev_sep = false;
-        }
-    }
-    if out.ends_with('-') {
-        out.pop();
-    }
-    out
-}
-
-fn stake_pkg(index: &Path, name: &str, version: &str) {
-    let ver_dir = index.join(normalize_pep503(name)).join(version);
-    std::fs::create_dir_all(&ver_dir).unwrap();
-    std::fs::write(ver_dir.join("metadata.toml"), "requires = []\n").unwrap();
-}
+use crate::fixtures::fixture_pkg;
 
 fn build_index() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
-    stake_pkg(dir.path(), "frozen_demo_pkg", "0.1.0");
+    fixture_pkg(dir.path(), "frozen_demo_pkg", "0.1.0", &[]);
     dir
 }
 
@@ -167,7 +142,7 @@ fn run_outside_mamba_project_is_legacy() {
     .unwrap();
 
     let out = run(tmp.path(), &["run", "solo.py"]);
-    // No mamba.toml here, so preflight is bypassed entirely. The
+    // No pyproject.toml here, so preflight is bypassed entirely. The
     // command must NOT fail with the env-not-synced diagnostic.
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(

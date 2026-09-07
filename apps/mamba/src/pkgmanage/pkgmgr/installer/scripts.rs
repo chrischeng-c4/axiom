@@ -4,7 +4,7 @@
 
 /// @spec .aw/tech-design/apps/mamba/pkgmgr/installer.md#Logic
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::InstallerError;
 
@@ -50,12 +50,15 @@ fn parse_console_scripts(text: &str) -> Vec<EntryPoint> {
 }
 
 /// Generate `bin/<name>` shebang wrappers for every `[console_scripts]` entry.
-/// Returns the list of script names that were written.
+/// Returns, per script written, its name alongside the absolute path it was
+/// written to -- so a caller can hash and record what is actually on disk,
+/// rather than reconstructing the path from the name and `bin_dir` a second
+/// time.
 pub fn write_console_scripts(
     entry_points_text: &str,
     bin_dir: &Path,
     python_executable: &Path,
-) -> Result<Vec<String>, InstallerError> {
+) -> Result<Vec<(String, PathBuf)>, InstallerError> {
     let scripts = parse_console_scripts(entry_points_text);
     if scripts.is_empty() {
         return Ok(Vec::new());
@@ -66,7 +69,7 @@ pub fn write_console_scripts(
         detail: e.to_string(),
     })?;
 
-    let mut names = Vec::with_capacity(scripts.len());
+    let mut written = Vec::with_capacity(scripts.len());
     for ep in scripts {
         let body = render_wrapper(&ep, python_executable);
         let dest = bin_dir.join(&ep.name);
@@ -84,9 +87,37 @@ pub fn write_console_scripts(
                 }
             })?;
         }
-        names.push(ep.name);
+        written.push((ep.name, dest));
     }
-    Ok(names)
+    Ok(written)
+}
+
+/// The path from `wrapper` to `site_packages`, written the way pip's
+/// installed `RECORD` writes a script row: relative to `site_packages`, with
+/// `..` segments climbing out of it and `/`-separated components throughout
+/// (never the platform separator), computed by walking the two absolute
+/// paths' common prefix component-by-component. `wrapper` is never inside
+/// `site_packages` in practice -- a console script always lives beside the
+/// interpreter, not in site-packages -- so the result always climbs out with
+/// at least one `..`.
+pub fn relative_to_site_packages(wrapper: &Path, site_packages: &Path) -> String {
+    let wrapper_components: Vec<_> = wrapper.components().collect();
+    let site_components: Vec<_> = site_packages.components().collect();
+    let mut common = 0;
+    while common < wrapper_components.len()
+        && common < site_components.len()
+        && wrapper_components[common] == site_components[common]
+    {
+        common += 1;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common..site_components.len() {
+        parts.push("..".to_string());
+    }
+    for comp in &wrapper_components[common..] {
+        parts.push(comp.as_os_str().to_string_lossy().into_owned());
+    }
+    parts.join("/")
 }
 
 fn render_wrapper(ep: &EntryPoint, python_executable: &Path) -> String {
@@ -154,6 +185,26 @@ gui = some.gui:run
         };
         let body = render_wrapper(&ep, &PathBuf::from("/usr/bin/python3"));
         assert!(body.contains("runpy.run_module('pkg.cli'"));
+    }
+
+    #[test]
+    fn relative_to_site_packages_climbs_out_with_dotdot_segments_posix() {
+        let site = PathBuf::from("/env/lib/python3.13/site-packages");
+        let wrapper = PathBuf::from("/env/bin/sentinelctl");
+        assert_eq!(
+            super::relative_to_site_packages(&wrapper, &site),
+            "../../../bin/sentinelctl"
+        );
+    }
+
+    #[test]
+    fn relative_to_site_packages_climbs_out_with_dotdot_segments_windows_shaped() {
+        let site = PathBuf::from("/env/Lib/site-packages");
+        let wrapper = PathBuf::from("/env/Scripts/x");
+        assert_eq!(
+            super::relative_to_site_packages(&wrapper, &site),
+            "../../Scripts/x"
+        );
     }
 }
 // HANDWRITE-END

@@ -9,15 +9,25 @@
 //   - Import probe (`<pkg>/__init__.py`) is present after both runs.
 //   - Offline against the frozen local index; never touches global cache.
 //
-// Materialization model (offline / frozen-index):
-//   .venv/site-packages/<pep503_name>/__init__.py
-// This is a deliberate stub install — sufficient to satisfy the
-// fixture's "import_ok" probe and idempotence contract without
-// pretending we have wheels we don't. Real wheel install lands when
-// the live-network family unblocks.
+// Materialization model (real venv, real wheel):
+//   <venv>/lib/pythonX.Y/site-packages/<dist>-<version>.dist-info/RECORD
+//   (POSIX; `Lib/site-packages` on Windows) — the venv's own `pyvenv.cfg`
+// names the interpreter version, `VenvLayout::for_current_platform` derives
+// the layout from it, and `Installer::install` unpacks the real wheel
+// there. A lock entry's `path` (index, direct_file) is installed directly;
+// a `url` plus `sha256` entry is downloaded and hash-verified first, then
+// installed the same way; a `mamba_provider` entry keeps its
+// generated-file materialization. No stub is written for any kind.
+//
+// When `.venv` does not already exist (no prior `mamba venv`), `sync`
+// creates a real PEP 405 environment itself via `pkgmgr::venv::create_venv`
+// so a package is always installed into a real interpreter's
+// site-packages.
 //
 // Idempotence signal: when the second run sees every locked package
-// already present, it writes `no_op` to stderr and exits 0.
+// already present, it writes `no_op` to stderr and exits 0 — the
+// installer's own dist-info fast path (`read_installed_dist_info`) is
+// what makes a second install of the same version a no-op.
 //
 // No partial state on failure: lockfile is never rewritten by sync.
 
@@ -26,21 +36,81 @@ use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::pkgmanage::manifest::pyproject::{self, ManifestState, DEV_GROUP};
+use crate::pkgmanage::pkgmgr::installer::{InstallMode, InstallRequest, Installer};
+use crate::pkgmanage::pkgmgr::venv::{
+    create_venv, first_python_on_path, layout_from_pyvenv_cfg, VenvCreationOutcome, VenvOptions,
+};
 use crate::pkgmanage::provider;
 
-const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const VENV_DIR: &str = ".venv";
 const SITE_PACKAGES: &str = "site-packages";
 
+/// Resolve the site-packages directory `sync` installs into for a given
+/// `.venv` root: the venv's own `VenvLayout` derived from its own
+/// `pyvenv.cfg` (`lib/pythonX.Y/site-packages` on POSIX, `Lib/site-packages`
+/// on Windows) — never the flat `<venv>/site-packages` directory. Falls
+/// back to the flat layout only when `pyvenv.cfg` doesn't exist yet or
+/// can't be parsed, so callers that probe before a venv exists still get a
+/// stable (if unused) path.
+pub(crate) fn resolve_site_packages(venv_dir: &Path) -> PathBuf {
+    layout_from_pyvenv_cfg(venv_dir)
+        .map(|layout| layout.site_packages)
+        .unwrap_or_else(|_| venv_dir.join(SITE_PACKAGES))
+}
+
+/// Resolve the artifact `Installer::install` should unpack for one locked,
+/// non-provider package: a non-empty `path` (index, direct_file) names it
+/// directly and must exist on disk; otherwise a non-empty `url` plus
+/// `sha256` names an already-downloaded, hash-verified artifact in the
+/// sync cache; an entry with neither fails, naming the package.
+pub(crate) fn resolve_artifact_path(pkg: &LockedPkg) -> Result<PathBuf> {
+    if !pkg.path.is_empty() {
+        let path = PathBuf::from(&pkg.path);
+        if !path.is_file() {
+            bail!(
+                "cannot sync package `{}`: artifact path {} does not exist",
+                pkg.name,
+                path.display()
+            );
+        }
+        return Ok(path);
+    }
+    if !pkg.url.is_empty() && !pkg.sha256.is_empty() {
+        let cache_dir = sync_cache_dir();
+        let filename = derive_filename(&pkg.url, &pkg.name, &pkg.version);
+        return Ok(crate::pkgmanage::pkgmgr::cache::artifact_path(
+            &cache_dir, &pkg.name, &filename,
+        ));
+    }
+    bail!(
+        "cannot sync package `{}`: mamba.lock entry names neither `path` nor `url`",
+        pkg.name
+    );
+}
+
+/// Create a real PEP 405 environment at `venv_dir` when `mamba sync` runs
+/// before any `mamba venv`. Uses the first `python3`/`python` found on
+/// `PATH` (falling back to the bare name `python3`, matching `mamba venv`'s
+/// own default) and lays down the real interpreter tree — sync never seeds
+/// `pip`, it doesn't need it.
+fn ensure_real_venv(venv_dir: &Path) -> Result<()> {
+    let python = first_python_on_path().unwrap_or_else(|| PathBuf::from("python3"));
+    let opts = VenvOptions::new(python, venv_dir);
+    match create_venv(&opts) {
+        Ok(VenvCreationOutcome::Created { .. }) => Ok(()),
+        Ok(VenvCreationOutcome::Refused { reason }) => bail!(reason),
+        Err(e) => Err(anyhow::anyhow!(
+            "create virtual environment at {}: {e}",
+            venv_dir.display()
+        )),
+    }
+}
+
 pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
     let project_dir = std::env::current_dir().context("read current directory")?;
-    if !project_dir.join(MANIFEST_FILE).exists() {
-        bail!(
-            "no {MANIFEST_FILE} in {} — run `mamba init` first",
-            project_dir.display()
-        );
-    }
+    let manifest_path = pyproject::locate(&project_dir)?;
     let lock_path = project_dir.join(LOCKFILE_FILE);
     if !lock_path.exists() {
         bail!(
@@ -51,39 +121,71 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
 
     let lock_src =
         fs::read_to_string(&lock_path).with_context(|| format!("read {}", lock_path.display()))?;
-    let packages = parse_locked_packages(&lock_src)?;
+    if sub.get_flag("locked") {
+        let manifest_src = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read {}", manifest_path.display()))?;
+        let state = ManifestState::parse(&manifest_src)?;
+        check_lock_current(&lock_src, &state)?;
+    }
+    let selection = Selection::from_matches(sub);
+    let packages = selection.select(&parse_locked_packages(&lock_src)?);
 
     let venv_dir = project_dir.join(VENV_DIR);
-    let site = venv_dir.join(SITE_PACKAGES);
 
-    let plan = plan_install(&packages, &site);
+    // `plan_install` below only needs to read an existing site-packages;
+    // when the venv doesn't exist yet, treat every package as pending so
+    // `--check` and the no-op probe both see the real state.
+    let probe_site = venv_dir
+        .join("pyvenv.cfg")
+        .exists()
+        .then(|| resolve_site_packages(&venv_dir));
+    let plan = plan_install(&packages, probe_site.as_deref());
+    let extraneous: Vec<(String, String)> = probe_site
+        .as_deref()
+        .map(|site| plan_extraneous(&packages, site))
+        .unwrap_or_default();
     if sub.get_flag("check") {
         if !venv_dir.join("pyvenv.cfg").exists() {
             bail!("environment is not synchronized with mamba.lock; missing .venv/pyvenv.cfg");
         }
-        if !plan.is_empty() {
-            let missing = plan
-                .iter()
-                .map(|p| format!("{}=={}", p.name, p.version))
-                .collect::<Vec<_>>()
-                .join(", ");
-            bail!("environment is not synchronized with mamba.lock; pending packages: {missing}");
+        if !plan.is_empty() || !extraneous.is_empty() {
+            let mut message = String::from("environment is not synchronized with mamba.lock");
+            if !plan.is_empty() {
+                let missing = plan
+                    .iter()
+                    .map(|p| format!("{}=={}", p.name, p.version))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                message.push_str(&format!("; pending packages: {missing}"));
+            }
+            if !extraneous.is_empty() {
+                let extra = extraneous
+                    .iter()
+                    .map(|(name, version)| format!("{name}=={version}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                message.push_str(&format!("; extraneous packages: {extra}"));
+            }
+            bail!(message);
         }
         println!("environment is synchronized with mamba.lock");
         return Ok(());
     }
-    if plan.is_empty() && venv_dir.exists() {
+    if plan.is_empty() && extraneous.is_empty() && venv_dir.join("pyvenv.cfg").exists() {
         eprintln!("no_op: environment already in sync with mamba.lock");
         return Ok(());
     }
 
+    if !venv_dir.join("pyvenv.cfg").exists() {
+        ensure_real_venv(&venv_dir)?;
+    }
+    let site = resolve_site_packages(&venv_dir);
     fs::create_dir_all(&site).with_context(|| format!("create {}", site.display()))?;
-    write_venv_marker(&venv_dir, &project_dir)?;
 
     // Tick 15: when the lockfile carries `url` + `sha256` for a package, fetch
     // the artifact through the streaming, sha-verifying IndexClient before
-    // materialising the stub. Tick 16: fan downloads out under a Semaphore
-    // so large lockfiles don't sit on a single network connection.
+    // installing it. Tick 16: fan downloads out under a Semaphore so large
+    // lockfiles don't sit on a single network connection.
     let downloadable: Vec<LockedPkg> = plan
         .iter()
         .filter(|p| !p.url.is_empty() && !p.sha256.is_empty())
@@ -94,8 +196,33 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
         download_and_verify_parallel(&downloadable, jobs)?;
     }
 
+    let layout = layout_from_pyvenv_cfg(&venv_dir)
+        .map_err(|e| anyhow::anyhow!("resolve venv layout at {}: {e}", venv_dir.display()))?;
+    let installer = Installer::new();
+
+    // Prune every distribution the lock no longer pins before installing the
+    // pending set — a package whose installed version differs from its pin
+    // is both extraneous (old version) and pending (new version), and must
+    // be removed before the new version is placed.
+    for (name, _version) in &extraneous {
+        prune_distribution(&installer, &site, name)?;
+    }
+
     for pkg in &plan {
-        materialize_stub(&site, pkg)?;
+        if pkg.source_kind == "mamba_provider" {
+            materialize_mamba_provider(&site, pkg)?;
+            continue;
+        }
+        let artifact_path = resolve_artifact_path(pkg)?;
+        let req = InstallRequest {
+            artifact_path,
+            site_packages: site.clone(),
+            python_executable: layout.python_executable.clone(),
+            mode: InstallMode::Purelib,
+        };
+        installer
+            .install(req)
+            .map_err(|e| anyhow::anyhow!("install {}=={}: {e}", pkg.name, pkg.version))?;
     }
     Ok(())
 }
@@ -121,6 +248,103 @@ fn resolve_jobs(sub: &ArgMatches) -> usize {
         }
     }
     8
+}
+
+/// Which lock entries one `mamba sync` installs, uv's defaults exactly:
+/// the `[project] dependencies` closure always, the `dev` group unless
+/// `--no-dev`, and whatever `--group`, `--all-groups`, `--extra`, and
+/// `--all-extras` add. The environment converges on exactly the selection:
+/// `plan_extraneous` runs over the selected set, so `sync --no-dev` after a
+/// full sync uninstalls the dev packages the way `uv sync --no-dev` does
+/// (uv's `--inexact` is not offered).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Selection {
+    pub(crate) dev: bool,
+    pub(crate) groups: Vec<String>,
+    pub(crate) all_groups: bool,
+    pub(crate) extras: Vec<String>,
+    pub(crate) all_extras: bool,
+}
+
+impl Default for Selection {
+    fn default() -> Self {
+        Self {
+            dev: true,
+            groups: Vec::new(),
+            all_groups: false,
+            extras: Vec::new(),
+            all_extras: false,
+        }
+    }
+}
+
+impl Selection {
+    pub(crate) fn from_matches(sub: &ArgMatches) -> Self {
+        let many = |id: &str| -> Vec<String> {
+            sub.get_many::<String>(id)
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default()
+        };
+        Self {
+            dev: !sub.get_flag("no-dev"),
+            groups: many("group"),
+            all_groups: sub.get_flag("all-groups"),
+            extras: many("extra"),
+            all_extras: sub.get_flag("all-extras"),
+        }
+    }
+
+    /// True when `pkg` is reachable from a selected list.
+    pub(crate) fn includes(&self, pkg: &LockedPkg) -> bool {
+        if pkg.project {
+            return true;
+        }
+        if self.all_groups && !pkg.groups.is_empty() {
+            return true;
+        }
+        if self.dev && pkg.groups.iter().any(|g| g == DEV_GROUP) {
+            return true;
+        }
+        if pkg.groups.iter().any(|g| self.groups.contains(g)) {
+            return true;
+        }
+        if self.all_extras && !pkg.extras.is_empty() {
+            return true;
+        }
+        pkg.extras.iter().any(|e| self.extras.contains(e))
+    }
+
+    pub(crate) fn select(&self, packages: &[LockedPkg]) -> Vec<LockedPkg> {
+        packages
+            .iter()
+            .filter(|p| self.includes(p))
+            .cloned()
+            .collect()
+    }
+}
+
+/// `sync --locked`: refuse a lock whose `input_hash` no longer matches the
+/// manifest, instead of installing from it. A lock without an `input_hash`
+/// cannot be checked and is refused the same way.
+pub(crate) fn check_lock_current(lock_src: &str, state: &ManifestState) -> Result<()> {
+    let recorded = parse_lock_input_hash(lock_src)?;
+    let expected = crate::pkgmanage::lock::compute_input_hash(&state.lock_inputs());
+    if recorded.as_deref() != Some(expected.as_str()) {
+        bail!(
+            "the lockfile at `{LOCKFILE_FILE}` needs to be updated, but `--locked` was provided; \
+             run `mamba lock` to update it"
+        );
+    }
+    Ok(())
+}
+
+/// The top-level `input_hash` a lock records, if any.
+pub(crate) fn parse_lock_input_hash(lock_src: &str) -> Result<Option<String>> {
+    let doc: toml::Value = lock_src.parse().context("parse mamba.lock")?;
+    Ok(doc
+        .get("input_hash")
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +373,15 @@ pub(crate) struct LockedPkg {
     pub(crate) compatibility: String,
     /// Provider maturity label, e.g. experimental.
     pub(crate) maturity: String,
+    /// Reachable from `[project] dependencies`; a lock written before
+    /// groups were recorded omits the key and every entry is a project
+    /// entry.
+    pub(crate) project: bool,
+    /// The `[dependency-groups]` groups whose closure reaches this entry.
+    pub(crate) groups: Vec<String>,
+    /// The `[project.optional-dependencies]` extras whose closure reaches
+    /// this entry.
+    pub(crate) extras: Vec<String>,
 }
 
 pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
@@ -209,6 +442,9 @@ pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let project = tbl.get("project").and_then(|v| v.as_bool()).unwrap_or(true);
+        let groups = string_array(tbl, "groups");
+        let extras = string_array(tbl, "extras");
         out.push(LockedPkg {
             name,
             version,
@@ -220,6 +456,9 @@ pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
             provides,
             compatibility,
             maturity,
+            project,
+            groups,
+            extras,
         });
     }
     Ok(out)
@@ -385,12 +624,154 @@ fn derive_filename(url: &str, name: &str, version: &str) -> String {
     format!("{name}-{version}.unknown")
 }
 
-fn plan_install(packages: &[LockedPkg], site: &Path) -> Vec<LockedPkg> {
+/// Filter `packages` down to those not yet installed at `site`. `site` is
+/// `None` when the venv doesn't exist yet (nothing can be installed there
+/// yet), which trivially makes every package pending.
+pub(crate) fn plan_install(packages: &[LockedPkg], site: Option<&Path>) -> Vec<LockedPkg> {
     packages
         .iter()
-        .filter(|p| !is_installed(site, p))
+        .filter(|p| !site.is_some_and(|site| is_installed(site, p)))
         .cloned()
         .collect()
+}
+
+/// Enumerate distributions installed at `site` whose `(normalized name,
+/// version)` matches no entry in `packages` -- the set `mamba sync` must
+/// uninstall to converge on `mamba.lock`. Only `*.dist-info` directories are
+/// considered: a provider directory written by `materialize_mamba_provider`
+/// carries no dist-info and so is never reported or pruned. Sorted by name
+/// so the `--check` report is stable.
+pub(crate) fn plan_extraneous(packages: &[LockedPkg], site: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(site) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let s = file_name.to_string_lossy();
+        let Some(stem) = s.strip_suffix(".dist-info") else {
+            continue;
+        };
+        let Some((dist, version)) = stem.rsplit_once('-') else {
+            continue;
+        };
+        let normalized = normalize_dist_name(dist);
+        let still_locked = packages
+            .iter()
+            .any(|p| normalize_dist_name(&p.name) == normalized && p.version == version);
+        if !still_locked {
+            out.push((dist.to_string(), version.to_string()));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Locate `name`'s own `*.dist-info` directory at `site`, the same
+/// normalized-name match `Installer::uninstall` itself uses.
+fn find_dist_info_dir(site: &Path, name: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(site).ok()?;
+    let target = normalize_dist_name(name);
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let s = file_name.to_string_lossy();
+        let Some(stem) = s.strip_suffix(".dist-info") else {
+            continue;
+        };
+        let Some((dist, _ver)) = stem.rsplit_once('-') else {
+            continue;
+        };
+        if normalize_dist_name(dist) == target {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
+/// Remove `name`'s installed distribution from `site`, bounded to exactly
+/// what its own dist-info owns: the files `Installer::uninstall` removes per
+/// RECORD, plus the `.pyc` bytecode cache `import` derives from each
+/// RECORD-listed `.py` file, plus any directory left empty by that removal.
+/// Never a wholesale directory delete -- a namespace portion shared with a
+/// surviving distribution (`ns/two.py` still locked while `ns/one.py`'s
+/// distribution is pruned) must keep the survivor's files in place.
+///
+/// pip's own uninstall algorithm is the model: RECORD names the files a
+/// distribution owns, never the derived bytecode cache next to them, so a
+/// distribution is not "gone" from the interpreter's point of view until
+/// that cache is cleared too -- otherwise a package directory a RECORD-listed
+/// `.py` shared with nothing else survives as an importable implicit
+/// namespace package with no source, and `import` succeeds instead of
+/// raising `ModuleNotFoundError`.
+pub(crate) fn prune_distribution(installer: &Installer, site: &Path, name: &str) -> Result<()> {
+    // Read the dist-info's own RECORD *before* `Installer::uninstall` deletes
+    // it, collecting the `.py` entries: `(parent dir under site, stem)`.
+    let py_entries: Vec<(PathBuf, String)> = find_dist_info_dir(site, name)
+        .and_then(|dist_info| {
+            let dist_info_name = dist_info.file_name()?.to_string_lossy().into_owned();
+            let record_path = dist_info.join("RECORD");
+            let record_text = fs::read_to_string(&record_path).ok()?;
+            let entries = crate::pkgmanage::pkgmgr::installer::record::parse(&record_text).ok()?;
+            Some(
+                entries
+                    .into_iter()
+                    .filter(|e| !e.path.starts_with(&format!("{dist_info_name}/")))
+                    .filter_map(|e| {
+                        let rel = e.path.strip_suffix(".py")?;
+                        let (dir, stem) = rel.rsplit_once('/').unwrap_or(("", rel));
+                        Some((site.join(dir), stem.to_string()))
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+
+    installer
+        .uninstall(name, site)
+        .map_err(|e| anyhow::anyhow!("uninstall {name}: {e}"))?;
+
+    // Remove the bytecode cache `import` derived from each RECORD-listed
+    // `.py` -- `<stem>.cpython-3XY.pyc`, `<stem>.cpython-3XY.opt-1.pyc`,
+    // `<stem>.cpython-3XY.opt-2.pyc` -- then walk from that file's own
+    // directory up towards `site` (exclusive), best-effort removing each
+    // level while it is empty. `fs::remove_dir` refuses on a non-empty
+    // directory, which is exactly the boundary a shared namespace portion
+    // needs: it stops the walk at the first level another distribution's
+    // files still occupy.
+    let mut swept_dirs: Vec<PathBuf> = Vec::new();
+    for (dir, stem) in &py_entries {
+        let pycache = dir.join("__pycache__");
+        if let Ok(entries) = fs::read_dir(&pycache) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let s = file_name.to_string_lossy();
+                if s.starts_with(stem.as_str())
+                    && s.starts_with(&format!("{stem}."))
+                    && s.ends_with(".pyc")
+                {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+        let _ = fs::remove_dir(&pycache);
+        if !swept_dirs.contains(dir) {
+            swept_dirs.push(dir.clone());
+        }
+    }
+    for dir in swept_dirs {
+        let mut cursor = dir.as_path();
+        while cursor != site && cursor.starts_with(site) {
+            if fs::remove_dir(cursor).is_err() {
+                break;
+            }
+            let Some(parent) = cursor.parent() else {
+                break;
+            };
+            cursor = parent;
+        }
+    }
+
+    Ok(())
 }
 
 fn is_installed(site: &Path, pkg: &LockedPkg) -> bool {
@@ -401,7 +782,52 @@ fn is_installed(site: &Path, pkg: &LockedPkg) -> bool {
                 .iter()
                 .all(|alias| provider_alias_installed(site, alias, &pkg.name));
     }
-    dist_marker_installed(site, pkg)
+    dist_info_installed(site, &pkg.name, &pkg.version)
+}
+
+/// Whether `site` already holds a `<dist>-<version>.dist-info/` directory
+/// for `name`/`version` — the RECORD-backed signal a real `Installer`
+/// install leaves behind, replacing the retired stub-marker probe
+/// (`__init__.py` / `INSTALLER` / `VERSION`) for every non-provider entry.
+fn dist_info_installed(site: &Path, name: &str, version: &str) -> bool {
+    let Ok(entries) = fs::read_dir(site) else {
+        return false;
+    };
+    let target = normalize_dist_name(name);
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let s = file_name.to_string_lossy();
+        let Some(stem) = s.strip_suffix(".dist-info") else {
+            continue;
+        };
+        let Some((dist, ver)) = stem.rsplit_once('-') else {
+            continue;
+        };
+        if normalize_dist_name(dist) == target && ver == version {
+            return true;
+        }
+    }
+    false
+}
+
+/// PEP 503-style normalization used to match a dist-info directory name
+/// back to a locked package name: lowercase, runs of `[-_.]` collapse to a
+/// single `-`.
+fn normalize_dist_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_sep = false;
+    for c in name.chars() {
+        if c == '-' || c == '_' || c == '.' {
+            if !prev_sep {
+                out.push('-');
+                prev_sep = true;
+            }
+        } else {
+            out.push(c.to_ascii_lowercase());
+            prev_sep = false;
+        }
+    }
+    out
 }
 
 fn dist_marker_installed(site: &Path, pkg: &LockedPkg) -> bool {
@@ -412,29 +838,6 @@ fn dist_marker_installed(site: &Path, pkg: &LockedPkg) -> bool {
             .ok()
             .map(|v| v.trim() == pkg.version)
             .unwrap_or(false)
-}
-
-fn materialize_stub(site: &Path, pkg: &LockedPkg) -> Result<()> {
-    if pkg.source_kind == "mamba_provider" {
-        return materialize_mamba_provider(site, pkg);
-    }
-    let dir = site.join(normalize_module_name(&pkg.name));
-    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let init_body = format!(
-        "# stub-installed by `mamba sync` from a frozen local index\n\
-         __mamba_pkg__ = {:?}\n\
-         __version__ = {:?}\n\
-         __mamba_source_kind__ = {:?}\n\
-         __mamba_source_path__ = {:?}\n",
-        pkg.name, pkg.version, pkg.source_kind, pkg.path
-    );
-    fs::write(dir.join("__init__.py"), init_body)
-        .with_context(|| format!("write {}/__init__.py", dir.display()))?;
-    fs::write(dir.join("INSTALLER"), b"mamba\n")
-        .with_context(|| format!("write {}/INSTALLER", dir.display()))?;
-    fs::write(dir.join("VERSION"), format!("{}\n", pkg.version))
-        .with_context(|| format!("write {}/VERSION", dir.display()))?;
-    Ok(())
 }
 
 fn materialize_mamba_provider(site: &Path, pkg: &LockedPkg) -> Result<()> {
@@ -511,22 +914,6 @@ fn ensure_provider_alias_available(site: &Path, alias: &str, distribution: &str)
     Ok(())
 }
 
-fn write_venv_marker(venv_dir: &Path, project_dir: &Path) -> Result<()> {
-    let cfg_path = venv_dir.join("pyvenv.cfg");
-    if cfg_path.exists() {
-        return Ok(());
-    }
-    let body = format!(
-        "# Created by `mamba sync`\n\
-         home = {home}\n\
-         include-system-site-packages = false\n\
-         version = mamba\n",
-        home = project_dir.display()
-    );
-    fs::write(&cfg_path, body).with_context(|| format!("write {}", cfg_path.display()))?;
-    Ok(())
-}
-
 /// Python import name normalization: `-` and `.` become `_`, lowercase.
 fn normalize_module_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -598,5 +985,139 @@ dependencies = []
     fn normalize_module() {
         assert_eq!(normalize_module_name("Foo.Bar-baz"), "foo_bar_baz");
         assert_eq!(normalize_module_name("plain"), "plain");
+    }
+
+    const GROUPED_LOCK: &str = r#"
+format_version = 1
+input_hash = "x"
+
+[[package]]
+name = "core"
+version = "1.0"
+sha256 = ""
+source = "pypi://core/1.0"
+direct = true
+dependencies = ["shared==0.1"]
+
+[[package]]
+name = "fastdep"
+version = "2.0"
+sha256 = ""
+source = "pypi://fastdep/2.0"
+direct = true
+project = false
+extras = ["fast"]
+dependencies = []
+
+[[package]]
+name = "pytest"
+version = "8.0"
+sha256 = ""
+source = "pypi://pytest/8.0"
+direct = true
+project = false
+groups = ["dev"]
+dependencies = []
+
+[[package]]
+name = "ruff"
+version = "0.5"
+sha256 = ""
+source = "pypi://ruff/0.5"
+direct = true
+project = false
+groups = ["lint"]
+dependencies = []
+
+[[package]]
+name = "shared"
+version = "0.1"
+sha256 = ""
+source = "pypi://shared/0.1"
+direct = false
+groups = ["dev"]
+dependencies = []
+"#;
+
+    fn names(pkgs: &[LockedPkg]) -> Vec<&str> {
+        pkgs.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    #[test]
+    fn parse_membership_defaults_to_project() {
+        let pkgs = parse_locked_packages(GROUPED_LOCK).unwrap();
+        let core = pkgs.iter().find(|p| p.name == "core").unwrap();
+        assert!(core.project && core.groups.is_empty() && core.extras.is_empty());
+        let pytest = pkgs.iter().find(|p| p.name == "pytest").unwrap();
+        assert!(!pytest.project);
+        assert_eq!(pytest.groups, vec!["dev"]);
+        let shared = pkgs.iter().find(|p| p.name == "shared").unwrap();
+        assert!(shared.project);
+        assert_eq!(shared.groups, vec!["dev"]);
+    }
+
+    #[test]
+    fn selection_follows_uv_defaults() {
+        let pkgs = parse_locked_packages(GROUPED_LOCK).unwrap();
+        let default = Selection::default();
+        assert_eq!(
+            names(&default.select(&pkgs)),
+            vec!["core", "pytest", "shared"]
+        );
+        let no_dev = Selection {
+            dev: false,
+            ..Selection::default()
+        };
+        assert_eq!(names(&no_dev.select(&pkgs)), vec!["core", "shared"]);
+        let lint = Selection {
+            groups: vec!["lint".into()],
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&lint.select(&pkgs)),
+            vec!["core", "pytest", "ruff", "shared"]
+        );
+        let all_groups = Selection {
+            dev: false,
+            all_groups: true,
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&all_groups.select(&pkgs)),
+            vec!["core", "pytest", "ruff", "shared"]
+        );
+        let fast = Selection {
+            extras: vec!["fast".into()],
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&fast.select(&pkgs)),
+            vec!["core", "fastdep", "pytest", "shared"]
+        );
+        let all_extras = Selection {
+            dev: false,
+            all_extras: true,
+            ..Selection::default()
+        };
+        assert_eq!(
+            names(&all_extras.select(&pkgs)),
+            vec!["core", "fastdep", "shared"]
+        );
+    }
+
+    #[test]
+    fn locked_refuses_a_stale_hash() {
+        let state = ManifestState::parse(
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\nrequires-python = \">=3.12\"\ndependencies = [\"core==1.0\"]\n",
+        )
+        .unwrap();
+        let err = check_lock_current(GROUPED_LOCK, &state).unwrap_err();
+        assert!(err.to_string().contains("--locked"), "{err}");
+        let current = format!(
+            "format_version = 1\ninput_hash = \"{}\"\n",
+            crate::pkgmanage::lock::compute_input_hash(&state.lock_inputs())
+        );
+        check_lock_current(&current, &state).unwrap();
+        assert!(check_lock_current("format_version = 1\n", &state).is_err());
     }
 }

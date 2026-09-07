@@ -3,7 +3,7 @@
 //! Acceptance (issue #2679):
 //!
 //!   1. Init creates the expected files exactly once.
-//!      `[outputs].must_exist` is non-empty and includes `mamba.toml`.
+//!      `[outputs].must_exist` is non-empty and includes `pyproject.toml`.
 //!   2. Re-running init fails or is idempotent according to documented
 //!      policy.
 //!      `[reentry].policy` is set to one of the allowed policy strings,
@@ -91,8 +91,8 @@ fn pkgmgr_init_outputs_pin_expected_files() {
          (acceptance: \"Init creates the expected files exactly once.\")"
     );
     assert!(
-        must_exist.contains("mamba.toml"),
-        "`[outputs].must_exist` must include `mamba.toml` — the \
+        must_exist.contains("pyproject.toml"),
+        "`[outputs].must_exist` must include `pyproject.toml` — the \
          primary project manifest the init command creates"
     );
 
@@ -115,20 +115,20 @@ fn pkgmgr_init_outputs_pin_expected_files() {
         "must_exist and must_not_exist sets must not overlap; got {overlap:?}"
     );
 
-    // Defaults block exists and pins at least the python-requires
+    // Defaults block exists and pins at least the requires-python
     // field — the gate needs SOMETHING to assert against the file
     // content rather than only the file's presence.
     let defaults = outputs
         .get("manifest_defaults")
         .and_then(|v| v.as_table())
         .expect("`[outputs.manifest_defaults]` must declare default field values");
-    let python_requires = defaults
-        .get("python_requires")
+    let requires_python = defaults
+        .get("requires_python")
         .and_then(|v| v.as_str())
-        .expect("`[outputs.manifest_defaults].python_requires` must be set");
+        .expect("`[outputs.manifest_defaults].requires_python` must be set");
     assert!(
-        !python_requires.is_empty(),
-        "manifest_defaults.python_requires must be a non-empty version spec"
+        !requires_python.is_empty(),
+        "manifest_defaults.requires_python must be a non-empty version spec"
     );
 }
 
@@ -161,8 +161,8 @@ fn pkgmgr_init_reentry_policy_is_pinned() {
         .unwrap_or_default();
     if policy.starts_with("idempotent") {
         assert!(
-            must_preserve.contains("mamba.toml"),
-            "idempotent policies must list `mamba.toml` in \
+            must_preserve.contains("pyproject.toml"),
+            "idempotent policies must list `pyproject.toml` in \
              `[reentry].must_preserve` so a second run cannot overwrite \
              the user's edits; got {must_preserve:?}"
         );
