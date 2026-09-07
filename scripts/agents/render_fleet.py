@@ -38,7 +38,7 @@ from typing import Dict, Iterable, List, Tuple
 APPS: Tuple[str, ...] = (
     "arena", "aw", "beam", "cap", "cgdb", "courier", "cube", "defer", "guard",
     "jet", "keep", "loom", "lumen", "mamba", "mesh", "meter", "pgpool",
-    "preview", "relay", "rig", "tape", "vat", "workbench",
+    "pm", "preview", "relay", "rig", "tape", "vat", "workbench",
 )
 LIBS: Tuple[str, ...] = (
     "build-stamp", "claim-token", "cli-std", "compass", "metrics-prometheus",

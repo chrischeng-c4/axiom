@@ -7,10 +7,8 @@
       "command": "npx"
     },
     "pm": {
-      "command": "pm",
-      "args": [
-        "serve"
-      ]
+      "type": "http",
+      "url": "http://127.0.0.1:3200/mcp"
     }
   }
 }

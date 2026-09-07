@@ -144,6 +144,38 @@ impl PmState {
             .collect()
     }
 
+    /// Automatically transitions any Blocked tasks whose prerequisites in `blocked_by`
+    /// are all now in `Done` status into `Todo` status.
+    pub fn unblock_dependent_tasks(&mut self, completed_task_id: &str) -> Vec<String> {
+        let mut newly_unblocked = Vec::new();
+        let candidate_ids: Vec<String> = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Blocked && t.blocked_by.iter().any(|d| d == completed_task_id))
+            .map(|t| t.id.clone())
+            .collect();
+
+        for tid in candidate_ids {
+            let all_deps_done = if let Some(task) = self.tasks.get(&tid) {
+                task.blocked_by.iter().all(|dep_id| {
+                    self.tasks.get(dep_id).map_or(false, |dt| dt.status == TaskStatus::Done)
+                })
+            } else {
+                false
+            };
+
+            if all_deps_done {
+                if let Some(task) = self.tasks.get_mut(&tid) {
+                    task.status = TaskStatus::Todo;
+                    task.updated_at = Utc::now().to_rfc3339();
+                    newly_unblocked.push(tid);
+                }
+            }
+        }
+
+        newly_unblocked
+    }
+
     // Defects (Bug Tracking)
     pub fn upsert_defect(&mut self, defect: Defect) {
         self.defects.insert(defect.id.clone(), defect);

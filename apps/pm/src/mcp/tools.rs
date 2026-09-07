@@ -229,6 +229,15 @@ pub fn tool_definitions() -> Vec<Value> {
             &["task_id"],
         ),
         tool(
+            "pm_get_gate_log",
+            "Retrieve the full stdout and stderr log of a previous gate run by its gate ID",
+            json!({
+                "gate_id": { "type": "string", "description": "Gate run ID (e.g. 'gate_1725...')" },
+                "project_id": { "type": "string", "description": "Project ID (optional, defaults to current directory)" }
+            }),
+            &["gate_id"],
+        ),
+        tool(
             "pm_merge_change",
             "Local Auto-Merge: Verifies passing gate run and zero blocking review comments, then merges local working branch into target branch, advances task to 'done', and unblocks downstream tasks",
             json!({
@@ -573,6 +582,8 @@ pub async fn call_tool(store: &PmStore, name: &str, args: &Value) -> Result<Valu
                 assignee,
                 blocked_by,
                 result_summary: None,
+                e2e_red_commit: None,
+                impl_red_commit: None,
                 created_at: now.clone(),
                 updated_at: now,
             };
@@ -667,9 +678,11 @@ pub async fn call_tool(store: &PmStore, name: &str, args: &Value) -> Result<Valu
             }).await?;
 
             let status_str = if passed { "PASSED" } else { "FAILED" };
+            let log_info = run.log_path.as_deref().unwrap_or("none");
+            let sha_info = run.output_sha256.as_deref().unwrap_or("none");
             text_response(format!(
-                "Gate run '{}' {} in {}ms (exit code: {}).\nCommand: {}\nStdout:\n{}\nStderr:\n{}",
-                run.id, status_str, run.duration_ms, run.exit_code, run.command, run.stdout.trim(), run.stderr.trim()
+                "Gate run '{}' {} in {}ms (exit code: {}).\nHEAD commit: {}\nLog path: {}\nSHA-256: {}\nCommand: {}\nStdout:\n{}\nStderr:\n{}",
+                run.id, status_str, run.duration_ms, run.exit_code, run.head_commit, log_info, sha_info, run.command, run.stdout_display().trim(), run.stderr_display().trim()
             ))
         }
 
@@ -677,6 +690,20 @@ pub async fn call_tool(store: &PmStore, name: &str, args: &Value) -> Result<Valu
             let task_id = get_str(args, "task_id")?;
             let runs = store.read(|s| s.get_gate_runs(&task_id).into_iter().cloned().collect::<Vec<_>>()).await;
             text_response(serde_json::to_string_pretty(&runs)?)
+        }
+
+        "pm_get_gate_log" => {
+            let gate_id = get_str(args, "gate_id")?;
+            let root_path = match args.get("project_id").and_then(Value::as_str) {
+                Some(pid) => store.read(|s| s.get_project(pid).map(|p| p.root_path.clone())).await.unwrap_or_else(|| ".".to_string()),
+                None => ".".to_string(),
+            };
+            let log_path = std::path::Path::new(&root_path).join(".pm").join("gates").join(format!("{}.log", gate_id));
+            if !log_path.exists() {
+                anyhow::bail!("Gate log file not found at '{}'", log_path.display());
+            }
+            let content = tokio::fs::read_to_string(&log_path).await?;
+            text_response(content)
         }
 
         "pm_merge_change" => {
@@ -699,7 +726,7 @@ pub async fn call_tool(store: &PmStore, name: &str, args: &Value) -> Result<Valu
             ).await?;
 
             text_response(format!(
-                "Task '{}' successfully merged into '{}' (strategy: {}, commit: {}). Task status set to 'done'.",
+                "Task '{}' successfully merged into '{}' (strategy: {}, commit: {}). Task status set to 'done', and any downstream blocked tasks were unblocked.",
                 task_id, target_branch, strategy, commit
             ))
         }
@@ -747,6 +774,8 @@ pub async fn call_tool(store: &PmStore, name: &str, args: &Value) -> Result<Valu
                         assignee: None,
                         blocked_by: vec![],
                         result_summary: None,
+                        e2e_red_commit: None,
+                        impl_red_commit: None,
                         created_at: now.clone(),
                         updated_at: now.clone(),
                     };
@@ -895,3 +924,66 @@ fn text_response(text: impl Into<String>) -> Result<Value> {
         }
     ]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{DefectSeverity, DefectStatus, Priority, Project, TaskStatus};
+
+    #[tokio::test]
+    async fn test_defects_and_auto_task_creation() {
+        let store = PmStore::in_memory();
+        let proj_id = "proj_test_defects";
+
+        store
+            .write(|s| {
+                s.upsert_project(Project {
+                    id: proj_id.to_string(),
+                    name: "Test".to_string(),
+                    description: "Test".to_string(),
+                    root_path: ".".to_string(),
+                    default_gate_cmd: None,
+                    created_at: "2026-09-06T00:00:00Z".to_string(),
+                    updated_at: "2026-09-06T00:00:00Z".to_string(),
+                });
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let res = call_tool(
+            &store,
+            "pm_report_defect",
+            &json!({
+                "project_id": proj_id,
+                "title": "Null pointer on empty payload",
+                "description": "Panics when JSON body is empty",
+                "severity": "critical",
+                "reproduction_steps": "curl -X POST with empty body",
+                "auto_create_task": true
+            }),
+        )
+        .await
+        .unwrap();
+
+        let text = res[0]["text"].as_str().unwrap();
+        assert!(text.contains("reported successfully"));
+        assert!(text.contains("Actionable fix task"));
+
+        store
+            .read(|s| {
+                let defects = s.list_defects(proj_id, Some(DefectStatus::Open), None);
+                assert_eq!(defects.len(), 1);
+                let d = defects[0];
+                assert_eq!(d.severity, DefectSeverity::Critical);
+                assert!(d.created_task_id.is_some());
+
+                let tasks = s.list_tasks(proj_id, None, Some(TaskStatus::Todo), None);
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].priority, Priority::Critical);
+                assert!(tasks[0].title.contains("Fix: Null pointer"));
+            })
+            .await;
+    }
+}
+
