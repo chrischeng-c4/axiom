@@ -3,8 +3,8 @@ name = "mamba"
 cap_path = "apps/mamba/CAPABILITIES.md"
 
 [impl]
-build = "cargo test --locked -p mamba --lib --no-run"
-test = "cargo test --locked -p mamba --lib -- --skip driver:: --skip runtime::"
+build = "cargo test --locked -p mamba -p arraykit-pyo3 --lib --no-run"
+test = "cargo test --locked -p mamba -p arraykit-pyo3 --lib -- --skip driver:: --skip runtime::"
 harness = "cargo"
 
 # AW-EC-BEGIN
