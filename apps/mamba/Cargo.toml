@@ -10,12 +10,14 @@ description = "Mamba - Force-typed Python compiler with native code generation"
 autotests = false
 
 # The mambalibs kits are wrapped by sibling crates, not by `src/`: the PyO3
-# wheel behind `mambalibs.array` lives at `mambalibs/arraykit/pyo3`, and
-# resolving it moves the workspace member list and the lock file. These keys
-# name that write set so the impl phase's C0 scope can admit it; without them
-# the only impl root is `apps/mamba/src/`.
+# wheel behind `mambalibs.array` lives at `mambalibs/arraykit/pyo3` and the one
+# behind `mambalibs.sci` at `mambalibs/scikit/pyo3`, and resolving either moves
+# the workspace member list and the lock file. These keys name that write set
+# so the impl phase's C0 scope can admit it; without them the only impl root is
+# `apps/mamba/src/`. One entry per kit: a root that is not listed is refused,
+# so the list grows with the kits rather than widening to `mambalibs/`.
 [package.metadata.aw]
-impl-roots = ["mambalibs/arraykit/pyo3"]
+impl-roots = ["mambalibs/arraykit/pyo3", "mambalibs/scikit/pyo3"]
 impl-repo-paths = ["Cargo.toml", "Cargo.lock"]
 
 [features]
@@ -451,3 +453,7 @@ path = "e2e/pkgmgr_flag_surface_uv_parity.rs"
 [[test]]
 name = "mambalibs_array_wheel"
 path = "e2e/mambalibs_array_wheel.rs"
+
+[[test]]
+name = "mambalibs_sci_wheel"
+path = "e2e/mambalibs_sci_wheel.rs"
