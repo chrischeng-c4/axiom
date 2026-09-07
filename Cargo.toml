@@ -60,6 +60,7 @@ members = [
     "apps/mamba/mambalibs/httpkit/binding",
     "apps/mamba/mambalibs/arraykit",
     "apps/mamba/mambalibs/arraykit/binding",
+    "apps/mamba/mambalibs/arraykit/pyo3",
     "crates/cclab-frame",
     "apps/mamba/mambalibs/scikit",
     "apps/mamba/mambalibs/scikit/binding",
