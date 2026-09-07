@@ -10631,6 +10631,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "plotkit-pyo3"
+version = "0.4.13"
+dependencies = [
+ "plotkit",
+ "pyo3",
+]
+
+[[package]]
 name = "plotters"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

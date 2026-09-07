@@ -68,6 +68,7 @@ members = [
     "crates/cclab-learn",
     "apps/mamba/mambalibs/plotkit",
     "apps/mamba/mambalibs/plotkit/binding",
+    "apps/mamba/mambalibs/plotkit/pyo3",
     "apps/mamba/mambalibs/mediakit",
     "apps/mamba/mambalibs/mediakit/binding",
     "crates/cclab-text",
