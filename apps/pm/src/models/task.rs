@@ -56,6 +56,10 @@ pub struct Task {
     #[serde(default)]
     pub blocked_by: Vec<String>,
     pub result_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e2e_red_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impl_red_commit: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

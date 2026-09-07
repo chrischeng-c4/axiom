@@ -120,3 +120,231 @@ pub fn get_task_context(state: &PmState, task_id: &str) -> Result<String> {
 
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{
+        Feature, FeatureStatus, Prd, PrdStatus, Priority, Project, Task, TaskStatus,
+        TechDesign, TechDesignStatus,
+    };
+
+    #[test]
+    fn test_scheduler_dependency_resolution() {
+        let mut state = PmState::default();
+        let proj_id = "proj_demo";
+
+        let t1 = Task {
+            id: "task_1".to_string(),
+            project_id: proj_id.to_string(),
+            feature_id: None,
+            title: "Setup Database".to_string(),
+            description: "Initialize DB".to_string(),
+            status: TaskStatus::Todo,
+            priority: Priority::Medium,
+            assignee: Some("dev".to_string()),
+            blocked_by: vec![],
+            result_summary: None,
+            e2e_red_commit: None,
+            impl_red_commit: None,
+            created_at: "2026-09-06T01:00:00Z".to_string(),
+            updated_at: "2026-09-06T01:00:00Z".to_string(),
+        };
+
+        let t2 = Task {
+            id: "task_2".to_string(),
+            project_id: proj_id.to_string(),
+            feature_id: None,
+            title: "Implement API".to_string(),
+            description: "Build API routes".to_string(),
+            status: TaskStatus::Todo,
+            priority: Priority::High,
+            assignee: Some("dev".to_string()),
+            blocked_by: vec!["task_1".to_string()],
+            result_summary: None,
+            e2e_red_commit: None,
+            impl_red_commit: None,
+            created_at: "2026-09-06T02:00:00Z".to_string(),
+            updated_at: "2026-09-06T02:00:00Z".to_string(),
+        };
+
+        let t3 = Task {
+            id: "task_3".to_string(),
+            project_id: proj_id.to_string(),
+            feature_id: None,
+            title: "Deploy Service".to_string(),
+            description: "Deploy to cloud".to_string(),
+            status: TaskStatus::Todo,
+            priority: Priority::Critical,
+            assignee: Some("dev".to_string()),
+            blocked_by: vec!["task_2".to_string()],
+            result_summary: None,
+            e2e_red_commit: None,
+            impl_red_commit: None,
+            created_at: "2026-09-06T03:00:00Z".to_string(),
+            updated_at: "2026-09-06T03:00:00Z".to_string(),
+        };
+
+        state.upsert_task(t1);
+        state.upsert_task(t2);
+        state.upsert_task(t3);
+
+        let next1 = get_next_actionable_task(&state, proj_id, None);
+        assert!(next1.is_some());
+        assert_eq!(next1.unwrap().id, "task_1");
+
+        state.tasks.get_mut("task_1").unwrap().status = TaskStatus::InProgress;
+        let next2 = get_next_actionable_task(&state, proj_id, None);
+        assert!(next2.is_none());
+
+        state.tasks.get_mut("task_1").unwrap().status = TaskStatus::Done;
+        let next3 = get_next_actionable_task(&state, proj_id, None);
+        assert!(next3.is_some());
+        assert_eq!(next3.unwrap().id, "task_2");
+
+        state.tasks.get_mut("task_2").unwrap().status = TaskStatus::Done;
+        let next4 = get_next_actionable_task(&state, proj_id, None);
+        assert!(next4.is_some());
+        assert_eq!(next4.unwrap().id, "task_3");
+
+        state.tasks.get_mut("task_3").unwrap().status = TaskStatus::Done;
+        let next5 = get_next_actionable_task(&state, proj_id, None);
+        assert!(next5.is_none());
+    }
+
+    #[test]
+    fn test_scheduler_unblock_dependent_tasks() {
+        let mut state = PmState::default();
+        let proj_id = "proj_unblock";
+
+        let t1 = Task {
+            id: "t_a".to_string(),
+            project_id: proj_id.to_string(),
+            feature_id: None,
+            title: "Task A".to_string(),
+            description: "A".to_string(),
+            status: TaskStatus::Todo,
+            priority: Priority::Medium,
+            assignee: None,
+            blocked_by: vec![],
+            result_summary: None,
+            e2e_red_commit: None,
+            impl_red_commit: None,
+            created_at: "2026-09-06T01:00:00Z".to_string(),
+            updated_at: "2026-09-06T01:00:00Z".to_string(),
+        };
+
+        let t2 = Task {
+            id: "t_b".to_string(),
+            project_id: proj_id.to_string(),
+            feature_id: None,
+            title: "Task B".to_string(),
+            description: "B".to_string(),
+            status: TaskStatus::Blocked,
+            priority: Priority::High,
+            assignee: None,
+            blocked_by: vec!["t_a".to_string()],
+            result_summary: None,
+            e2e_red_commit: None,
+            impl_red_commit: None,
+            created_at: "2026-09-06T02:00:00Z".to_string(),
+            updated_at: "2026-09-06T02:00:00Z".to_string(),
+        };
+
+        state.upsert_task(t1);
+        state.upsert_task(t2);
+
+        // Before completing A, B is blocked and cannot be scheduled
+        assert_eq!(state.get_task("t_b").unwrap().status, TaskStatus::Blocked);
+        assert_eq!(get_next_actionable_task(&state, proj_id, None).unwrap().id, "t_a");
+
+        // Complete A and run unblock
+        state.tasks.get_mut("t_a").unwrap().status = TaskStatus::Done;
+        let unblocked = state.unblock_dependent_tasks("t_a");
+        assert_eq!(unblocked, vec!["t_b".to_string()]);
+        assert_eq!(state.get_task("t_b").unwrap().status, TaskStatus::Todo);
+
+        // Now B is actionable
+        assert_eq!(get_next_actionable_task(&state, proj_id, None).unwrap().id, "t_b");
+    }
+
+    #[test]
+    fn test_task_context_aggregation() {
+        let mut state = PmState::default();
+        let proj_id = "proj_axiom";
+
+        state.upsert_project(Project {
+            id: proj_id.to_string(),
+            name: "Axiom".to_string(),
+            description: "Monorepo".to_string(),
+            root_path: ".".to_string(),
+            default_gate_cmd: None,
+            created_at: "2026-09-06T00:00:00Z".to_string(),
+            updated_at: "2026-09-06T00:00:00Z".to_string(),
+        });
+
+        state.upsert_prd(Prd {
+            id: "prd_auth".to_string(),
+            project_id: proj_id.to_string(),
+            title: "User Authentication PRD".to_string(),
+            version: "1.0".to_string(),
+            status: PrdStatus::Approved,
+            content: "## Requirements\nMust support JWT and Argon2 password hashing.".to_string(),
+            created_at: "2026-09-06T00:00:00Z".to_string(),
+            updated_at: "2026-09-06T00:00:00Z".to_string(),
+        });
+
+        state.upsert_tech_design(TechDesign {
+            id: "td_auth".to_string(),
+            project_id: proj_id.to_string(),
+            prd_id: Some("prd_auth".to_string()),
+            title: "Authentication Tech Design".to_string(),
+            version: "1.0".to_string(),
+            status: TechDesignStatus::Approved,
+            content: "## Architecture\nStateless JWT verification using ed25519 keys.".to_string(),
+            created_at: "2026-09-06T00:00:00Z".to_string(),
+            updated_at: "2026-09-06T00:00:00Z".to_string(),
+        });
+
+        state.upsert_feature(Feature {
+            id: "feat_jwt".to_string(),
+            project_id: proj_id.to_string(),
+            prd_id: Some("prd_auth".to_string()),
+            tech_design_id: Some("td_auth".to_string()),
+            title: "JWT Token Engine".to_string(),
+            description: "Implement JWT creation and verification modules.".to_string(),
+            status: FeatureStatus::InProgress,
+            priority: Priority::High,
+            created_at: "2026-09-06T00:00:00Z".to_string(),
+            updated_at: "2026-09-06T00:00:00Z".to_string(),
+        });
+
+        state.upsert_task(Task {
+            id: "task_jwt_sign".to_string(),
+            project_id: proj_id.to_string(),
+            feature_id: Some("feat_jwt".to_string()),
+            title: "Implement Token Signing".to_string(),
+            description: "Write ed25519 token signing function with 1hr expiry.".to_string(),
+            status: TaskStatus::Todo,
+            priority: Priority::High,
+            assignee: Some("dev".to_string()),
+            blocked_by: vec![],
+            result_summary: None,
+            e2e_red_commit: None,
+            impl_red_commit: None,
+            created_at: "2026-09-06T00:00:00Z".to_string(),
+            updated_at: "2026-09-06T00:00:00Z".to_string(),
+        });
+
+        let context = get_task_context(&state, "task_jwt_sign").expect("Failed to get context");
+
+        assert!(context.contains("# Task: Implement Token Signing"));
+        assert!(context.contains("Write ed25519 token signing function"));
+        assert!(context.contains("Parent Feature: JWT Token Engine"));
+        assert!(context.contains("Product Requirements Document: User Authentication PRD"));
+        assert!(context.contains("Must support JWT and Argon2"));
+        assert!(context.contains("Technical Design: Authentication Tech Design"));
+        assert!(context.contains("Stateless JWT verification"));
+    }
+}
+

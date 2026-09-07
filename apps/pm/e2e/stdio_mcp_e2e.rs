@@ -9,7 +9,7 @@ async fn test_mcp_tool_definitions_and_invocations() {
 
     // 1. Check tool definitions count
     let tools = tool_definitions();
-    assert!(tools.len() >= 16);
+    assert!(tools.len() >= 17);
 
     // 2. Initialize project via pm_init_project
     let res = call_tool(

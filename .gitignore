@@ -30,6 +30,7 @@
 .agents/*
 !.agents/agents/
 !.agents/skills/
+!.agents/plugins/
 # Agents also drop the same scratch under a project dir when dispatched with a
 # project cwd; nothing under a nested .agents/ has ever been source.
 projects/*/.agents/
@@ -167,3 +168,10 @@ mutants.out.old
 
 # Swift Package Manager local build products for the native Workbench host.
 apps/workbench/macos/.build/
+
+# apps/pm local artifacts (state.json is version-controlled; ephemeral logs, worktrees, locks ignored)
+.pm/gates/
+.pm/worktrees/
+.pm/*.lock
+.pm/*.tmp.*
+

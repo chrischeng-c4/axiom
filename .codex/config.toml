@@ -3,6 +3,9 @@ sandbox_mode = "workspace-write"
 args = ["@playwright/mcp@latest"]
 command = "npx"
 
+[mcp_servers.pm]
+url = "http://127.0.0.1:3200/mcp"
+
 [shell_environment_policy]
 inherit = "core"
 
