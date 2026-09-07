@@ -64,6 +64,7 @@ members = [
     "crates/cclab-frame",
     "apps/mamba/mambalibs/scikit",
     "apps/mamba/mambalibs/scikit/binding",
+    "apps/mamba/mambalibs/scikit/pyo3",
     "crates/cclab-learn",
     "apps/mamba/mambalibs/plotkit",
     "apps/mamba/mambalibs/plotkit/binding",

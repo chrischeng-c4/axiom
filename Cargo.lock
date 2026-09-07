@@ -12740,6 +12740,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "scikit-pyo3"
+version = "0.4.13"
+dependencies = [
+ "pyo3",
+ "scikit",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
