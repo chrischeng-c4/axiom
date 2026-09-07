@@ -27,7 +27,7 @@ each outcome lives under [docs/product/README.md](docs/product/README.md).
   `cargo test -p mamba --release --test perf_pin` exit zero over the tier's
   fixture set, with the tier's exit gate written and named in the README
   before the tier is claimed.
-- Tracking: Not assigned.
+- Tracking: [Milestone #131](https://github.com/chrischeng-c4/axiom/milestone/131).
 
 ## Later outcomes
 

@@ -8,7 +8,7 @@ its wheel. It is third in delivery order: the package manager ships first,
 the mambalibs wheels second, and nothing here changes the package manager's
 contract.
 
-## CPython runtime replacement
+## CPython runtime replacement (Milestone #131)
 
 - Problem: a CPython 3.12 program compiled by mamba does not yet give the
   CPython result across the conformance corpus, and the memory gate measures
@@ -26,15 +26,16 @@ contract.
   claimed.
 - Non-goals: a mamba runtime as a prerequisite for the package manager; C
   extensions built from sdist.
-- Open: which tier opens the first release Milestone after
-  `uv-workflow-parity`. Whether each tier's exit gate is a new `[[test]]`
-  target or a case set inside the existing conformance targets.
+- Open: how the 1199 `type/std-libs` walls split into T1 slices after
+  `mamba@0.3.0`. Whether the `sys.argv` shape under `mamba run --compile`
+  (the binary's own arguments precede the script path) is a T1 fact or a
+  T3 one.
 - Neighbours: starts after
   [package-manager.md](package-manager.md) § uv workflow parity, and after
   [mambalibs.md](mambalibs.md) § mambalibs CPython wheels, whose Python API
   the `MambaModule` carrier must match; a compiled `mamba run <file>` stays
   the opt-in path the parity outcome defines.
-- Outcome: `cpython-runtime-replacement`. Tracking: Not assigned.
+- Outcome: `cpython-runtime-replacement`. Tracking: [Milestone #131](https://github.com/chrischeng-c4/axiom/milestone/131).
 
 ## Non-goals in this area
 
