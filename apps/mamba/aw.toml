@@ -4,7 +4,7 @@ cap_path = "apps/mamba/CAPABILITIES.md"
 
 [impl]
 build = "cargo test --locked -p mamba -p *-pyo3 --lib --no-run"
-test = "cargo test --locked -p mamba -p *-pyo3 --lib -- --skip driver:: --skip runtime::"
+test = "cargo test --locked -p mamba -p *-pyo3 --lib -- --skip driver:: --test-threads=1 --skip runtime::async_task::tests::test_gather_completed_coroutines --skip runtime::generator::tests::test_cleanup_on_other_thread_does_not_cause_gen_id_collision --skip runtime::iter::tests::test_cleanup_on_other_thread_does_not_cause_id_collision_for_live_iterator --skip runtime::iter::tests::test_t1_iterator_container_copy_keeps_ordinary_int_distinct_phase_a --skip runtime::iter::tests::test_t1_iterator_handle_is_not_an_integer_phase_a --skip runtime::iter::tests::test_t1_range_sequence_predicate_distinguishes_iter_range_phase_a --skip runtime::stdlib::random_mod::tests::test_choices_drained_heap_range_materialization_is_balanced --skip runtime::stdlib::random_mod::tests::test_choices_owned_population_early_error_is_balanced --skip runtime::stdlib::random_mod::tests::test_choices_raw_string_repeated_result_ownership_is_balanced --skip runtime::stdlib::random_mod::tests::test_choices_raw_string_zero_k_releases_unselected_materialization --skip runtime::stdlib::random_mod::tests::test_random_constructor_rejects_range_and_range_iterator_without_allocation_or_consumption --skip runtime::stdlib::random_mod::tests::test_random_constructor_rejects_user_instance_without_handle_allocation --skip runtime::stdlib::random_mod::tests::test_random_seed_rejects_range_and_range_iterator_without_state_change_or_consumption --skip runtime::tests::store_owned_instrument_tolerates_a_second_thread_retaining_the_same_object"
 harness = "cargo"
 
 # AW-EC-BEGIN
