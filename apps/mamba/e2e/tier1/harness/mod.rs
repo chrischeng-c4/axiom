@@ -21,14 +21,26 @@
 //!   `concurrency: PASS` stdout line; there is no CPython oracle for a
 //!   concurrency fixture because CPython's own thread interleaving is not
 //!   the contract being judged.
+//! - `"readiness"` — mamba alone runs the fixture twice, with
+//!   `MAMBA_FIXTURE_ROUNDS=5` and then `MAMBA_FIXTURE_ROUNDS=50` in the
+//!   child's environment; both runs must exit 0 and print a
+//!   `readiness: PASS` stdout line, both must finish inside the fixture
+//!   header's own `max_wall_s`, and the 50-round run's peak RSS
+//!   (`ru_maxrss`, read by waiting on the child directly with `wait4` so the
+//!   rusage is this one child's, never `RUSAGE_CHILDREN`'s cross-run
+//!   aggregate) must be no more than 4x the 5-round run's; there is no
+//!   CPython oracle for this kind either, since CPython does not retain the
+//!   same containers across rounds (issue #4244).
 //!
 //! A fixture whose header is missing, malformed, or names an unknown `kind`
 //! is a judge failure, never a skip: the harness carries no expected-failure
 //! or allowlist mechanism of any kind (Frozen decisions, issue #4242).
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Instant;
 
 /// One discovered `*.py` fixture under an area directory
 /// (`core`, `type`, or `concurrency`) of `e2e/tier1/`.
@@ -39,11 +51,12 @@ pub struct Fixture {
     pub area: String,
 }
 
-/// The three judges a fixture's `[tool.mamba] kind` field selects.
+/// The four judges a fixture's `[tool.mamba] kind` field selects.
 enum Kind {
     Oracle,
     TypeStrict,
     SelfVerdict,
+    Readiness,
 }
 
 /// Resolves the built `mamba` binary under test — the `CARGO_BIN_EXE_mamba`
@@ -130,6 +143,7 @@ pub fn judge_fixture(path: &Path) -> Result<(), String> {
         Kind::Oracle => judge_oracle(path),
         Kind::TypeStrict => judge_type_strict(path),
         Kind::SelfVerdict => judge_self_verdict(path),
+        Kind::Readiness => judge_readiness(path),
     }
 }
 
@@ -176,8 +190,28 @@ fn parse_kind(text: &str) -> Result<Kind, String> {
         "oracle" => Ok(Kind::Oracle),
         "type-strict" => Ok(Kind::TypeStrict),
         "self-verdict" => Ok(Kind::SelfVerdict),
+        "readiness" => Ok(Kind::Readiness),
         other => Err(format!("unknown [tool.mamba] kind {other:?}")),
     }
+}
+
+/// Extracts the `[tool.mamba] max_wall_s` field a `"readiness"`-kind
+/// fixture's header must carry -- the wall-time bound `judge_readiness` and
+/// `tier1_readiness_evidence.rs` both check each run against. Missing or
+/// non-numeric is `Err`, matching `parse_kind`'s own no-skip contract
+/// (module doc above): a malformed or absent field is a judge failure,
+/// never a silent default. `pub` so the case can feed it a synthetic header
+/// string directly to exercise that contract.
+pub fn parse_max_wall_s(text: &str) -> Result<f64, String> {
+    let body = extract_pep723_toml(text)?;
+    let value: toml::Value =
+        toml::from_str(&body).map_err(|e| format!("invalid PEP 723 TOML header: {e}"))?;
+    value
+        .get("tool")
+        .and_then(|t| t.get("mamba"))
+        .and_then(|m| m.get("max_wall_s"))
+        .and_then(|w| w.as_float().or_else(|| w.as_integer().map(|i| i as f64)))
+        .ok_or_else(|| "no [tool.mamba] max_wall_s field in header, or not a number".to_string())
 }
 
 fn judge_oracle(path: &Path) -> Result<(), String> {
@@ -270,4 +304,153 @@ fn judge_self_verdict(path: &Path) -> Result<(), String> {
             "mamba exited 0 without a `concurrency: PASS` stdout line: stdout={stdout:?}"
         ))
     }
+}
+
+/// One child run of a `"readiness"` fixture at a given round count: its
+/// peak RSS, CPU time (`ru_utime + ru_stime`), wall time, and stdout.
+///
+/// `maxrss` is `ru_maxrss` as the kernel reports it -- bytes on macOS,
+/// kilobytes on Linux. Only a ratio of two `maxrss` values from this same
+/// function on the same host is portable; a caller must never compare it to
+/// a fixed byte count across platforms.
+pub struct RusageRun {
+    pub rounds: u32,
+    pub maxrss: i64,
+    pub cpu_s: f64,
+    pub wall_s: f64,
+    pub stdout: String,
+}
+
+/// Spawns `mamba run --compile <path>` with `MAMBA_FIXTURE_ROUNDS=<rounds>`
+/// in the child's environment and waits on it by calling `libc::wait4`
+/// directly on its pid (`child.id()`), never `Child::wait()` /
+/// `Child::try_wait()` -- `wait4` is this pid's one reap, and it is what
+/// makes the returned rusage this one child's own rather than
+/// `RUSAGE_CHILDREN`'s aggregate over every child this test binary has ever
+/// reaped. Stdout and stderr are drained on background threads started
+/// before the wait, so a fixture that ever printed enough to fill the pipe
+/// buffer cannot deadlock the parent against its own child.
+///
+/// Shared by `judge_readiness` below (so the `tier1_exit` rollup discovers
+/// and judges a readiness fixture through the ordinary `judge_fixture`
+/// dispatch) and by `tier1_readiness_evidence.rs`'s own `#[test] fn`, so the
+/// case and the rollup measure a readiness fixture identically.
+pub fn run_readiness_rounds(path: &Path, rounds: u32) -> Result<RusageRun, String> {
+    let mut child = Command::new(mamba_bin())
+        .args(["run", "--compile"])
+        .arg(path)
+        .env("MAMBA_FIXTURE_ROUNDS", rounds.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn mamba for {rounds} rounds: {e}"))?;
+
+    let mut stdout_pipe = child
+        .stdout
+        .take()
+        .expect("stdout was requested as piped");
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .expect("stderr was requested as piped");
+    let pid = child.id() as libc::pid_t;
+
+    let start = Instant::now();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout_pipe.read_to_string(&mut buf);
+        buf
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stderr_pipe.read_to_string(&mut buf);
+        buf
+    });
+
+    let mut status: libc::c_int = 0;
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // Safety: `pid` is this process's own direct child, read from
+    // `Child::id()` immediately after `spawn()`. No other code in this
+    // process waits on it, and `child` (the `Child` handle) is never
+    // `.wait()`ed/`.try_wait()`ed, so this `wait4` call is the pid's one
+    // reap -- `status` and `usage` are populated from a real, successful
+    // wait whenever the return value is non-negative.
+    let reaped = unsafe { libc::wait4(pid, &mut status, 0, &mut usage) };
+    let wall_s = start.elapsed().as_secs_f64();
+    if reaped < 0 {
+        return Err(format!(
+            "wait4 on mamba pid {pid} ({rounds} rounds) failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+
+    if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
+        return Err(format!(
+            "mamba ({rounds} rounds) did not exit 0: raw wait status={status}, stdout={stdout:?}, stderr={stderr:?}"
+        ));
+    }
+
+    Ok(RusageRun {
+        rounds,
+        maxrss: usage.ru_maxrss as i64,
+        cpu_s: timeval_secs(usage.ru_utime) + timeval_secs(usage.ru_stime),
+        wall_s,
+        stdout,
+    })
+}
+
+fn timeval_secs(tv: libc::timeval) -> f64 {
+    tv.tv_sec as f64 + (tv.tv_usec as f64) / 1_000_000.0
+}
+
+/// The fourth judge: runs a `"readiness"` fixture twice through
+/// `run_readiness_rounds` (5 rounds, then 50), requires both runs to print
+/// `readiness: PASS` and to finish inside the header's own `max_wall_s`,
+/// and requires the 50-round run's peak RSS to be no more than 4x the
+/// 5-round run's. This is the same ratio and wall bound
+/// `tier1_readiness_evidence.rs` applies directly; this copy is what lets
+/// `tier1_exit`'s generic `judge_fixture` loop discover and judge a
+/// readiness fixture without `tier1_exit.rs` itself changing.
+fn judge_readiness(path: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("cannot read fixture: {e}"))?;
+    let max_wall_s = parse_max_wall_s(&text)?;
+
+    let five = run_readiness_rounds(path, 5)?;
+    let fifty = run_readiness_rounds(path, 50)?;
+
+    if !five.stdout.lines().any(|l| l.trim() == "readiness: PASS") {
+        return Err(format!(
+            "5-round run did not print `readiness: PASS`: stdout={:?}",
+            five.stdout
+        ));
+    }
+    if !fifty.stdout.lines().any(|l| l.trim() == "readiness: PASS") {
+        return Err(format!(
+            "50-round run did not print `readiness: PASS`: stdout={:?}",
+            fifty.stdout
+        ));
+    }
+    if five.wall_s > max_wall_s {
+        return Err(format!(
+            "5-round wall time {:.3}s exceeded max_wall_s {max_wall_s:.3}s",
+            five.wall_s
+        ));
+    }
+    if fifty.wall_s > max_wall_s {
+        return Err(format!(
+            "50-round wall time {:.3}s exceeded max_wall_s {max_wall_s:.3}s",
+            fifty.wall_s
+        ));
+    }
+    if fifty.maxrss > 4 * five.maxrss {
+        let ratio = fifty.maxrss as f64 / five.maxrss as f64;
+        return Err(format!(
+            "50-round peak RSS {} exceeded 4x the 5-round peak RSS {} (ratio {ratio:.2}x)",
+            fifty.maxrss, five.maxrss
+        ));
+    }
+    Ok(())
 }

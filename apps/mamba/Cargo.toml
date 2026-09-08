@@ -475,3 +475,8 @@ harness = true
 name = "tier1_cross_thread_identity"
 path = "e2e/tier1_cross_thread_identity.rs"
 harness = true
+
+[[test]]
+name = "tier1_readiness_evidence"
+path = "e2e/tier1_readiness_evidence.rs"
+harness = true
