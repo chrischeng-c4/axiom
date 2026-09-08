@@ -2428,15 +2428,24 @@ pub fn mb_re_match_getitem(match_inst: MbValue, key: MbValue) -> MbValue {
             );
             return MbValue::none();
         }
-        return guard
+        let value = guard
             .get(&format!("group_{i}"))
             .copied()
             .unwrap_or_else(MbValue::none);
+        unsafe {
+            super::super::rc::retain_if_ptr(value);
+        }
+        return value;
     }
 
     if let Some(name) = extract_exact_str(key) {
         return match guard.get(&format!("group_name_{name}")).copied() {
-            Some(value) => value,
+            Some(value) => {
+                unsafe {
+                    super::super::rc::retain_if_ptr(value);
+                }
+                value
+            }
             None => {
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),

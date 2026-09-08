@@ -7199,13 +7199,25 @@ impl<'a> HirToMir<'a> {
         // Body: sync user-visible var from private counter, then execute body.
         // `continue` jumps to latch_block so the counter increment is never skipped.
         // Suppress StoreGlobal during loop body — module-scope variable stores
-        // inside a tight loop are the #1 performance killer (~200ns/iter).
+        // inside a tight loop are the #1 performance killer (~200ns/iter) —
+        // UNLESS this module lowers at least one nested function (genexpr
+        // thunk, lambda, or def) anywhere, mirroring the same guard
+        // `lower_for` applies for the general (non-range) loop form (#4242).
+        // Without this guard, a module that defines a `def` anywhere and
+        // also mutates a module-scope global inside a `for _ in range(...)`
+        // loop (`acc = 0; for _ in range(3): acc += 1`) never emits the
+        // per-iteration `StoreGlobal` that `HirStmt::Assign`'s `orig_vreg`
+        // branch gates on `self.in_module_scope`, so a post-loop read (a
+        // `LoadGlobal`, since a `def` is present) observes only the
+        // pre-loop value instead of the accumulated one.
         let old_exit = self.loop_exit.replace(cleanup_block);
         let old_header = self.loop_header.replace(latch_block);
         let was_module_scope = self.in_module_scope;
-        self.in_module_scope = false;
         let outer_sync_suppressed = self.module_scope_sync_suppressed;
-        self.module_scope_sync_suppressed = outer_sync_suppressed || was_module_scope;
+        if !self.module_has_closures {
+            self.in_module_scope = false;
+            self.module_scope_sync_suppressed = outer_sync_suppressed || was_module_scope;
+        }
         self.start_block(body_block);
         // Expose current counter value as the user-visible loop variable.
         // This is a no-op for non-nested loops (var_vreg == start_raw, same

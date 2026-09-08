@@ -456,3 +456,6 @@ pub fn register_stdlib() {
 pub(crate) fn register_module(name: &str, attrs: HashMap<String, MbValue>) {
     mb_module_register(name, attrs);
 }
+
+#[cfg(test)]
+mod tests;

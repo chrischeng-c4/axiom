@@ -2,6 +2,10 @@ pub mod ast_to_hir;
 pub mod hir_to_mir;
 pub mod pep695;
 
+#[cfg(test)]
+#[path = "tests.rs"]
+mod for_range_module_scope_tests;
+
 pub use ast_to_hir::lower_module;
 pub use ast_to_hir::lower_module_repl;
 pub use ast_to_hir::ReplSymInfo;
