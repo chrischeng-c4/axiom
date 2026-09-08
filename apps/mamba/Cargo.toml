@@ -465,3 +465,8 @@ path = "e2e/mambalibs_sci_wheel.rs"
 [[test]]
 name = "mambalibs_plot_wheel"
 path = "e2e/mambalibs_plot_wheel.rs"
+
+[[test]]
+name = "tier1_exit"
+path = "e2e/tier1_exit.rs"
+harness = true

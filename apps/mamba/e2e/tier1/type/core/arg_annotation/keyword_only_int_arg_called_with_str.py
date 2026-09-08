@@ -1,0 +1,28 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.mamba]
+# bucket = "core"
+# lib = "arg_annotation"
+# dimension = "type"
+# case = "keyword_only_int_arg_called_with_str"
+# subject = "function keyword-only parameter annotation"
+# kind = "type-strict"
+# mem_carveout = ""
+# source = ""
+# status = "filled"
+# ///
+# mamba-strict-type: TypeError
+"""Mamba rejects a wrong-typed keyword-only argument annotation."""
+
+
+def requires_count(*, count: int) -> int:
+    return count
+
+
+try:
+    result = requires_count(count="3")
+    print("no_typeerror:", repr(result))
+except TypeError as e:
+    print("typeerror:", type(e).__name__, str(e)[:80])
