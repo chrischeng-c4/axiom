@@ -470,3 +470,8 @@ path = "e2e/mambalibs_plot_wheel.rs"
 name = "tier1_exit"
 path = "e2e/tier1_exit.rs"
 harness = true
+
+[[test]]
+name = "tier1_cross_thread_identity"
+path = "e2e/tier1_cross_thread_identity.rs"
+harness = true
