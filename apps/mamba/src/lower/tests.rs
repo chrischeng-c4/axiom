@@ -74,3 +74,93 @@ print(acc)
          defines a function elsewhere, got {store_global_count}"
     );
 }
+
+/// The `with … as name` alias binding inside a function must allocate a fresh
+/// function-local symbol when the enclosing function assigns that name, rather
+/// than resolving to a same-named module-level binding.
+///
+/// `ast::Stmt::With`'s alias arm binds through `resolve_name` with a
+/// `define_local` fallback, so when a module-level `fh` already exists the
+/// alias inside `worker` reuses the *module* symbol. `hir_to_mir` then classes
+/// that symbol `VariableClass::Global` and emits a `StoreGlobal` for the
+/// `__enter__` result, while the body's read of `fh` still goes through the
+/// function's local slot — which was never written. The program dies with
+/// `UnboundLocalError: cannot access local variable 'fh' …`.
+///
+/// This is the whole cause of the red
+/// `apps/mamba/e2e/tier1/concurrency/identity/io/child_opened_file_writes_in_child.py`
+/// fixture: its module scope runs `with open(path) as fh:` after the worker
+/// function that also binds `fh`. The defect has nothing to do with threads —
+/// the program below has none — so this test pins the scoping rule directly.
+#[test]
+fn with_alias_in_function_does_not_reuse_module_symbol() {
+    let src = r#"
+class CM:
+    def __enter__(self) -> int:
+        return 7
+    def __exit__(self, a: object, b: object, c: object) -> bool:
+        return False
+
+fh = 1
+
+def worker() -> int:
+    with CM() as fh:
+        return fh
+"#;
+    let module = parse(src, FileId(0)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let _ = checker.check_module(&module);
+    let hir = lower_module(&module, &checker).expect("HIR lowering failed");
+
+    let module_fh = checker
+        .symbols
+        .lookup("fh")
+        .expect("expected module-scope `fh` symbol");
+
+    let alias = hir
+        .functions
+        .iter()
+        .find_map(|f| first_with_alias(&f.body))
+        .expect("expected a `with … as fh` alias inside a lowered function");
+
+    assert_ne!(
+        alias, module_fh,
+        "`with CM() as fh` inside `worker` bound the module-level `fh` symbol \
+         ({module_fh:?}) instead of a fresh function local; hir_to_mir then \
+         stores the __enter__ result with StoreGlobal while the body reads the \
+         unwritten local slot, which is the UnboundLocalError"
+    );
+}
+
+/// First `with … as name` alias symbol found anywhere in a statement list.
+fn first_with_alias(stmts: &[crate::hir::HirStmt]) -> Option<crate::resolve::SymbolId> {
+    use crate::hir::HirStmt;
+    for stmt in stmts {
+        match stmt {
+            HirStmt::With { items, body, .. } => {
+                if let Some(sym) = items.iter().find_map(|(_, alias)| *alias) {
+                    return Some(sym);
+                }
+                if let Some(found) = first_with_alias(body) {
+                    return Some(found);
+                }
+            }
+            HirStmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                if let Some(found) = first_with_alias(then_body).or_else(|| first_with_alias(else_body)) {
+                    return Some(found);
+                }
+            }
+            HirStmt::While { body, .. } => {
+                if let Some(found) = first_with_alias(body) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}

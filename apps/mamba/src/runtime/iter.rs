@@ -8,10 +8,9 @@ use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Iterator state — stores the current position and source.
 pub struct MbIterator {
@@ -142,10 +141,10 @@ pub enum IterKind {
         inner_id: Option<u64>,
     },
     /// itertools.groupby outer iterator.
-    GroupByOuter { state: Rc<RefCell<GroupByState>> },
+    GroupByOuter { state: Arc<parking_lot::RwLock<GroupByState>> },
     /// Active group iterator yielded by itertools.groupby.
     GroupByGroup {
-        state: Rc<RefCell<GroupByState>>,
+        state: Arc<parking_lot::RwLock<GroupByState>>,
         group_index: usize,
         cursor: usize,
     },
@@ -174,14 +173,74 @@ const ITER_ID_BASE: u64 = 0x1_0000_0000;
 /// IDs do not alias across threads.
 static NEXT_ITER_ID: AtomicU64 = AtomicU64::new(ITER_ID_BASE);
 
-// Thread-local iterator storage.
+/// A process-wide table that keeps `RefCell` access semantics.
+///
+/// The runtime's object registries used to be `thread_local!` `RefCell`s, which
+/// made a handle meaningless on any thread but the one that minted it. They are
+/// process-wide now, following `program_state().closures`. The wrapper exists so
+/// the move does not also change *borrow* semantics at ~200 call sites: `with`
+/// hands out a `&RefCell<T>`, so `borrow()` / `borrow_mut()` still mean exactly
+/// what they meant before, including the panic on a nested `borrow_mut`.
+///
+/// The lock is re-entrant on purpose. Several of these registries legitimately
+/// re-enter on one thread — an outer immutable borrow while a composite
+/// iterator inspects an inner one — which a plain `Mutex` or `RwLock` would
+/// turn from "fine" into a self-deadlock. Re-entrancy is a same-thread
+/// allowance only; another thread still waits, which is what makes the table
+/// safe to share.
+///
+/// Declared here rather than in a module of its own to stay inside this issue's
+/// change points; `file_io`, `hashlib_mod`, and `random_mod` import it.
+pub(crate) struct SharedTable<T>(parking_lot::ReentrantMutex<std::cell::RefCell<T>>);
+
+impl<T> SharedTable<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self(parking_lot::ReentrantMutex::new(std::cell::RefCell::new(
+            value,
+        )))
+    }
+
+    #[inline]
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&std::cell::RefCell<T>) -> R) -> R {
+        let guard = self.0.lock();
+        f(&guard)
+    }
+}
+
+/// `SharedTable`'s counterpart for the plain `Cell` slots that sit beside these
+/// registries (id counters, lazily initialized default handles). `with` hands
+/// out a `&Cell<T>`, so `get()` / `set()` call sites are unchanged, and holding
+/// the lock across the closure makes the read-modify-write of an id counter one
+/// step rather than two.
+pub(crate) struct SharedCell<T: Copy>(parking_lot::ReentrantMutex<std::cell::Cell<T>>);
+
+impl<T: Copy> SharedCell<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self(parking_lot::ReentrantMutex::new(std::cell::Cell::new(value)))
+    }
+
+    #[inline]
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&std::cell::Cell<T>) -> R) -> R {
+        let guard = self.0.lock();
+        f(&guard)
+    }
+}
+
+/// Process-wide iterator storage: a handle minted on one thread must resolve on
+/// every other thread (#4243).
+static ITERATORS: std::sync::LazyLock<SharedTable<HashMap<u64, MbIterator>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashMap::new()));
+static RANGE_ITERATOR_IDS: std::sync::LazyLock<SharedTable<HashSet<u64>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashSet::new()));
+
 thread_local! {
-    static ITERATORS: std::cell::RefCell<HashMap<u64, MbIterator>> =
-        std::cell::RefCell::new(HashMap::new());
-    static RANGE_ITERATOR_IDS: std::cell::RefCell<HashSet<u64>> =
-        std::cell::RefCell::new(HashSet::new());
     /// StopIteration flag — set by __next__ to signal exhaustion.
     /// Separates "yielded None" from "iterator is done".
+    ///
+    /// Stays thread-local: unlike the registry above this is not an object, it
+    /// is a signal between one `__next__` call and its immediate caller, both
+    /// of which are on the same thread by construction. Sharing it would let
+    /// one thread's exhaustion end another thread's loop.
     static STOP_ITERATION: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
@@ -1940,7 +1999,7 @@ pub fn mb_groupby_iter(items: Vec<MbValue>, groups: Vec<GroupByGroupSpec>) -> Mb
             super::rc::retain_if_ptr(group.key);
         }
     }
-    let state = Rc::new(RefCell::new(GroupByState {
+    let state = Arc::new(parking_lot::RwLock::new(GroupByState {
         items,
         groups,
         next_group: 0,
@@ -4409,11 +4468,11 @@ fn advance_chain_from_iterable_if_applicable(id: u64) -> Option<MbValue> {
 fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
     enum Info {
         Outer {
-            state: Rc<RefCell<GroupByState>>,
+            state: Arc<parking_lot::RwLock<GroupByState>>,
             peeked: Option<MbValue>,
         },
         Group {
-            state: Rc<RefCell<GroupByState>>,
+            state: Arc<parking_lot::RwLock<GroupByState>>,
             group_index: usize,
             cursor: usize,
             peeked: Option<MbValue>,
@@ -4428,7 +4487,7 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
         }
         match &mut iter.kind {
             IterKind::GroupByOuter { state } => Some(Info::Outer {
-                state: Rc::clone(state),
+                state: Arc::clone(state),
                 peeked: iter.peeked.take(),
             }),
             IterKind::GroupByGroup {
@@ -4436,7 +4495,7 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
                 group_index,
                 cursor,
             } => Some(Info::Group {
-                state: Rc::clone(state),
+                state: Arc::clone(state),
                 group_index: *group_index,
                 cursor: *cursor,
                 peeked: iter.peeked.take(),
@@ -4451,7 +4510,7 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
         } => Some(v),
         Info::Outer { state, .. } => {
             let next = {
-                let mut state_ref = state.borrow_mut();
+                let mut state_ref = state.write();
                 if state_ref.next_group >= state_ref.groups.len() {
                     state_ref.active_group = None;
                     None
@@ -4474,7 +4533,7 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
 
             let group_iter = MbIterator {
                 kind: IterKind::GroupByGroup {
-                    state: Rc::clone(&state),
+                    state: Arc::clone(&state),
                     group_index,
                     cursor: 0,
                 },
@@ -4501,7 +4560,7 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
             ..
         } => {
             let value = {
-                let state_ref = state.borrow();
+                let state_ref = state.read();
                 if state_ref.active_group != Some(group_index) {
                     None
                 } else if let Some(group) = state_ref.groups.get(group_index) {

@@ -44,7 +44,6 @@
 
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 // HANDWRITE-BEGIN
@@ -299,15 +298,26 @@ struct MbHash {
 /// caps ids at (1<<47) - 1; see `integer_handle_registry::HANDLE_MIN_ID`.
 const HASH_HANDLE_BASE: u64 = 1u64 << 45;
 
-thread_local! {
-    static HASHES: RefCell<HashMap<u64, MbHash>> = RefCell::new(HashMap::new());
-    static HASH_IDS: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
-    static NEXT_HASH_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(HASH_HANDLE_BASE) };
-    /// Per-handle refcount (#2111). Drops the HASHES entry when the count
-    /// hits zero; without this, every per-iter `h = hashlib.sha256(...)`
-    /// rebind leaked the prior digester state.
-    static HASH_REFCOUNTS: RefCell<HashMap<u64, u32>> = RefCell::new(HashMap::new());
-}
+/// hashlib state — process-wide (#4243).
+///
+/// A hash handle is a plain `u64` index into these tables. While they were
+/// `thread_local!`, a digester built on the main thread indexed an empty table
+/// inside a worker, so `h.hexdigest()` in a child reported
+/// `TypeError: 'NoneType' object is not callable`.
+type SharedTable<T> = crate::runtime::iter::SharedTable<T>;
+
+static HASHES: std::sync::LazyLock<SharedTable<HashMap<u64, MbHash>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashMap::new()));
+static HASH_IDS: std::sync::LazyLock<SharedTable<HashSet<u64>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashSet::new()));
+/// Shared with `HASHES`, so two threads cannot mint the same handle id.
+static NEXT_HASH_ID: std::sync::LazyLock<crate::runtime::iter::SharedCell<u64>> =
+    std::sync::LazyLock::new(|| crate::runtime::iter::SharedCell::new(HASH_HANDLE_BASE));
+/// Per-handle refcount (#2111). Drops the HASHES entry when the count
+/// hits zero; without this, every per-iter `h = hashlib.sha256(...)`
+/// rebind leaked the prior digester state.
+static HASH_REFCOUNTS: std::sync::LazyLock<SharedTable<HashMap<u64, u32>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashMap::new()));
 
 fn alloc_hash_id() -> u64 {
     NEXT_HASH_ID.with(|cell| {

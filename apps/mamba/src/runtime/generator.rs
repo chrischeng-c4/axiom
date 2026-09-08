@@ -66,6 +66,13 @@ struct CoroStack {
     total_size: usize,
 }
 
+/// A `CoroStack` is an `mmap`'d region owned by the process, not by the thread
+/// that allocated it, and the generator registry hands exclusive access to one
+/// thread at a time. Moving a suspended generator between threads is therefore
+/// moving a pointer to process memory (#4243), the same reasoning that makes
+/// `MbCoroutine` and `MbTask` `Send` in `async_rt`.
+unsafe impl Send for CoroStack {}
+
 impl CoroStack {
     /// Allocate a new coroutine stack with a guard page.
     fn new(stack_size: usize) -> Self {
@@ -346,11 +353,24 @@ struct GenActive {
     last_resumed_capture_context: std::cell::Cell<*const super::closure::CapturedCellContext>,
 }
 
-thread_local! {
-    /// Generator registry (thread-local — generators run on their creator's thread).
-    static GENERATORS: std::cell::RefCell<HashMap<u64, GenEntry>> =
-        std::cell::RefCell::new(HashMap::new());
+/// Generator registry — process-wide (#4243).
+///
+/// A generator handle is a plain `u64` index into this table. While the table
+/// was `thread_local!`, a generator built on the main thread indexed an empty
+/// table inside a worker, so the handle degraded to a bare int and
+/// `for x in gen` in a child reported `'int' object is not iterable`. The
+/// entries themselves are heap-allocated (`Box<CoroContext>` plus an owned
+/// `CoroStack`), and `THREAD_EXEC_MUTEX` serializes thread execution, so a
+/// suspended generator can be resumed from whichever thread reaches it next.
+///
+/// The cells below stay thread-local on purpose: they describe *this* thread's
+/// currently running generator (`GEN_ACTIVE`), the value in flight across a
+/// single yield/resume swap (`GEN_XFER`), and this thread's caller-context
+/// stack. Sharing any of them would let one thread's resume clobber another's.
+static GENERATORS: std::sync::LazyLock<super::iter::SharedTable<HashMap<u64, GenEntry>>> =
+    std::sync::LazyLock::new(|| super::iter::SharedTable::new(HashMap::new()));
 
+thread_local! {
     /// Bundled active-generator + resume-cache cells (see GenActive).
     static GEN_ACTIVE: GenActive = GenActive {
         active_id: std::cell::Cell::new(None),

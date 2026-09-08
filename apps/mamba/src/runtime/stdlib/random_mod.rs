@@ -49,7 +49,6 @@ use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 use num_bigint::{BigInt, Sign};
 use sha2::{Digest, Sha512};
-use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 // HANDWRITE-BEGIN
@@ -61,20 +60,36 @@ use rand_mt::Mt;
 /// `integer_handle_registry::HANDLE_MIN_ID`.
 const RANDOM_HANDLE_BASE: u64 = (1u64 << 46) + (1u64 << 45);
 
-thread_local! {
-    static RANDOMS: RefCell<HashMap<u64, Mt>> = RefCell::new(HashMap::new());
-    static RANDOM_IDS: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
-    static NEXT_RANDOM_ID: Cell<u64> = const { Cell::new(RANDOM_HANDLE_BASE) };
-    /// Per-handle refcount (#2111).
-    static RANDOM_REFCOUNTS: RefCell<HashMap<u64, u32>> = RefCell::new(HashMap::new());
-    /// Lazy-init default handle for module-level functions (Python's
-    /// `random._inst`). None until first call.
-    static DEFAULT_HANDLE: Cell<Option<u64>> = const { Cell::new(None) };
-    /// Legacy cached spare normal retained for non-gauss Box–Muller callers.
-    static GAUSS_SPARE: Cell<Option<f64>> = const { Cell::new(None) };
-    /// CPython-compatible `gauss()` spare, isolated per Random handle.
-    static GAUSS_SPARES: RefCell<HashMap<u64, f64>> = RefCell::new(HashMap::new());
-}
+/// `random.Random` state — process-wide (#4243).
+///
+/// A Random handle is a plain `u64` index into these tables. While they were
+/// `thread_local!`, an instance built on the main thread indexed an empty table
+/// inside a worker, so `rng.random()` in a child reported
+/// `TypeError: 'NoneType' object is not callable`. `DEFAULT_HANDLE` moves with
+/// them so module-level `random.random()` keeps drawing from one stream across
+/// threads, as CPython's shared `random._inst` does.
+type SharedTable<T> = crate::runtime::iter::SharedTable<T>;
+type SharedCell<T> = crate::runtime::iter::SharedCell<T>;
+
+static RANDOMS: std::sync::LazyLock<SharedTable<HashMap<u64, Mt>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashMap::new()));
+static RANDOM_IDS: std::sync::LazyLock<SharedTable<HashSet<u64>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashSet::new()));
+static NEXT_RANDOM_ID: std::sync::LazyLock<SharedCell<u64>> =
+    std::sync::LazyLock::new(|| SharedCell::new(RANDOM_HANDLE_BASE));
+/// Per-handle refcount (#2111).
+static RANDOM_REFCOUNTS: std::sync::LazyLock<SharedTable<HashMap<u64, u32>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashMap::new()));
+/// Lazy-init default handle for module-level functions (Python's
+/// `random._inst`). None until first call.
+static DEFAULT_HANDLE: std::sync::LazyLock<SharedCell<Option<u64>>> =
+    std::sync::LazyLock::new(|| SharedCell::new(None));
+/// Legacy cached spare normal retained for non-gauss Box–Muller callers.
+static GAUSS_SPARE: std::sync::LazyLock<SharedCell<Option<f64>>> =
+    std::sync::LazyLock::new(|| SharedCell::new(None));
+/// CPython-compatible `gauss()` spare, isolated per Random handle.
+static GAUSS_SPARES: std::sync::LazyLock<SharedTable<HashMap<u64, f64>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashMap::new()));
 
 fn alloc_random_id() -> u64 {
     NEXT_RANDOM_ID.with(|c| {
@@ -1445,12 +1460,13 @@ pub fn mb_random_method_randbytes(receiver: MbValue, n: MbValue) -> MbValue {
 
 /// `getstate()` → `(handle_id,)` 1-tuple — opaque token. Restore via
 /// `setstate`, valid for the lifetime of the handle.
-thread_local! {
-    /// getstate() snapshots: cloned generator states keyed by snapshot id.
-    static SAVED_STATES: std::cell::RefCell<HashMap<u64, Mt>> =
-        std::cell::RefCell::new(HashMap::new());
-    static NEXT_STATE_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
-}
+/// getstate() snapshots: cloned generator states keyed by snapshot id.
+/// Process-wide for the same reason as `RANDOMS` (#4243) — a token handed out
+/// on one thread has to restore on any other.
+static SAVED_STATES: std::sync::LazyLock<SharedTable<HashMap<u64, Mt>>> =
+    std::sync::LazyLock::new(|| SharedTable::new(HashMap::new()));
+static NEXT_STATE_ID: std::sync::LazyLock<SharedCell<u64>> =
+    std::sync::LazyLock::new(|| SharedCell::new(1));
 
 pub fn mb_random_method_getstate(receiver: MbValue) -> MbValue {
     let id = receiver
@@ -2013,6 +2029,16 @@ unsafe extern "C" fn dispatch_Random(args_ptr: *const MbValue, nargs: usize) -> 
     };
     let id = make_handle(seed);
     MbValue::from_int(id as i64)
+}
+
+/// Test-only constructor shim. `dispatch_Random` is the only way to allocate a
+/// `random.Random` handle and it is private and `extern "C"`; the colocated
+/// cross-thread test in `crate::runtime::tests` needs one handle it fully owns
+/// (rather than the module-level default instance, which other tests in the
+/// same binary also touch). Adds no behavior of its own.
+#[cfg(test)]
+pub(crate) fn test_only_new_random_handle(seed: i64) -> MbValue {
+    unsafe { dispatch_Random([MbValue::from_int(seed)].as_ptr(), 1) }
 }
 
 /// `SystemRandom()` — CPython's hardware-entropy generator. Mamba has no

@@ -357,20 +357,4 @@ mod cleanup_tests {
 }
 
 #[cfg(test)]
-mod tests {
-    mod async_gen_event_loop_interleaving_gate;
-    mod base64_memory_gate;
-    mod container_lock_perf;
-    mod generator_runtime_type_gate;
-    mod jit_refcount_audit;
-    mod list_literal_perf;
-    mod list_sort_builtin_perf_gate;
-    mod pymalloc_freelist;
-    mod runtime_core;
-    mod runtime_integration;
-    mod stdlib_coverage_lower;
-    mod stdlib_coverage_remaining;
-    mod string_concat_perf_gate;
-    mod thread_safety;
-    mod adversarial_refcount_challenge;
-}
+mod tests;

@@ -7040,9 +7040,31 @@ impl<'a> AstLowerer<'a> {
                         let ctx = self.lower_expr(&item.context)?;
                         // `with expr as name` always binds `name` — define it if new,
                         // reuse existing SymbolId if already in scope.
+                        //
+                        // Inside a function, an alias the function assigns is a
+                        // fresh function local, exactly as a plain `name = …`
+                        // is: `resolve_name` alone would hand back a same-named
+                        // *module* symbol, hir_to_mir would class it
+                        // `VariableClass::Global` and store the `__enter__`
+                        // result with `StoreGlobal`, and the body's read of the
+                        // name would still go through the never-written local
+                        // slot — `UnboundLocalError`. This mirrors the rule the
+                        // plain-Assign arm applies; `collect_assignment_targets`
+                        // already collects with-aliases into
+                        // `local_assigned_names`.
                         let alias = item.alias.as_ref().map(|n| {
-                            self.resolve_name(n, stmt.span)
-                                .unwrap_or_else(|| self.define_local(n, self.checker.tcx.any()))
+                            let is_function_local_target = self
+                                .local_assigned_names
+                                .iter()
+                                .any(|x| x == n)
+                                && !self.local_declared_names.iter().any(|x| x == n)
+                                && !self.local_names.contains_key(n.as_str());
+                            if is_function_local_target {
+                                self.define_local(n, self.checker.tcx.any())
+                            } else {
+                                self.resolve_name(n, stmt.span)
+                                    .unwrap_or_else(|| self.define_local(n, self.checker.tcx.any()))
+                            }
                         });
                         Some((ctx, alias))
                     })

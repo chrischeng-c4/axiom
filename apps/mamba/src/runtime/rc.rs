@@ -1777,8 +1777,59 @@ pub unsafe fn retain_if_ptr(val: super::value::MbValue) {
     }
 }
 
+/// Number of OS threads that have executed a refcount-instrumented transfer and
+/// have not yet exited (#4243).
+///
+/// The debug refcount instrument reads `header.rc` twice with `Relaxed` loads —
+/// once before `retain_if_ptr` and once after — and asserts the difference is
+/// exactly the expected delta. That subtraction is only a fact while this thread
+/// is the sole mutator of that header. With mamba's registries now process-wide,
+/// a second thread retaining the same object between the two loads makes the
+/// instrument report e.g. `before=2601, after=2603` and abort a run that has no
+/// refcount defect at all. The census lets the instrument stand down exactly
+/// while it cannot measure: single-threaded runs — the overwhelming majority,
+/// and the ones the instrument was written to police — keep the full assertion.
+#[cfg(debug_assertions)]
+static LIVE_INSTRUMENTED_THREADS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Counts one OS thread into [`LIVE_INSTRUMENTED_THREADS`] for its lifetime.
+#[cfg(debug_assertions)]
+struct ThreadCensusGuard;
+
+#[cfg(debug_assertions)]
+impl ThreadCensusGuard {
+    fn new() -> Self {
+        LIVE_INSTRUMENTED_THREADS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for ThreadCensusGuard {
+    fn drop(&mut self) {
+        LIVE_INSTRUMENTED_THREADS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    static THREAD_CENSUS: ThreadCensusGuard = ThreadCensusGuard::new();
+}
+
+/// True while more than one OS thread is inside the instrumented runtime, i.e.
+/// while a before/after refcount pair is not attributable to this thread alone.
+#[cfg(debug_assertions)]
+fn debug_refcount_delta_is_measurable() -> bool {
+    LIVE_INSTRUMENTED_THREADS.load(Ordering::SeqCst) <= 1
+}
+
 #[cfg(debug_assertions)]
 fn debug_heap_refcount(val: super::value::MbValue) -> Option<u32> {
+    // Registering here (rather than in the assertion) counts a thread from its
+    // first instrumented transfer, so the *other* thread's in-flight pair is
+    // already unmeasurable by the time this one starts mutating headers.
+    let _ = THREAD_CENSUS.try_with(|_| ());
     if is_typed_native_wrapper(val) {
         return None;
     }
@@ -1807,6 +1858,9 @@ fn debug_assert_refcount_delta(
     let Some(ptr) = value.as_ptr() else {
         return;
     };
+    if !debug_refcount_delta_is_measurable() {
+        return;
+    }
     let after = unsafe { (*ptr).header.rc.load(Ordering::Relaxed) };
     debug_assert_eq!(
         after,

@@ -92,11 +92,18 @@ fn parse_mode(mode: &str) -> Option<ParsedMode> {
     })
 }
 
-thread_local! {
-    static FILES: std::cell::RefCell<HashMap<u64, MbFile>> =
-        std::cell::RefCell::new(HashMap::new());
-    static NEXT_FILE_ID: std::cell::Cell<u64> = std::cell::Cell::new(1);
-}
+/// Open-file registry — process-wide (#4243).
+///
+/// A file handle is a plain `u64` index into this table. While it was
+/// `thread_local!`, a file opened on the main thread indexed an empty table
+/// inside a worker, so `fh.write(...)` in a child reported
+/// `AttributeError: 'int' object has no attribute 'write'`.
+static FILES: std::sync::LazyLock<super::iter::SharedTable<HashMap<u64, MbFile>>> =
+    std::sync::LazyLock::new(|| super::iter::SharedTable::new(HashMap::new()));
+
+/// Shared with `FILES`, so two threads cannot mint the same handle id.
+static NEXT_FILE_ID: std::sync::LazyLock<super::iter::SharedCell<u64>> =
+    std::sync::LazyLock::new(|| super::iter::SharedCell::new(1));
 
 fn alloc_file_id() -> u64 {
     NEXT_FILE_ID.with(|cell| {
