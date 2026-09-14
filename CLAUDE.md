@@ -11,7 +11,7 @@ project:
 
 ## Default product route
 
-The main controller owns scope, dispatch, Git, tracker changes, and final
+The main Terra/high controller owns scope, dispatch, Git, tracker changes, and final
 acceptance. It reads worker summaries, not product source, documents, or raw
 logs.
 
@@ -21,6 +21,8 @@ logs.
 | approved outcome needing a scoped task | `product-plan` through `<p>-pm` and `<p>-tl` |
 | delivery, test-only, or read-only review | `product-deliver` |
 | cross-project boundary | `cto`, then `integration-qa` only when verification crosses projects |
+| material product trade-off | on-demand `product-advisor` profile |
+| irreversible, paid, or permission-sensitive choice | on-demand `risk-advisor` profile |
 | explicit legacy AW work | one renamed explicit-only legacy skill |
 | bounded AW Python CLI work | `aw-dev` |
 
@@ -43,6 +45,25 @@ actions. Preserve the AW CLI protocol for this legacy route.
 
 The new product route is PENDING ACTIVATION. Do not start a product writer
 task or pilot as part of this migration.
+
+## Senior advisor policy
+
+The main default is `gpt-5.6-terra` at high effort. It delegates detailed
+work. Astra is not the normal controller model.
+
+Ask one senior advisor only when the evidence leaves a material decision open.
+Give the advisor one exact question and the needed evidence. The advisor has
+no Git, tracker, release, cloud, or acceptance authority.
+
+| Profile | Model and effort | Use when |
+|---|---|---|
+| `cto` | Sol / xhigh | a shared interface, project boundary, or architecture decision crosses projects |
+| `product-advisor` | Sol / high | product value, scope, or roadmap choices conflict |
+| `risk-advisor` | Sol / xhigh | a release, paid run, deletion, permission, or other irreversible choice needs a second judgment |
+
+Do not ask an advisor for routine routing or a clear, repeatable task. Do not
+ask all advisors for one decision. Their profiles are future fleet policy, not
+active role configuration. The isolation admission work remains incomplete.
 
 ## Conversation shortcuts
 
@@ -68,9 +89,10 @@ roles. Edit templates under
 `scripts/agents/templates/`, not generated fleet copies, then use
 `scripts/agents/render_fleet.py` only from the repository root.
 
-The candidate maps PM/TL/CTO and Integration QA to Terra and QA/Dev to Luna.
-Its efforts are PM high, TL xhigh, QA max, and Dev medium. Only one declared
-model result was measured: `lumen-qa` used Luna at max effort.
+The candidate maps PM/TL and Integration QA to Terra and QA/Dev to Luna. The
+future CTO advisor profile uses Sol/xhigh. Its efforts are PM high, TL xhigh,
+QA max, and Dev medium. Only one declared model result was measured:
+`lumen-qa` used Luna at max effort.
 
 The CLI canary allowed all six forbidden writes. The native read-only canary
 also wrote its first `/private/tmp` sentinel. The desktop admission test then
