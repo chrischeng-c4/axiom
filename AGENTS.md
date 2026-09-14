@@ -52,6 +52,22 @@ close actions remain controller-only even in legacy work.
 The new product route is PENDING ACTIVATION. Do not start a product writer
 task or pilot as part of this migration.
 
+## Conversation shortcuts
+
+Use `next-step` to give a read-only choice. It gives at most two options and
+one recommendation with its purpose, completion condition, and needed
+authority. It may check only needed read-only evidence. It never starts the
+recommended action.
+
+Use `follow-next-step` only after a clear request to do the latest unfinished
+main recommendation. It rechecks only that target and routes real work to an
+available specialist. Stop when the pending work or authority is unclear.
+
+Use `approve-next-step` only for a clear current assent to the latest pending,
+well-scoped request. It approves that one target and limit. It does not grant
+future authority or bypass a gate, a read-only rule, Plan mode, or the blocked
+writer policy.
+
 ## Fleet and permission boundary
 
 The 226-role fleet is a generated candidate target, not the active fleet. It

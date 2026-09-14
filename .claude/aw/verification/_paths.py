@@ -78,7 +78,8 @@ SKILL_PREFIX = ""
 LEGACY_SKILLS = ("ask-user", "e2e-for", "grill-release", "impl-for",
                  "prepare-goal", "review", "test-for")
 PRODUCT_SKILLS = ("product-ideate", "product-plan", "product-deliver")
-SKILLS = LEGACY_SKILLS + PRODUCT_SKILLS
+CONVERSATION_SHORTCUTS = ("next-step", "follow-next-step", "approve-next-step")
+SKILLS = LEGACY_SKILLS + PRODUCT_SKILLS + CONVERSATION_SHORTCUTS
 
 
 def skill_dir(skill: str) -> pathlib.Path:
@@ -143,8 +144,9 @@ def skill_invocation(skill: str) -> str:
 # them instead would leave the two ladder skills that no per-skill rule can
 # refuse.
 #
-# The two lists are exhaustive and disjoint for the legacy and product
-# operation skills.
+# The two lists are exhaustive and disjoint only for the legacy and product
+# operation skills. Conversation shortcuts are separately inventoried above:
+# they advise or bind one current approval, not an AW operation.
 #
 # `e2e-for` and `impl-for` are procedural despite the phases they drive
 # being model work rather than command work. The line is not "does a model

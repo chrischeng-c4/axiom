@@ -1,7 +1,7 @@
 # Verification
 
-Gates for the explicit legacy and product skill mirrors, the release
-Milestone contract, and the remaining work-item schemas.
+Gates for the explicit legacy, product, and conversation shortcut skill
+mirrors, the release Milestone contract, and the remaining work-item schemas.
 
 ```
 uv run --python 3.13 --no-project .claude/aw/verification/run_all.py                          # ~38s
@@ -63,6 +63,7 @@ apps/aw/src/aw/
 .claude/skills/
   ask-user/  e2e-for/  grill-release/  impl-for/  prepare-goal/  review/  test-for/
   product-ideate/  product-plan/  product-deliver/
+  next-step/  follow-next-step/  approve-next-step/
 .agents/skills/
   the same exact SKILL.md files, byte-identical for Codex
 ```

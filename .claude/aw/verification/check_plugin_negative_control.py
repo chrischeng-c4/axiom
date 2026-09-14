@@ -16,6 +16,7 @@ CHECKER = HERE / "check_plugin.py"
 SKILLS = (
     "ask-user", "e2e-for", "grill-release", "impl-for", "prepare-goal",
     "review", "test-for", "product-ideate", "product-plan", "product-deliver",
+    "next-step", "follow-next-step", "approve-next-step",
 )
 
 
@@ -132,6 +133,18 @@ def make_integration_default(root: Path) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+def remove_shortcut_frontmatter(root: Path) -> None:
+    for runtime in (".agents", ".claude"):
+        path = root / runtime / "skills/next-step/SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("name: next-step", "name: stale-step", 1), encoding="utf-8")
+
+
+def drift_shortcut_mirror(root: Path) -> None:
+    path = root / ".agents/skills/approve-next-step/SKILL.md"
+    path.write_text(path.read_text(encoding="utf-8") + "\nDrift.\n", encoding="utf-8")
+
+
 def bypass_plan_digest(root: Path) -> None:
     path = root / "apps/aw/src/aw/scripts/release_plan.py"
     text = path.read_text(encoding="utf-8")
@@ -211,6 +224,10 @@ def main() -> int:
         case("delivery makes Integration QA default", make_integration_default,
              "FAIL product-deliver: carries routing contract "
              "`Integration QA only for a cross-project scope`"),
+        case("conversation shortcut frontmatter drifts", remove_shortcut_frontmatter,
+             "FAIL next-step: frontmatter name matches"),
+        case("conversation shortcut mirror drifts", drift_shortcut_mirror,
+             "FAIL approve-next-step: mirror bytes match"),
         case("missing Milestone queue-head verb", remove_next_verb,
              "FAIL milestone.py exposes `next`"),
         case("Milestone default bump changes", change_default_milestone_bump,

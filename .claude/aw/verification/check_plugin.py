@@ -15,7 +15,8 @@ LEGACY_SKILLS = (
     "review", "test-for",
 )
 PRODUCT_SKILLS = ("product-ideate", "product-plan", "product-deliver")
-SKILLS = LEGACY_SKILLS + PRODUCT_SKILLS
+CONVERSATION_SHORTCUTS = ("next-step", "follow-next-step", "approve-next-step")
+SKILLS = LEGACY_SKILLS + PRODUCT_SKILLS + CONVERSATION_SHORTCUTS
 HEADINGS = ("## Goal", "## How", "## Never")
 SCRIPTS = (
     "change.py",
@@ -211,9 +212,13 @@ def collect(repo: Path) -> Reporter:
                      overrides.get(skill) == "user-invocable-only")
         report.check(f"{skill}: says it is explicit-only",
                      "Never invoke this skill implicitly." in bodies.get(skill, ""))
-    for skill in PRODUCT_SKILLS:
+    for skill in PRODUCT_SKILLS + CONVERSATION_SHORTCUTS:
         report.check(f"{skill}: Claude does not override default visibility",
                      skill not in overrides)
+    for skill in CONVERSATION_SHORTCUTS:
+        report.check(f"{skill}: keeps default implicit discovery",
+                     not (codex_root / skill / "agents" / "openai.yaml").exists()
+                     and not (claude_root / skill / "agents" / "openai.yaml").exists())
 
     for name in SCRIPTS:
         report.check(f"{name} exists", (scripts_root / name).is_file())
@@ -235,6 +240,15 @@ def collect(repo: Path) -> Reporter:
         "product-deliver": ("e2e-only", "impl-only", "test-only", "read-only-review",
                             "fresh `<p>-qa` instance", "Integration QA only for a cross-project scope",
                             "controller owns Git, tracker changes, scope changes, and final acceptance"),
+        "next-step": ("current conversation first", "read-only check", "at most two options",
+                      "needed authority", "Never execute the recommended action"),
+        "follow-next-step": ("latest unfinished, clear main recommendation",
+                             "Plan mode", "blocked-writer policy", "Explain the difference",
+                             "Never treat skill selection as approval"),
+        "approve-next-step": ("latest pending, well-scoped request",
+                              "explicit user invocation", "safety- or correctness-relevant current state",
+                              "exact approved action", "same consent", "blanket future authority",
+                              "blocked-writer policy"),
     }
     for skill, phrases in required_phrases.items():
         text = bodies.get(skill, "")
