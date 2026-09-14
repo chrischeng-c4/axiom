@@ -38,30 +38,34 @@ from typing import Dict, Iterable, List, Tuple
 APPS: Tuple[str, ...] = (
     "arena", "aw", "beam", "cap", "cgdb", "courier", "cube", "defer", "guard",
     "jet", "keep", "loom", "lumen", "mamba", "mesh", "meter", "pgpool",
-    "pm", "preview", "relay", "rig", "tape", "vat", "workbench",
+    "pm", "preview", "relay", "rig", "sift", "tape", "vat", "workbench",
 )
 LIBS: Tuple[str, ...] = (
-    "build-stamp", "claim-token", "cli-std", "compass", "metrics-prometheus",
-    "openapi-codegen", "peer-tls", "raft-core", "raft-runtime", "server-http",
-    "server-lifecycle", "server-tcp", "service-auth", "service-backup",
-    "service-executor", "service-http", "service-k8s", "service-observability",
-    "storage-durable", "surface", "transport-h2c", "ui-runtime",
+    "build-stamp", "claim-token", "cli-std", "compass", "index-text",
+    "metrics-prometheus", "metrics-remote-write", "openapi-codegen", "peer-tls",
+    "raft-core", "raft-runtime", "server-http", "server-lifecycle", "server-tcp",
+    "service-auth", "service-backup", "service-collector", "service-executor",
+    "service-http", "service-k8s", "service-mcp", "service-observability",
+    "service-projection", "storage-durable", "storage-object", "storage-segment",
+    "surface", "transport-h2c", "transport-otlp", "ui-runtime",
 )
 TIER_ROLES: Dict[str, Tuple[str, ...]] = {
-    "app": ("pm", "qa", "dev"),
-    "lib": ("pm", "qa", "dev"),
+    "app": ("pm", "tl", "qa", "dev"),
+    "lib": ("pm", "tl", "qa", "dev"),
 }
 # apps/aw is a Python uv project whose implementation agent is the hand-written
-# singleton `aw-dev`; it takes the product-manager role only, none of the
-# per-project ladder roles.
-ROLE_OVERRIDES: Dict[str, Tuple[str, ...]] = {"aw": ("pm",)}
+# singleton `aw-dev`. It gets PM, TL, and QA roles from the templates; the
+# custom Dev role keeps the Python/uv verification contract.
+ROLE_OVERRIDES: Dict[str, Tuple[str, ...]] = {"aw": ("pm", "tl", "qa")}
 
 PROJECTS: Tuple[Tuple[str, str], ...] = tuple(
     [("app", name) for name in APPS] + [("lib", name) for name in LIBS]
 )
 
-CODEX_MODEL = "gpt-5.6-terra"
-CODEX_SANDBOX = "workspace-write"
+CODEX_DEFAULT_MODEL = "gpt-5.6-terra"
+# A generated role remains read-only until the runtime proves an isolated
+# writable environment. Permission profiles are activated outside this renderer.
+CODEX_SANDBOX = "read-only"
 PLACEHOLDER = "{project}"
 
 _FRONTMATTER_LINE = re.compile(r"^(name|description|effort):[ \t]*(.*?)[ \t]*$")
@@ -146,10 +150,11 @@ def split_frontmatter(text: str, source: str) -> Tuple[Dict[str, str], str]:
 def toml_projection(markdown: str, source: str) -> str:
     fields, body = split_frontmatter(markdown, source)
     name = fields["name"]
+    model = codex_model(name)
     return (
         f"name = {json.dumps(name)}\n"
         f"description = {json.dumps(fields['description'])}\n"
-        f"model = {json.dumps(CODEX_MODEL)}\n"
+        f"model = {json.dumps(model)}\n"
         f"model_reasoning_effort = {json.dumps(fields['effort'])}\n"
         f"sandbox_mode = {json.dumps(CODEX_SANDBOX)}\n"
         f"nickname_candidates = [{json.dumps(name)}, "
@@ -159,6 +164,17 @@ def toml_projection(markdown: str, source: str) -> str:
         f"{body}\n"
         "'''\n"
     )
+
+
+def codex_model(name: str) -> str:
+    """Return the fixed Codex model for one registered fleet role."""
+    if name == "integration-qa" or name == "cto":
+        return "gpt-5.6-terra"
+    if name.endswith("-pm") or name.endswith("-tl"):
+        return "gpt-5.6-terra"
+    if name.endswith("-qa") or name.endswith("-dev"):
+        return "gpt-5.6-luna"
+    return CODEX_DEFAULT_MODEL
 
 
 def expected_files(root: Path) -> Dict[Path, str]:

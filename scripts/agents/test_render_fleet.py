@@ -45,22 +45,35 @@ class RenderFleetTests(unittest.TestCase):
         self.tmp = copy_tree()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-    # -- the checked-in tree -------------------------------------------------
+    def render_candidate(self) -> None:
+        """Render only a disposable candidate tree, never the live fleet."""
+        render_fleet.write(self.tmp)
+        self.assertEqual(render_fleet.check(self.tmp), [])
 
-    def test_repo_tree_matches_templates(self) -> None:
-        self.assertEqual(render_fleet.check(REPO), [])
+    # -- inactive source and disposable candidate ---------------------------
 
-    def test_cli_check_passes_on_repo(self) -> None:
+    def test_repo_tree_remains_inactive(self) -> None:
+        findings = render_fleet.check(REPO)
+        self.assertIn("missing: .claude/agents/lumen-tl.md", findings)
+        self.assertIn("differs: .claude/agents/lumen-dev.md", findings)
+
+    def test_cli_check_reports_inactive_repo(self) -> None:
         result = run_cli(REPO, "--check")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("fleet matches", result.stdout)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("missing: .claude/agents/lumen-tl.md", result.stdout)
+
+    def test_disposable_candidate_matches_templates(self) -> None:
+        self.render_candidate()
 
     def test_rendered_population(self) -> None:
         rendered = render_fleet.rendered_agents(REPO)
-        self.assertEqual(len(rendered), 133)
+        self.assertEqual(len(rendered), 219)
         self.assertNotIn("aw-dev", rendered)
-        self.assertNotIn("aw-qa", rendered)
         self.assertIn("aw-pm", rendered)
+        self.assertIn("aw-tl", rendered)
+        self.assertIn("aw-qa", rendered)
+        self.assertIn("sift-dev", rendered)
+        self.assertIn("service-collector-tl", rendered)
         self.assertIn("lumen-qa", rendered)
         self.assertIn("lumen-pm", rendered)
         self.assertIn("build-stamp-dev", rendered)
@@ -75,13 +88,22 @@ class RenderFleetTests(unittest.TestCase):
             self.assertNotIn(agents / f"{singleton}.md", expected)
             self.assertIn(codex / f"{singleton}.toml", expected)
 
-    def test_write_on_a_copy_changes_nothing(self) -> None:
+    def test_write_on_a_rendered_candidate_changes_nothing(self) -> None:
+        self.render_candidate()
+        before = {
+            path.relative_to(self.tmp): path.read_bytes()
+            for rel in OWNED_DIRS
+            for path in sorted((self.tmp / rel).rglob("*"))
+            if path.is_file()
+        }
         self.assertEqual(render_fleet.write(self.tmp), [])
-        for rel in OWNED_DIRS:
-            for path in sorted((REPO / rel).rglob("*")):
-                if path.is_file():
-                    twin = self.tmp / path.relative_to(REPO)
-                    self.assertEqual(twin.read_bytes(), path.read_bytes(), twin)
+        after = {
+            path.relative_to(self.tmp): path.read_bytes()
+            for rel in OWNED_DIRS
+            for path in sorted((self.tmp / rel).rglob("*"))
+            if path.is_file()
+        }
+        self.assertEqual(after, before)
 
     # -- projection shape ----------------------------------------------------
 
@@ -93,6 +115,8 @@ class RenderFleetTests(unittest.TestCase):
         toml = render_fleet.toml_projection(markdown, "demo-dev.md")
         self.assertIn('description = "Demo \\u2014 with \\"quotes\\""', toml)
         self.assertIn('model_reasoning_effort = "medium"', toml)
+        self.assertIn('model = "gpt-5.6-luna"', toml)
+        self.assertIn('sandbox_mode = "read-only"', toml)
         self.assertIn('nickname_candidates = ["demo-dev", "demo_dev"]', toml)
         self.assertTrue(toml.endswith("'''\nYou are **demo-dev** — body.\n'''\n"))
 
@@ -101,9 +125,17 @@ class RenderFleetTests(unittest.TestCase):
         with self.assertRaisesRegex(render_fleet.RenderError, "no effort"):
             render_fleet.toml_projection(markdown, "demo-dev.md")
 
+    def test_role_model_mapping(self) -> None:
+        self.assertEqual(render_fleet.codex_model("lumen-pm"), "gpt-5.6-terra")
+        self.assertEqual(render_fleet.codex_model("lumen-tl"), "gpt-5.6-terra")
+        self.assertEqual(render_fleet.codex_model("lumen-qa"), "gpt-5.6-luna")
+        self.assertEqual(render_fleet.codex_model("lumen-dev"), "gpt-5.6-luna")
+        self.assertEqual(render_fleet.codex_model("integration-qa"), "gpt-5.6-terra")
+
     # -- negative controls: each divergence class is caught ------------------
 
     def test_template_mutation_is_caught(self) -> None:
+        self.render_candidate()
         template = self.tmp / "scripts/agents/templates/app/dev.md"
         template.write_text(
             template.read_text(encoding="utf-8").replace("## Goal", "## Goal!", 1),
@@ -117,6 +149,7 @@ class RenderFleetTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
 
     def test_hand_edited_rendered_file_is_caught(self) -> None:
+        self.render_candidate()
         path = self.tmp / ".claude/agents/tape-dev.md"
         path.write_text(path.read_text(encoding="utf-8") + "\n- extra\n",
                         encoding="utf-8")
@@ -124,6 +157,7 @@ class RenderFleetTests(unittest.TestCase):
                          ["differs: .claude/agents/tape-dev.md"])
 
     def test_stale_projection_is_caught_and_removed(self) -> None:
+        self.render_candidate()
         (self.tmp / ".codex/agents/ghost-dev.toml").write_text(
             'name = "ghost-dev"\nmodel_reasoning_effort = "max"\n', encoding="utf-8"
         )
@@ -134,6 +168,7 @@ class RenderFleetTests(unittest.TestCase):
         self.assertEqual(render_fleet.check(self.tmp), [])
 
     def test_missing_projection_is_caught_and_written(self) -> None:
+        self.render_candidate()
         (self.tmp / ".codex/agents/cap-qa.toml").unlink()
         self.assertEqual(render_fleet.check(self.tmp),
                          ["missing: .codex/agents/cap-qa.toml"])
@@ -142,6 +177,7 @@ class RenderFleetTests(unittest.TestCase):
         self.assertEqual(render_fleet.check(self.tmp), [])
 
     def test_singleton_edit_reprojects_only_its_toml(self) -> None:
+        self.render_candidate()
         path = self.tmp / ".claude/agents/gke-operator.md"
         path.write_text(path.read_text(encoding="utf-8") + "\n- extra\n",
                         encoding="utf-8")
