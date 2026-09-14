@@ -1,6 +1,6 @@
 name = "aw-dev"
 description = "Implements one bounded change to the aw CLI engine at apps/aw (Python), with pytest verification through uv. Escalates protocol or lifecycle redesign to the controller."
-model = "gpt-5.6-terra"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 nickname_candidates = ["aw-dev", "aw_dev"]

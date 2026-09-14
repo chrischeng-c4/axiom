@@ -51,8 +51,9 @@ The seven legacy skills are `prepare-goal`, `grill-release`, `e2e-for`,
 are not aliases for the default route. AW phase state, commit, lifecycle, and
 close actions remain controller-only even in legacy work.
 
-The new product route is PENDING ACTIVATION. Do not start a product writer
-task or pilot as part of this migration.
+The product route is active with prompt-only role boundaries. Start one scoped
+role task at a time. The controller names its exact paths, keeps one writer in
+one worktree, and rejects a report that crosses the assigned role or paths.
 
 ## Senior advisor policy
 
@@ -91,23 +92,22 @@ writer policy.
 
 ## Fleet and permission boundary
 
-The 226-role fleet is a generated candidate target, not the active fleet. It
+The Codex 226-role fleet is active. It
 has PM/TL/QA/Dev for 25 apps and 30 libs, custom `aw-dev`, and six further
 singleton roles. Templates under
 `scripts/agents/templates/` render project Markdown and `.codex` projections
 through `scripts/agents/render_fleet.py`; never hand-edit generated files.
 
-The candidate maps PM/TL and Integration QA to Terra and QA/Dev to Luna.
+The fleet maps PM/TL and Integration QA to Terra and QA/Dev to Luna.
 The future CTO advisor profile uses Sol/xhigh. Its efforts are PM high, TL
 xhigh, QA max, and Dev medium. Only one declared model result was measured:
 `lumen-qa` used Luna at max effort.
 
-The CLI canary allowed all six forbidden writes. The native read-only canary
-also wrote its first `/private/tmp` sentinel. The desktop admission test then
-ignored the installed hook and launched `lumen-dev`; it did no tool or write
-action. The global configuration was restored. These results do not prove
-permission isolation or hook enforcement. Do not claim either for Codex or
-Claude.
+This is prompt-only scope control, not permission isolation. The CLI canary
+allowed all six forbidden writes. The native read-only canary also wrote its
+first `/private/tmp` sentinel. The desktop admission test ignored the hook and
+launched `lumen-dev`. Do not claim sandbox isolation or hook enforcement for
+Codex or Claude. Permission testing is separate work.
 
 ## Git and external work
 

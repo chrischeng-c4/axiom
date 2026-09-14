@@ -1,10 +1,15 @@
-# Fleet migration note
+# Active Codex prompt-only fleet
 
 The renderer source is `scripts/agents/render_fleet.py`.
 
-The new workflow and 226-role projection are PENDING ACTIVATION. They are
-source candidates, not active runtime policy. Do not start a product writer
-task or pilot as part of this migration.
+The Codex 226-role projection is active. It provides PM/TL/QA/Dev roles for 25 apps
+and 30 libs, custom `aw-dev`, and six singleton roles. Generate it only from
+the templates with `scripts/agents/render_fleet.py`; never hand-edit a
+generated role file.
+
+This fleet uses prompt-only scope control. The controller gives every task its
+exact paths, permits one writer in one worktree, and retains Git, tracker, and
+acceptance authority. This is not permission isolation.
 
 The CLI canary allowed all six forbidden writes. A native read-only
 `lumen-qa` canary also wrote its first `/private/tmp` sentinel. The desktop
@@ -13,23 +18,12 @@ tool or write action. The global configuration was restored. Only the
 `lumen-qa` Luna/max declaration was measured. These results do not prove
 permission isolation or hook enforcement for Codex or Claude.
 
-Rollback is complete and verified. It restored 291 original role, config, and
-hook files. It moved 168 new role files recoverably. `.codex`,
-`.claude/agents`, and `.claude/hooks` are clean. The global configuration
-matches original hash `61a65c...`.
-
-The candidate archive is
+The prior rollback retained the candidate archive at
 `/private/tmp/axiom-rollback-reviewed/current-candidate.tar.gz`. Its
 `moved-new` directory and `rollback-journal.json` are in the same directory.
-The corrected draft hook tests remain in
-`/private/tmp/axiom-fleet-phase2-protected`; staged and install-shape tests
-there pass 10 and 16 cases.
+The recovered `integration-qa` singleton is now part of the active fleet.
 
-Source templates, skills, and routing remain, but rollout is incomplete. The
-current `render_fleet --check` deliberately reports 444 divergences and exits
-1 after rollback. The product-skill check passes. Do not run `--write` now.
-Before resuming, recover and review the archived singleton source candidates:
-`aw-dev`, `cto`, `project-manager`, `tech-design`, and `integration-qa`.
-
-This note records migration state only. It is not delivery evidence or an
-approval to write.
+`python3 -B scripts/agents/render_fleet.py --check-codex` must exit zero. This
+does not generate or activate Claude roles. Permission profiles, tool
+isolation, and hook enforcement remain separate work. Do not claim that the
+active prompt-only fleet has any of those protections.
