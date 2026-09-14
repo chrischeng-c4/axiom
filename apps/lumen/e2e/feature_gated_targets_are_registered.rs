@@ -31,6 +31,26 @@ impl GatedTarget {
 
 const REGISTRY: &[GatedTarget] = &[
     GatedTarget {
+        path: "apps/lumen/e2e/inherited_checkpoint_file_sync.rs",
+        gate: r#"#![cfg(unix)]"#,
+        required_features: &[],
+    },
+    GatedTarget {
+        path: "apps/lumen/e2e/aof_trim_append_progress.rs",
+        gate: r#"#![cfg(unix)]"#,
+        required_features: &[],
+    },
+    GatedTarget {
+        path: "apps/lumen/e2e/jieba_bigram_fallback_e2e.rs",
+        gate: r#"#![cfg(not(feature = "jieba"))]"#,
+        required_features: &[],
+    },
+    GatedTarget {
+        path: "apps/lumen/e2e/jieba_fallback_staging.rs",
+        gate: r#"#![cfg(not(feature = "jieba"))]"#,
+        required_features: &[],
+    },
+    GatedTarget {
         path: "apps/lumen/e2e/access_render_cli.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
         required_features: &["operator"],
@@ -120,7 +140,9 @@ fn count_test_rows(content: &str) -> usize {
         .lines()
         .filter(|line| {
             let trimmed = line.trim();
-            trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test]")
+            trimmed.starts_with("#[test]")
+                || trimmed.starts_with("#[tokio::test]")
+                || trimmed.starts_with("#[tokio::test(")
         })
         .count()
 }

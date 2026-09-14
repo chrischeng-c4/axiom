@@ -1,3 +1,5 @@
+#![cfg(not(feature = "jieba"))]
+
 //! CJK matching still works when the `jieba` feature is compiled out.
 //!
 //! Runs over the HTTP API with the default feature set: a `text` field is

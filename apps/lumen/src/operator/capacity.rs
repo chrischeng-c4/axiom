@@ -9,8 +9,8 @@
 //! (`apps/lumen/terraform/modules/lumen-capacity/catalog.tf`), mapping direct GCE
 //! machine types to `lumen.axiom.dev/capacity-profile` labels and tolerations.
 
-use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Default initial GCE machine type.
 pub const DEFAULT_INITIAL_MACHINE_TYPE: &str = "e2-standard-2";
@@ -172,7 +172,13 @@ pub struct Rejection {
 
 impl std::fmt::Display for Rejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {} ({})", self.reason.as_str(), self.message, self.field_path)
+        write!(
+            f,
+            "{}: {} ({})",
+            self.reason.as_str(),
+            self.message,
+            self.field_path
+        )
     }
 }
 
@@ -435,7 +441,9 @@ pub fn derive_requests(
     reserves: CapacityVector,
     headroom: CapacityVector,
 ) -> Result<CapacityVector, Rejection> {
-    let needed_cpu = reserves.cpu_millicores.saturating_add(headroom.cpu_millicores);
+    let needed_cpu = reserves
+        .cpu_millicores
+        .saturating_add(headroom.cpu_millicores);
     let needed_mem = reserves.memory_mib.saturating_add(headroom.memory_mib);
 
     if allocatable.cpu_millicores <= needed_cpu || allocatable.memory_mib <= needed_mem {
@@ -537,7 +545,10 @@ pub fn decide_transition(
     catalog_maximum: u32,
 ) -> Result<TransitionDecision, Rejection> {
     if from_machine_type != to_machine_type
-        && !policy.allowed_transitions.iter().any(|t| t == "scale_out" || t == to_machine_type)
+        && !policy
+            .allowed_transitions
+            .iter()
+            .any(|t| t == "scale_out" || t == to_machine_type)
     {
         return Err(Rejection {
             reason: RejectionReason::TransitionNotAllowed,

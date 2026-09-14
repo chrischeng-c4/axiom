@@ -880,6 +880,40 @@ impl RaftNode {
         std::mem::take(&mut self.outbox)
     }
 
+    /// Identity of the next committed entry, without advancing the applied head.
+    /// The driver must finish this identity only after its state machine succeeds.
+    pub fn peek_next_committed_identity(&self) -> Option<(Index, Term, EntryKind)> {
+        let index = self.last_applied.checked_add(1)?;
+        if index > self.commit_index {
+            return None;
+        }
+        let offset = index.checked_sub(self.snapshot_index)?.checked_sub(1)?;
+        let entry = self.log.get(usize::try_from(offset).ok()?)?;
+        (entry.index == index).then_some((index, entry.term, entry.kind))
+    }
+
+    /// Finish exactly the pending committed identity. A stale or out-of-order
+    /// identity returns false and leaves both application and membership state intact.
+    pub fn finish_committed_identity(&mut self, index: Index, term: Term) -> bool {
+        let Some((next, next_term, kind)) = self.peek_next_committed_identity() else {
+            return false;
+        };
+        if (next, next_term) != (index, term) {
+            return false;
+        }
+        if kind == EntryKind::Config {
+            let offset = (index - self.snapshot_index - 1) as usize;
+            if let Some(conf) = ConfState::decode(&self.log[offset].command) {
+                self.adopt_conf(conf);
+                if self.role == Role::Leader && self.is_joint() {
+                    self.check_leave_joint();
+                }
+            }
+        }
+        self.last_applied = index;
+        true
+    }
+
     /// Newly committed entries (in index order); advances `last_applied`.
     /// Configuration entries are adopted into force and withheld from the
     /// consumer.
@@ -1565,6 +1599,84 @@ mod tests {
             1,
             "heartbeat is due at the interval"
         );
+    }
+
+    fn committed_pair() -> RaftNode {
+        let membership = Membership {
+            voters: vec![1],
+            learners: vec![],
+        };
+        let mut node = RaftNode::new(1, &membership);
+        node.become_leader();
+        assert_eq!(node.propose(vec![11]), Some(1));
+        assert_eq!(node.propose(vec![22]), Some(2));
+        node
+    }
+
+    #[test]
+    fn committed_identity_is_stable_until_exact_completion() {
+        let mut node = committed_pair();
+        let term = node.current_term();
+        assert_eq!(
+            node.peek_next_committed_identity(),
+            Some((1, term, EntryKind::Command))
+        );
+        assert_eq!(
+            node.peek_next_committed_identity(),
+            Some((1, term, EntryKind::Command))
+        );
+        assert!(!node.finish_committed_identity(2, term));
+        assert!(!node.finish_committed_identity(1, term + 1));
+        assert_eq!(node.last_applied, 0);
+        assert!(node.finish_committed_identity(1, term));
+        assert_eq!(
+            node.peek_next_committed_identity(),
+            Some((2, term, EntryKind::Command))
+        );
+        assert!(!node.finish_committed_identity(1, term));
+        assert!(node.finish_committed_identity(2, term));
+        assert_eq!(node.peek_next_committed_identity(), None);
+        assert!(!node.finish_committed_identity(3, term));
+    }
+
+    #[test]
+    fn unfinished_committed_head_survives_durable_recovery() {
+        let node = committed_pair();
+        let membership = node.conf_state().membership.clone();
+        let restored = RaftNode::from_persisted(1, &membership, node.persisted());
+        assert_eq!(
+            restored.peek_next_committed_identity(),
+            Some((1, node.current_term(), EntryKind::Command))
+        );
+        assert_eq!(restored.last_applied, 0);
+    }
+
+    #[test]
+    fn configuration_changes_only_when_its_exact_identity_finishes() {
+        let mut node = committed_pair();
+        let term = node.current_term();
+        assert!(node.finish_committed_identity(1, term));
+        assert!(node.finish_committed_identity(2, term));
+        let mut next = node.conf_state().clone();
+        next.generation += 1;
+        next.membership.learners.push(9);
+        node.log.push(RaftEntry {
+            index: 3,
+            term,
+            kind: EntryKind::Config,
+            command: next.encode(),
+        });
+        node.commit_index = 3;
+        assert_eq!(
+            node.peek_next_committed_identity(),
+            Some((3, term, EntryKind::Config))
+        );
+        assert!(!node.conf_state().membership.learners.contains(&9));
+        assert!(!node.finish_committed_identity(3, term + 1));
+        assert!(!node.conf_state().membership.learners.contains(&9));
+        assert!(node.finish_committed_identity(3, term));
+        assert!(node.conf_state().membership.learners.contains(&9));
+        assert_eq!(node.peek_next_committed_identity(), None);
     }
 
     #[test]

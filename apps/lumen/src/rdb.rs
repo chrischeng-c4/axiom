@@ -33,12 +33,16 @@ pub struct RdbSnapshot {
 }
 
 impl RdbSnapshot {
-    /// Capture the engine's current state as a snapshot tagged with
-    /// `up_to_seq` (the caller passes the coordinator's applied
-    /// sequence so the tag matches exactly what the snapshot contains).
+    /// Capture one complete applied-record boundary. The supplied sequence is
+    /// a fallback for engines with no log watermark, such as offline snapshots.
+    /// A running engine's protected watermark always takes precedence.
     pub fn capture(engine: &Engine, up_to_seq: u64) -> Result<Self> {
+        let capture = engine
+            .capture_barrier
+            .capture(up_to_seq)
+            .map_err(anyhow::Error::msg)?;
         Ok(Self {
-            up_to_seq,
+            up_to_seq: capture.stamp().sequence,
             snapshot: engine.snapshot()?,
         })
     }
@@ -167,6 +171,37 @@ mod tests {
         )
         .unwrap();
         e
+    }
+
+    #[test]
+    fn capture_uses_applied_record_watermark_instead_of_stale_or_future_hint() {
+        let engine = seeded_engine();
+        engine.capture_barrier.apply().initialize_sequence(17);
+        for caller_hint in [0, 11, 99] {
+            let captured = RdbSnapshot::capture(&engine, caller_hint).unwrap();
+            assert_eq!(
+                captured.up_to_seq, 17,
+                "RDB capture must use the watermark protected with its state"
+            );
+            let restored = Engine::new();
+            captured.restore_into(&restored).unwrap();
+            assert_eq!(restored.stats("u").unwrap().documents_indexed, 1);
+        }
+    }
+
+    #[test]
+    fn capture_refuses_an_uncertain_apply_boundary() {
+        let engine = seeded_engine();
+        engine.capture_barrier.apply().mark_uncertain();
+        let captured = RdbSnapshot::capture(&engine, 42);
+        assert!(
+            captured.is_err(),
+            "RDB capture must refuse a record with uncertain durability"
+        );
+        assert!(captured
+            .unwrap_err()
+            .to_string()
+            .contains("durability is uncertain"));
     }
 
     #[tokio::test]

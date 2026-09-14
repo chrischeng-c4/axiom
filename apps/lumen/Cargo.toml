@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.6.0"
+version = "0.6.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -38,7 +38,6 @@ path = "e2e/index_text_parity.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-nats = { workspace = true }
 async-trait = { workspace = true }
 axum.workspace = true
 base64.workspace = true
@@ -53,6 +52,7 @@ roaring = "0.10"
 chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 crc32fast = "1.4"
+sha2 = "0.10"
 futures.workspace = true
 # Shared h2c client for the Lumen-owned raft WAL and online CLI ops. The serving
 # binary links it only when a feature that needs outbound HTTP is enabled.
@@ -107,7 +107,7 @@ rayon = "1.10"
 # internally unit-normalized vectors to use the NEON kernel (DistCosine has no
 # SIMD path and recomputes both operand norms per comparison).
 hnsw_rs = { version = "0.3", features = ["simdeez_f"] }
-jieba-rs = { version = "0.7", optional = true }
+jieba-rs = { version = "=0.7.4", optional = true }
 # K8s Operator (feature `operator`). Versions mirror the workspace's existing
 # kube-rs user (mambalibs/queuekit) so the lockfile stays single-versioned.
 kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }
@@ -119,6 +119,10 @@ service-k8s = { path = "../../libs/service-k8s", default-features = false, featu
 serde_yaml.workspace = true
 lz4_flex = "0.11"
 memmap2 = "0.9"
+# Private bounded spools retain generic committed replacement values on disk.
+tempfile = "3"
+# Query destination filesystem path limits before allocating peer archive metadata.
+libc = "0.2"
 moka = { version = "0.12", features = ["sync"] }
 serde = { workspace = true }
 serde_json.workspace = true
@@ -219,7 +223,6 @@ proptest = "1"
 rand = "0.8"
 rig = { path = "../rig" }
 serde_json.workspace = true
-tempfile = "3"
 # Shared observability layer: JSON formatter + service-identity for subscriber-capture tests.
 service-observability = { path = "../../libs/service-observability" }
 tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter", "registry"] }
@@ -239,7 +242,6 @@ toml = "0.8"
 # fault) evidence. libc is already a transitive dep; naming it here is a no-op on
 # the lockfile. Both are test-only.
 memory-stats = "1"
-libc = "0.2"
 # Mock HTTP server for the `backup` feature's unit tests (stands in for the
 # admin API's `/admin/backup`).
 wiremock = { workspace = true }
@@ -462,6 +464,7 @@ path = "e2e/hybrid_rrf.rs"
 [[test]]
 name = "jieba_bigram_fallback_e2e"
 path = "e2e/jieba_bigram_fallback_e2e.rs"
+required-features = []
 
 [[test]]
 name = "llm_command_template_flags_are_live"
@@ -476,9 +479,6 @@ name = "legacy-3073-app"
 path = "e2e/legacy-3073-app.rs"
 required-features = ["raft-wal"]
 
-[[test]]
-name = "nats_cluster_e2e"
-path = "e2e/nats_cluster_e2e.rs"
 
 [[test]]
 name = "operator_backup_kubernetes_wiring"
@@ -503,6 +503,10 @@ required-features = ["operator"]
 name = "operator_retired_credential_projection"
 path = "e2e/operator_retired_credential_projection.rs"
 required-features = ["operator"]
+
+[[test]]
+name = "oversized_text_staging"
+path = "e2e/oversized_text_staging.rs"
 
 [[test]]
 name = "perf_gate"
@@ -594,6 +598,14 @@ path = "e2e/segment_checkpoint_vector_sidecar.rs"
 [[test]]
 name = "segment_startup_fail_closed_e2e"
 path = "e2e/segment_startup_fail_closed_e2e.rs"
+
+[[test]]
+name = "segment_startup_replay_budget"
+path = "e2e/segment_startup_replay_budget.rs"
+
+[[test]]
+name = "nonsegment_budget_progress"
+path = "e2e/nonsegment_budget_progress.rs"
 
 [[test]]
 name = "serving_tls_rotation"
@@ -696,10 +708,124 @@ path = "e2e/vector_field_keeps_its_backend_across_reopen.rs"
 name = "wal_fast_record_stays_downgradable"
 path = "e2e/wal_fast_record_stays_downgradable.rs"
 
-[[test]]
-name = "wal_nats_e2e"
-path = "e2e/wal_nats_e2e.rs"
 
 [[test]]
 name = "write_qps"
 path = "e2e/write_qps.rs"
+
+[[test]]
+name = "jieba_fallback_staging"
+path = "e2e/jieba_fallback_staging.rs"
+required-features = []
+
+[[test]]
+name = "raft_segment_snapshot_archive"
+path = "e2e/raft_segment_snapshot_archive.rs"
+required-features = ["raft-wal"]
+
+[[test]]
+name = "raft_segment_snapshot_archive_wiring"
+path = "e2e/raft_segment_snapshot_archive_wiring.rs"
+required-features = ["raft-wal"]
+
+[[test]]
+name = "raft_oversized_committed_apply"
+path = "e2e/raft_oversized_committed_apply.rs"
+required-features = ["raft-wal"]
+
+[[test]]
+name = "raft_private_layer_during_checkpoint"
+path = "e2e/raft_private_layer_during_checkpoint.rs"
+required-features = ["raft-wal"]
+
+[[test]]
+name = "aof_oversized_committed_apply"
+path = "e2e/aof_oversized_committed_apply.rs"
+
+[[test]]
+name = "native_oversized_committed_apply"
+path = "e2e/native_oversized_committed_apply.rs"
+
+[[test]]
+name = "native_private_layer_cap"
+path = "e2e/native_private_layer_cap.rs"
+
+[[test]]
+name = "aof_oversized_committed_text"
+path = "e2e/aof_oversized_committed_text.rs"
+
+[[test]]
+name = "aof_recovered_catalog_layer_cap"
+path = "e2e/aof_recovered_catalog_layer_cap.rs"
+
+[[test]]
+name = "aof_oversized_committed_hash"
+path = "e2e/aof_oversized_committed_hash.rs"
+
+[[test]]
+name = "aof_oversized_committed_mixed"
+path = "e2e/aof_oversized_committed_mixed.rs"
+
+[[test]]
+name = "aof_oversized_committed_vector"
+path = "e2e/aof_oversized_committed_vector.rs"
+
+[[test]]
+name = "aof_oversized_committed_unicode_token"
+path = "e2e/aof_oversized_committed_unicode_token.rs"
+
+[[test]]
+name = "segment_backpressure_metric"
+path = "e2e/segment_backpressure_metric.rs"
+
+[[test]]
+name = "aof_oversized_committed_replace"
+path = "e2e/aof_oversized_committed_replace.rs"
+
+[[test]]
+name = "native_oversized_committed_replace"
+path = "e2e/native_oversized_committed_replace.rs"
+
+[[test]]
+name = "raft_oversized_committed_replace"
+path = "e2e/raft_oversized_committed_replace.rs"
+required-features = ["raft-wal"]
+
+[[test]]
+name = "aof_standalone_replay_capacity_progress"
+path = "e2e/aof_standalone_replay_capacity_progress.rs"
+
+[[test]]
+name = "raft_committed_capacity_progress"
+path = "e2e/raft_committed_capacity_progress.rs"
+required-features = ["raft-wal"]
+
+[[test]]
+name = "native_committed_capacity_progress"
+path = "e2e/native_committed_capacity_progress.rs"
+
+[[test]]
+name = "committed_staged_text_stage_failure"
+path = "e2e/committed_staged_text_stage_failure.rs"
+
+[[test]]
+name = "merge_cleanup_checkpoint_serialization"
+path = "e2e/merge_cleanup_checkpoint_serialization.rs"
+
+[[test]]
+name = "inherited_checkpoint_file_sync"
+path = "e2e/inherited_checkpoint_file_sync.rs"
+required-features = []
+
+[[test]]
+name = "current_publication_apply_barrier"
+path = "e2e/current_publication_apply_barrier.rs"
+
+[[test]]
+name = "checkpoint_aof_failure_recovery"
+path = "e2e/checkpoint_aof_failure_recovery.rs"
+
+[[test]]
+name = "aof_trim_append_progress"
+path = "e2e/aof_trim_append_progress.rs"
+required-features = []

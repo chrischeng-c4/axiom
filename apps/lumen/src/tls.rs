@@ -107,9 +107,7 @@ impl PeerTlsConfig {
         peer_tls::ReloadableTls::required(
             peer_tls::TlsRuntimeProfile::peer(dns_names, spiffe_uris),
             std::sync::Arc::new(peer_tls::FileMaterialSource::new(
-                &self.cert,
-                &self.key,
-                &self.ca,
+                &self.cert, &self.key, &self.ca,
             )),
         )
         .map_err(anyhow::Error::from)
@@ -198,9 +196,7 @@ impl ServingTlsConfig {
         peer_tls::ReloadableTls::required(
             peer_tls::TlsRuntimeProfile::serving(self.dns_names.clone()),
             std::sync::Arc::new(peer_tls::FileMaterialSource::new(
-                &self.cert,
-                &self.key,
-                &self.ca,
+                &self.cert, &self.key, &self.ca,
             )),
         )
         .map_err(anyhow::Error::from)
@@ -367,7 +363,9 @@ LkjT2UdpFBDZGWHwqDRhXX8k
             vec![b"h2".to_vec(), b"http/1.1".to_vec()],
             "the client port offers both HTTP/2 and HTTP/1.1"
         );
-        assert!(peer_tls::TlsRuntimeProfile::peer(["lumen-0".to_string()], std::iter::empty()).mutual);
+        assert!(
+            peer_tls::TlsRuntimeProfile::peer(["lumen-0".to_string()], std::iter::empty()).mutual
+        );
     }
 
     fn write_tls_fixture(name: &str) -> PeerTlsConfig {

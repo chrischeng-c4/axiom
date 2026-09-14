@@ -17,6 +17,12 @@ cargo build -p loom
 echo "cargo build -p lumen --features raft-wal"
 cargo build -p lumen --features raft-wal
 
+echo "cargo test -p lumen --features raft-wal --lib --no-run"
+cargo test -p lumen --features raft-wal --lib --no-run
+
+echo "cargo test -p lumen --features raft-wal --test raft_oversized_committed_apply --no-run"
+cargo test -p lumen --features raft-wal --test raft_oversized_committed_apply --no-run
+
 echo "cargo build -p relay"
 cargo build -p relay
 

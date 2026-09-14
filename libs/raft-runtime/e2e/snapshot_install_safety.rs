@@ -507,45 +507,180 @@ async fn capability_disappearance_between_probe_and_install_fails_before_restore
 
 #[tokio::test]
 async fn higher_term_snapshot_refusal_steps_the_old_leader_down_immediately() {
-    let nodes = cluster(3).await;
+    use axum::{
+        body::to_bytes, extract::Request, http::StatusCode, middleware::Next,
+        response::IntoResponse,
+    };
+    use std::sync::{atomic::AtomicU64, Arc};
+    use tokio::task::JoinSet;
+
+    let mut nodes = cluster(3).await;
     let leader = await_leader(&nodes).await.expect("a leader is elected");
     for value in 1_u8..=4 {
         nodes[leader].host.propose(vec![value]).await.unwrap();
     }
-    let newer_voter = (0..nodes.len()).find(|index| *index != leader).unwrap();
     let client = transport_h2c::h2c_client_with(None, None).unwrap();
-    client
-        .post(format!("{}/raft/request-vote", nodes[newer_voter].url))
-        .json(&serde_json::json!({
-            "group_id": LEGACY_GROUP_ID,
-            "from": newer_voter as u64,
-            "req": {
-                "term": 100,
-                "candidate": newer_voter as u64,
-                "last_log_index": 4,
-                "last_log_term": 1
-            }
-        }))
-        .send()
-        .await
-        .unwrap();
 
-    let error = nodes[leader]
+    let injected_voter = (0..nodes.len()).find(|index| *index != leader).unwrap();
+    let original_url = nodes[injected_voter].url.clone();
+    let injected_calls = Arc::new(AtomicU64::new(0));
+    let injected_calls_for_router = Arc::clone(&injected_calls);
+    let router = nodes[injected_voter]
+        .host
+        .router()
+        .layer(axum::middleware::from_fn(
+            move |request: Request, next: Next| {
+                let injected_calls = Arc::clone(&injected_calls_for_router);
+                async move {
+                    if request.uri().path() != "/raft/install-snapshot-capable" {
+                        return next.run(request).await;
+                    }
+
+                    let bytes = match to_bytes(request.into_body(), usize::MAX).await {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                format!("snapshot-refusal proxy could not read request: {error}"),
+                            )
+                                .into_response();
+                        }
+                    };
+                    let envelope: serde_json::Value = match serde_json::from_slice(&bytes) {
+                        Ok(envelope) => envelope,
+                        Err(error) => {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                format!("snapshot-refusal proxy received invalid JSON: {error}"),
+                            )
+                                .into_response();
+                        }
+                    };
+                    let group_id = envelope.get("group_id").and_then(|value| value.as_str());
+                    let capability = envelope
+                        .get("snapshot_capability")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_owned);
+                    let nonce = envelope
+                        .get("snapshot_nonce")
+                        .and_then(|value| value.as_u64());
+                    let snapshot_index = envelope
+                        .get("req")
+                        .and_then(|request| request.get("snapshot_index"))
+                        .and_then(|value| value.as_u64());
+                    let (Some(capability), Some(nonce), Some(snapshot_index)) =
+                        (capability, nonce, snapshot_index)
+                    else {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            "snapshot-refusal proxy needs the capable-snapshot fields",
+                        )
+                            .into_response();
+                    };
+                    if group_id != Some(LEGACY_GROUP_ID) || nonce == 0 {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            "snapshot-refusal proxy received a malformed capable-snapshot envelope",
+                        )
+                            .into_response();
+                    }
+
+                    injected_calls.fetch_add(1, Ordering::AcqRel);
+                    axum::Json(serde_json::json!({
+                        "term": 100_u64,
+                        "accepted": false,
+                        "snapshot_index": snapshot_index,
+                        "snapshot_capability": capability,
+                        "snapshot_nonce": nonce,
+                    }))
+                    .into_response()
+                }
+            },
+        ));
+    let (listener, refusal_url) = bind().await;
+    // The listener task owns and joins every accepted connection. If setup
+    // fails, dropping its JoinSet cancels the listener and its connections.
+    let mut servers = JoinSet::new();
+    servers.spawn(async move {
+        let mut connections = JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((stream, _)) = accepted else { break };
+                    let router = router.clone();
+                    connections.spawn(async move {
+                        let _ = transport_h2c::server::serve_connection(stream, router).await;
+                    });
+                }
+                Some(_) = connections.join_next(), if !connections.is_empty() => {}
+            }
+        }
+    });
+    nodes[leader]
+        .host
+        .upsert_peer(injected_voter as u64, refusal_url)
+        .await;
+
+    let snapshot_result = nodes[leader]
         .host
         .snapshot_and_compact_through_outcome(4)
-        .await
-        .expect_err("a higher-term voter must refuse the old leader snapshot");
-    assert!(error.to_string().contains("advanced the term"));
-    let old_leader: RaftStatus = client
-        .get(format!("{}/raftz", nodes[leader].url))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+        .await;
+    let old_leader_result = async {
+        client
+            .get(format!("{}/raftz", nodes[leader].url))
+            .send()
+            .await?
+            .json::<RaftStatus>()
+            .await
+    }
+    .await;
+
+    // Finish all owned work before checking the result. Restoring the peer
+    // address prevents shutdown from depending on the disposable proxy.
+    nodes[leader]
+        .host
+        .upsert_peer(injected_voter as u64, original_url)
+        .await;
+    servers.abort_all();
+    while servers.join_next().await.is_some() {}
+    let mut shutdowns = JoinSet::new();
+    for node in &nodes {
+        let host = Arc::clone(&node.host);
+        shutdowns.spawn(async move { host.shutdown().await.map_err(|error| error.to_string()) });
+    }
+    let mut shutdown_failures = Vec::new();
+    while let Some(joined) = shutdowns.join_next().await {
+        match joined {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => shutdown_failures.push(error),
+            Err(error) => shutdown_failures.push(format!("shutdown task failed: {error}")),
+        }
+    }
+    for node in &mut nodes {
+        node._serve.abort();
+        let _ = (&mut node._serve).await;
+    }
+
+    assert_eq!(
+        injected_calls.load(Ordering::Acquire),
+        1,
+        "the coordinator must receive exactly one injected capable-snapshot refusal"
+    );
+    let error =
+        snapshot_result.expect_err("a higher-term voter must refuse the old leader snapshot");
+    assert!(
+        error.to_string().contains("advanced the term"),
+        "higher-term snapshot refusal must name the term advance; got: {error}"
+    );
+    let old_leader =
+        old_leader_result.expect("the old leader status remains readable after refusal");
     assert!(!old_leader.is_leader);
     assert!(old_leader.term >= 100);
+    assert!(
+        shutdown_failures.is_empty(),
+        "all hosts must complete their bounded shutdown after the refusal: {}",
+        shutdown_failures.join("; ")
+    );
 }
 
 /// Shutdown must account for a snapshot request started by the public

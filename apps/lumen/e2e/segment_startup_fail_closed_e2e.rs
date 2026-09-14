@@ -3,6 +3,26 @@
 //! This test invokes the packaged `lumen` binary. It does not call the segment
 //! store directly, because a root that fails after the listener binds would
 //! still expose an unsafe fresh service to callers.
+//!
+//! # Facets
+//!
+//! - Behavior: fixture assertions at
+//!   `apps/lumen/e2e/segment_startup_fail_closed_e2e.rs:492`, `:560`, `:569`,
+//!   `:577`, `:584`, and `:589` establish the complete CRC-valid frames, bad
+//!   middle payload, and valid successor. `:923` invokes refusal assertions at
+//!   `:360`, `:364`, `:368`, and `:373`; `:939` requires replay error and `:943`
+//!   requires only sequence 1. This covers recovery in `apps/lumen/src/aof.rs:226-243`,
+//!   `apps/lumen/src/aof.rs:259-274`, and
+//!   `apps/lumen/src/bin/lumen.rs:3609-3636`.
+//! - Security: `apps/lumen/e2e/segment_startup_fail_closed_e2e.rs:928`
+//!   preserves the valid baseline, while `:364`, `:368`, `:373`, and `:933`
+//!   reject a file-controlled complete, CRC-valid, undecodable middle frame
+//!   before it binds a listener or mutates the root in those recovery paths.
+//! - Performance: Gap. The change reaches startup, but
+//!   `apps/lumen/README.md:358-373` promises recovery without a current
+//!   numerical startup or refusal budget. `STARTUP_DEADLINE` below is fixture
+//!   cleanup only. The approved full performance gate owns restart telemetry.
+//! - Gate: `cargo test -p lumen` (`apps/lumen/CONTRIBUTING.md:93-96`).
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -13,7 +33,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use lumen::aof::AofWriter;
+use lumen::aof::{AofReader, AofWriter};
 use lumen::log_entry::RaftLogEntry;
 use lumen::segment_rdb::SegmentRdbStore;
 use lumen::storage::Engine;
@@ -35,6 +55,11 @@ const POST_ADOPTION_EXTERNAL_ID: &str = "post-adoption-external-id";
 const POST_ADOPTION_VALUE: &str = "post-adoption@example.test";
 const AOF_TAIL_EXTERNAL_ID: &str = "aof-tail-external-id";
 const AOF_TAIL_VALUE: &str = "aof-tail@example.test";
+const MALFORMED_MIDDLE_EXTERNAL_ID: &str = "malformed-middle";
+const MALFORMED_MIDDLE_VALUE: &str = "middle@example.test";
+const MALFORMED_SUCCESSOR_EXTERNAL_ID: &str = "malformed-successor";
+const MALFORMED_SUCCESSOR_VALUE: &str = "successor@example.test";
+const AOF_FRAME_HEADER_BYTES: usize = 16;
 const MAX_PORT_BIND_ATTEMPTS: usize = 3;
 static PORT_BIND_HANDOFF: Mutex<()> = Mutex::new(());
 
@@ -319,6 +344,40 @@ fn assert_refuses_without_mutation(root: &Path, case: &str) -> String {
     logs
 }
 
+/// A valid empty checkpoint is an authorized baseline before AOF replay. A
+/// later malformed frame must still refuse before binding and leave that
+/// baseline, including its AOF, byte-identical.
+fn assert_refuses_with_existing_empty_baseline(root: &Path, case: &str) -> String {
+    let current = std::fs::read(root.join("CURRENT")).expect("read empty CURRENT baseline");
+    assert_eq!(
+        current,
+        b"empty\n",
+        "{case} fixture must begin from the official empty CURRENT baseline"
+    );
+    let before = snapshot_root(root);
+    let mut process = LumenProcess::spawn(root);
+    let (status, logs, ever_bound) = process.wait_for_refusal();
+    assert!(
+        !status.success(),
+        "{case} root exited successfully:\n{logs}"
+    );
+    assert!(
+        !ever_bound,
+        "{case} root bound a listener before refusing startup:\n{logs}"
+    );
+    assert_eq!(
+        std::fs::read(root.join("CURRENT")).expect("read refused CURRENT baseline"),
+        current,
+        "{case} root changed the existing CURRENT baseline during refused startup"
+    );
+    assert_eq!(
+        snapshot_root(root),
+        before,
+        "{case} root changed during its refused startup"
+    );
+    logs
+}
+
 fn recovered_schema() -> CreateCollectionRequest {
     CreateCollectionRequest {
         fields: BTreeMap::from([(
@@ -403,6 +462,141 @@ fn write_aof_tail(root: &Path) {
             .expect("append official AOF record");
     }
     aof.sync().expect("sync official AOF writer");
+}
+
+fn valid_aof_frame_end(bytes: &[u8], start: usize, label: &str) -> usize {
+    let header_end = start
+        .checked_add(AOF_FRAME_HEADER_BYTES)
+        .expect("AOF frame header offset fits usize");
+    assert!(
+        header_end <= bytes.len(),
+        "{label} AOF frame must have a complete header"
+    );
+    let payload_len = u32::from_le_bytes(
+        bytes[start + 8..start + 12]
+            .try_into()
+            .expect("AOF payload length header width"),
+    ) as usize;
+    let payload_end = header_end
+        .checked_add(payload_len)
+        .expect("AOF payload offset fits usize");
+    assert!(
+        payload_end <= bytes.len(),
+        "{label} AOF frame must have a complete payload"
+    );
+    let expected_crc = u32::from_le_bytes(
+        bytes[start + 12..header_end]
+            .try_into()
+            .expect("AOF CRC header width"),
+    );
+    assert_eq!(
+        crc32fast::hash(&bytes[header_end..payload_end]),
+        expected_crc,
+        "{label} AOF frame must retain a valid payload CRC"
+    );
+    payload_end
+}
+
+fn aof_frame_sequence(bytes: &[u8], start: usize) -> u64 {
+    u64::from_le_bytes(
+        bytes[start..start + 8]
+            .try_into()
+            .expect("AOF sequence header width"),
+    )
+}
+
+/// Build a fully framed three-record AOF, then change only the middle payload
+/// and CRC. The changed frame is complete and CRC-valid, but it is not a
+/// decodable `WalRecord`, so it is not a torn tail.
+fn write_valid_crc_malformed_middle_aof(root: &Path) -> Vec<u8> {
+    let path = root.join("aof.log");
+    {
+        let mut aof = AofWriter::open(&path).expect("open official malformed-middle AOF");
+        let entries = [
+            RaftLogEntry::CreateCollection {
+                collection_id: RECOVERED_COLLECTION.into(),
+                req: recovered_schema(),
+            },
+            RaftLogEntry::Index {
+                collection_id: RECOVERED_COLLECTION.into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: MALFORMED_MIDDLE_EXTERNAL_ID.into(),
+                        field: "email".into(),
+                        value: FieldValue::String(MALFORMED_MIDDLE_VALUE.into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            },
+            RaftLogEntry::Index {
+                collection_id: RECOVERED_COLLECTION.into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: MALFORMED_SUCCESSOR_EXTERNAL_ID.into(),
+                        field: "email".into(),
+                        value: FieldValue::String(MALFORMED_SUCCESSOR_VALUE.into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            },
+        ];
+        for (index, entry) in entries.into_iter().enumerate() {
+            aof.append((index + 1) as u64, &WalRecord::new(entry))
+                .expect("append official malformed-middle AOF frame");
+        }
+        aof.sync_strict()
+            .expect("strict-sync official malformed-middle AOF");
+    }
+
+    let mut bytes = std::fs::read(&path).expect("read official malformed-middle AOF");
+    let first_start = 0;
+    let first_end = valid_aof_frame_end(&bytes, first_start, "first");
+    let second_start = first_end;
+    let second_end = valid_aof_frame_end(&bytes, second_start, "second before mutation");
+    let third_start = second_end;
+    let third_end = valid_aof_frame_end(&bytes, third_start, "successor");
+    assert_eq!(
+        [
+            aof_frame_sequence(&bytes, first_start),
+            aof_frame_sequence(&bytes, second_start),
+            aof_frame_sequence(&bytes, third_start),
+        ],
+        [1, 2, 3],
+        "fixture must retain the intended prefix, malformed middle, and successor sequence order"
+    );
+    assert_eq!(
+        third_end,
+        bytes.len(),
+        "fixture must contain exactly three complete frames"
+    );
+
+    let second_payload_start = second_start + AOF_FRAME_HEADER_BYTES;
+    let bad_payload = vec![0xff; second_end - second_payload_start];
+    assert!(
+        WalRecord::decode(&bad_payload).is_err(),
+        "fixture payload must be invalid at the real WalRecord decode boundary"
+    );
+    bytes[second_payload_start..second_end].copy_from_slice(&bad_payload);
+    bytes[second_start + 12..second_start + AOF_FRAME_HEADER_BYTES]
+        .copy_from_slice(&crc32fast::hash(&bad_payload).to_le_bytes());
+    assert_eq!(
+        valid_aof_frame_end(&bytes, second_start, "rewritten malformed middle"),
+        second_end,
+        "rewriting the bad payload must retain the original complete frame bounds"
+    );
+    assert!(
+        WalRecord::decode(&bytes[third_start + AOF_FRAME_HEADER_BYTES..third_end]).is_ok(),
+        "the successor frame must remain a valid WalRecord after the middle rewrite"
+    );
+    std::fs::write(&path, &bytes).expect("write CRC-valid malformed-middle AOF");
+    assert_eq!(
+        std::fs::read(&path).expect("reread CRC-valid malformed-middle AOF"),
+        bytes,
+        "fixture must place the exact intended bytes on disk"
+    );
+    bytes
 }
 
 /// Append one sequence strictly after a legacy checkpoint. This exercises the
@@ -707,6 +901,49 @@ fn aof_only_root_replays_records_into_the_real_process() {
     assert!(
         logs.contains("AOF startup decision") && logs.contains("tail_replayed"),
         "AOF-tail root must log that it replayed the durable AOF tail:\n{logs}"
+    );
+}
+
+#[test]
+fn valid_crc_malformed_middle_aof_refuses_before_listener_or_successor() {
+    let root = tempfile::tempdir().expect("CRC-valid malformed-middle AOF root");
+    let empty_baseline = SegmentRdbStore::new(root.path())
+        .expect("install official empty checkpoint baseline before AOF replay");
+    drop(empty_baseline);
+    let empty_current = std::fs::read(root.path().join("CURRENT"))
+        .expect("read official empty checkpoint baseline");
+    assert_eq!(
+        empty_current,
+        b"empty\n",
+        "fixture must use the official empty checkpoint baseline before corrupt AOF replay"
+    );
+    let aof_path = root.path().join("aof.log");
+    let before = write_valid_crc_malformed_middle_aof(root.path());
+
+    let _logs = assert_refuses_with_existing_empty_baseline(
+        root.path(),
+        "CRC-valid malformed middle AOF",
+    );
+
+    assert_eq!(
+        std::fs::read(root.path().join("CURRENT")).expect("read refused empty checkpoint baseline"),
+        empty_current,
+        "a malformed middle frame must leave the preexisting empty checkpoint baseline byte-identical"
+    );
+    assert_eq!(
+        std::fs::read(&aof_path).expect("read refused malformed-middle AOF"),
+        before,
+        "a malformed complete middle frame and its valid successor must remain byte-identical after refusal"
+    );
+    let mut replayed = Vec::new();
+    assert!(
+        AofReader::replay(&aof_path, 0, |sequence, _| replayed.push(sequence)).is_err(),
+        "a valid-CRC malformed middle payload must error rather than become a torn tail"
+    );
+    assert_eq!(
+        replayed,
+        vec![1],
+        "replay must stop at the malformed middle frame and never advance to its successor"
     );
 }
 

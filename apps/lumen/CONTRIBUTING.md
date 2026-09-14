@@ -110,3 +110,12 @@ applicable candidate or promotion lifecycle stage before claiming that a release
 is complete. Run the public verifier only after publication. Use the exact
 capability gates in the README when the claim is narrower or requires a
 live-cluster script.
+
+The durable performance matrix (README gate `cargo test --release --locked -p
+lumen --test perf_gate -- --ignored --test-threads=1 --nocapture`) has a local
+driver, `apps/lumen/scripts/durable-perf-local.sh`: `build` makes a
+source-bound image from `apps/lumen/Dockerfile`, `cell <endpoint> <batch>
+<backend>` runs one diagnostic cell, `matrix` runs all sixteen and resumes past
+cells already green, and `status` prints the receipts. Every local run is
+diagnostic only; qualifying receipts come from the
+`lumen-release-candidate` workflow and `verify-durable-perf.py`.

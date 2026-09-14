@@ -72,6 +72,9 @@ validate_manifest() {
   if jq -e 'has("jobs")' "$MANIFEST" >/dev/null; then
     expected_keys='["artifacts","candidate_tag","commit","image","jobs","pr","repository","run_attempt","run_id","run_url","sboms","schema","source_ref","tag","version","workflow_id","workflow_path","workflow_ref"]'
     jq -e '.jobs == {identity:"success",build:"success",manifest:"success","ghcr-image-and-attest":"success","verify-candidate":"success","verify-libraries":"success","kind-amd64":"success","kind-arm64":"success",result:"success"}' "$MANIFEST" >/dev/null || fail "final candidate manifest does not bind all successful jobs"
+    if jq -e 'has("performance")' "$MANIFEST" >/dev/null; then
+      expected_keys="$(jq -c '. + ["performance"] | sort' <<<"$expected_keys")"
+    fi
   fi
   [[ "$actual_keys" == "$expected_keys" ]] || fail "candidate manifest keys changed: $actual_keys"
   targets="$(target_list | jq -Rsc 'split("\n") | map(select(length > 0))')"
@@ -95,6 +98,38 @@ validate_manifest() {
       (.amd64 | (keys | sort) == ["file","sha256"] and .file == "spdx-amd64.json" and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))) and
       (.arm64 | (keys | sort) == ["file","sha256"] and .file == "spdx-arm64.json" and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))))
   ' "$MANIFEST" >/dev/null || fail "candidate manifest bindings changed"
+  if jq -e 'has("jobs") and ((.version | split(".") | map(tonumber)) >= [0,6,1]) and (has("performance") | not)' "$MANIFEST" >/dev/null; then
+    fail "final candidate manifest requires durable performance evidence"
+  fi
+  if jq -e 'has("performance")' "$MANIFEST" >/dev/null; then
+    verify_performance_evidence
+  fi
+}
+
+verify_performance_evidence() {
+  local perf_sha perf_image verifier_dir
+  jq -e '.performance | type == "object" and
+    (keys | sort) == ["receipts_directory","schema_version","summary_file","summary_sha256"] and
+    .schema_version == 1 and .summary_file == "durable-perf-summary.json" and
+    .receipts_directory == "perf" and
+    (.summary_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+  ' "$MANIFEST" >/dev/null || fail "invalid durable performance manifest binding"
+  perf_sha="$(jq -er '.performance.summary_sha256' "$MANIFEST")"
+  perf_image="$(jq -er '.image.repository + "@" + .image.root_digest' "$MANIFEST")"
+  if [[ -n "$IMAGE" && "$IMAGE" != "$perf_image" ]]; then
+    fail "CLI and performance image identity differ"
+  fi
+  require_regular_file "$ARTIFACTS_DIR/durable-perf-summary.json"
+  require_regular_file "$ARTIFACTS_DIR/durable-perf-summary.json.sha256"
+  [[ -d "$ARTIFACTS_DIR/perf" && ! -L "$ARTIFACTS_DIR/perf" ]] || fail "durable performance receipts directory is invalid"
+  verifier_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  python3 "$verifier_dir/verify-durable-perf.py" \
+    --receipts-dir "$ARTIFACTS_DIR/perf" \
+    --repo "$REPO" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
+    --commit "$COMMIT" --image "$perf_image" \
+    --output "$ARTIFACTS_DIR/durable-perf-summary.json" \
+    --verify-existing --summary-sha256 "$perf_sha" \
+    || fail "durable performance evidence verification failed"
 }
 
 verify_local_artifacts() {

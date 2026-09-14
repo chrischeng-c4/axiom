@@ -222,9 +222,10 @@ fn free_form_object(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
         instance_type: Some(schemars::schema::InstanceType::Object.into()),
         ..Default::default()
     };
-    schema
-        .extensions
-        .insert("x-kubernetes-preserve-unknown-fields".to_string(), json!(true));
+    schema.extensions.insert(
+        "x-kubernetes-preserve-unknown-fields".to_string(),
+        json!(true),
+    );
     schemars::schema::Schema::Object(schema)
 }
 
@@ -289,7 +290,9 @@ fn validate_merged(merged: Value) -> PlanOutcome {
     };
     let round_trip = match serde_json::to_value(&spec) {
         Ok(value) => value,
-        Err(err) => return PlanOutcome::Rejected(format!("merged spec does not re-serialize: {err}")),
+        Err(err) => {
+            return PlanOutcome::Rejected(format!("merged spec does not re-serialize: {err}"))
+        }
     };
     let mut unknown = Vec::new();
     unknown_keys(&merged, &round_trip, "", &mut unknown);
@@ -573,8 +576,7 @@ async fn prune(
 
     let fleet_name = fleet.name_any();
     let lumens: kube::Api<Lumen> = kube::Api::all(client.clone());
-    let params =
-        kube::api::ListParams::default().labels(&format!("{FLEET_LABEL}={fleet_name}"));
+    let params = kube::api::ListParams::default().labels(&format!("{FLEET_LABEL}={fleet_name}"));
     let mut out = Vec::new();
     for live in lumens.list(&params).await?.items {
         let namespace = live.namespace().unwrap_or_default();

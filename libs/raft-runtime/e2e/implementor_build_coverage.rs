@@ -1,3 +1,21 @@
+//! # Facets
+//!
+//! - Behavior: `all_workspace_implementors_are_registered` at
+//!   `libs/raft-runtime/e2e/implementor_build_coverage.rs:615` rejects an
+//!   unregistered `(path, implementor)`, and
+//!   `registry_and_script_commands_match` at
+//!   `libs/raft-runtime/e2e/implementor_build_coverage.rs:628` rejects a
+//!   missing or changed compile command.
+//! - Security: `GatedSm` at `apps/lumen/src/raft_sm.rs:607` is inside the
+//!   private test module at `apps/lumen/src/raft_sm.rs:349`; `AdmissionSm` at
+//!   `libs/raft-runtime/src/host.rs:2658` is inside the one at
+//!   `libs/raft-runtime/src/host.rs:2641`. Registering them changes no input,
+//!   authorization, file, socket, or secret boundary.
+//! - Performance: those same private test helpers reach only test compilation.
+//!   The `rg -n -g '*.rs' '\braft_runtime\b' apps/*/src libs/*/src` call-site
+//!   search found no public caller of either helper, so no public request,
+//!   startup, scan, or build path, and no documented runtime budget, changes.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
@@ -14,6 +32,8 @@ enum Gate {
     KeepRaft,
     Loom,
     LumenRaftWal,
+    LumenRaftWalTests,
+    LumenRaftWalE2e,
     Relay,
     Tape,
     Sift,
@@ -21,11 +41,13 @@ enum Gate {
 }
 
 impl Gate {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 10] = [
         Self::Defer,
         Self::KeepRaft,
         Self::Loom,
         Self::LumenRaftWal,
+        Self::LumenRaftWalTests,
+        Self::LumenRaftWalE2e,
         Self::Relay,
         Self::Tape,
         Self::Sift,
@@ -38,6 +60,8 @@ impl Gate {
             Self::KeepRaft => "cargo build -p keep --features raft",
             Self::Loom => "cargo build -p loom",
             Self::LumenRaftWal => "cargo build -p lumen --features raft-wal",
+            Self::LumenRaftWalE2e => "cargo test -p lumen --features raft-wal --test raft_oversized_committed_apply --no-run",
+            Self::LumenRaftWalTests => "cargo test -p lumen --features raft-wal --lib --no-run",
             Self::Relay => "cargo build -p relay",
             Self::Tape => "cargo build -p tape",
             Self::Sift => "cargo build -p sift",
@@ -49,7 +73,7 @@ impl Gate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Registration {
     path: &'static str,
-    line: String,
+    implementor: &'static str,
     gate: Gate,
 }
 
@@ -60,7 +84,7 @@ struct Site {
     gate: Gate,
 }
 
-const SITES: [Site; 16] = [
+const SITES: [Site; 21] = [
     Site {
         path: "apps/defer/src/raft.rs",
         implementor: "DeferStateMachine",
@@ -80,6 +104,16 @@ const SITES: [Site; 16] = [
         path: "apps/lumen/src/raft_sm.rs",
         implementor: "EngineSm",
         gate: Gate::LumenRaftWal,
+    },
+    Site {
+        path: "apps/lumen/src/raft_sm.rs",
+        implementor: "GatedSm",
+        gate: Gate::LumenRaftWalTests,
+    },
+    Site {
+        path: "apps/lumen/e2e/raft_oversized_committed_apply.rs",
+        implementor: "RecordingStateMachine",
+        gate: Gate::LumenRaftWalE2e,
     },
     Site {
         path: "apps/relay/src/raft.rs",
@@ -104,6 +138,16 @@ const SITES: [Site; 16] = [
     Site {
         path: "libs/raft-runtime/src/conformance.rs",
         implementor: "CountingSm",
+        gate: Gate::RaftRuntimeTests,
+    },
+    Site {
+        path: "libs/raft-runtime/src/host.rs",
+        implementor: "AdmissionSm",
+        gate: Gate::RaftRuntimeTests,
+    },
+    Site {
+        path: "libs/raft-runtime/src/host.rs",
+        implementor: "PermitPreflightSm",
         gate: Gate::RaftRuntimeTests,
     },
     Site {
@@ -141,6 +185,11 @@ const SITES: [Site; 16] = [
         implementor: "IndexedSnapshotStateMachine",
         gate: Gate::RaftRuntimeTests,
     },
+    Site {
+        path: "libs/raft-runtime/e2e/snapshot_preflight_release.rs",
+        implementor: "PreparedSnapshotStateMachine",
+        gate: Gate::RaftRuntimeTests,
+    },
 ];
 
 type Location = (String, String);
@@ -150,31 +199,42 @@ fn registrations() -> Vec<Registration> {
         .iter()
         .map(|site| Registration {
             path: site.path,
-            line: format!("{TRAIT}{FOR} {}", site.implementor),
+            implementor: site.implementor,
             gate: site.gate,
         })
         .collect()
 }
 
-fn required_gate(path: &str) -> Result<Gate, String> {
-    match path {
-        "apps/defer/src/raft.rs" => Ok(Gate::Defer),
-        "apps/keep/src/raft.rs" => Ok(Gate::KeepRaft),
-        "apps/loom/src/raft.rs" => Ok(Gate::Loom),
-        "apps/lumen/src/raft_sm.rs" => Ok(Gate::LumenRaftWal),
-        "apps/relay/src/raft.rs" => Ok(Gate::Relay),
-        "apps/tape/src/raft.rs" => Ok(Gate::Tape),
-        "apps/sift/src/durability.rs" => Ok(Gate::Sift),
-        "libs/raft-runtime/src/lib.rs"
-        | "libs/raft-runtime/src/conformance.rs"
-        | "libs/raft-runtime/e2e/adversarial_recovery.rs"
-        | "libs/raft-runtime/e2e/group_registry.rs"
-        | "libs/raft-runtime/e2e/support/cluster.rs"
-        | "libs/raft-runtime/e2e/group_membership_isolation.rs"
-        | "libs/raft-runtime/e2e/snapshot_peak_memory.rs"
-        | "libs/raft-runtime/e2e/host_shutdown_deadline.rs"
-        | "libs/raft-runtime/e2e/snapshot_at_index.rs" => Ok(Gate::RaftRuntimeTests),
-        _ => Err(format!("unknown implementor path: {path}")),
+fn required_gate(path: &str, implementor: &str) -> Result<Gate, String> {
+    match (path, implementor) {
+        ("apps/defer/src/raft.rs", "DeferStateMachine") => Ok(Gate::Defer),
+        ("apps/keep/src/raft.rs", "KvStateMachine") => Ok(Gate::KeepRaft),
+        ("apps/loom/src/raft.rs", "LoomSm") => Ok(Gate::Loom),
+        ("apps/lumen/src/raft_sm.rs", "EngineSm") => Ok(Gate::LumenRaftWal),
+        ("apps/lumen/src/raft_sm.rs", "GatedSm") => Ok(Gate::LumenRaftWalTests),
+        ("apps/lumen/e2e/raft_oversized_committed_apply.rs", "RecordingStateMachine") => {
+            Ok(Gate::LumenRaftWalE2e)
+        }
+        ("apps/relay/src/raft.rs", "RelayStateMachine") => Ok(Gate::Relay),
+        ("apps/tape/src/raft.rs", "TapeStateMachine") => Ok(Gate::Tape),
+        ("apps/sift/src/durability.rs", "SiftStateMachine") => Ok(Gate::Sift),
+        ("libs/raft-runtime/src/lib.rs", "CounterSm")
+        | ("libs/raft-runtime/src/conformance.rs", "CountingSm")
+        | ("libs/raft-runtime/src/host.rs", "AdmissionSm")
+        | ("libs/raft-runtime/src/host.rs", "PermitPreflightSm")
+        | ("libs/raft-runtime/e2e/adversarial_recovery.rs", "Sm")
+        | ("libs/raft-runtime/e2e/group_registry.rs", "SequenceSm")
+        | ("libs/raft-runtime/e2e/support/cluster.rs", "TestSm")
+        | ("libs/raft-runtime/e2e/group_membership_isolation.rs", "NullSm")
+        | ("libs/raft-runtime/e2e/snapshot_peak_memory.rs", "MemoryTestSm")
+        | ("libs/raft-runtime/e2e/host_shutdown_deadline.rs", "BlockingApplySm")
+        | ("libs/raft-runtime/e2e/snapshot_at_index.rs", "IndexedSnapshotStateMachine")
+        | ("libs/raft-runtime/e2e/snapshot_preflight_release.rs", "PreparedSnapshotStateMachine") => {
+            Ok(Gate::RaftRuntimeTests)
+        }
+        _ => Err(format!(
+            "unknown implementor site: {path} | {TRAIT}{FOR} {implementor}"
+        )),
     }
 }
 
@@ -186,17 +246,21 @@ fn validate_registry(entries: &[Registration]) -> Result<(), String> {
             entries.len()
         ));
     }
-    let mut paths = BTreeSet::new();
+    let mut sites = BTreeSet::new();
     let mut gates = BTreeSet::new();
     for entry in entries {
-        if !paths.insert(entry.path) {
-            return Err(format!("duplicate registry path: {}", entry.path));
+        if !sites.insert((entry.path, entry.implementor)) {
+            return Err(format!(
+                "duplicate registry site: {} | {TRAIT}{FOR} {}",
+                entry.path, entry.implementor
+            ));
         }
-        let expected = required_gate(entry.path)?;
+        let expected = required_gate(entry.path, entry.implementor)?;
         if entry.gate != expected {
             return Err(format!(
-                "wrong command for {}: expected '{}', found '{}'",
+                "wrong command for {} | {TRAIT}{FOR} {}: expected '{}', found '{}'",
                 entry.path,
+                entry.implementor,
                 expected.command(),
                 entry.gate.command()
             ));
@@ -451,7 +515,12 @@ fn multiset(rows: impl IntoIterator<Item = Location>) -> BTreeMap<Location, usiz
 fn expected_locations(entries: &[Registration]) -> Vec<Location> {
     entries
         .iter()
-        .map(|entry| (entry.path.to_owned(), entry.line.clone()))
+        .map(|entry| {
+            (
+                entry.path.to_owned(),
+                format!("{TRAIT}{FOR} {}", entry.implementor),
+            )
+        })
         .collect()
 }
 
@@ -642,9 +711,17 @@ fn negative_fixtures_reject_bidirectional_drift() {
 
     let mut unknown = registry.clone();
     unknown[0].path = "apps/unknown/src/raft.rs";
-    unknown[0].line = format!("{TRAIT}{FOR} UnknownSm");
+    unknown[0].implementor = "UnknownSm";
     changed(&registry, &unknown);
-    expect_error(validate_registry(&unknown), "unknown implementor path");
+    expect_error(validate_registry(&unknown), "unknown implementor site");
+
+    let mut duplicate_registry = registry.clone();
+    duplicate_registry[3] = registry[4].clone();
+    changed(&registry, &duplicate_registry);
+    expect_error(
+        validate_registry(&duplicate_registry),
+        "duplicate registry site",
+    );
 
     let valid_commands: Vec<_> = Gate::ALL
         .into_iter()
@@ -704,6 +781,18 @@ fn negative_fixtures_reject_bidirectional_drift() {
     );
     changed(&valid_script, &lumen_feature_drift);
     expect_error(validate_script(&lumen_feature_drift), "script line");
+    let lumen_test_feature_drift = valid_script.replace(
+        "cargo test -p lumen --features raft-wal --lib --no-run",
+        "cargo test -p lumen --lib --no-run",
+    );
+    changed(&valid_script, &lumen_test_feature_drift);
+    expect_error(validate_script(&lumen_test_feature_drift), "script line");
+    let lumen_test_target_drift = valid_script.replace(
+        "cargo test -p lumen --features raft-wal --lib --no-run",
+        "cargo test -p lumen --features raft-wal --no-run",
+    );
+    changed(&valid_script, &lumen_test_target_drift);
+    expect_error(validate_script(&lumen_test_target_drift), "script line");
 
     let early_exit = valid_script.replace("cd \"$ROOT_DIR\"", "cd \"$ROOT_DIR\"\nexit 0");
     changed(&valid_script, &early_exit);

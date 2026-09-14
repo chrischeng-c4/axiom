@@ -5,7 +5,7 @@
 //! filesystem transaction that makes one complete generation current. The
 //! rename of `CURRENT.tmp` over `CURRENT` is the only activation commit point.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -263,10 +263,109 @@ impl StagedGeneration {
     }
 }
 
+
+/// A private staging transaction derived from the exact current generation.
+///
+/// It can register only same-relative hard links to that current generation.
+/// The value is single-use and is consumed by
+/// [`GenerationStore::commit_from_current`]. Ordinary staging remains fully
+/// synced by [`GenerationStore::commit`].
+#[derive(Debug)]
+pub struct CurrentGenerationStaging {
+    staged: StagedGeneration,
+    predecessor: GenerationName,
+    root: PathBuf,
+    inherited: BTreeMap<PathBuf, InheritedFile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InheritedFile {
+    #[cfg(unix)]
+    identity: FileIdentity,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+}
+
+impl CurrentGenerationStaging {
+    /// Return the generation that will become current on a successful commit.
+    pub fn generation(&self) -> &GenerationName {
+        self.staged.generation()
+    }
+
+    /// Return the private staging directory for this transaction.
+    pub fn path(&self) -> &Path {
+        self.staged.path()
+    }
+
+    /// Register one final same-relative file hard-linked from the captured
+    /// current generation.
+    ///
+    /// This is available only on Unix. The source and staged paths must be
+    /// regular, nonsymlink files with the same device and inode. Call it after
+    /// all staged writes and removals, so fresh replacements stay fully synced.
+    pub fn inherit_current_file(&mut self, relative: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            let relative = checked_relative_file(relative.as_ref())?;
+            let source_root = self.root.join(self.predecessor.as_str());
+            validate_real_relative_parent(&source_root, &relative)?;
+            validate_real_relative_parent(&self.staged.path, &relative)?;
+            let source = source_root.join(&relative);
+            let destination = self.staged.path.join(&relative);
+            let source_identity = regular_file_identity(&source)?;
+            let destination_identity = regular_file_identity(&destination)?;
+            if source_identity.dev != destination_identity.dev
+                || source_identity.ino != destination_identity.ino
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "inherited staged file is not a hard link to CURRENT",
+                ));
+            }
+            match self.inherited.get(&relative) {
+                Some(existing) if existing.identity == source_identity => Ok(()),
+                Some(_) => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "inherited staged file registration changed",
+                )),
+                None => {
+                    self.inherited.insert(
+                        relative,
+                        InheritedFile {
+                            identity: source_identity,
+                        },
+                    );
+                    Ok(())
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = relative;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "current-generation inherited sync is supported only on Unix",
+            ))
+        }
+    }
+}
+
+struct RootCommitState {
+    durable_current: Option<GenerationName>,
+}
+
 struct GenerationStoreInner {
     root: PathBuf,
     injector: Arc<dyn FailureInjector>,
-    commit: Arc<Mutex<()>>,
+    commit: Arc<Mutex<RootCommitState>>,
 }
 
 /// An opt-in durable store for immutable directory generations.
@@ -303,7 +402,7 @@ impl GenerationStore {
             ));
         }
         let root = std::fs::canonicalize(root)?;
-        let commit = shared_root_lock(&root)?;
+        let commit = shared_root_state(&root)?;
         Ok(Self {
             inner: Arc::new(GenerationStoreInner {
                 root,
@@ -316,6 +415,114 @@ impl GenerationStore {
     /// Create one unique direct-child staging directory.
     pub fn begin(&self, generation: GenerationName) -> io::Result<StagedGeneration> {
         let _guard = self.lock_commit()?;
+        self.begin_locked(generation)
+    }
+
+    /// Begin a private stage only when CURRENT has a process-owned durable
+    /// publication proof.
+    ///
+    /// `Ok(None)` means CURRENT is a valid named generation but this process has
+    /// not completed its full publication. Callers must choose ordinary staging
+    /// explicitly in that case. On non-Unix this returns `Unsupported`.
+    #[cfg(unix)]
+    pub fn begin_from_current_if_durable(
+        &self,
+        generation: GenerationName,
+    ) -> io::Result<Option<CurrentGenerationStaging>> {
+        let guard = self.lock_commit()?;
+        let predecessor = match read_current_from(&self.inner.root, |_| Ok(())).map_err(current_read_as_io)? {
+            CurrentTarget::Generation(name) => name,
+            CurrentTarget::Empty => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "CURRENT is empty and has no inheritable generation",
+                ));
+            }
+        };
+        if guard.durable_current.as_ref() != Some(&predecessor) {
+            return Ok(None);
+        }
+        let staged = self.begin_locked(generation)?;
+        Ok(Some(CurrentGenerationStaging {
+            staged,
+            predecessor,
+            root: self.inner.root.clone(),
+            inherited: BTreeMap::new(),
+        }))
+    }
+
+    #[cfg(not(unix))]
+    pub fn begin_from_current_if_durable(
+        &self,
+        _generation: GenerationName,
+    ) -> io::Result<Option<CurrentGenerationStaging>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "current-generation inherited sync is supported only on Unix",
+        ))
+    }
+
+    /// Durably activate a complete staged generation.
+    ///
+    /// Before this call, the caller must close its writers and stop all changes
+    /// under [`StagedGeneration::path`]. The caller must also ensure that no
+    /// other process mutates this store root.
+    pub fn commit(&self, staged: StagedGeneration) -> Result<GenerationName, CommitError> {
+        self.commit_with_publication_guard(staged, || Ok(()))
+    }
+
+    /// Acquire a domain guard for CURRENT publication. The returned guard must
+    /// remain held until the pointer and its parent directory are durable.
+    pub fn commit_with_publication_guard<G>(
+        &self,
+        staged: StagedGeneration,
+        acquire: impl FnOnce() -> io::Result<G>,
+    ) -> Result<GenerationName, CommitError> {
+        self.commit_staged_with_publication_guard(staged, None, BTreeMap::new(), acquire)
+    }
+
+    /// Durably activate a stage derived from the exact current generation.
+    ///
+    /// Only registered, still-identical Unix hard links skip `SyncFile`.
+    /// Every unregistered file and every directory and pointer durability step
+    /// uses the ordinary commit policy.
+    pub fn commit_from_current(
+        &self,
+        staged: CurrentGenerationStaging,
+    ) -> Result<GenerationName, CommitError> {
+        self.commit_from_current_with_publication_guard(staged, || Ok(()))
+    }
+
+    /// Commit an inherited-current stage while holding a caller domain guard
+    /// through CURRENT publication.
+    pub fn commit_from_current_with_publication_guard<G>(
+        &self,
+        staged: CurrentGenerationStaging,
+        acquire: impl FnOnce() -> io::Result<G>,
+    ) -> Result<GenerationName, CommitError> {
+        let CurrentGenerationStaging {
+            staged,
+            predecessor,
+            root,
+            inherited,
+        } = staged;
+        if root != self.inner.root {
+            let target = CurrentTarget::Generation(staged.generation.clone());
+            return Err(self.commit_error(
+                CommitFailureClass::PreCommit,
+                CommitStep::ValidateStaging,
+                target,
+                &staged.path,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "current-derived staging belongs to another store",
+                ),
+            ));
+        }
+        self.commit_staged_with_publication_guard(staged, Some(predecessor), inherited, acquire)
+    }
+
+    fn begin_locked(&self, generation: GenerationName) -> io::Result<StagedGeneration> {
         let target = self.generation_path(&generation);
         if path_exists(&target)? {
             return Err(io::Error::new(
@@ -332,13 +539,14 @@ impl GenerationStore {
         })
     }
 
-    /// Durably activate a complete staged generation.
-    ///
-    /// Before this call, the caller must close its writers and stop all changes
-    /// under [`StagedGeneration::path`]. The caller must also ensure that no
-    /// other process mutates this store root.
-    pub fn commit(&self, staged: StagedGeneration) -> Result<GenerationName, CommitError> {
-        let _guard = self.lock_commit().map_err(|error| {
+    fn commit_staged_with_publication_guard<G>(
+        &self,
+        staged: StagedGeneration,
+        predecessor: Option<GenerationName>,
+        inherited: BTreeMap<PathBuf, InheritedFile>,
+        acquire: impl FnOnce() -> io::Result<G>,
+    ) -> Result<GenerationName, CommitError> {
+        let mut guard = self.lock_commit().map_err(|error| {
             self.commit_error(
                 CommitFailureClass::PreCommit,
                 CommitStep::ValidateStaging,
@@ -349,21 +557,46 @@ impl GenerationStore {
         })?;
         let target = CurrentTarget::Generation(staged.generation.clone());
         let mut mutation = Mutation::new(self.inner.injector.as_ref());
-        if let Err(error) = read_current_from(&self.inner.root, |relative| {
+        let current = match read_current_from(&self.inner.root, |relative| {
             mutation.check(CommitStep::ValidateCurrent, relative)
         }) {
-            let path = error.path.clone();
+            Ok(current) => current,
+            Err(error) => {
+                let path = error.path.clone();
+                return Err(self.commit_error(
+                    CommitFailureClass::PreCommit,
+                    CommitStep::ValidateCurrent,
+                    target,
+                    path,
+                    current_read_as_io(error),
+                ));
+            }
+        };
+        if predecessor.as_ref().is_some_and(|predecessor| {
+            current != CurrentTarget::Generation(predecessor.clone())
+                || guard.durable_current.as_ref() != Some(predecessor)
+        }) {
             return Err(self.commit_error(
                 CommitFailureClass::PreCommit,
                 CommitStep::ValidateCurrent,
                 target,
-                path,
-                current_read_as_io(error),
+                self.inner.root.join(CURRENT_FILE_NAME),
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CURRENT changed or lost durable proof since inherited staging began",
+                ),
             ));
         }
 
         self.validate_staged(&staged, &target, &mut mutation)?;
-        self.sync_tree(&staged.path, &target, &mut mutation)?;
+        let skipped = self.verify_inherited_files(
+            &staged,
+            predecessor.as_ref(),
+            &inherited,
+            &target,
+            &mut mutation,
+        )?;
+        self.sync_tree_with_skips(&staged.path, &target, &mut mutation, &skipped)?;
 
         let final_path = self.generation_path(&staged.generation);
         self.checked(
@@ -381,8 +614,27 @@ impl GenerationStore {
             CommitFailureClass::PreCommit,
         )?;
 
-        self.commit_pointer(&target, &mut mutation)?;
-        Ok(staged.generation)
+        let _publication = acquire().map_err(|error| {
+            self.commit_error(
+                CommitFailureClass::PreCommit,
+                CommitStep::ValidateCurrent,
+                target.clone(),
+                &final_path,
+                error,
+            )
+        })?;
+        match self.commit_pointer(&target, &mut mutation) {
+            Ok(()) => {
+                guard.durable_current = Some(staged.generation.clone());
+                Ok(staged.generation)
+            }
+            Err(error) => {
+                if error.class() == CommitFailureClass::CommitUncertain {
+                    guard.durable_current = None;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Resolve only the exact target named by `CURRENT`.
@@ -392,7 +644,7 @@ impl GenerationStore {
 
     /// Initialize an empty store. Missing `CURRENT` never implies this state.
     pub fn initialize_empty(&self) -> Result<(), CommitError> {
-        let _guard = self.lock_commit().map_err(|error| {
+        let mut guard = self.lock_commit().map_err(|error| {
             self.commit_error(
                 CommitFailureClass::PreCommit,
                 CommitStep::ValidateCurrent,
@@ -508,12 +760,23 @@ impl GenerationStore {
             }
         }
 
-        self.commit_pointer(&CurrentTarget::Empty, &mut mutation)
+        match self.commit_pointer(&CurrentTarget::Empty, &mut mutation) {
+            Ok(()) => {
+                guard.durable_current = None;
+                Ok(())
+            }
+            Err(error) => {
+                if error.class() == CommitFailureClass::CommitUncertain {
+                    guard.durable_current = None;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Point an uninitialized store at one caller-validated legacy generation.
     pub fn adopt_legacy(&self, generation: GenerationName) -> Result<(), CommitError> {
-        let _guard = self.lock_commit().map_err(|error| {
+        let mut guard = self.lock_commit().map_err(|error| {
             self.commit_error(
                 CommitFailureClass::PreCommit,
                 CommitStep::ValidateCurrent,
@@ -568,7 +831,18 @@ impl GenerationStore {
             &target,
             CommitFailureClass::PreCommit,
         )?;
-        self.commit_pointer(&target, &mut mutation)
+        match self.commit_pointer(&target, &mut mutation) {
+            Ok(()) => {
+                guard.durable_current = Some(generation);
+                Ok(())
+            }
+            Err(error) => {
+                if error.class() == CommitFailureClass::CommitUncertain {
+                    guard.durable_current = None;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Return the exact direct-child path for one generation.
@@ -576,7 +850,7 @@ impl GenerationStore {
         self.inner.root.join(generation.as_str())
     }
 
-    fn lock_commit(&self) -> io::Result<std::sync::MutexGuard<'_, ()>> {
+    fn lock_commit(&self) -> io::Result<std::sync::MutexGuard<'_, RootCommitState>> {
         self.inner
             .commit
             .lock()
@@ -641,11 +915,118 @@ impl GenerationStore {
         Ok(())
     }
 
+    fn verify_inherited_files(
+        &self,
+        staged: &StagedGeneration,
+        predecessor: Option<&GenerationName>,
+        inherited: &BTreeMap<PathBuf, InheritedFile>,
+        target: &CurrentTarget,
+        mutation: &mut Mutation<'_>,
+    ) -> Result<BTreeSet<PathBuf>, CommitError> {
+        if inherited.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        let Some(predecessor) = predecessor else {
+            return Err(self.commit_error(
+                CommitFailureClass::PreCommit,
+                CommitStep::ValidateStaging,
+                target.clone(),
+                &staged.path,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "ordinary staging cannot claim inherited files",
+                ),
+            ));
+        };
+        #[cfg(unix)]
+        {
+            let mut skipped = BTreeSet::new();
+            for (relative, registered) in inherited {
+                let source_root = self.generation_path(predecessor);
+                self.checked(
+                    mutation,
+                    CommitStep::ValidateStaging,
+                    relative,
+                    target,
+                    &source_root,
+                    || validate_real_relative_parent(&source_root, relative),
+                )?;
+                self.checked(
+                    mutation,
+                    CommitStep::ValidateStaging,
+                    relative,
+                    target,
+                    &staged.path,
+                    || validate_real_relative_parent(&staged.path, relative),
+                )?;
+                let source = source_root.join(relative);
+                let destination = staged.path.join(relative);
+                let source_identity = self.checked_value(
+                    mutation,
+                    CommitStep::ValidateStaging,
+                    relative,
+                    target,
+                    &source,
+                    || regular_file_identity(&source),
+                )?;
+                let destination_identity = self.checked_value(
+                    mutation,
+                    CommitStep::ValidateStaging,
+                    relative,
+                    target,
+                    &destination,
+                    || regular_file_identity(&destination),
+                )?;
+                if source_identity != registered.identity
+                    || destination_identity != registered.identity
+                {
+                    return Err(self.commit_error(
+                        CommitFailureClass::PreCommit,
+                        CommitStep::ValidateStaging,
+                        target.clone(),
+                        &destination,
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "inherited staged file changed after registration",
+                        ),
+                    ));
+                }
+                skipped.insert(relative.clone());
+            }
+            Ok(skipped)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = predecessor;
+            let _ = mutation;
+            Err(self.commit_error(
+                CommitFailureClass::PreCommit,
+                CommitStep::ValidateStaging,
+                target.clone(),
+                &staged.path,
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "current-generation inherited sync is supported only on Unix",
+                ),
+            ))
+        }
+    }
+
     fn sync_tree(
         &self,
         tree_root: &Path,
         target: &CurrentTarget,
         mutation: &mut Mutation<'_>,
+    ) -> Result<(), CommitError> {
+        self.sync_tree_with_skips(tree_root, target, mutation, &BTreeSet::new())
+    }
+
+    fn sync_tree_with_skips(
+        &self,
+        tree_root: &Path,
+        target: &CurrentTarget,
+        mutation: &mut Mutation<'_>,
+        skipped: &BTreeSet<PathBuf>,
     ) -> Result<(), CommitError> {
         let entries = collect_tree(tree_root, |relative| {
             mutation.check(CommitStep::ValidateStaging, relative)
@@ -661,6 +1042,9 @@ impl GenerationStore {
         })?;
 
         for relative in &entries.files {
+            if skipped.contains(relative) {
+                continue;
+            }
             let absolute = tree_root.join(relative);
             self.checked(
                 mutation,
@@ -892,10 +1276,10 @@ struct TreeEntries {
     directories: Vec<PathBuf>,
 }
 
-fn shared_root_lock(root: &Path) -> io::Result<Arc<Mutex<()>>> {
-    static ROOT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+fn shared_root_state(root: &Path) -> io::Result<Arc<Mutex<RootCommitState>>> {
+    static ROOT_STATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<RootCommitState>>>>> = OnceLock::new();
 
-    let registry = ROOT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let registry = ROOT_STATES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut registry = registry
         .lock()
         .map_err(|_| io::Error::other("generation root-lock registry poisoned"))?;
@@ -903,9 +1287,11 @@ fn shared_root_lock(root: &Path) -> io::Result<Arc<Mutex<()>>> {
     if let Some(lock) = registry.get(root).and_then(Weak::upgrade) {
         return Ok(lock);
     }
-    let lock = Arc::new(Mutex::new(()));
-    registry.insert(root.to_path_buf(), Arc::downgrade(&lock));
-    Ok(lock)
+    let state = Arc::new(Mutex::new(RootCommitState {
+        durable_current: None,
+    }));
+    registry.insert(root.to_path_buf(), Arc::downgrade(&state));
+    Ok(state)
 }
 
 fn collect_tree(
@@ -988,6 +1374,73 @@ fn collect_directory(
         }
     }
     Ok(())
+}
+
+fn checked_relative_file(relative: &Path) -> io::Result<PathBuf> {
+    if relative.as_os_str().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "inherited file path is empty",
+        ));
+    }
+    let mut checked = PathBuf::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(component) => checked.push(component),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "inherited file path is not a safe relative path",
+                ));
+            }
+        }
+    }
+    if checked.as_os_str() != relative.as_os_str() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "inherited file path is not canonical",
+        ));
+    }
+    Ok(checked)
+}
+
+fn validate_real_relative_parent(root: &Path, relative: &Path) -> io::Result<()> {
+    validate_real_directory(root)?;
+    let mut current = root.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        let std::path::Component::Normal(component) = component else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "inherited file path is not a safe relative path",
+            ));
+        };
+        if components.peek().is_some() {
+            current.push(component);
+            validate_real_directory(&current)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn regular_file_identity(path: &Path) -> io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "inherited file must be a regular nonsymlink file",
+        ));
+    }
+    Ok(FileIdentity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        len: metadata.len(),
+        mtime: metadata.mtime(),
+        mtime_nsec: metadata.mtime_nsec(),
+    })
 }
 
 fn directory_depth(path: &Path) -> usize {
@@ -1205,6 +1658,11 @@ mod tests {
         fn fail_at(&self, point: FailurePoint, kind: io::ErrorKind) {
             *self.failure.lock().unwrap() = Some(InjectedFailure { point, kind });
         }
+
+        fn clear(&self) {
+            self.points.lock().unwrap().clear();
+            *self.failure.lock().unwrap() = None;
+        }
     }
 
     impl FailureInjector for RecordingInjector {
@@ -1364,6 +1822,36 @@ mod tests {
                 (CommitStep::SyncDirectory, 3, PathBuf::from(".")),
             ]
         );
+    }
+
+    #[test]
+    fn publication_guard_starts_after_file_sync_and_lasts_through_current() {
+        let (_directory, injector, store, staged) = instrumented_fixture(false);
+        struct Guard(GenerationStore, GenerationName);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                assert_eq!(
+                    self.0.read_current().unwrap(),
+                    CurrentTarget::Generation(self.1.clone())
+                );
+            }
+        }
+        let target = staged.generation.clone();
+        store
+            .commit_with_publication_guard(staged, || {
+                let points = injector.points();
+                assert!(
+                    points
+                        .iter()
+                        .any(|point| point.step == CommitStep::SyncRootAfterGeneration),
+                    "publication guard acquired before generation files became durable"
+                );
+                assert!(!points
+                    .iter()
+                    .any(|point| point.step == CommitStep::WriteCurrentTemp));
+                Ok(Guard(store.clone(), target))
+            })
+            .unwrap();
     }
 
     #[test]
@@ -1746,6 +2234,330 @@ mod tests {
         let error = store.adopt_legacy(name("gen-1")).unwrap_err();
         assert_eq!(error.class(), CommitFailureClass::CommitUncertain);
         assert_eq!(current_generation(&store), "gen-1");
+    }
+
+
+    #[cfg(unix)]
+    fn inherited_fixture() -> (
+        tempfile::TempDir,
+        Arc<RecordingInjector>,
+        GenerationStore,
+        CurrentGenerationStaging,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let injector = Arc::new(RecordingInjector::default());
+        let store =
+            GenerationStore::open_with_injector(directory.path(), injector.clone()).unwrap();
+        store.initialize_empty().unwrap();
+        let old = store.begin(name("old")).unwrap();
+        std::fs::write(old.path().join("payload"), b"old").unwrap();
+        store.commit(old).unwrap();
+        injector.clear();
+        let mut staged = store
+            .begin_from_current_if_durable(name("new"))
+            .unwrap()
+            .expect("successful generic commit must mint durable-current proof");
+        std::fs::hard_link(
+            directory.path().join("old/payload"),
+            staged.path().join("payload"),
+        )
+        .unwrap();
+        staged.inherit_current_file("payload").unwrap();
+        std::fs::write(staged.path().join("fresh"), b"fresh").unwrap();
+        (directory, injector, store, staged)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_begin_requires_process_owned_current_proof() {
+        let directory = tempfile::tempdir().unwrap();
+        seed_current(directory.path(), "old");
+        let injector = Arc::new(RecordingInjector::default());
+        let store =
+            GenerationStore::open_with_injector(directory.path(), injector.clone()).unwrap();
+        assert!(store
+            .begin_from_current_if_durable(name("new"))
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store.adopt_legacy(name("old")).unwrap_err().class(),
+            CommitFailureClass::PreCommit
+        );
+        assert!(store
+            .begin_from_current_if_durable(name("new"))
+            .unwrap()
+            .is_none());
+        assert!(!directory.path().join(".stage-new").exists());
+        assert!(!injector
+            .points()
+            .iter()
+            .any(|point| point.step == CommitStep::SyncFile));
+
+        let empty = tempfile::tempdir().unwrap();
+        let empty_store = GenerationStore::open(empty.path()).unwrap();
+        empty_store.initialize_empty().unwrap();
+        assert_eq!(
+            empty_store
+                .begin_from_current_if_durable(name("empty"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert!(!empty.path().join(".stage-empty").exists());
+
+        let (_directory, _injector, store, _staged) = inherited_fixture();
+        let second = GenerationStore::open(store.inner.root.clone()).unwrap();
+        assert!(second
+            .begin_from_current_if_durable(name("second"))
+            .unwrap()
+            .is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_current_proof_expires_after_handles_drop_or_uncertain_commit() {
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let store = GenerationStore::open(directory.path()).unwrap();
+            store.initialize_empty().unwrap();
+            let old = store.begin(name("old")).unwrap();
+            std::fs::write(old.path().join("payload"), b"old").unwrap();
+            store.commit(old).unwrap();
+            assert!(store
+                .begin_from_current_if_durable(name("in-process"))
+                .unwrap()
+                .is_some());
+        }
+        let reopened = GenerationStore::open(directory.path()).unwrap();
+        assert!(reopened
+            .begin_from_current_if_durable(name("after-reopen"))
+            .unwrap()
+            .is_none());
+
+        let (_directory, injector, store, staged) = inherited_fixture();
+        injector.fail_at(
+            FailurePoint {
+                step: CommitStep::SyncRootAfterCurrent,
+                occurrence: 0,
+                relative_path: PathBuf::from("."),
+            },
+            io::ErrorKind::Other,
+        );
+        assert_eq!(
+            store.commit_from_current(staged).unwrap_err().class(),
+            CommitFailureClass::CommitUncertain
+        );
+        assert!(store
+            .begin_from_current_if_durable(name("after-uncertain"))
+            .unwrap()
+            .is_none());
+
+        let directory = tempfile::tempdir().unwrap();
+        seed_current(directory.path(), "old");
+        let injector = Arc::new(RecordingInjector::default());
+        let store =
+            GenerationStore::open_with_injector(directory.path(), injector.clone()).unwrap();
+        let staged = store.begin(name("failed")).unwrap();
+        std::fs::write(staged.path().join("fresh"), b"fresh").unwrap();
+        injector.fail_at(
+            FailurePoint {
+                step: CommitStep::SyncFile,
+                occurrence: 0,
+                relative_path: PathBuf::from("fresh"),
+            },
+            io::ErrorKind::Other,
+        );
+        assert_eq!(
+            store.commit(staged).unwrap_err().class(),
+            CommitFailureClass::PreCommit
+        );
+        assert!(store
+            .begin_from_current_if_durable(name("after-failed"))
+            .unwrap()
+            .is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_commit_skips_only_registered_current_hard_links() {
+        let (_directory, injector, store, staged) = inherited_fixture();
+        store.commit_from_current(staged).unwrap();
+        let synced: Vec<_> = injector
+            .points()
+            .into_iter()
+            .filter(|point| point.step == CommitStep::SyncFile)
+            .map(|point| point.relative_path)
+            .collect();
+        assert_eq!(synced, vec![PathBuf::from("fresh")]);
+        let points = injector.points();
+        assert!(points.iter().any(|point| point.step == CommitStep::SyncDirectory));
+        assert!(points
+            .iter()
+            .any(|point| point.step == CommitStep::SyncRootAfterGeneration));
+        assert!(points.iter().any(|point| point.step == CommitStep::SyncCurrentTemp));
+        assert!(points.iter().any(|point| point.step == CommitStep::SyncRootAfterCurrent));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_registration_rejects_copies_bad_paths_and_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let (directory, _injector, store, _existing) = inherited_fixture();
+        let mut staged = store
+            .begin_from_current_if_durable(name("copy"))
+            .unwrap()
+            .expect("durable predecessor must permit a second derived stage");
+        std::fs::copy(directory.path().join("old/payload"), staged.path().join("payload")).unwrap();
+        assert_eq!(
+            staged.inherit_current_file("payload").unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        for bad in [
+            "",
+            ".",
+            "../payload",
+            "/payload",
+            "nested/./file",
+            "nested//file",
+            "payload/",
+        ] {
+            assert_eq!(
+                staged.inherit_current_file(bad).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+        std::fs::remove_file(staged.path().join("payload")).unwrap();
+        symlink(directory.path().join("old/payload"), staged.path().join("payload")).unwrap();
+        assert_eq!(
+            staged.inherit_current_file("payload").unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        std::fs::create_dir(directory.path().join("old/nested")).unwrap();
+        std::fs::hard_link(
+            directory.path().join("old/payload"),
+            directory.path().join("old/nested/file"),
+        )
+        .unwrap();
+        symlink(directory.path().join("old/nested"), staged.path().join("nested")).unwrap();
+        assert_eq!(
+            staged.inherit_current_file("nested/file").unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_commit_rejects_replaced_or_mutated_or_stale_current_proof() {
+        let (directory, _injector, store, staged) = inherited_fixture();
+        std::fs::remove_file(staged.path().join("payload")).unwrap();
+        std::fs::write(staged.path().join("payload"), b"replacement").unwrap();
+        let error = store.commit_from_current(staged).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::PreCommit);
+        assert_eq!(error.step(), CommitStep::ValidateStaging);
+        assert_eq!(current_generation(&store), "old");
+
+        let (_directory, _injector, store, staged) = inherited_fixture();
+        std::fs::write(staged.path().join("payload"), b"changed-in-place").unwrap();
+        let error = store.commit_from_current(staged).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::PreCommit);
+        assert_eq!(error.step(), CommitStep::ValidateStaging);
+        assert_eq!(current_generation(&store), "old");
+
+        let (_directory, _injector, store, staged) = inherited_fixture();
+        let replacement = stage_fixture(&store, "other");
+        store.commit(replacement).unwrap();
+        let error = store.commit_from_current(staged).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::PreCommit);
+        assert_eq!(error.step(), CommitStep::ValidateCurrent);
+        assert_eq!(current_generation(&store), "other");
+
+        let (_directory, _injector, store, staged) = inherited_fixture();
+        let foreign = tempfile::tempdir().unwrap();
+        seed_current(foreign.path(), "old");
+        let foreign_store = GenerationStore::open(foreign.path()).unwrap();
+        let error = foreign_store.commit_from_current(staged).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::PreCommit);
+        assert_eq!(error.step(), CommitStep::ValidateStaging);
+        assert_eq!(current_generation(&store), "old");
+        assert_eq!(current_generation(&foreign_store), "old");
+        drop(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_commit_keeps_fresh_and_pointer_failure_classes() {
+        let (_directory, injector, store, staged) = inherited_fixture();
+        injector.fail_at(
+            FailurePoint {
+                step: CommitStep::SyncFile,
+                occurrence: 0,
+                relative_path: PathBuf::from("fresh"),
+            },
+            io::ErrorKind::Other,
+        );
+        let error = store.commit_from_current(staged).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::PreCommit);
+        assert_eq!(error.step(), CommitStep::SyncFile);
+        assert_eq!(current_generation(&store), "old");
+
+        let (_directory, injector, store, staged) = inherited_fixture();
+        injector.fail_at(
+            FailurePoint {
+                step: CommitStep::SyncDirectory,
+                occurrence: 0,
+                relative_path: PathBuf::from("."),
+            },
+            io::ErrorKind::Other,
+        );
+        let error = store.commit_from_current(staged).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::PreCommit);
+        assert_eq!(error.step(), CommitStep::SyncDirectory);
+        assert_eq!(current_generation(&store), "old");
+
+        let (_directory, injector, store, staged) = inherited_fixture();
+        injector.fail_at(
+            FailurePoint {
+                step: CommitStep::SyncRootAfterCurrent,
+                occurrence: 0,
+                relative_path: PathBuf::from("."),
+            },
+            io::ErrorKind::Other,
+        );
+        let error = store.commit_from_current(staged).unwrap_err();
+        assert_eq!(error.class(), CommitFailureClass::CommitUncertain);
+        assert_eq!(error.step(), CommitStep::SyncRootAfterCurrent);
+        assert_eq!(current_generation(&store), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_commit_holds_publication_guard_through_current() {
+        let (_directory, injector, store, staged) = inherited_fixture();
+        struct Guard(GenerationStore, GenerationName);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                assert_eq!(
+                    self.0.read_current().unwrap(),
+                    CurrentTarget::Generation(self.1.clone())
+                );
+            }
+        }
+        let target = staged.generation().clone();
+        store
+            .commit_from_current_with_publication_guard(staged, || {
+                assert!(injector
+                    .points()
+                    .iter()
+                    .any(|point| point.step == CommitStep::SyncRootAfterGeneration));
+                assert!(!injector
+                    .points()
+                    .iter()
+                    .any(|point| point.step == CommitStep::WriteCurrentTemp));
+                Ok(Guard(store.clone(), target))
+            })
+            .unwrap();
     }
 
     #[test]

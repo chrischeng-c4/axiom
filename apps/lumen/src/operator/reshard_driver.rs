@@ -1512,7 +1512,14 @@ async fn run_migration_pass_impl(
         )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
-            if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_ref().map(ProjectedToken::expose), batch).await {
+            if let Err(err) = apply_reshard_batch(
+                http,
+                &dest_url,
+                token.as_ref().map(ProjectedToken::expose),
+                batch,
+            )
+            .await
+            {
                 // #1444 R2: record the wedge distinctly before propagating, so
                 // callers that turn this `Err` into `DriveOutcome::Blocked`
                 // still leave a structured trace behind for `status.reshard`
@@ -1551,9 +1558,13 @@ async fn run_migration_pass_impl(
         // collection a batch of deletes emptied out of these buckets still
         // gets an (empty) keep scope instead of being silently skipped.
         if final_pass {
-            let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_ref().map(ProjectedToken::expose))
-                .await
-                .context("fetch source shard's full collection list for the final reshard pass")?;
+            let collection_ids = fetch_all_collection_ids(
+                http,
+                &source_url,
+                token.as_ref().map(ProjectedToken::expose),
+            )
+            .await
+            .context("fetch source shard's full collection list for the final reshard pass")?;
             maybe_rearm_fence(
                 control,
                 http,
@@ -1580,7 +1591,13 @@ async fn run_migration_pass_impl(
                     );
                 };
                 let dest_url = control.shard_base_url(namespace, name, to_shard);
-                apply_reshard_prune_chunk(http, &dest_url, token.as_ref().map(ProjectedToken::expose), chunk).await?;
+                apply_reshard_prune_chunk(
+                    http,
+                    &dest_url,
+                    token.as_ref().map(ProjectedToken::expose),
+                    chunk,
+                )
+                .await?;
                 maybe_rearm_fence(
                     control,
                     http,
