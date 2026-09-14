@@ -7,10 +7,10 @@ How to change `apps/tape`. What it promises and the work roots it owns live in
 [STATUS.md](STATUS.md); repository-wide authoring and verification rules live
 in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-Changes here are authored one phase at a time, red first: `e2e` writes
-`apps/tape/e2e/`, then `impl` writes `apps/tape/src/`. `/aw-e2e-for` drives
-the e2e phase and `/aw-impl-for` drives the impl phase, and every phase
-refuses a dirty path outside its own write root.
+Use `product-deliver` for authorized work. QA owns the red e2e case and its
+registration. Dev owns the red unit test and scoped implementation. A fresh
+`tape-qa` runs the declared complete gate. The controller owns Git, tracker,
+and acceptance. Legacy AW use is explicit-only.
 
 `Cargo.toml` declares `autotests = false` and one `[[test]]` stanza per
 `e2e/*.rs` file. A new case is not run until its stanza exists, so add the

@@ -87,7 +87,7 @@ Rules that keep the planes honest:
 | `2>/dev/null` stdout-only compare while other agents build | debug stderr pollutes diffs; the grading harness is stdout-only anyway |
 | Memory claims: `/usr/bin/time -l` at **two scales** | superlinear/leak classes look flat at small N |
 | Perf claims: run the pins yourself | ratios drift under box contention |
-| Open changes through an approved `aw-grill-release apply`, never by hand | `change.py create` refuses a body that fails the GHAN schema and renames the staged file to the number it got back; a hand-filed issue is one nothing validated |
+| Use `product-plan` for new work; select explicit legacy `grill-release` only when needed | The controller owns tracker writes and validates any selected legacy AW plan |
 
 ## Doctrines (check these FIRST when diagnosing)
 

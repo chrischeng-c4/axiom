@@ -47,7 +47,7 @@ the repository root). `e2e/test_cli.py` measures the delegation with
 
 ### Release plans
 
-`aw-grill-release` reuses an existing plan and its approved decisions.
+The explicit-only legacy `grill-release` skill reuses an existing plan and its approved decisions.
 Read-only preparation and validation work in any runtime mode. A validated
 plan with an approved digest goes directly to Apply in Default mode.
 
