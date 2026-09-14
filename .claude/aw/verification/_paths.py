@@ -70,16 +70,16 @@ REPO = repo_root()
 AW_DIR = REPO / ".claude/aw"
 SKILLS_DIR = REPO / ".claude/skills"
 
-# The skill directory names are the invocation names -- Claude Code composes the
-# command from the directory -- and the frontmatter `name:` is held equal to
-# the directory name by check_plugin.py, so `aw-<skill>/` is invoked as
-# `/aw-<skill>` and listed as `aw-<skill>`. One prefix, one namespace. Naming
-# the exact set here rather than globbing keeps a stray directory from silently
+# The directory and frontmatter names are the invocation names. The product
+# route is implicit. The seven legacy AW names are explicit-only. Naming the
+# exact set here rather than globbing keeps a stray directory from silently
 # joining the population under test.
-NAMESPACE = "aw"
-SKILL_PREFIX = f"{NAMESPACE}-"      # directory, invocation, and frontmatter name: aw-<skill>
-SKILLS = ("ask-user", "e2e-for", "grill-release", "impl-for",
-          "prepare-goal", "review", "test-for")
+SKILL_PREFIX = ""
+LEGACY_SKILLS = ("ask-user", "e2e-for", "grill-release", "impl-for",
+                 "prepare-goal", "review", "test-for")
+PRODUCT_SKILLS = ("product-ideate", "product-plan", "product-deliver")
+CONVERSATION_SHORTCUTS = ("next-step", "follow-next-step", "approve-next-step")
+SKILLS = LEGACY_SKILLS + PRODUCT_SKILLS + CONVERSATION_SHORTCUTS
 
 
 def skill_dir(skill: str) -> pathlib.Path:
@@ -88,7 +88,7 @@ def skill_dir(skill: str) -> pathlib.Path:
 
 
 def skill_invocation(skill: str) -> str:
-    """What a human types to run one skill: the directory name behind a slash."""
+    """What a human types to run one explicit skill: its directory behind a slash."""
     return f"/{SKILL_PREFIX}{skill}"
 
 # The `ec -> td -> cb` ladder is gone from this plugin: three scripts, three
@@ -120,7 +120,7 @@ def skill_invocation(skill: str) -> str:
 # beside them; both skills and the whole `docs/technical/` tree are deleted,
 # and a design decision now lives in the `//!` or `///` block of the module
 # or type that owns it (`CLAUDE.md`, "Authoring").
-# The product and release interviews now have one entry: `aw-grill-release`.
+# The explicit-only legacy product and release interview is `grill-release`.
 # Its read-only plan operation reads META documents, tracker state, and
 # `wis.py gap`, then returns one closed plan and digest without writes. Its
 # Default-mode Apply
@@ -144,8 +144,9 @@ def skill_invocation(skill: str) -> str:
 # them instead would leave the two ladder skills that no per-skill rule can
 # refuse.
 #
-# The two lists are asserted exhaustive and disjoint over SKILLS, so a new skill
-# cannot join without someone deciding which kind it is.
+# The two lists are exhaustive and disjoint only for the legacy and product
+# operation skills. Conversation shortcuts are separately inventoried above:
+# they advise or bind one current approval, not an AW operation.
 #
 # `e2e-for` and `impl-for` are procedural despite the phases they drive
 # being model work rather than command work. The line is not "does a model
@@ -157,12 +158,12 @@ def skill_invocation(skill: str) -> str:
 # declared commands read-only and reports exit codes, with nothing
 # underspecified to resolve.
 #
-# `aw-grill-release` is interviewing because it
+# `grill-release` is interviewing because it
 # runs before any work item exists, so everything it writes -- across all
 # four paths in its allowlist now, not the single `docs/product/` path it
 # used to be -- is in the human's head, including how to resolve whatever
 # `meta.py check` surfaces in the landing sequence's second step.
-# `aw-grill-release` is interviewing
+# `grill-release` is interviewing
 # for a parallel reason: `wis.py gap` prints what is missing, not what to do
 # about it -- only the human can say which version a release takes, or
 # whether a gap closes by opening a change, merging two issues, or closing
@@ -177,8 +178,9 @@ def skill_invocation(skill: str) -> str:
 # human's head. Classifying it procedural would forbid the very tool that route
 # is made of, and would leave the no-iid case answered by whatever the agent
 # guessed the human meant.
-INTERVIEWING = ("ask-user", "grill-release", "prepare-goal")
-PROCEDURAL = ("e2e-for", "impl-for", "review", "test-for")
+INTERVIEWING = ("ask-user", "grill-release", "prepare-goal",
+                "product-ideate", "product-plan")
+PROCEDURAL = ("e2e-for", "impl-for", "review", "test-for", "product-deliver")
 
 # The fourteen scripts sit in one directory, not inside a skill. They were under
 # `wi-epic-grill/scripts/` (then `grill-me-to-epic`, folded into
@@ -243,7 +245,7 @@ META_SCRIPT = SCRIPTS / "meta.py"
 
 # The META-doc run's own refusal. It is not on the ladder either, and it is the
 # only script here whose subject is prose rather than a work item:
-# `aw-grill-release apply` writes `<project>/README.md`, `STATUS.md`,
+# Explicit-only `grill-release apply` writes `<project>/README.md`, `STATUS.md`,
 # `ROADMAP.md` and `docs/**`, and this refuses a run that reached outside those
 # four, then writes the one commit that run is allowed. Two verbs, `check` and
 # `commit`, and the split is what keeps the read from being able to repair what
@@ -256,7 +258,7 @@ META_SCRIPT = SCRIPTS / "meta.py"
 METADOC_SCRIPT = SCRIPTS / "metadoc.py"
 
 # The read-only work-item/promise gap reader, and also not on the ladder: it
-# owns no work item and writes nothing. `aw-grill-release plan` runs its one verb,
+# owns no work item and writes nothing. Explicit-only `grill-release plan` runs its one verb,
 # `gap <project>`, for the
 # seven G1..G7 rows before reorganising their half of the work-item set
 # through `milestone.py` / `change.py` -- every write those skills make goes

@@ -42,10 +42,10 @@ edit generated schema as a substitute for changing its source.
 
 ## Local Workflow
 
-Application behavior follows the repository phase ladder `wi → e2e → impl`.
-Write the failing black-box case in `apps/lumen/e2e/` before changing
-`apps/lumen/src/`. Use `/aw-e2e-for` for the e2e phase and
-`/aw-impl-for` for the impl phase when the work is tied to a work item.
+Use `product-deliver` for authorized behavior work. QA writes the failing
+black-box case before Dev changes `apps/lumen/src/`; Dev adds the red unit test
+and implementation. A fresh `lumen-qa` runs the declared complete gate. The
+controller owns Git, tracker, and acceptance. Legacy AW use is explicit-only.
 
 Keep Lumen-specific search, schema, shard, and health policy in `apps/lumen`.
 Put reusable Kubernetes mechanisms in `libs/service-k8s` after their shared

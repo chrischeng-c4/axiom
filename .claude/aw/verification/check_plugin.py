@@ -5,20 +5,19 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 from pathlib import Path
 
 
-SKILLS = (
-    "aw-ask-user",
-    "aw-e2e-for",
-    "aw-grill-release",
-    "aw-impl-for",
-    "aw-prepare-goal",
-    "aw-review",
-    "aw-test-for",
+LEGACY_SKILLS = (
+    "ask-user", "e2e-for", "grill-release", "impl-for", "prepare-goal",
+    "review", "test-for",
 )
-HEADINGS = ("## Goal", "## How", "## Acceptance", "## Never")
+PRODUCT_SKILLS = ("product-ideate", "product-plan", "product-deliver")
+CONVERSATION_SHORTCUTS = ("next-step", "follow-next-step", "approve-next-step")
+SKILLS = LEGACY_SKILLS + PRODUCT_SKILLS + CONVERSATION_SHORTCUTS
+HEADINGS = ("## Goal", "## How", "## Never")
 SCRIPTS = (
     "change.py",
     "e2e.py",
@@ -114,11 +113,11 @@ def string_constants(source: str) -> dict[str, str]:
     return {name: value for name, value in values.items() if writes[name] == 1}
 
 
-def aw_directories(root: Path) -> list[str]:
+def skill_directories(root: Path) -> list[str]:
     if not root.is_dir():
         return []
     return sorted(path.name for path in root.iterdir()
-                  if path.is_dir() and path.name.startswith("aw-"))
+                  if path.is_dir() and (path / "SKILL.md").is_file())
 
 
 def collect(repo: Path) -> Reporter:
@@ -130,10 +129,16 @@ def collect(repo: Path) -> Reporter:
     report.check("Codex skill root exists", codex_root.is_dir(), str(codex_root))
     report.check("Claude skill root exists", claude_root.is_dir(), str(claude_root))
     report.check("shared AW script root exists", scripts_root.is_dir(), str(scripts_root))
-    report.check("Codex AW skill set is exact", aw_directories(codex_root) == list(SKILLS),
-                 f"found={aw_directories(codex_root)}")
-    report.check("Claude AW skill set is exact", aw_directories(claude_root) == list(SKILLS),
-                 f"found={aw_directories(claude_root)}")
+    codex_skills = skill_directories(codex_root)
+    claude_skills = skill_directories(claude_root)
+    report.check("Codex required product and legacy skills exist",
+                 set(SKILLS).issubset(codex_skills), f"found={codex_skills}")
+    report.check("Claude required product and legacy skills exist",
+                 set(SKILLS).issubset(claude_skills), f"found={claude_skills}")
+    report.check("Codex has no retired aw-prefixed skill directory",
+                 not any(skill.startswith("aw-") for skill in codex_skills))
+    report.check("Claude has no retired aw-prefixed skill directory",
+                 not any(skill.startswith("aw-") for skill in claude_skills))
 
     bodies: dict[str, str] = {}
     for skill in SKILLS:
@@ -141,6 +146,8 @@ def collect(repo: Path) -> Reporter:
         claude = claude_root / skill / "SKILL.md"
         report.check(f"{skill}: Codex SKILL.md exists", codex.is_file())
         report.check(f"{skill}: Claude SKILL.md exists", claude.is_file())
+        if claude.is_file():
+            bodies[skill] = claude.read_text(encoding="utf-8")
         if not codex.is_file() or not claude.is_file():
             continue
         codex_bytes = codex.read_bytes()
@@ -188,131 +195,66 @@ def collect(repo: Path) -> Reporter:
             report.check(f"{skill}: named script {name} exists",
                          (scripts_root / name).is_file())
 
+    settings_path = repo / ".claude" / "settings.json"
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        settings = {}
+    overrides = settings.get("skillOverrides", {})
+    report.check("Claude settings parse", isinstance(overrides, dict))
+    for skill in LEGACY_SKILLS:
+        codex_metadata = codex_root / skill / "agents" / "openai.yaml"
+        report.check(f"{skill}: Codex disables implicit invocation",
+                     codex_metadata.read_text(encoding="utf-8")
+                     == "policy:\n  allow_implicit_invocation: false\n"
+                     if codex_metadata.is_file() else False)
+        report.check(f"{skill}: Claude is user-invocable only",
+                     overrides.get(skill) == "user-invocable-only")
+        report.check(f"{skill}: says it is explicit-only",
+                     "Never invoke this skill implicitly." in bodies.get(skill, ""))
+    for skill in PRODUCT_SKILLS + CONVERSATION_SHORTCUTS:
+        report.check(f"{skill}: Claude does not override default visibility",
+                     skill not in overrides)
+    for skill in CONVERSATION_SHORTCUTS:
+        report.check(f"{skill}: keeps default implicit discovery",
+                     not (codex_root / skill / "agents" / "openai.yaml").exists()
+                     and not (claude_root / skill / "agents" / "openai.yaml").exists())
+
     for name in SCRIPTS:
         report.check(f"{name} exists", (scripts_root / name).is_file())
 
     required_phrases = {
-        "aw-grill-release": (
-            "release-plan-v1", "release-plan validate --plan -",
-            "approved digest", "Apply one project only", "Default mode",
-            "tracker baseline summary", "{{milestone_number}}",
-            "{{development_order}}", "exact owner label",
-            "The list is also the enforced Apply order.",
-            "one sealed canonical", "plan_sha256", "approved `priority`",
-            "Include no command, hook, script, or executable field.",
-            "aw milestone next-version", "default minor bump",
-            "G1 through G5", "G6 and G7",
-            "A drafted answer the human has not confirmed is not an answer",
-            "<project>-pm", "project-manager", "tech-design",
-            "aw milestone validate --description-file",
-            "aw change bodydir --type <type>",
-        ),
-        "aw-e2e-for": (
-            "aw milestone next",
-            "--json",
-            "aw milestone versions --project <project> --state open --json",
-            "A bare number never means a Milestone.",
-            "Never choose a Milestone's issue order yourself.",
-            "type:feat", "type:fix", "type:perf", "queue head",
-            "flow: behavior", "next_phase: e2e",
-            "aw change lifecycle",
-        ),
-        "aw-impl-for": (
-            "aw milestone next",
-            "--json",
-            "aw milestone versions --project <project> --state open --json",
-            "A bare number never means a Milestone.",
-            "Never choose or infer Milestone order.",
-            "type:feat", "type:fix", "type:perf", "queue head",
-            "flow: behavior", "next_phase: impl",
-            "type:refactor", "type:test", "type:docs", "type:chore",
-            "flow: maintenance", "next_phase: maint",
-            "Maint-Contract:", "Maint-Change-Digest:", "record <iid>",
-            "--output-file <path>", "aw change lifecycle", "aw change close",
-        ),
-        "aw-test-for": (
-            "aw milestone versions --project <project> --state open --json",
-            "A bare number never means a Milestone.",
-            "aw milestone reconcile",
-            "E2E-Red:", "Impl-Red:", "Impl-Contract:",
-            "Maint-Contract:", "Maint-Change-Digest:",
-            "no test filter",
-            "Never pass a test filter to a gate command.",
-        ),
-        "aw-review": (
-            "aw meta check --path <project>",
-            "aw wis gap <project>",
-            "UNMEASURED",
-            "Never pass a test filter to a declared gate.",
-            "Never fix a finding in this skill",
-        ),
-        "aw-prepare-goal": (
-            "milestone:<number>",
-            "aw milestone next",
-            "Never use a bare number as a Milestone reference.",
-            "behavior to e2e then impl, maintenance to maint",
-            "Reject `type:change`",
-        ),
-        "aw-ask-user": (
-            "version, milestone order, scope boundary",
-            "default minor Milestone bump",
-            "major, patch, or exact version override",
-            "No file, Git ref, issue, milestone, or release changes.",
-        ),
+        "ask-user": ("explicitly requested scope", "changes no project state"),
+        "prepare-goal": ("legacy e2e then impl legs", "all AW state authority"),
+        "e2e-for": ("controller resolves one eligible behavior queue head",
+                    "QA has no Git, tracker, lifecycle, or close authority"),
+        "impl-for": ("controller resolves the current queue head",
+                     "Dev cannot weaken or replace QA's e2e test"),
+        "test-for": ("fresh QA instance", "complete, unfiltered gate"),
+        "review": ("read-only project review", "controller reads the summary"),
+        "grill-release": ("validate a plan read-only",
+                           "exact plan digest the human explicitly approved"),
+        "product-ideate": ("owning PM", "return a short option table"),
+        "product-plan": ("PM owns product docs", "TL drafts tasks and does not write source",
+                         "controller owns Git and tracker writes"),
+        "product-deliver": ("e2e-only", "impl-only", "test-only", "read-only-review",
+                            "fresh `<p>-qa` instance", "Integration QA only for a cross-project scope",
+                            "controller owns Git, tracker changes, scope changes, and final acceptance"),
+        "next-step": ("current conversation first", "read-only check", "at most two options",
+                      "needed authority", "Never execute the recommended action"),
+        "follow-next-step": ("latest unfinished, clear main recommendation",
+                             "Plan mode", "blocked-writer policy", "Explain the difference",
+                             "Never treat skill selection as approval"),
+        "approve-next-step": ("latest pending, well-scoped request",
+                              "explicit user invocation", "safety- or correctness-relevant current state",
+                              "exact approved action", "same consent", "blanket future authority",
+                              "blocked-writer policy"),
     }
     for skill, phrases in required_phrases.items():
         text = bodies.get(skill, "")
         for phrase in phrases:
-            report.check(f"{skill}: carries typed queue contract `{phrase}`",
+            report.check(f"{skill}: carries routing contract `{phrase}`",
                          phrase in text)
-
-    phase_commands = {
-        "aw-e2e-for": (("e2e", ("start", "verify", "test", "commit")),),
-        # `maint record` takes extra required options, so only its bare verbs
-        # are asserted here; the record line is covered by required_phrases.
-        "aw-impl-for": (
-            ("impl", ("start", "red", "verify", "test", "commit")),
-            ("maint", ("start", "verify", "commit")),
-        ),
-    }
-    for skill, groups in phase_commands.items():
-        text = bodies.get(skill, "")
-        for group, verbs in groups:
-            for verb in verbs:
-                command = f"aw {group} --project <project> {verb} <iid>"
-                report.check(
-                    f"{skill}: `{group} {verb}` keeps --project before the verb",
-                    command in text,
-                )
-
-    for skill in ("aw-grill-release",):
-        text = bodies.get(skill, "")
-        how = text.partition("## How")[2].partition("## Acceptance")[0]
-        plan_section = how.partition("### Plan")[2].partition("### Apply")[0]
-        apply_section = how.partition("### Apply")[2]
-        first = re.search(r"^(?P<rank>[1-9][0-9]*)\.\s+(?P<step>.+)$", how, re.M)
-        report.check(f"{skill}: first step selects a mode",
-                     bool(first) and first.group("rank") == "1"
-                     and first.group("step").startswith("Select `plan` or `apply`"),
-                     f"first={first.group(0)!r}" if first else "no numbered step")
-        report.check(f"{skill}: Plan preparation ignores native UI mode",
-                     "Prepare the plan read-only in any runtime mode. No mode switch is required."
-                     in plan_section
-                     and "native Plan mode" not in how)
-        report.check(f"{skill}: settled plans go directly to Apply",
-                     "A validated plan with an approved digest goes directly to Apply." in how
-                     and "Reuse an existing approved plan and its settled decisions." in how
-                     and "Do not restart\n   the interview." in plan_section)
-        write_verbs = (
-            "release-plan apply", "release-plan resume", "metadoc commit",
-            "milestone create", "milestone update", "change create", "change update",
-            "git add", "git commit", "git push",
-        )
-        report.check(f"{skill}: Plan operation has no write command",
-                     not any(verb in plan_section for verb in write_verbs))
-        report.check(f"{skill}: Apply mode is fail-closed",
-                     "Confirm Default mode and an explicit human approval" in apply_section
-                     and "approved digest is the only write authority" in apply_section)
 
     retired = tuple("aw-grill-" + suffix for suffix in (
         "me-to-meta", "meta-to-milestone", "milestone-to-issue",
@@ -435,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     if report.failed:
         print(f"\n=> RED: {len(report.failed)} failure(s)")
         return 1
-    print(f"\n=> GREEN: {len(SKILLS)} byte-identical typed-delivery AW skill pairs")
+    print(f"\n=> GREEN: {len(SKILLS)} byte-identical product and explicit-only legacy skill pairs")
     return 0
 
 

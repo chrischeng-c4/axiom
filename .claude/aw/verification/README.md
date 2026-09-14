@@ -1,7 +1,7 @@
 # Verification
 
-Gates for the two seven-skill AW mirrors, the release Milestone contract, and
-the remaining work-item schemas.
+Gates for the explicit legacy, product, and conversation shortcut skill
+mirrors, the release Milestone contract, and the remaining work-item schemas.
 
 ```
 uv run --python 3.13 --no-project .claude/aw/verification/run_all.py                          # ~38s
@@ -61,8 +61,9 @@ apps/aw/src/aw/
 .claude/aw/
   verification/   this directory
 .claude/skills/
-  aw-ask-user/  aw-e2e-for/  aw-grill-release/  aw-impl-for/
-  aw-prepare-goal/  aw-review/  aw-test-for/
+  ask-user/  e2e-for/  grill-release/  impl-for/  prepare-goal/  review/  test-for/
+  product-ideate/  product-plan/  product-deliver/
+  next-step/  follow-next-step/  approve-next-step/
 .agents/skills/
   the same exact SKILL.md files, byte-identical for Codex
 ```
@@ -79,8 +80,8 @@ copy**. What they measured is a property of Claude Code, and the conclusion
 that outlived the plugin is the one `check_plugin.py` still asserts — a
 directory name registers as itself. Until 2026-08-26 that meant the `aw:`
 namespace survived only because it was literally in each directory's name;
-since the rename it means the directory and frontmatter name are both
-`aw-<skill>`.
+since the rename it means the directory and frontmatter name are both the
+unprefixed skill name.
 
 The fourteen scripts cannot be split across the seven skill directories, and that
 is not a preference: `e2e.py` and `impl.py` each load `leg.py` by
@@ -108,8 +109,8 @@ widened from one write root (`docs/product/`) to four
 (`README.md`/`STATUS.md`/`ROADMAP.md`/`docs/**`) in the same change. There is
 no technical-design step: a design decision lives in the `//!` or `///` block
 of the module or type that owns it (`CLAUDE.md`, "Authoring"). Product
-documents, release Milestones, typed issues, and Development Order now enter
-through one `aw-grill-release` skill. Its Plan phase is read-only. Its Apply phase
+documents, release Milestones, typed issues, and Development Order enter only
+through explicit legacy `grill-release`. Its Plan phase is read-only. Its Apply phase
 delegates the exact approved digest to `release_plan.py`. That facade owns
 baseline checks, one-project writes, receipts, recovery, readback,
 reconciliation, and the final full `wis.py gap` snapshot. G1 through G5 are
@@ -128,7 +129,7 @@ directory for a file none of them owns.
 |---|---|
 | `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
 | `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
-| `check_plugin.py` | a missing or drifted seven-skill mirror, missing script, legacy issue-epic writer, or incomplete release-plan, type, and Milestone contract |
+| `check_plugin.py` | a missing or drifted skill mirror, missing script, legacy issue-epic writer, or incomplete release-plan, type, and Milestone contract |
 | `check_plugin_negative_control.py` | a mirror checker that misses a removed file, byte drift, restored issue-epic writer, missing queue-head rule, or a grill that restores a native Plan-mode gate |
 | `check_milestone.py` | a malformed SemVer-core title, wrong next-version bump, duplicate identity, malformed or lingering draft, ambiguous reference, incomplete pagination, wrong child type or project, unsafe assignment write, failed readback, or an order that does not equal native Milestone membership |
 | `check_type_registry.py` | a missing, duplicate, unknown, intake, or legacy executable type; wrong flow; unsafe retype; or lifecycle close without matching commit evidence |
@@ -497,7 +498,7 @@ silently.
 
 ## Who opens a delivery issue
 
-`aw-grill-release` settles the complete issue set, each issue type, each
+Explicit-only `grill-release` settles the complete issue set, each issue type, each
 priority, and the global order with the human during its read-only plan
 operation. Its approved Apply
 uses `release_plan.py`, which delegates writes to `milestone.py` and

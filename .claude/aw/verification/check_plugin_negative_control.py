@@ -14,13 +14,9 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 CHECKER = HERE / "check_plugin.py"
 SKILLS = (
-    "aw-ask-user",
-    "aw-e2e-for",
-    "aw-grill-release",
-    "aw-impl-for",
-    "aw-prepare-goal",
-    "aw-review",
-    "aw-test-for",
+    "ask-user", "e2e-for", "grill-release", "impl-for", "prepare-goal",
+    "review", "test-for", "product-ideate", "product-plan", "product-deliver",
+    "next-step", "follow-next-step", "approve-next-step",
 )
 
 
@@ -33,6 +29,8 @@ def fixture(root: Path) -> None:
             target = root / runtime / "skills" / skill
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(REPO / runtime / "skills" / skill, target)
+    (root / ".claude").mkdir(exist_ok=True)
+    shutil.copy2(REPO / ".claude" / "settings.json", root / ".claude" / "settings.json")
     scripts = root / SCRIPTS_REL
     scripts.mkdir(parents=True)
     for source in (REPO / SCRIPTS_REL).glob("*.py"):
@@ -65,19 +63,20 @@ def case(name: str, mutate, expected: str) -> bool:
 
 
 def remove_skill(root: Path) -> None:
-    (root / ".agents/skills/aw-ask-user/SKILL.md").unlink()
+    (root / ".agents/skills/ask-user/SKILL.md").unlink()
 
 
 def drift_pair(root: Path) -> None:
-    path = root / ".agents/skills/aw-e2e-for/SKILL.md"
+    path = root / ".agents/skills/e2e-for/SKILL.md"
     path.write_text(path.read_text(encoding="utf-8") + "\nDrift.\n", encoding="utf-8")
 
 
 def restore_issue_epic(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-e2e-for/SKILL.md"
+        path = root / runtime / "skills/e2e-for/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace("aw milestone next", "aw epic create")
+        text = text.replace("controller resolves one eligible behavior queue head",
+                            "aw epic create", 1)
         path.write_text(text, encoding="utf-8")
 
 
@@ -95,74 +94,55 @@ def change_default_milestone_bump(root: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def remove_plan_first(root: Path) -> None:
+def remove_legacy_visibility(root: Path) -> None:
+    path = root / ".agents/skills/ask-user/agents/openai.yaml"
+    path.write_text("policy:\n  allow_implicit_invocation: true\n", encoding="utf-8")
+
+
+def remove_claude_override(root: Path) -> None:
+    path = root / ".claude/settings.json"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace('    "ask-user": "user-invocable-only"',
+                        '    "ask-user": "enabled"', 1)
+    path.write_text(text, encoding="utf-8")
+
+
+def make_legacy_implicit(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        path = root / runtime / "skills/grill-release/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace("1. Select `plan` or `apply`", "1. Read repository context", 1)
+        text = text.replace("Never invoke this skill implicitly.",
+                            "This skill may run implicitly.", 1)
         path.write_text(text, encoding="utf-8")
 
 
-def restore_native_plan_gate(root: Path) -> None:
+def remove_fresh_final_qa(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        path = root / runtime / "skills/product-deliver/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace(
-            "Prepare the plan read-only in any runtime mode. No mode switch is required.",
-            "Confirm native Plan mode. Stop if the runtime cannot confirm it.",
-            1,
-        )
+        text = text.replace("fresh `<p>-qa` instance", "same QA instance")
         path.write_text(text, encoding="utf-8")
 
 
-def put_write_in_plan(root: Path) -> None:
+def make_integration_default(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        path = root / runtime / "skills/product-deliver/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace(
-            "### Apply", "Run `release-plan apply` now.\n\n### Apply", 1,
-        )
+        text = text.replace("Integration QA only for a cross-project scope",
+                            "Integration QA for every scope", 1)
         path.write_text(text, encoding="utf-8")
 
 
-def make_apply_open(root: Path) -> None:
+def remove_shortcut_frontmatter(root: Path) -> None:
     for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-release/SKILL.md"
+        path = root / runtime / "skills/next-step/SKILL.md"
         text = path.read_text(encoding="utf-8")
-        text = text.replace(
-            "Confirm Default mode and an explicit human approval",
-            "Assume Default mode and human approval",
-            1,
-        )
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text.replace("name: next-step", "name: stale-step", 1), encoding="utf-8")
 
 
-def remove_grill_version_policy(root: Path) -> None:
-    for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-release/SKILL.md"
-        text = path.read_text(encoding="utf-8")
-        text = text.replace("default minor bump", "selected bump", 1)
-        path.write_text(text, encoding="utf-8")
-
-
-def weaken_grill_gap_contract(root: Path) -> None:
-    for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-release/SKILL.md"
-        text = path.read_text(encoding="utf-8")
-        text = text.replace("G1 through G5", "some planning rows", 1)
-        path.write_text(text, encoding="utf-8")
-
-
-def land_unconfirmed_draft(root: Path) -> None:
-    for runtime in (".agents", ".claude"):
-        path = root / runtime / "skills/aw-grill-release/SKILL.md"
-        text = path.read_text(encoding="utf-8")
-        text = text.replace(
-            "A drafted answer the human has not confirmed is not an answer",
-            "A drafted answer counts as an answer",
-            1,
-        )
-        path.write_text(text, encoding="utf-8")
+def drift_shortcut_mirror(root: Path) -> None:
+    path = root / ".agents/skills/approve-next-step/SKILL.md"
+    path.write_text(path.read_text(encoding="utf-8") + "\nDrift.\n", encoding="utf-8")
 
 
 def bypass_plan_digest(root: Path) -> None:
@@ -228,30 +208,30 @@ def bypass_lifecycle_close(root: Path) -> None:
 def main() -> int:
     rows = (
         case("missing Codex mirror", remove_skill,
-             "FAIL aw-ask-user: Codex SKILL.md exists"),
+             "FAIL ask-user: Codex SKILL.md exists"),
         case("pair drift", drift_pair,
-             "FAIL aw-e2e-for: mirror bytes match"),
+             "FAIL e2e-for: mirror bytes match"),
         case("legacy issue-epic writer", restore_issue_epic,
-             "FAIL aw-e2e-for: has no legacy issue-epic writer"),
+             "FAIL e2e-for: has no legacy issue-epic writer"),
+        case("Codex legacy visibility is enabled", remove_legacy_visibility,
+             "FAIL ask-user: Codex disables implicit invocation"),
+        case("Claude legacy visibility is enabled", remove_claude_override,
+             "FAIL ask-user: Claude is user-invocable only"),
+        case("legacy skill is implicitly callable", make_legacy_implicit,
+             "FAIL grill-release: says it is explicit-only"),
+        case("delivery reuses final QA", remove_fresh_final_qa,
+             "FAIL product-deliver: carries routing contract `fresh `<p>-qa` instance`"),
+        case("delivery makes Integration QA default", make_integration_default,
+             "FAIL product-deliver: carries routing contract "
+             "`Integration QA only for a cross-project scope`"),
+        case("conversation shortcut frontmatter drifts", remove_shortcut_frontmatter,
+             "FAIL next-step: frontmatter name matches"),
+        case("conversation shortcut mirror drifts", drift_shortcut_mirror,
+             "FAIL approve-next-step: mirror bytes match"),
         case("missing Milestone queue-head verb", remove_next_verb,
              "FAIL milestone.py exposes `next`"),
         case("Milestone default bump changes", change_default_milestone_bump,
              "FAIL milestone.py defaults new release Milestones to a minor bump"),
-        case("grill skips mode selection", remove_plan_first,
-             "FAIL aw-grill-release: first step selects a mode"),
-        case("grill restores native Plan-mode gate", restore_native_plan_gate,
-             "FAIL aw-grill-release: Plan preparation ignores native UI mode"),
-        case("grill Plan section writes", put_write_in_plan,
-             "FAIL aw-grill-release: Plan operation has no write command"),
-        case("grill Apply mode is open", make_apply_open,
-             "FAIL aw-grill-release: Apply mode is fail-closed"),
-        case("grill loses default version policy", remove_grill_version_policy,
-             "FAIL aw-grill-release: carries typed queue contract `default minor bump`"),
-        case("grill weakens gap handoff", weaken_grill_gap_contract,
-             "FAIL aw-grill-release: carries typed queue contract `G1 through G5`"),
-        case("grill lands an unconfirmed draft", land_unconfirmed_draft,
-             "FAIL aw-grill-release: carries typed queue contract "
-             "`A drafted answer the human has not confirmed is not an answer`"),
         case("release plan ignores approved digest", bypass_plan_digest,
              "FAIL release_plan.py keeps validate read-only and apply approval-bound"),
         case("release plan schema changes", change_release_plan_schema,

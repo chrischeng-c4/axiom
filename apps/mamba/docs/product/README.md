@@ -14,11 +14,11 @@ way round.
   A future promise names the [ROADMAP](../../ROADMAP.md) outcome that owns it
   and ends with `Tracking: Not assigned.` until its release Milestone exists.
 - A future section is written before its release Milestone. Use
-  `aw-grill-release plan` to fix the promise, version, issue set, and order
+  explicit legacy `grill-release` only when that legacy flow is selected to fix the promise, version, issue set, and order
   without writing. Its approved `apply` opens or updates the Milestone, adds
   the binding, and writes the typed issues, so nothing is promised here that
   the tracker cannot measure.
-- Every section carries the parts `aw-grill-release plan` asks for —
+- Every section carries the product-planning parts —
   Problem, Who, Promise, Non-goals, Neighbours — plus `Open:` lines for
   decisions the release plan still has to settle. An `Open:` line is a
   question, not a default; the issue body answers it or the human does.

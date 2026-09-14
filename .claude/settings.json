@@ -1,5 +1,14 @@
 {
   "outputStyle": "ELI5",
+  "skillOverrides": {
+    "prepare-goal": "user-invocable-only",
+    "grill-release": "user-invocable-only",
+    "e2e-for": "user-invocable-only",
+    "impl-for": "user-invocable-only",
+    "test-for": "user-invocable-only",
+    "review": "user-invocable-only",
+    "ask-user": "user-invocable-only"
+  },
   "env": {
   },
   "permissions": {
