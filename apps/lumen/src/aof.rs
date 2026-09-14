@@ -50,8 +50,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-pub use storage_durable::FsyncPolicy;
-use storage_durable::{FramedLogReader, FramedLogWriter};
+pub use storage_durable::{FramedLogTrimObserver, FsyncPolicy};
+use storage_durable::{FramedLogCursor, FramedLogWriter, LogFrame};
+#[cfg(unix)]
+use storage_durable::FramedLogTrimPlan;
 
 #[cfg(test)]
 use std::fs::OpenOptions;
@@ -96,7 +98,48 @@ pub struct AofWriter {
     inject_failure_once: Option<std::io::ErrorKind>,
 }
 
+/// A prepared durable AOF trim. It has no public configuration surface.
+#[cfg(unix)]
+pub(crate) struct AofTrimPlan {
+    inner: FramedLogTrimPlan,
+}
+
+#[cfg(unix)]
+impl AofTrimPlan {
+    /// Copy and durably sync the stable trim prefix without borrowing the AOF
+    /// writer, so `SharedAof` can admit normal appends during this work.
+    pub(crate) fn copy_stable_prefix(&mut self) -> Result<()> {
+        self.inner.copy_stable_prefix()
+    }
+}
+
 impl AofWriter {
+    /// Install an optional in-process observer for covered AOF frames and the
+    /// initial temp-sync boundary during trim. This only forwards the shared
+    /// framed-log hook; it does not change AOF locking, trimming, or durability.
+    #[doc(hidden)]
+    pub fn with_trim_observer(
+        mut self,
+        observer: std::sync::Arc<dyn FramedLogTrimObserver>,
+    ) -> Self {
+        self.inner = self.inner.with_trim_observer(observer);
+        self
+    }
+
+    /// Begin a two-phase trim while the caller owns `SharedAof`.
+    #[cfg(unix)]
+    pub(crate) fn begin_trim(&mut self, through: u64) -> Result<AofTrimPlan> {
+        self.inner
+            .begin_trim_mapped(through)
+            .map(|inner| AofTrimPlan { inner })
+    }
+
+    /// Finish a prepared trim while the caller owns `SharedAof`.
+    #[cfg(unix)]
+    pub(crate) fn finish_trim(&mut self, plan: AofTrimPlan) -> Result<()> {
+        self.inner.finish_trim_mapped(plan.inner)
+    }
+
     /// Open `path` for appending with the default [`FsyncPolicy::Always`],
     /// first truncating any torn tail.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
@@ -119,7 +162,7 @@ impl AofWriter {
         })
     }
 
-    /// #2516: arm/disarm the next [`AofWriter::append`] call on THIS writer to
+    /// #2516: arm/disarm the next typed or raw append call on THIS writer to
     /// fail with a synthetic `io::ErrorKind::StorageFull` error instead of
     /// touching the real file — the fault-injection seam that exercises the
     /// REAL production error-handling path (`crate::coordinator::is_storage_full`
@@ -140,6 +183,21 @@ impl AofWriter {
     /// Append one applied `(seq, record)` frame. Buffered; durability follows the
     /// fsync policy (`Always` fsyncs now, `EverySec` defers to `maybe_sync`).
     pub fn append(&mut self, seq: u64, record: &WalRecord) -> Result<()> {
+        self.check_injected_append_failure()?;
+        let payload = encode_payload(record)?;
+        self.append_large_payload(seq, &payload)
+    }
+
+    /// Append a payload which the caller already validated as one public WAL
+    /// wire record. This keeps a mapped fast-Index source borrowed: it does not
+    /// decode or clone its values. The coordinator owns wire validation before
+    /// it calls this crate-private persistence primitive.
+    pub(crate) fn append_raw_payload(&mut self, seq: u64, payload: &[u8]) -> Result<()> {
+        self.check_injected_append_failure()?;
+        self.append_large_payload(seq, payload)
+    }
+
+    fn check_injected_append_failure(&mut self) -> Result<()> {
         #[cfg(test)]
         if let Some(kind) = self.inject_failure_once.take() {
             return Err(anyhow::Error::new(std::io::Error::from(kind)));
@@ -153,8 +211,11 @@ impl AofWriter {
                 std::io::ErrorKind::StorageFull,
             )));
         }
-        let payload = encode_payload(record)?;
-        self.inner.append(seq, &payload)
+        Ok(())
+    }
+
+    fn append_large_payload(&mut self, seq: u64, payload: &[u8]) -> Result<()> {
+        self.inner.append_large_payload(seq, payload)
     }
 
     /// Flush the buffered writer to the OS (does NOT fsync). Cheap; safe to call
@@ -192,7 +253,7 @@ impl AofWriter {
     /// AOF intact (un-checkpointed frames are never lost); a crash after leaves
     /// the compacted AOF. The temp is removed first if a prior attempt left one.
     pub fn truncate_through(&mut self, through: u64) -> Result<()> {
-        self.inner.truncate_through(through)
+        self.inner.truncate_through_mapped(through)
     }
 }
 
@@ -212,19 +273,33 @@ impl AofReader {
     pub fn replay(
         path: impl AsRef<Path>,
         from_seq: u64,
-        mut apply: impl FnMut(u64, WalRecord),
+        apply: impl FnMut(u64, WalRecord),
     ) -> Result<u64> {
-        let mut max_seq = 0u64;
-        for frame in FramedLogReader::read_frames(path, from_seq)? {
-            let rec = match decode_payload(&frame.payload) {
-                Ok(r) => r,
-                Err(_) => break,
-            };
-            apply(frame.seq, rec);
-            max_seq = max_seq.max(frame.seq);
-        }
-        Ok(max_seq)
+        let mut cursor = FramedLogCursor::open(path)?;
+        replay_frames(from_seq, || cursor.next_frame(), apply)
     }
+}
+
+/// Replay one validated frame at a time in sequence order.
+///
+/// The next frame is fetched only after the previous callback returns.  This
+/// keeps replay memory bounded by the frame currently being decoded.
+fn replay_frames(
+    from_seq: u64,
+    mut next_frame: impl FnMut() -> Result<Option<LogFrame>>,
+    mut apply: impl FnMut(u64, WalRecord),
+) -> Result<u64> {
+    let mut max_seq = 0u64;
+    while let Some(frame) = next_frame()? {
+        if frame.seq <= from_seq {
+            continue;
+        }
+        let rec = decode_payload(&frame.payload)
+            .with_context(|| format!("decode complete AOF frame at sequence {}", frame.seq))?;
+        apply(frame.seq, rec);
+        max_seq = max_seq.max(frame.seq);
+    }
+    Ok(max_seq)
 }
 
 /// Recovery helper: replay every AOF frame with `seq > from_seq` into `engine`
@@ -236,19 +311,197 @@ pub fn replay_aof_into(
     path: impl AsRef<Path>,
     from_seq: u64,
 ) -> Result<u64> {
-    AofReader::replay(path, from_seq, |seq, rec| {
-        if let Err(e) = engine.apply_raft_entry(rec.entry) {
-            // An apply error here mirrors the live apply loop: log + no-op. The
-            // record is still durable; a divergence would surface in the crux
-            // recovery test.
-            tracing::warn!(seq, error = %e, "AOF replay apply error (entry no-ops)");
+    // Initialize the capture cut before a relay can react to a process-global
+    // waiter from another Engine. The observed helper repeats this idempotently.
+    engine.capture_barrier.apply().initialize_sequence(from_seq);
+    // The public replay owns its fallback before any admission can wait. The
+    // observed helper below deliberately stays a lower-level manual seam.
+    let mut capacity_owner = None;
+    crate::segment_capacity::Fallback::ensure(&mut capacity_owner, engine, None)?;
+    replay_aof_into_with_capacity_owner(engine, path, from_seq, || {}, &mut capacity_owner)
+}
+
+fn replay_aof_into_observed(
+    engine: &std::sync::Arc<crate::storage::Engine>,
+    path: impl AsRef<Path>,
+    from_seq: u64,
+    before_decode: impl FnMut(),
+) -> Result<u64> {
+    let mut capacity_owner = None;
+    replay_aof_into_with_capacity_owner(
+        engine,
+        path,
+        from_seq,
+        before_decode,
+        &mut capacity_owner,
+    )
+}
+
+fn replay_aof_into_with_capacity_owner(
+    engine: &std::sync::Arc<crate::storage::Engine>,
+    path: impl AsRef<Path>,
+    from_seq: u64,
+    mut before_decode: impl FnMut(),
+    capacity_owner: &mut Option<crate::segment_capacity::Fallback>,
+) -> Result<u64> {
+    engine.capture_barrier.apply().initialize_sequence(from_seq);
+    let mut cursor = FramedLogCursor::open(path)?;
+    let mut max_seq = 0u64;
+
+    while let Some((start, frame)) = {
+        let start = cursor.byte_offset();
+        cursor
+            .next_large_mapped_frame()?
+            .map(|frame| (start, frame))
+    } {
+        if frame.seq <= from_seq {
+            continue;
         }
-    })
+        let seq = frame.seq;
+        let encoded_bytes = frame.payload().len();
+        let encoded_crc = crc32fast::hash(frame.payload());
+        // A large fast Index frame remains mapped through its scalar projection.
+        // Do this before scanner admission or generic decode, so one valid value
+        // cannot become an owned record merely because recovery is replaying it.
+        if encoded_bytes > crate::change_budget::HARD_LIMIT / 8 {
+            if let Ok(scanner) =
+                crate::wal::fast_index_scanner::FastIndexScanner::parse(frame.payload())
+            {
+                if engine.try_apply_committed_index_with_capacity_owner(&scanner, seq, || {
+                    crate::segment_capacity::Fallback::ensure(capacity_owner, engine, None)
+                }, |apply, outcome| {
+                    if let Err(error) = outcome {
+                        tracing::warn!(seq, error = %error, "AOF replay apply error (entry no-ops)");
+                    }
+                    apply.advance_sequence(seq);
+                })? {
+                    max_seq = max_seq.max(seq);
+                    continue;
+                }
+            }
+            if engine.try_apply_committed_replace_with_capacity_owner(
+                frame.payload(), seq,
+                &mut || crate::segment_capacity::Fallback::ensure(capacity_owner, engine, None),
+                |apply, outcome| {
+                    if let Err(error) = outcome {
+                        tracing::warn!(seq, error = %error, "AOF replay replacement business error");
+                    }
+                    apply.advance_sequence(seq);
+                },
+            )? {
+                max_seq = max_seq.max(seq);
+                continue;
+            }
+        }
+        // This first pass borrows mapped bytes and stores only token counters.
+        // The source mapping is excluded from pending heap ownership. Reserve
+        // before the typed scanner or decoder can allocate token buffers.
+        let workspace = crate::wal_wire_cost::scan_workspace_bound(frame.payload())
+            .with_context(|| format!("preflight complete AOF frame at sequence {seq}"))?;
+        let request = engine.record_ram_request_from_bound(workspace, 0);
+        let mut reservation = match engine.try_reserve_record_ram(&request) {
+            Ok(reservation) => reservation,
+            Err(crate::storage::RecordAdmissionError::Capacity(
+                crate::change_budget::AdmissionError::Full { .. },
+            )) => engine
+                .wait_reserve_record_ram(&request)
+                .context("wait for AOF replay scanner admission")?,
+            Err(error) => {
+                return Err(anyhow::Error::new(error).context("reserve AOF replay scanner"))
+            }
+        };
+        let decoded_peak = crate::wal_wire_cost::decoded_peak_bound(frame.payload())
+            .with_context(|| format!("price complete AOF frame at sequence {seq}"))?;
+        match reservation.try_grow_to(decoded_peak) {
+            Ok(()) => (),
+            Err(crate::change_budget::AdmissionError::Full { .. }) => {
+                engine.request_pending_checkpoint();
+                reservation
+                    .wait_grow_to(decoded_peak)
+                    .map_err(crate::storage::RecordAdmissionError::Capacity)
+                    .context("wait for AOF replay decode admission")?;
+            }
+            Err(error) => {
+                return Err(
+                    anyhow::Error::new(crate::storage::RecordAdmissionError::Capacity(error))
+                        .context("reserve AOF replay decode"),
+                )
+            }
+        }
+        // The same cursor pins the original inode and open-time length across
+        // capacity waits. Recheck that exact frame, never resolve a new path.
+        let reread = cursor
+            .reread_large_mapped_frame_at(start)
+            .context("reread pinned AOF frame after admission")?
+            .ok_or_else(|| anyhow::anyhow!("AOF frame vanished from pinned cursor"))?;
+        anyhow::ensure!(
+            reread.seq == seq
+                && reread.payload().len() == encoded_bytes
+                && crc32fast::hash(reread.payload()) == encoded_crc,
+            "pinned AOF frame identity changed while replay waited"
+        );
+        before_decode();
+        let record = decode_payload(reread.payload())
+            .with_context(|| format!("decode complete AOF frame at sequence {seq}"))?;
+        engine
+            .price_decoded_record(&record.entry, &mut reservation, decoded_peak, 0, false)
+            .context("retain decoded AOF record charge")?;
+        drop(reread);
+        drop(frame);
+        // Decoder scratch is gone. Release its conservative allowance before
+        // normalized changes are prepared; retain the actual decoded owner.
+        reservation
+            .release_transport_bytes()
+            .map_err(crate::storage::RecordAdmissionError::Capacity)
+            .context("release completed AOF decoder workspace")?;
+        let mut entry = record.entry;
+        loop {
+            match engine.begin_admitted_record(entry, reservation) {
+                Ok(mut prepared) => {
+                    // Existing partial-prefix semantics retain a charge before
+                    // dispatch and advance ordinary validation errors. Admission,
+                    // preparation, decode, and reread failures returned above do
+                    // not reach this point and therefore do not advance `seq`.
+                    if let Err(error) = engine.apply_prepared_raft_entry(&mut prepared) {
+                        tracing::warn!(seq, error = %error, "AOF replay apply error (entry no-ops)");
+                    }
+                    prepared.apply_lease().advance_sequence(seq);
+                    max_seq = max_seq.max(seq);
+                    break;
+                }
+                Err(mut reprice) => {
+                    let Some(required) = reprice.required else {
+                        return Err(
+                            anyhow::Error::new(reprice.error).context("prepare AOF replay record")
+                        );
+                    };
+                    // `begin_admitted_record` dropped its apply lease before it
+                    // returned repricing ownership. Only missing normalized or
+                    // staged bytes wait here; the decoded entry remains charged.
+                    let grown = match reprice.reservation.try_grow_to(required) {
+                        Err(crate::change_budget::AdmissionError::Full { .. }) => {
+                            engine.request_pending_checkpoint();
+                            reprice.reservation.wait_grow_to(required)
+                        }
+                        result => result,
+                    };
+                    grown
+                        .map_err(crate::storage::RecordAdmissionError::Capacity)
+                        .context("wait for AOF replay repricing")?;
+                    entry = reprice.entry;
+                    reservation = reprice.reservation;
+                }
+            }
+        }
+    }
+    Ok(max_seq)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::collections::VecDeque;
 
     #[test]
     fn open_uses_always_fsync_by_default() {
@@ -274,11 +527,17 @@ mod tests {
         writer.sync_strict().unwrap();
         assert_eq!(AofReader::replay(&path, 0, |_, _| {}).unwrap(), 1);
     }
+    use crate::change_budget::ChangeBudget;
     use crate::log_entry::RaftLogEntry;
+    use crate::segment_rdb::SegmentRdbStore;
+    use crate::storage::Engine;
     use crate::types::{
         CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
+        MatchOp, MatchQuery, QueryNode, SearchRequest, TermQuery,
     };
     use std::collections::BTreeMap;
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
 
     fn create_entry(coll: &str) -> RaftLogEntry {
         RaftLogEntry::CreateCollection {
@@ -331,6 +590,667 @@ mod tests {
     }
 
     #[test]
+    fn replay_reserves_capacity_before_decoding_a_complete_frame() {
+        use crate::change_budget::ChangeBudget;
+        use crate::storage::Engine;
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use std::time::{Duration, Instant};
+
+        const LIMIT: usize = 4 * 1024 * 1024;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aof.log");
+        let budget = ChangeBudget::with_hard_limit(LIMIT);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.apply_raft_entry(create_entry("u")).unwrap();
+        {
+            let mut writer = AofWriter::open(&path).unwrap();
+            writer
+                .append(1, &rec(index_entry("u", "id", &"x".repeat(512 * 1024))))
+                .unwrap();
+            writer.sync().unwrap();
+        }
+        let owner = budget.owner();
+        let filler = owner.try_reserve(LIMIT - budget.snapshot().total).unwrap();
+        let decodes = Arc::new(AtomicUsize::new(0));
+        let replay_engine = engine.clone();
+        let replay_decodes = decodes.clone();
+        let replay = std::thread::spawn(move || {
+            replay_aof_into_observed(&replay_engine, &path, 0, || {
+                replay_decodes.fetch_add(1, Ordering::SeqCst);
+            })
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !budget.has_capacity_waiters() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let waited = budget.has_capacity_waiters();
+        let before_capacity = decodes.load(Ordering::SeqCst);
+        // Always release the real budget owner and join replay before assertions.
+        drop(filler);
+        let completed = replay.join().unwrap().unwrap();
+        assert!(waited, "replay must reach a real capacity wait");
+        assert_eq!(
+            before_capacity, 0,
+            "AOF decoded a frame before pending capacity was reserved"
+        );
+        assert_eq!(completed, 1);
+        assert_eq!(decodes.load(Ordering::SeqCst), 1);
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    /// Write a valid frame whose payload is not a Lumen WAL record between two
+    /// ordinary AOF records. `FramedLogCursor` can read all three frames only
+    /// after it has checked each complete payload length and CRC.
+    fn complete_crc_valid_malformed_middle(path: &Path) {
+        {
+            let mut writer = AofWriter::open_with_policy(path, FsyncPolicy::Always).unwrap();
+            writer.append(1, &rec(create_entry("u"))).unwrap();
+            writer.sync().unwrap();
+        }
+        {
+            let mut writer = FramedLogWriter::open(path, FsyncPolicy::Always).unwrap();
+            writer.append(2, b"not a Lumen WAL record").unwrap();
+            writer.sync().unwrap();
+        }
+        {
+            let mut writer = AofWriter::open_with_policy(path, FsyncPolicy::Always).unwrap();
+            writer
+                .append(
+                    3,
+                    &rec(index_entry("u", "after-malformed", "must-not-apply")),
+                )
+                .unwrap();
+            writer.sync().unwrap();
+        }
+    }
+
+    #[test]
+    fn reader_rejects_complete_crc_valid_malformed_middle_frame_without_visiting_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("complete-malformed-middle.aof");
+        complete_crc_valid_malformed_middle(&path);
+
+        let mut cursor = FramedLogCursor::open(&path).unwrap();
+        let first = cursor.next_frame().unwrap().unwrap();
+        let middle = cursor.next_frame().unwrap().unwrap();
+        let suffix = cursor.next_frame().unwrap().unwrap();
+        assert_eq!((first.seq, middle.seq, suffix.seq), (1, 2, 3));
+        assert!(decode_payload(&middle.payload).is_err());
+        assert!(cursor.next_frame().unwrap().is_none());
+
+        let mut visited = Vec::new();
+        assert!(AofReader::replay(&path, 0, |seq, _| visited.push(seq)).is_err());
+        assert_eq!(visited, vec![1]);
+    }
+
+    #[test]
+    fn engine_replay_rejects_complete_crc_valid_malformed_middle_frame_at_prefix_watermark() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("complete-malformed-middle.aof");
+        complete_crc_valid_malformed_middle(&path);
+        let engine = Arc::new(Engine::new());
+
+        assert!(replay_aof_into(&engine, &path, 0).is_err());
+        let capture = engine.capture_barrier.capture(0).unwrap();
+        assert_eq!(capture.stamp().sequence, 1);
+        drop(capture);
+        assert_eq!(
+            engine
+                .search("u", term_query("email", "must-not-apply"))
+                .unwrap()
+                .total,
+            0
+        );
+    }
+
+    #[test]
+    fn replay_does_not_fetch_frame_two_before_applying_frame_one() {
+        let frames = std::cell::RefCell::new(VecDeque::from([
+            LogFrame {
+                seq: 1,
+                payload: encode_payload(&rec(create_entry("u"))).unwrap(),
+            },
+            LogFrame {
+                seq: 2,
+                payload: encode_payload(&rec(index_entry("u", "u1", "a@x"))).unwrap(),
+            },
+        ]));
+        let polls = Cell::new(0usize);
+        let mut applied = Vec::new();
+
+        let max = replay_frames(
+            0,
+            || {
+                polls.set(polls.get() + 1);
+                Ok(frames.borrow_mut().pop_front())
+            },
+            |seq, _| {
+                if seq == 1 {
+                    assert_eq!(
+                        polls.get(),
+                        1,
+                        "frame two must stay unread until frame one applies"
+                    );
+                }
+                applied.push(seq);
+            },
+        )
+        .unwrap();
+
+        assert_eq!(applied, vec![1, 2]);
+        assert_eq!(max, 2);
+    }
+
+    fn term_query(field: &str, value: &str) -> SearchRequest {
+        SearchRequest {
+            query: QueryNode::Term(TermQuery {
+                field: field.into(),
+                value: FieldValue::String(value.into()),
+            }),
+            limit: 10,
+            offset: 0,
+            cursor: None,
+            routing_key: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        }
+    }
+
+    fn text_match_query(field: &str, text: &str) -> SearchRequest {
+        SearchRequest {
+            query: QueryNode::Match(MatchQuery {
+                field: field.into(),
+                text: text.into(),
+                op: MatchOp::And,
+            }),
+            limit: 10,
+            offset: 0,
+            cursor: None,
+            routing_key: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        }
+    }
+
+    #[test]
+    fn replay_full_waits_for_real_checkpoint_then_replays_and_cold_recovers() {
+        // Deliberately below CHECKPOINT_TRIGGER: replay itself must request a
+        // checkpoint before its blocking reprice/wait, rather than depending on
+        // the soft trigger.
+        const HARD: usize = 64 * 1024;
+        let budget = ChangeBudget::with_hard_limit(HARD);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let RaftLogEntry::CreateCollection { req, .. } = create_entry("u") else {
+            unreachable!()
+        };
+        engine.create_collection("u", req).unwrap();
+        engine
+            .index(
+                "u",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "filler".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("x".repeat(12 * 1024)),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        let entry = index_entry("u", "replayed", "after-checkpoint");
+        let record = rec(entry);
+        let payload = encode_payload(&record).unwrap();
+        let raw = Engine::record_owned_bytes(&record.entry).unwrap();
+        let active = budget.snapshot().total;
+        let needed = raw.checked_add(payload.len()).unwrap();
+        assert!(
+            active + needed < HARD,
+            "fixture must leave a reservable record"
+        );
+        let held = budget
+            .owner()
+            .try_reserve(HARD - active - needed + 1)
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let aof = dir.path().join("replay.aof");
+        let mut writer = AofWriter::open(&aof).unwrap();
+        writer.append(1, &record).unwrap();
+        writer.sync().unwrap();
+        let before = std::fs::read(&aof).unwrap();
+        let wake = budget.checkpoint_wake();
+        let observed = wake.epoch();
+        let (done_tx, done_rx) = mpsc::channel();
+        let replay_engine = engine.clone();
+        let replay_path = aof.clone();
+        std::thread::spawn(move || {
+            done_tx
+                .send(replay_aof_into(&replay_engine, replay_path, 0))
+                .unwrap();
+        });
+
+        assert!(
+            wake.wait_for_change_timeout(observed, Duration::from_secs(2)),
+            "a full replay record must request a checkpoint before waiting"
+        );
+        assert!(
+            done_rx.try_recv().is_err(),
+            "replay must not apply before capacity releases"
+        );
+        assert_eq!(
+            engine
+                .search("u", term_query("email", "after-checkpoint"))
+                .unwrap()
+                .total,
+            0
+        );
+
+        let store = SegmentRdbStore::new(dir.path().join("segments")).unwrap();
+        store.save(&engine, 0).unwrap();
+        assert_eq!(
+            store.load_latest().unwrap().unwrap().1,
+            0,
+            "the blocked frame must not advance the checkpoint watermark"
+        );
+        assert_eq!(
+            std::fs::read(&aof).unwrap(),
+            before,
+            "waiting never rewrites the AOF"
+        );
+        assert_eq!(
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            engine
+                .search("u", term_query("email", "after-checkpoint"))
+                .unwrap()
+                .total,
+            1
+        );
+
+        store.save(&engine, 1).unwrap();
+        let (cold, sequence) = store.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 1);
+        assert_eq!(
+            cold.search("u", term_query("email", "after-checkpoint"))
+                .unwrap()
+                .total,
+            1
+        );
+        drop(held);
+    }
+
+    // Insert inside the existing `#[cfg(test)] mod tests` in apps/lumen/src/aof.rs,
+    // after `replay_full_waits_for_real_checkpoint_then_replays_and_cold_recovers`.
+    // It uses that module's existing imports and helpers: `ChangeBudget`, `Engine`,
+    // `AofWriter`, `SegmentRdbStore`, `create_entry`, `index_entry`, `rec`, and
+    // `term_query`.
+
+    #[test]
+    fn public_replay_full_checkpointable_work_starts_its_own_capacity_maintainer() {
+        const HARD: usize = 64 * 1024;
+        let budget = ChangeBudget::with_hard_limit(HARD);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let RaftLogEntry::CreateCollection { req, .. } = create_entry("u") else {
+            unreachable!()
+        };
+        engine.create_collection("u", req).unwrap();
+        engine
+            .index(
+                "u",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "checkpointable".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("x".repeat(12 * 1024)),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        let record = rec(index_entry("u", "replayed", "after-capacity-release"));
+        let payload = encode_payload(&record).unwrap();
+        let workspace = crate::wal_wire_cost::scan_workspace_bound(&payload).unwrap();
+        let raw = Engine::record_owned_bytes(&record.entry).unwrap();
+        let crate::change_record_cost::RecordEstimate::Ready(cost) =
+            engine.estimate_record_cost(&record.entry)
+        else {
+            panic!("known Keyword fixture must have a normalized cost")
+        };
+        let normalized = raw + cost.active + cost.frozen + cost.prepublish;
+        let active = budget.snapshot().total;
+        assert!(active + workspace < HARD, "fixture scanner must fit after publication");
+        let held_bytes = HARD - active - workspace + 1;
+        let held = budget.owner().try_reserve(held_bytes).unwrap();
+        let available = HARD - budget.snapshot().total;
+        assert!(available < workspace, "fixture must block initial scanner admission");
+        assert!(
+            held_bytes + workspace <= HARD,
+            "held charge and scanner workspace must fit after publication"
+        );
+        assert!(
+            held_bytes + normalized <= HARD,
+            "held charge and completed normalized record must fit after publication"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("standalone-progress.aof");
+        let mut writer = AofWriter::open(&path).unwrap();
+        writer.append(1, &record).unwrap();
+        writer.sync().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let replay_engine = engine.clone();
+        std::thread::spawn(move || {
+            done_tx.send(replay_aof_into(&replay_engine, path, 0)).unwrap();
+        });
+
+        match done_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(result) => assert_eq!(result.unwrap(), 1),
+            Err(timeout) => {
+                // Cleanup only. The public replay is required to have arranged this
+                // publication itself before the deadline above.
+                let store = SegmentRdbStore::new(dir.path().join("cleanup-segments")).unwrap();
+                store.save(&engine, 0).unwrap();
+                assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 1);
+                panic!("public replay did not start independent capacity maintenance: {timeout}");
+            }
+        }
+        assert_eq!(
+            engine.search("u", term_query("email", "after-capacity-release")).unwrap().total,
+            1
+        );
+        drop(held);
+    }
+
+    #[test]
+    fn public_replay_growth_wait_starts_its_own_capacity_maintainer() {
+        const HARD: usize = 256 * 1024;
+        let budget = ChangeBudget::with_hard_limit(HARD);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let RaftLogEntry::CreateCollection { req, .. } = create_entry("u") else {
+            unreachable!()
+        };
+        engine.create_collection("u", req).unwrap();
+        engine
+            .index(
+                "u",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "checkpointable".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("x".repeat(12 * 1024)),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        let keyword = FieldSpec {
+            field_type: FieldType::Keyword,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        };
+        let fields = (0..8)
+            .map(|ordinal| (format!("field-{ordinal:03}"), keyword.clone()))
+            .collect();
+        let record = rec(RaftLogEntry::CreateCollection {
+            collection_id: "growth-created".into(),
+            req: CreateCollectionRequest { fields },
+        });
+        let payload = encode_payload(&record).unwrap();
+        let workspace = crate::wal_wire_cost::scan_workspace_bound(&payload).unwrap();
+        let decoded = crate::wal_wire_cost::decoded_peak_bound(&payload).unwrap();
+        assert!(workspace < decoded, "fixture must pass scanner reserve before decoded growth");
+        let raw = Engine::record_owned_bytes(&record.entry).unwrap();
+        let crate::change_record_cost::RecordEstimate::Ready(cost) =
+            engine.estimate_record_cost(&record.entry)
+        else {
+            panic!("CreateCollection fixture must have a normalized cost")
+        };
+        let normalized = raw + cost.active + cost.frozen + cost.prepublish;
+        let active = budget.snapshot().total;
+        assert!(active + decoded < HARD, "fixture decoded record must fit after publication");
+        let held_bytes = HARD - active - decoded + 1;
+        let held = budget.owner().try_reserve(held_bytes).unwrap();
+        let available = HARD - budget.snapshot().total;
+        assert!(workspace <= available, "fixture scanner reserve must fit");
+        assert!(available < decoded, "fixture must block only decoded growth");
+        assert!(
+            held_bytes + normalized <= HARD,
+            "held charge and completed normalized record must fit after publication"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("standalone-growth.aof");
+        let mut writer = AofWriter::open(&path).unwrap();
+        writer.append(1, &record).unwrap();
+        writer.sync().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let replay_engine = engine.clone();
+        std::thread::spawn(move || {
+            done_tx.send(replay_aof_into(&replay_engine, path, 0)).unwrap();
+        });
+
+        match done_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(result) => assert_eq!(result.unwrap(), 1),
+            Err(timeout) => {
+                let store = SegmentRdbStore::new(dir.path().join("cleanup-segments")).unwrap();
+                store.save(&engine, 0).unwrap();
+                assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 1);
+                panic!("public replay decoded-growth wait had no capacity maintainer: {timeout}");
+            }
+        }
+        assert!(engine.list_collections().unwrap().contains(&"growth-created".to_owned()));
+        drop(held);
+    }
+
+    #[test]
+    fn public_replay_does_not_checkpoint_reserved_only_capacity_pressure() {
+        const HARD: usize = 64 * 1024;
+        let budget = ChangeBudget::with_hard_limit(HARD);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let RaftLogEntry::CreateCollection { req, .. } = create_entry("u") else {
+            unreachable!()
+        };
+        engine.create_collection("u", req).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let baseline = SegmentRdbStore::new(dir.path().join("baseline-segments")).unwrap();
+        baseline.save(&engine, 0).unwrap();
+        assert_eq!(budget.snapshot().total, 0, "baseline checkpoint must release schema setup work");
+        let record = rec(index_entry("u", "replayed", "after-reservation-release"));
+        let payload = encode_payload(&record).unwrap();
+        let workspace = crate::wal_wire_cost::scan_workspace_bound(&payload).unwrap();
+        let decoded = crate::wal_wire_cost::decoded_peak_bound(&payload).unwrap();
+        assert!(workspace > 0, "fixture must have scanner admission work");
+        assert!(decoded < HARD, "fixture must be fitting, rather than oversized");
+        let held = budget.owner().try_reserve(HARD - workspace + 1).unwrap();
+        let checkpoints_before = engine.metrics().segment_checkpoint_completed_total.get();
+
+        let path = dir.path().join("reserved-only.aof");
+        let mut writer = AofWriter::open(&path).unwrap();
+        writer.append(1, &record).unwrap();
+        writer.sync().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let replay_engine = engine.clone();
+        std::thread::spawn(move || {
+            done_tx.send(replay_aof_into(&replay_engine, path, 0)).unwrap();
+        });
+
+        let waiter_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !budget.has_capacity_waiters() && std::time::Instant::now() < waiter_deadline {
+            std::thread::yield_now();
+        }
+        assert!(budget.has_capacity_waiters(), "replay must reach the real initial reservation wait");
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "reserved-only capacity must not be treated as checkpointable progress"
+        );
+        assert_eq!(
+            engine.metrics().segment_checkpoint_completed_total.get(),
+            checkpoints_before,
+            "reserved-only pressure must not publish a pointless checkpoint"
+        );
+        drop(held);
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 1);
+        assert_eq!(
+            engine
+                .search("u", term_query("email", "after-reservation-release"))
+                .unwrap()
+                .total,
+            1
+        );
+    }
+    #[test]
+    fn replay_reprice_with_free_capacity_does_not_request_checkpoint() {
+        let budget = ChangeBudget::with_hard_limit(64 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.apply_raft_entry(create_entry("u")).unwrap();
+        let RaftLogEntry::Index { req, .. } = index_entry("u", "existing", "kept") else {
+            unreachable!()
+        };
+        engine.index("u", req).unwrap();
+        assert!(
+            budget.snapshot().active > 0,
+            "fixture needs checkpointable preceding work"
+        );
+        let value = "a".repeat(2048);
+        let record = rec(index_entry("u", "replayed", &value));
+        let raw = Engine::record_owned_bytes(&record.entry).unwrap();
+        let crate::change_record_cost::RecordEstimate::Ready(cost) =
+            engine.estimate_record_cost(&record.entry)
+        else {
+            panic!("Keyword fixture must have a known normalized cost")
+        };
+        let normalized = raw + cost.active + cost.frozen + cost.prepublish;
+        assert!(normalized > raw, "fixture must need normalized repricing");
+        assert!(budget.snapshot().total + normalized < 64 * 1024);
+        let before = budget.snapshot().checkpoint_request_revision;
+        assert_eq!(before, None);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reprice-with-room.aof");
+        let mut writer = AofWriter::open(&path).unwrap();
+        writer.append(1, &record).unwrap();
+        writer.sync().unwrap();
+        assert_eq!(replay_aof_into(&engine, &path, 0).unwrap(), 1);
+        assert_eq!(
+            engine
+                .search("u", term_query("email", &value))
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            budget.snapshot().checkpoint_request_revision,
+            before,
+            "repricing that fits must not force a checkpoint of the preceding record"
+        );
+    }
+
+    #[test]
+    fn replay_reprice_error_keeps_failed_frame_and_watermark() {
+        // This is deliberately an unresolved oversized prepared-Text record.
+        // The ordinary replay route must return Err before it mutates or
+        // advances, rather than using the old uncharged apply fallback.
+        let budget = ChangeBudget::with_hard_limit(64 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget));
+        engine
+            .create_collection(
+                "text",
+                CreateCollectionRequest {
+                    fields: BTreeMap::from([(
+                        "body".into(),
+                        FieldSpec {
+                            field_type: FieldType::Text,
+                            analyzer: Some(crate::types::Analyzer::Ngram),
+                            multi: None,
+                            dim: None,
+                            metric: None,
+                            backend: None,
+                            quantize: None,
+                        },
+                    )]),
+                },
+            )
+            .unwrap();
+        // Repetitions now admit their distinct terms. Keep this refusal
+        // fixture truly oversized even when its terms are priced exactly.
+        let value = format!("ab{}", (0x4e00..0x4e00 + 512)
+            .map(|scalar| char::from_u32(scalar).unwrap()).collect::<String>());
+        let mut distinct = std::collections::BTreeSet::new();
+        crate::ngram_stream::stream_default_ngrams(&value, |token| {
+            distinct.insert(token.to_owned());
+            Ok::<_, ()>(())
+        }).unwrap();
+        let normalized = crate::change_memory_cost::estimate_change(
+            &crate::change_memory_cost::Change::Index {
+                external_id_bytes: "not-applied".len(),
+                new_document: true,
+                field: crate::change_memory_cost::FieldCost::Text {
+                    distinct_terms: distinct.len(),
+                    total_term_bytes: distinct.iter().map(String::len).sum(),
+                },
+                volatile_metadata_bytes: 0,
+            },
+        ).unwrap();
+        assert!(normalized.total() > 64 * 1024,
+            "distinct normalized data must exceed this test's budget before raw transport is added");
+        let record = rec(RaftLogEntry::Index {
+            collection_id: "text".into(),
+            req: IndexRequest {
+                items: vec![IndexItem {
+                    external_id: "not-applied".into(),
+                    field: "body".into(),
+                    value: FieldValue::String(value),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let aof = dir.path().join("reprice.aof");
+        let mut writer = AofWriter::open(&aof).unwrap();
+        writer.append(1, &record).unwrap();
+        writer.sync().unwrap();
+        let before = std::fs::read(&aof).unwrap();
+
+        assert!(replay_aof_into(&engine, &aof, 0).is_err());
+        assert_eq!(
+            std::fs::read(&aof).unwrap(),
+            before,
+            "failed replay preserves its source"
+        );
+        assert_eq!(
+            engine
+                .search("text", text_match_query("body", "ab"))
+                .unwrap()
+                .total,
+            0
+        );
+        let store = SegmentRdbStore::new(dir.path().join("segments")).unwrap();
+        store.save(&engine, 0).unwrap();
+        assert_eq!(store.load_latest().unwrap().unwrap().1, 0);
+        assert_eq!(
+            AofReader::replay(&aof, 0, |seq, _| assert_eq!(seq, 1)).unwrap(),
+            1
+        );
+    }
+
+    #[test]
     fn append_then_replay_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.aof");
@@ -352,6 +1272,55 @@ mod tests {
         assert_eq!(seqs, vec![1, 2, 3]);
         assert_eq!(max, 3);
         assert_eq!(kinds, vec![true, false, false]);
+    }
+
+    #[test]
+    fn append_raw_payload_keeps_the_validated_wire_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("raw.aof");
+        let payload = rec(index_entry("u", "u1", "raw@x")).encode().unwrap();
+        let mut writer = AofWriter::open(&path).unwrap();
+        writer.append_raw_payload(9, &payload).unwrap();
+        writer.sync().unwrap();
+        let mut cursor = FramedLogCursor::open(&path).unwrap();
+        let frame = cursor.next_frame().unwrap().unwrap();
+        assert_eq!(frame.seq, 9);
+        assert_eq!(frame.payload, payload);
+    }
+
+    #[test]
+    fn append_raw_payload_uses_the_existing_storage_full_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("raw-refusal.aof");
+        let payload = rec(index_entry("u", "u1", "raw@x")).encode().unwrap();
+        let mut writer = AofWriter::open(&path).unwrap();
+        writer.set_inject_storage_full(true);
+        assert!(writer.append_raw_payload(1, &payload).is_err());
+        writer.set_inject_storage_full(false);
+        assert_eq!(AofReader::replay(&path, 0, |_, _| {}).unwrap(), 0);
+    }
+
+    #[test]
+    fn replay_non_fast_record_uses_the_legacy_decode_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.aof");
+        let mut writer = AofWriter::open(&path).unwrap();
+        let record = WalRecord {
+            version: crate::wal::WAL_FORMAT_VERSION,
+            entry: RaftLogEntry::DropCollection {
+                collection_id: "missing".into(),
+                force: true,
+            },
+        };
+        writer.append(1, &record).unwrap();
+        writer.sync().unwrap();
+        let engine = Arc::new(Engine::new());
+        let decoded = Cell::new(0);
+        assert_eq!(
+            replay_aof_into_observed(&engine, &path, 0, || decoded.set(decoded.get() + 1)).unwrap(),
+            1
+        );
+        assert_eq!(decoded.get(), 1);
     }
 
     #[test]
@@ -389,6 +1358,30 @@ mod tests {
         w.append(7, &rec(index_entry("u", "u7", "x@y"))).unwrap();
         w.sync().unwrap();
         assert_eq!(replay_seqs(&path, 0), vec![5, 6, 7]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_phase_trim_wrapper_retains_the_late_suffix_and_busy_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("two-phase.aof");
+        let mut writer = AofWriter::open_with_policy(&path, FsyncPolicy::Always).unwrap();
+        writer
+            .append(1, &rec(index_entry("u", "covered", "one@example.test")))
+            .unwrap();
+        writer
+            .append(2, &rec(index_entry("u", "retained", "two@example.test")))
+            .unwrap();
+
+        let mut plan = writer.begin_trim(1).unwrap();
+        assert!(writer.begin_trim(1).is_err(), "an active plan must stay owned");
+        plan.copy_stable_prefix().unwrap();
+        writer
+            .append(3, &rec(index_entry("u", "late", "three@example.test")))
+            .unwrap();
+        writer.finish_trim(plan).unwrap();
+
+        assert_eq!(replay_seqs(&path, 0), vec![2, 3]);
     }
 
     #[test]
@@ -942,3 +1935,18 @@ mod crux_recovery_tests {
     }
 }
 // CODEGEN-END
+
+// Candidate AOF red tests to place in `aof::tests` after the cursor seam lands:
+//
+// 1. replay_admission_waits_before_mutating_or_advancing:
+//    create a budget-limited Engine, retain a checkpointable record charge to
+//    fill its budget, append the next create/index frame, and start replay on a
+//    thread. Assert the query and capture sequence remain at the prefix while
+//    the replay thread blocks. Drive the independent checkpoint, join replay,
+//    then assert the new document and its exact sequence are present after cold
+//    reopen.
+//
+// 2. replay_preparation_error_keeps_frame_and_watermark:
+//    arrange a record whose admitted prepared-text staging fails through the
+//    existing test failure seam. Assert replay returns Err, its sequence stays
+//    at the prefix, and a second AOF reader still returns that same frame.

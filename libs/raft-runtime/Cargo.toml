@@ -73,6 +73,10 @@ name = "snapshot_at_index"
 path = "e2e/snapshot_at_index.rs"
 
 [[test]]
+name = "snapshot_preflight_release"
+path = "e2e/snapshot_preflight_release.rs"
+
+[[test]]
 name = "snapshot_install_safety"
 path = "e2e/snapshot_install_safety.rs"
 
@@ -143,6 +147,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 crc32fast = "1"
+memmap2 = "0.9"
 tokio = { workspace = true }
 tracing = { workspace = true }
 rustls = "0.23"

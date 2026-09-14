@@ -7,14 +7,16 @@
 //! node's outbox, so no vote or ack is sent before the decision that produced it
 //! is durable. (Lifted from lumen/relay's identical `raft_store`.)
 
+use std::collections::BTreeMap;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex,
+    Arc, Mutex,
 };
 
+use memmap2::{Mmap, MmapOptions};
 use raft_core::{
     ConfState, EntryKind, Index, NodeId, PersistedState, PersistedStateRef, RaftEntry, Term,
 };
@@ -40,10 +42,29 @@ struct LogLayout {
     last_entry_digest: [u8; 32],
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CommandFrame {
+    index: Index,
+    term: Term,
+    kind: EntryKind,
+    payload_offset: u64,
+    payload_len: u64,
+    payload_crc: u32,
+    command_offset: u64,
+    command_len: u64,
+}
+
+#[derive(Clone)]
+struct PublishedLog {
+    layout: LogLayout,
+    commands: BTreeMap<(Index, Term), CommandFrame>,
+}
+
 #[derive(Default)]
 struct StoreCache {
     hard_digest: Option<[u8; 32]>,
-    log: Option<LogLayout>,
+    log: Option<PublishedLog>,
+    commit_index: Index,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -56,12 +77,112 @@ pub struct PersistenceStats {
 pub struct RaftStore {
     path: PathBuf,
     fsync: FsyncPolicy,
+    io_serial: Mutex<()>,
     cache: Mutex<StoreCache>,
+    pinned_log_generations: Arc<Mutex<BTreeMap<[u8; 32], usize>>>,
     log_bytes_appended: AtomicU64,
     log_bytes_rewritten: AtomicU64,
     injected_save_failure: Mutex<Option<io::ErrorKind>>,
     injected_after_artifact_failure: Mutex<Option<io::ErrorKind>>,
     injected_after_publish_failure: Mutex<Option<io::ErrorKind>>,
+    #[cfg(test)]
+    load_after_state_read_hook: Mutex<Option<LoadAfterStateReadHook>>,
+}
+
+#[cfg(test)]
+struct LoadAfterStateReadHook {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+/// A generation-pinned identity for one committed command. The pin is created
+/// while a host still holds its Raft-node mutex; a later implementation maps
+/// and validates the exact durable frame after that mutex is released.
+pub struct CommittedCommandPin {
+    generation: GenerationPin,
+    frame: CommandFrame,
+}
+
+/// Read-only bytes for one durable Raft command.
+pub struct CommittedCommandLease {
+    map: Mmap,
+    command_start: usize,
+    command_end: usize,
+    _generation: GenerationPin,
+}
+
+struct GenerationPin {
+    generation: [u8; 32],
+    path: PathBuf,
+    byte_len: u64,
+    pins: Arc<Mutex<BTreeMap<[u8; 32], usize>>>,
+}
+
+impl CommittedCommandLease {
+    /// The exact command payload from the pinned durable frame.
+    pub fn command(&self) -> &[u8] {
+        &self.map[self.command_start..self.command_end]
+    }
+}
+
+impl CommittedCommandPin {
+    /// Map and validate the pinned artifact outside the host node mutex.
+    pub fn map(self) -> io::Result<CommittedCommandLease> {
+        let file = OpenOptions::new().read(true).open(&self.generation.path)?;
+        let actual_len = file.metadata()?.len();
+        if actual_len < self.generation.byte_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "pinned Raft log artifact is truncated",
+            ));
+        }
+        let mapped_len = usize::try_from(self.generation.byte_len).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Raft log artifact exceeds address space",
+            )
+        })?;
+        let map =
+            unsafe { MmapOptions::new().len(mapped_len).map(&file) }.map_err(io::Error::other)?;
+        validate_pinned_frame(&map, self.frame)?;
+        let command_start = usize::try_from(self.frame.command_offset).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Raft command offset overflow")
+        })?;
+        let command_len = usize::try_from(self.frame.command_len).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Raft command length overflow")
+        })?;
+        let command_end = command_start.checked_add(command_len).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Raft command range overflow")
+        })?;
+        if command_end > map.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "pinned Raft command is truncated",
+            ));
+        }
+        Ok(CommittedCommandLease {
+            map,
+            command_start,
+            command_end,
+            _generation: self.generation,
+        })
+    }
+}
+
+impl Drop for GenerationPin {
+    fn drop(&mut self) {
+        let mut pins = self
+            .pins
+            .lock()
+            .expect("pinned log generations mutex poisoned");
+        let count = pins
+            .get_mut(&self.generation)
+            .expect("generation pin missing from registry");
+        *count -= 1;
+        if *count == 0 {
+            pins.remove(&self.generation);
+        }
+    }
 }
 
 fn migration_file_digest(path: &Path) -> io::Result<[u8; 32]> {
@@ -190,12 +311,16 @@ impl RaftStore {
         Ok(RaftStore {
             path: dir.join(filename),
             fsync,
+            io_serial: Mutex::new(()),
             cache: Mutex::new(StoreCache::default()),
+            pinned_log_generations: Arc::new(Mutex::new(BTreeMap::new())),
             log_bytes_appended: AtomicU64::new(0),
             log_bytes_rewritten: AtomicU64::new(0),
             injected_save_failure: Mutex::new(None),
             injected_after_artifact_failure: Mutex::new(None),
             injected_after_publish_failure: Mutex::new(None),
+            #[cfg(test)]
+            load_after_state_read_hook: Mutex::new(None),
         })
     }
 
@@ -238,12 +363,16 @@ impl RaftStore {
         let legacy_store = RaftStore {
             path: legacy_path.clone(),
             fsync,
+            io_serial: Mutex::new(()),
             cache: Mutex::new(StoreCache::default()),
+            pinned_log_generations: Arc::new(Mutex::new(BTreeMap::new())),
             log_bytes_appended: AtomicU64::new(0),
             log_bytes_rewritten: AtomicU64::new(0),
             injected_save_failure: Mutex::new(None),
             injected_after_artifact_failure: Mutex::new(None),
             injected_after_publish_failure: Mutex::new(None),
+            #[cfg(test)]
+            load_after_state_read_hook: Mutex::new(None),
         };
 
         // Read the hard state before inspecting a possible target. A target
@@ -283,12 +412,16 @@ impl RaftStore {
         let target_store = RaftStore {
             path: target_path.clone(),
             fsync,
+            io_serial: Mutex::new(()),
             cache: Mutex::new(StoreCache::default()),
+            pinned_log_generations: Arc::new(Mutex::new(BTreeMap::new())),
             log_bytes_appended: AtomicU64::new(0),
             log_bytes_rewritten: AtomicU64::new(0),
             injected_save_failure: Mutex::new(None),
             injected_after_artifact_failure: Mutex::new(None),
             injected_after_publish_failure: Mutex::new(None),
+            #[cfg(test)]
+            load_after_state_read_hook: Mutex::new(None),
         };
 
         if target_path.exists() {
@@ -350,6 +483,32 @@ impl RaftStore {
             .injected_after_publish_failure
             .lock()
             .expect("injected_after_publish_failure mutex poisoned") = Some(kind);
+    }
+
+    #[cfg(test)]
+    fn pause_next_load_after_state_read(
+        &self,
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        *self
+            .load_after_state_read_hook
+            .lock()
+            .expect("load_after_state_read_hook mutex poisoned") =
+            Some(LoadAfterStateReadHook { entered, release });
+    }
+
+    #[cfg(test)]
+    fn wait_after_load_state_read(&self) {
+        let hook = self
+            .load_after_state_read_hook
+            .lock()
+            .expect("load_after_state_read_hook mutex poisoned")
+            .take();
+        if let Some(hook) = hook {
+            let _ = hook.entered.send(());
+            let _ = hook.release.recv();
+        }
     }
 
     /// Access the file path of this store.
@@ -418,6 +577,7 @@ impl RaftStore {
                     if name.starts_with(&prefix)
                         && name.ends_with(".artifact")
                         && current_artifact.map_or(true, |current| current != path.as_path())
+                        && !self.log_artifact_is_pinned(&path)
                     {
                         let _ = std::fs::remove_file(&path);
                     }
@@ -425,6 +585,14 @@ impl RaftStore {
             }
         }
         Ok(())
+    }
+
+    fn log_artifact_is_pinned(&self, path: &Path) -> bool {
+        self.pinned_log_generations
+            .lock()
+            .expect("pinned log generations mutex poisoned")
+            .keys()
+            .any(|generation| self.log_artifact_path(generation) == path)
     }
 
     fn read_snapshot_artifact(
@@ -488,6 +656,57 @@ impl RaftStore {
         }
     }
 
+    /// Pin the published durable generation for exactly one committed command.
+    ///
+    /// This copies only frame metadata while the cache lock is held. The file
+    /// is opened and mapped later by [`CommittedCommandPin::map`].
+    pub fn pin_committed_command(
+        &self,
+        index: Index,
+        term: Term,
+    ) -> io::Result<CommittedCommandPin> {
+        let cache = self.cache.lock().expect("raft store cache poisoned");
+        if index > cache.commit_index {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "requested Raft command is not committed",
+            ));
+        }
+        let published = cache.log.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no published Raft log artifact",
+            )
+        })?;
+        let frame = *published.commands.get(&(index, term)).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "requested Raft command identity is not published",
+            )
+        })?;
+        if frame.kind != EntryKind::Command {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "requested Raft identity is not a command",
+            ));
+        }
+        let generation = published.layout.generation;
+        let mut pins = self
+            .pinned_log_generations
+            .lock()
+            .expect("pinned log generations mutex poisoned");
+        *pins.entry(generation).or_default() += 1;
+        Ok(CommittedCommandPin {
+            generation: GenerationPin {
+                generation,
+                path: self.log_artifact_path(&generation),
+                byte_len: published.layout.byte_len,
+                pins: Arc::clone(&self.pinned_log_generations),
+            },
+            frame,
+        })
+    }
+
     /// Durably persist the hard state (atomic temp-write + rename, fsync unless
     /// [`FsyncPolicy::Os`]).
     pub fn save(&self, state: &PersistedState) -> io::Result<()> {
@@ -505,9 +724,15 @@ impl RaftStore {
 
     /// Persist borrowed state without cloning the resident Raft log.
     pub fn save_ref(&self, state: &PersistedStateRef<'_>) -> io::Result<()> {
+        let _io_serial = self
+            .io_serial
+            .lock()
+            .expect("raft store I/O mutex poisoned");
         let mut cache = self.cache.lock().expect("raft store cache poisoned");
-        let log_plan = plan_log_write(state, cache.log);
+        let log_plan = plan_log_write(state, cache.log.as_ref().map(|log| log.layout));
         let next_log = log_plan.layout();
+        let frame_update = command_frame_update(&log_plan)?;
+        validate_command_frame_update(&cache, next_log, &frame_update)?;
         let snapshot_digest: [u8; 32] = Sha256::digest(state.snapshot).into();
         let bytes = encode_persisted_state_v4(state, &snapshot_digest, next_log);
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
@@ -555,8 +780,9 @@ impl RaftStore {
 
         storage_durable::atomic_write(&self.path, &bytes, self.fsync).map_err(io::Error::other)?;
 
+        apply_command_frame_update(&mut cache, next_log, frame_update);
         cache.hard_digest = Some(digest);
-        cache.log = next_log;
+        cache.commit_index = state.commit_index;
 
         if let Some(kind) = self
             .injected_after_publish_failure
@@ -620,8 +846,14 @@ impl RaftStore {
 
     /// Load the persisted hard state, or `None` if this node has none yet.
     pub fn load(&self) -> io::Result<Option<PersistedState>> {
+        let _io_serial = self
+            .io_serial
+            .lock()
+            .expect("raft store I/O mutex poisoned");
         match std::fs::read(&self.path) {
             Ok(bytes) => {
+                #[cfg(test)]
+                self.wait_after_load_state_read();
                 let state = self.decode_persisted_state(&bytes)?;
                 let mut cache = self.cache.lock().expect("raft store cache poisoned");
                 if bytes.starts_with(MAGIC_V4) {
@@ -637,7 +869,10 @@ impl RaftStore {
         }
     }
 
-    fn read_log_artifact(&self, layout: LogLayout) -> io::Result<Vec<RaftEntry>> {
+    fn read_log_artifact(
+        &self,
+        layout: LogLayout,
+    ) -> io::Result<(Vec<RaftEntry>, BTreeMap<(Index, Term), CommandFrame>)> {
         if layout.entry_count == 0 || layout.byte_len < LOG_MAGIC_V1.len() as u64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -667,7 +902,9 @@ impl RaftStore {
                 file.sync_all()?;
             }
         }
-        decode_log_artifact(&bytes, layout)
+        let log = decode_log_artifact(&bytes, layout)?;
+        let commands = command_frames_from_artifact(&bytes, layout)?;
+        Ok((log, commands))
     }
 
     fn decode_persisted_state(&self, bytes: &[u8]) -> io::Result<PersistedState> {
@@ -735,11 +972,13 @@ impl RaftStore {
                     "trailing bytes after persisted state",
                 ));
             }
-            let log = match layout {
+            let (log, commands) = match layout {
                 Some(layout) => self.read_log_artifact(layout)?,
-                None => Vec::new(),
+                None => (Vec::new(), BTreeMap::new()),
             };
-            self.cache.lock().expect("raft store cache poisoned").log = layout;
+            let mut cache = self.cache.lock().expect("raft store cache poisoned");
+            cache.log = layout.map(|layout| PublishedLog { layout, commands });
+            cache.commit_index = commit_index;
             Ok(PersistedState {
                 term,
                 voted_for,
@@ -1094,6 +1333,317 @@ fn plan_log_write(state: &PersistedStateRef<'_>, previous: Option<LogLayout>) ->
     }
 }
 
+enum CommandFrameUpdate {
+    Unchanged,
+    Append(Vec<CommandFrame>),
+    Rewrite(BTreeMap<(Index, Term), CommandFrame>),
+    Clear,
+}
+
+fn command_frame_update(plan: &LogWritePlan) -> io::Result<CommandFrameUpdate> {
+    match plan {
+        LogWritePlan::Unchanged(_) => Ok(CommandFrameUpdate::Unchanged),
+        LogWritePlan::Append {
+            previous,
+            next,
+            bytes,
+        } => Ok(CommandFrameUpdate::Append(
+            command_frames_from_encoded(
+                bytes,
+                next.entry_count
+                    .checked_sub(previous.entry_count)
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Raft append entry count underflow",
+                        )
+                    })?,
+                previous.byte_len,
+                false,
+            )?
+            .into_values()
+            .collect(),
+        )),
+        LogWritePlan::Rewrite {
+            next: Some(next),
+            bytes,
+        } => Ok(CommandFrameUpdate::Rewrite(command_frames_from_encoded(
+            bytes,
+            next.entry_count,
+            LOG_MAGIC_V1.len() as u64,
+            true,
+        )?)),
+        LogWritePlan::Rewrite { next: None, .. } => Ok(CommandFrameUpdate::Clear),
+    }
+}
+
+fn apply_command_frame_update(
+    cache: &mut StoreCache,
+    next_log: Option<LogLayout>,
+    update: CommandFrameUpdate,
+) {
+    match update {
+        CommandFrameUpdate::Unchanged => {
+            debug_assert_eq!(cache.log.as_ref().map(|log| log.layout), next_log);
+        }
+        CommandFrameUpdate::Append(frames) => {
+            let published = cache
+                .log
+                .as_mut()
+                .expect("validated append has published Raft command metadata");
+            for frame in frames {
+                let previous = published
+                    .commands
+                    .insert((frame.index, frame.term), frame)
+                    .is_some();
+                debug_assert!(
+                    !previous,
+                    "validated append has distinct command identities"
+                );
+            }
+            published.layout = next_log.expect("validated append has next Raft log layout");
+        }
+        CommandFrameUpdate::Rewrite(commands) => {
+            cache.log = Some(PublishedLog {
+                layout: next_log.expect("validated rewrite has next Raft log layout"),
+                commands,
+            });
+        }
+        CommandFrameUpdate::Clear => cache.log = None,
+    }
+}
+
+fn validate_command_frame_update(
+    cache: &StoreCache,
+    next_log: Option<LogLayout>,
+    update: &CommandFrameUpdate,
+) -> io::Result<()> {
+    match update {
+        CommandFrameUpdate::Unchanged => {
+            if cache.log.as_ref().map(|log| log.layout) != next_log {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unchanged Raft log metadata disagrees with cache",
+                ));
+            }
+        }
+        CommandFrameUpdate::Append(frames) => {
+            let published = cache.log.as_ref().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "append has no published Raft command metadata",
+                )
+            })?;
+            if next_log.is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "append has no next Raft log layout",
+                ));
+            }
+            if frames
+                .iter()
+                .any(|frame| published.commands.contains_key(&(frame.index, frame.term)))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate Raft command identity in log",
+                ));
+            }
+        }
+        CommandFrameUpdate::Rewrite(_) if next_log.is_none() => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "rewrite has no next Raft log layout",
+            ));
+        }
+        CommandFrameUpdate::Rewrite(_) | CommandFrameUpdate::Clear => {}
+    }
+    Ok(())
+}
+
+fn command_frames_from_artifact(
+    bytes: &[u8],
+    layout: LogLayout,
+) -> io::Result<BTreeMap<(Index, Term), CommandFrame>> {
+    command_frames_from_encoded(bytes, layout.entry_count, LOG_MAGIC_V1.len() as u64, true)
+}
+
+fn command_frames_from_encoded(
+    bytes: &[u8],
+    entry_count: u64,
+    mut frame_offset: u64,
+    include_magic: bool,
+) -> io::Result<BTreeMap<(Index, Term), CommandFrame>> {
+    let encoded = if include_magic {
+        if !bytes.starts_with(LOG_MAGIC_V1) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid Raft log artifact marker",
+            ));
+        }
+        &bytes[LOG_MAGIC_V1.len()..]
+    } else {
+        bytes
+    };
+    if include_magic && frame_offset != LOG_MAGIC_V1.len() as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid Raft log frame base offset",
+        ));
+    }
+    let mut reader = CursorReader(encoded);
+    let mut commands = BTreeMap::new();
+    for _ in 0..entry_count {
+        let payload_len = usize::try_from(reader.read_u64()?).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Raft log frame length overflow")
+        })?;
+        let payload_crc = reader.read_u32()?;
+        let payload = reader.read_slice(payload_len)?;
+        let mut entry = CursorReader(&payload);
+        let term = entry.read_u64()?;
+        let index = entry.read_u64()?;
+        let kind = match entry.read_u8()? {
+            0 => EntryKind::Command,
+            1 => EntryKind::Config,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid Raft log entry kind",
+                ))
+            }
+        };
+        let command_len = entry.read_u64()?;
+        let command_len_usize = usize::try_from(command_len).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Raft command length overflow")
+        })?;
+        entry.skip_bytes(command_len_usize)?;
+        if !entry.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid Raft log entry payload",
+            ));
+        }
+        let payload_len_u64 = payload_len as u64;
+        let payload_offset = frame_offset.checked_add(12).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Raft frame offset overflow")
+        })?;
+        let command_offset = payload_offset.checked_add(25).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Raft command offset overflow")
+        })?;
+        let frame = CommandFrame {
+            index,
+            term,
+            kind,
+            payload_offset,
+            payload_len: payload_len_u64,
+            payload_crc,
+            command_offset,
+            command_len,
+        };
+        if commands.insert((index, term), frame).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "duplicate Raft command identity in log",
+            ));
+        }
+        frame_offset = frame_offset
+            .checked_add(12)
+            .and_then(|offset| offset.checked_add(payload_len_u64))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Raft frame offset overflow")
+            })?;
+    }
+    if !reader.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Raft log artifact disagrees with hard state",
+        ));
+    }
+    Ok(commands)
+}
+
+fn validate_pinned_frame(map: &[u8], frame: CommandFrame) -> io::Result<()> {
+    if !map.starts_with(LOG_MAGIC_V1) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid Raft log artifact marker",
+        ));
+    }
+    let payload_start = usize::try_from(frame.payload_offset)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Raft payload offset overflow"))?;
+    let payload_len = usize::try_from(frame.payload_len)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Raft payload length overflow"))?;
+    let payload_end = payload_start
+        .checked_add(payload_len)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Raft payload range overflow"))?;
+    let payload = map.get(payload_start..payload_end).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "pinned Raft frame is truncated")
+    })?;
+    let frame_start = payload_start.checked_sub(12).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Raft frame header offset underflow",
+        )
+    })?;
+    let header = map.get(frame_start..payload_start).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pinned Raft frame header is truncated",
+        )
+    })?;
+    let encoded_len = u64::from_le_bytes(header[..8].try_into().unwrap());
+    let encoded_crc = u32::from_le_bytes(header[8..].try_into().unwrap());
+    if encoded_len != frame.payload_len || encoded_crc != frame.payload_crc {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pinned Raft frame header disagrees with metadata",
+        ));
+    }
+    if crc32fast::hash(payload) != frame.payload_crc {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pinned Raft frame checksum mismatch",
+        ));
+    }
+    let mut entry = CursorReader(payload);
+    let term = entry.read_u64()?;
+    let index = entry.read_u64()?;
+    let kind = match entry.read_u8()? {
+        0 => EntryKind::Command,
+        1 => EntryKind::Config,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid Raft log entry kind",
+            ))
+        }
+    };
+    let command_len = entry.read_u64()?;
+    let command_len_usize = usize::try_from(command_len)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Raft command length overflow"))?;
+    if index != frame.index
+        || term != frame.term
+        || kind != frame.kind
+        || command_len != frame.command_len
+        || entry.0.len() != command_len_usize
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pinned Raft frame identity disagrees with metadata",
+        ));
+    }
+    let expected_command_offset = frame.payload_offset.checked_add(25).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "Raft command offset overflow")
+    })?;
+    if frame.command_offset != expected_command_offset {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pinned Raft command range disagrees with metadata",
+        ));
+    }
+    Ok(())
+}
+
 fn encode_log_entries(entries: &[RaftEntry], include_magic: bool) -> Vec<u8> {
     let mut bytes = Vec::new();
     if include_magic {
@@ -1246,6 +1796,22 @@ fn hex_digest(bytes: &[u8; 32]) -> String {
 struct CursorReader<'a>(&'a [u8]);
 
 impl<'a> CursorReader<'a> {
+    fn read_slice(&mut self, len: usize) -> io::Result<&'a [u8]> {
+        if self.0.len() < len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected eof reading byte payload",
+            ));
+        }
+        let (data, rest) = self.0.split_at(len);
+        self.0 = rest;
+        Ok(data)
+    }
+
+    fn skip_bytes(&mut self, len: usize) -> io::Result<()> {
+        self.read_slice(len).map(|_| ())
+    }
+
     fn read_u8(&mut self) -> io::Result<u8> {
         if self.0.is_empty() {
             return Err(io::Error::new(
@@ -1283,19 +1849,308 @@ impl<'a> CursorReader<'a> {
     }
 
     fn read_bytes(&mut self, len: usize) -> io::Result<Vec<u8>> {
-        if self.0.len() < len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected eof reading byte payload",
-            ));
-        }
-        let (data, rest) = self.0.split_at(len);
-        self.0 = rest;
-        Ok(data.to_vec())
+        Ok(self.read_slice(len)?.to_vec())
     }
 
     fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod command_lease_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    fn state(entries: Vec<(Index, Term, Vec<u8>)>) -> PersistedState {
+        PersistedState {
+            term: entries.last().map(|(_, term, _)| *term).unwrap_or(0),
+            voted_for: None,
+            commit_index: entries.last().map(|(index, _, _)| *index).unwrap_or(0),
+            snapshot_index: 0,
+            snapshot_term: 0,
+            snapshot: Vec::new(),
+            conf: None,
+            log: entries
+                .into_iter()
+                .map(|(index, term, command)| RaftEntry {
+                    index,
+                    term,
+                    command,
+                    kind: EntryKind::Command,
+                })
+                .collect(),
+        }
+    }
+
+    fn store(dir: &tempfile::TempDir) -> RaftStore {
+        RaftStore::open(dir.path().to_str().unwrap(), 0, FsyncPolicy::Always).unwrap()
+    }
+
+    #[test]
+    fn command_pin_maps_published_frame_after_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        store.save(&state(vec![(1, 1, b"first".to_vec())])).unwrap();
+        let lease = store.pin_committed_command(1, 1).unwrap().map().unwrap();
+        store
+            .save(&state(vec![
+                (1, 1, b"first".to_vec()),
+                (2, 1, b"second".to_vec()),
+            ]))
+            .unwrap();
+
+        assert_eq!(lease.command(), b"first");
+        assert_eq!(
+            store
+                .pin_committed_command(2, 1)
+                .unwrap()
+                .map()
+                .unwrap()
+                .command(),
+            b"second"
+        );
+    }
+
+    #[test]
+    fn command_pin_survives_rewrite_and_superseded_generation_collection() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        store.save(&state(vec![(1, 1, b"old".to_vec())])).unwrap();
+        let old_generation = store
+            .cache
+            .lock()
+            .unwrap()
+            .log
+            .as_ref()
+            .unwrap()
+            .layout
+            .generation;
+        let pin = store.pin_committed_command(1, 1).unwrap();
+
+        store.save(&state(vec![(2, 2, b"new".to_vec())])).unwrap();
+
+        let lease = pin.map().unwrap();
+        assert_eq!(lease.command(), b"old");
+        assert!(store.log_artifact_path(&old_generation).exists());
+        drop(lease);
+        store.save(&state(vec![(3, 3, b"newer".to_vec())])).unwrap();
+        assert!(!store.log_artifact_path(&old_generation).exists());
+    }
+
+    #[test]
+    fn reopened_store_rebuilds_published_command_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = store(&dir);
+        first
+            .save(&state(vec![(1, 7, b"reopen".to_vec())]))
+            .unwrap();
+        drop(first);
+
+        let reopened = store(&dir);
+        reopened.load().unwrap();
+        let lease = reopened.pin_committed_command(1, 7).unwrap().map().unwrap();
+        assert_eq!(lease.command(), b"reopen");
+    }
+
+    #[test]
+    fn command_pin_refuses_wrong_identity_and_unpublished_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        store
+            .save(&state(vec![(1, 3, b"published".to_vec())]))
+            .unwrap();
+        let published = store.pin_committed_command(1, 3).unwrap();
+        store.inject_next_save_failure_with_kind(io::ErrorKind::Other);
+        assert!(store
+            .save(&state(vec![(2, 4, b"unpublished".to_vec())]))
+            .is_err());
+
+        assert_eq!(published.map().unwrap().command(), b"published");
+
+        let wrong_term = match store.pin_committed_command(1, 4) {
+            Ok(_) => panic!("wrong term must not pin a published command"),
+            Err(error) => error,
+        };
+        assert_eq!(wrong_term.kind(), io::ErrorKind::InvalidInput);
+        let unpublished = match store.pin_committed_command(2, 4) {
+            Ok(_) => panic!("unpublished command must not pin"),
+            Err(error) => error,
+        };
+        assert_eq!(unpublished.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn command_pin_refuses_published_but_uncommitted_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        let mut durable = state(vec![(1, 3, b"uncommitted".to_vec())]);
+        durable.commit_index = 0;
+        store.save(&durable).unwrap();
+
+        let error = match store.pin_committed_command(1, 3) {
+            Ok(_) => panic!("uncommitted suffix must not pin"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn load_cannot_truncate_concurrently_appended_published_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(store(&dir));
+        store.save(&state(vec![(1, 1, b"first".to_vec())])).unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        store.pause_next_load_after_state_read(entered_tx, release_rx);
+        let loading = {
+            let store = Arc::clone(&store);
+            thread::spawn(move || store.load())
+        };
+        let entered = entered_rx.recv_timeout(Duration::from_secs(1));
+        if entered.is_err() {
+            drop(release_tx);
+            let _ = loading.join();
+            panic!("load did not reach the post-read pause");
+        }
+
+        let (saved_tx, saved_rx) = mpsc::channel();
+        let saving = {
+            let store = Arc::clone(&store);
+            thread::spawn(move || {
+                let result = store.save(&state(vec![
+                    (1, 1, b"first".to_vec()),
+                    (2, 1, b"second".to_vec()),
+                ]));
+                let _ = saved_tx.send(result);
+            })
+        };
+
+        // A correct I/O mutex may keep this pending. Always release before join.
+        let saved_before_release = saved_rx.recv_timeout(Duration::from_secs(1)).ok();
+        let _ = release_tx.send(());
+        let loaded = loading.join();
+        let saving_join = saving.join();
+        let saved =
+            saved_before_release.or_else(|| saved_rx.recv_timeout(Duration::from_secs(1)).ok());
+        assert!(loaded.is_ok(), "load worker panicked");
+        assert!(saving_join.is_ok(), "save worker panicked");
+        assert_eq!(loaded.unwrap().unwrap().unwrap().log[0].command, b"first");
+        saved.expect("save did not finish after release").unwrap();
+
+        let reopened =
+            RaftStore::open(dir.path().to_str().unwrap(), 0, FsyncPolicy::Always).unwrap();
+        assert_eq!(reopened.load().unwrap().unwrap().log[1].command, b"second");
+        assert_eq!(
+            reopened
+                .pin_committed_command(2, 1)
+                .unwrap()
+                .map()
+                .unwrap()
+                .command(),
+            b"second"
+        );
+    }
+
+    #[test]
+    fn duplicate_append_identity_refuses_before_hard_state_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        store.save(&state(vec![(1, 1, b"first".to_vec())])).unwrap();
+        let hard_before = std::fs::read(store.path()).unwrap();
+        let pin = store.pin_committed_command(1, 1).unwrap();
+
+        let error = store
+            .save(&state(vec![
+                (1, 1, b"first".to_vec()),
+                (1, 1, b"repeated".to_vec()),
+            ]))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(store.path()).unwrap(), hard_before);
+        assert_eq!(pin.map().unwrap().command(), b"first");
+    }
+
+    #[test]
+    fn command_pin_map_refuses_missing_published_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        store.save(&state(vec![(1, 1, b"frame".to_vec())])).unwrap();
+        let pin = store.pin_committed_command(1, 1).unwrap();
+        let generation = store
+            .cache
+            .lock()
+            .unwrap()
+            .log
+            .as_ref()
+            .unwrap()
+            .layout
+            .generation;
+        std::fs::remove_file(store.log_artifact_path(&generation)).unwrap();
+
+        let error = match pin.map() {
+            Ok(_) => panic!("missing artifact must not map"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn command_pin_map_refuses_crc_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        store.save(&state(vec![(1, 1, b"frame".to_vec())])).unwrap();
+        let pin = store.pin_committed_command(1, 1).unwrap();
+        let generation = store
+            .cache
+            .lock()
+            .unwrap()
+            .log
+            .as_ref()
+            .unwrap()
+            .layout
+            .generation;
+        let path = store.log_artifact_path(&generation);
+        let mut artifact = OpenOptions::new().write(true).open(path).unwrap();
+        artifact.seek(SeekFrom::Start(8 + 12 + 25)).unwrap();
+        artifact.write_all(b"X").unwrap();
+        artifact.flush().unwrap();
+
+        let error = match pin.map() {
+            Ok(_) => panic!("corrupt artifact must not map"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn command_pin_map_refuses_truncated_published_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir);
+        store.save(&state(vec![(1, 1, b"frame".to_vec())])).unwrap();
+        let pin = store.pin_committed_command(1, 1).unwrap();
+        let generation = store
+            .cache
+            .lock()
+            .unwrap()
+            .log
+            .as_ref()
+            .unwrap()
+            .layout
+            .generation;
+        let artifact = OpenOptions::new()
+            .write(true)
+            .open(store.log_artifact_path(&generation))
+            .unwrap();
+        artifact.set_len(8).unwrap();
+
+        let error = match pin.map() {
+            Ok(_) => panic!("truncated artifact must not map"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }
 // CODEGEN-END

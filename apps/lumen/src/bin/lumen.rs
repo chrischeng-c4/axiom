@@ -5,9 +5,9 @@
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
-//! configured write log. In single-node mode that log is local; in legacy
-//! NATS mode it is external; in primary-replica mode Lumen owns ordering and
-//! replication via raft_core. Apply happens in the background subscribe loop —
+//! configured write log. In single-node mode that log is local; in
+//! primary-replica mode Lumen owns ordering and replication via raft_core.
+//! Apply happens in the background subscribe loop —
 //! see `coordinator` / `wal`.
 //!
 //! ```text
@@ -43,7 +43,6 @@ use lumen::coordinator::WriteCoordinator;
 use lumen::rdb::{LocalFsRdbStore, RdbSnapshot, RdbStore};
 use lumen::storage::Engine;
 use lumen::wal::{MemWal, SharedWal};
-use lumen::wal_nats::NatsWal;
 
 #[cfg(feature = "raft-wal")]
 #[path = "../shutdown.rs"]
@@ -989,8 +988,6 @@ enum WalBackend {
     Auto,
     /// In-process log. Single-node / dev. No external dependency.
     Embedded,
-    /// NATS JetStream legacy backend.
-    Nats,
     /// Lumen-owned raft_core replication (#515). HA without an external broker.
     #[cfg(feature = "raft-wal")]
     Raft,
@@ -1117,14 +1114,6 @@ struct ServeArgs {
     /// Write-log backend.
     #[arg(long = "wal", env = "LUMEN_WAL", value_enum, default_value_t = WalBackend::Auto)]
     wal: WalBackend,
-    /// NATS URL (used when `--wal nats`).
-    #[arg(long, env = "LUMEN_NATS_URL", default_value = "nats://localhost:4222")]
-    nats_url: String,
-    /// Max seconds to keep retrying the initial NATS connect before giving
-    /// up. A serving node started before its broker (common during a k8s
-    /// rollout) retries with backoff instead of crash-looping.
-    #[arg(long, env = "LUMEN_NATS_CONNECT_TIMEOUT_SECS", default_value_t = 120)]
-    nats_connect_timeout_secs: u64,
     /// Data dir for raft hard state (used when `--wal raft`). A PVC in k8s.
     #[cfg(feature = "raft-wal")]
     #[arg(
@@ -3230,23 +3219,7 @@ fn kubectl_apply_next(target: &Path) -> String {
     format!("kubectl apply -f {}", target.display())
 }
 
-/// Real [`lumen::api::CheckpointSink`] wiring for segment-persistence mode
-/// (#1389): forces the same synchronous stage-then-rename checkpoint the
-/// periodic snapshotter performs (`SegmentRdbStore::save`), but synchronously
-/// on demand — this is what `POST /admin/checkpoint` answers, and what the
-/// reshard driver's cutover gate (`service_k8s::reshard_driver::
-/// checkpoint_touched_shards`) awaits per touched shard before triggering the
-/// cutover rolling restart. Also prunes + trims the AOF through the
-/// checkpointed sequence, mirroring the periodic path exactly, so an
-/// on-demand checkpoint leaves the AOF in the same state a periodic one
-/// would (and a reshard cutover right after one doesn't leave a redundant,
-/// ever-growing AOF tail).
-struct SegmentCheckpointSink {
-    engine: Arc<Engine>,
-    store: Arc<lumen::segment_rdb::SegmentRdbStore>,
-    writer: Arc<dyn lumen::coordinator::WriteSink>,
-    aof: Option<lumen::coordinator::SharedAof>,
-}
+use lumen::segment_checkpoint::SegmentCheckpointSink;
 
 fn segment_restore_sink(
     segment_mode: bool,
@@ -3275,52 +3248,6 @@ fn segment_restore_sink(
         _ => Ok(Some(Arc::new(
             lumen::segment_restore::UnavailableRestoreSink::new(UNAVAILABLE_REASON),
         ))),
-    }
-}
-
-#[async_trait::async_trait]
-impl lumen::api::CheckpointSink for SegmentCheckpointSink {
-    async fn checkpoint_now(&self) -> Result<bool> {
-        // The sink owns the checkpoint permit. Do not acquire this in the API
-        // handler: an exclusive restore may already be queued ahead of this
-        // request, and a nested read would then deadlock.
-        let _checkpoint_permit = if let Some(gate) = self.writer.mutation_gate() {
-            Some(gate.shared().await?)
-        } else {
-            None
-        };
-        let seq = self.writer.applied_seq();
-        let store = self.store.clone();
-        let engine = self.engine.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            store.save(&engine, seq)?;
-            store.prune(3)?;
-            Ok(())
-        })
-        .await
-        .context("checkpoint task panicked")??;
-
-        if let Some(aof) = &self.aof {
-            let aof = aof.clone();
-            let trim = tokio::task::spawn_blocking(move || {
-                aof.lock()
-                    .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
-                    .truncate_through(seq)
-            })
-            .await;
-            match trim {
-                Ok(Ok(())) => tracing::info!(through = seq, "AOF trimmed to on-demand checkpoint"),
-                Ok(Err(e)) => {
-                    tracing::warn!(error = %e, "AOF trim after on-demand checkpoint failed")
-                }
-                Err(e) => tracing::warn!(error = %e, "AOF trim task panicked"),
-            }
-        }
-        tracing::info!(
-            up_to_seq = seq,
-            "on-demand checkpoint written (admin request)"
-        );
-        Ok(true)
     }
 }
 
@@ -3444,6 +3371,40 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // StatefulSet runs >1 replica per shard, else embedded — so single-node /
     // local dev needs no flags or cluster env.
     let backend = resolve_wal_backend(args.wal);
+    let segment_mode = use_segment_persistence(&args);
+    // The segment-checkpoint store — built only in segment mode.
+    let segment_store: Option<Arc<lumen::segment_rdb::SegmentRdbStore>> = if segment_mode {
+        match &args.data_dir {
+            Some(dir) => Some(Arc::new(
+                lumen::segment_rdb::SegmentRdbStore::new(dir)
+                    .context("open segment-checkpoint store")?,
+            )),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    // CBOR, ephemeral serving, and Raft keep the same public persistence path.
+    // A private segment root only bounds their pending in-process changes.
+    // Start before RaftHost restores and replays committed entries.
+    #[cfg(feature = "raft-wal")]
+    let raft_bootstrap = matches!(backend, WalBackend::Raft);
+    #[cfg(not(feature = "raft-wal"))]
+    let raft_bootstrap = false;
+    // Raft replay can start below the configured CURRENT sequence. Keep its
+    // startup capacity spill independent until the durable log has caught up.
+    let mut pending_spill = if raft_bootstrap || !segment_mode || args.data_dir.is_none() {
+        Some(
+            lumen::segment_checkpoint::PendingChangeSpill::temporary(
+                engine.clone(),
+                Duration::from_secs(args.snapshot_secs.max(1)),
+            )
+            .context("start private pending-change spill")?,
+        )
+    } else {
+        None
+    };
     let wal: Option<SharedWal> = match backend {
         WalBackend::Auto => unreachable!("auto is resolved by resolve_wal_backend"),
         WalBackend::Embedded => {
@@ -3455,14 +3416,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
             // redelivery-dedup guard silently strands the first N
             // post-restart writes.
             None
-        }
-        WalBackend::Nats => {
-            tracing::info!(url = %args.nats_url, "wal=nats (JetStream)");
-            Some(Arc::new(
-                connect_nats_with_retry(&args.nats_url, args.nats_connect_timeout_secs)
-                    .await
-                    .context("connect NATS write log")?,
-            ))
         }
         #[cfg(feature = "raft-wal")]
         WalBackend::Raft => {
@@ -3518,7 +3471,14 @@ async fn serve(args: ServeArgs) -> Result<()> {
             // the engine (via `EngineSm`), so there is no `WalLog`/coordinator
             // seam for the raft path. Cold-start (restore + replay) happens in
             // `RaftHost::spawn`; snapshot/compaction is driven externally below.
-            let sm = lumen::raft_sm::EngineSm::new(engine.clone(), 0);
+            let sm = match &segment_store {
+                Some(store) => lumen::raft_sm::EngineSm::new_with_segment_store(
+                    engine.clone(),
+                    0,
+                    store.clone(),
+                ),
+                None => lumen::raft_sm::EngineSm::new(engine.clone(), 0),
+            };
             let host_config = raft_runtime::HostConfig {
                 snapshot: raft_runtime::SnapshotPolicy::External,
                 ..Default::default()
@@ -3580,7 +3540,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // `--data-dir`: the default CBOR RDB and (opt-in) the columnar segment
     // checkpoint. `segment_mode` is `false` unless `--persistence=segment` is
     // passed, so the block below is byte-identical to today in the default mode.
-    let segment_mode = use_segment_persistence(&args);
 
     // The CBOR RDB store — built unless segment persistence is selected.
     let rdb_store = if segment_mode {
@@ -3592,19 +3551,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
             )),
             None => None,
         }
-    };
-
-    // The segment-checkpoint store — built only in segment mode.
-    let segment_store: Option<Arc<lumen::segment_rdb::SegmentRdbStore>> = if segment_mode {
-        match &args.data_dir {
-            Some(dir) => Some(Arc::new(
-                lumen::segment_rdb::SegmentRdbStore::new(dir)
-                    .context("open segment-checkpoint store")?,
-            )),
-            None => None,
-        }
-    } else {
-        None
     };
 
     // Cold-start sequence: the WAL position the checkpoint is current as of, so
@@ -3636,6 +3582,21 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     };
 
+    // Recovery may need to wait for pending capacity before the coordinator
+    // exists. This driver uses the same configured checkpoint store, samples
+    // the Engine watermark, and never trims the AOF being replayed.
+    let mut replay_checkpoint_driver = if !is_raft {
+        segment_store.as_ref().map(|store| {
+            lumen::segment_checkpoint::PendingChangeSpill::configured_replay(
+                engine.clone(),
+                store.clone(),
+                Duration::from_secs(args.snapshot_secs.max(1)),
+            )
+        })
+    } else {
+        None
+    };
+
     // Local AOF (segment mode only): RDB (segment checkpoint, up to `start_seq`)
     // → AOF replay (`start_seq+1 .. A`) → broker tail (`A+1 ..`). After replay the
     // apply loop keeps appending to this same writer, and the checkpoint
@@ -3649,8 +3610,21 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 // there is no tail), so retain the checkpoint watermark when
                 // that return value is lower. The loop must always tail from
                 // the first sequence strictly above the durable baseline.
-                let replayed = lumen::aof::replay_aof_into(&engine, &aof_path, start_seq)
-                    .context("replay AOF over segment baseline")?;
+                let replay_started = std::time::Instant::now();
+                let checkpoints_before = engine.metrics().segment_checkpoint_completed_total.get();
+                let replay_engine = engine.clone();
+                let replay_path = aof_path.clone();
+                let replayed = tokio::task::spawn_blocking(move || {
+                    lumen::aof::replay_aof_into(&replay_engine, &replay_path, start_seq)
+                })
+                .await
+                .context("AOF replay worker failed")?
+                .context("replay AOF over segment baseline")?;
+                let replay_checkpoints = engine
+                    .metrics()
+                    .segment_checkpoint_completed_total
+                    .get()
+                    .saturating_sub(checkpoints_before);
                 let recovered_head = start_seq.max(replayed);
                 let aof_decision = if replayed > start_seq {
                     "tail_replayed"
@@ -3661,6 +3635,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
                     aof_decision,
                     from_seq = start_seq,
                     to_seq = recovered_head,
+                    replay_checkpoints,
+                    replay_ms = replay_started.elapsed().as_millis() as u64,
                     "AOF startup decision"
                 );
                 start_seq = recovered_head;
@@ -3676,9 +3652,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     // Embedded backend: build the `MemWal` now that `start_seq` reflects the
     // final restore watermark (checkpoint restore, then AOF-tail replay if
-    // any — whichever is higher). Every other backend either owns its own
-    // sequence domain externally (NATS) or bypasses `wal` entirely (raft)
-    // (#1486).
+    // any — whichever is higher). Raft bypasses `wal` entirely (#1486).
     let wal: Option<SharedWal> = match backend {
         WalBackend::Embedded => Some(Arc::new(MemWal::starting_at(start_seq))),
         _ => wal,
@@ -3896,9 +3870,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     }
 
-    // Periodic snapshotter. Raft mode: the host captures the engine RDB AND
-    // compacts the raft log (bounding it + arming InstallSnapshot for a fresh
-    // replica) — the shared backup layer (#524, closes #522 by construction).
+    // Raft compaction uses the state machine's snapshot backend. Segment mode
+    // prepares and exports immutable files outside the host apply boundary.
     // Otherwise the RDB snapshotter writes the `--data-dir` checkpoints the apply
     // loop tails from on restart.
     #[cfg(feature = "raft-wal")]
@@ -3906,10 +3879,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
         let period = Duration::from_secs(args.snapshot_secs.max(1));
         let snap_engine = engine.clone();
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(period);
-            ticker.tick().await; // skip immediate fire
             loop {
-                ticker.tick().await;
+                // Start each interval after the previous attempt completes.
+                tokio::time::sleep(period).await;
                 match host.snapshot_and_compact().await {
                     Ok(idx) if idx > 0 => {
                         tracing::info!(snapshot_index = idx, "raft snapshot taken + log compacted")
@@ -3974,80 +3946,32 @@ async fn serve(args: ServeArgs) -> Result<()> {
         });
     }
 
-    // Periodic segment-checkpoint snapshotter (segment mode only). Re-seals every
-    // collection into a fresh generation, tagged with the applied seq, atomically
-    // (stage + rename). The seal is CPU-bound (re-materializes columns) and takes
-    // the per-collection state write lock, so it runs on a blocking thread to keep
-    // the async runtime free — mirroring the apply loop's `spawn_blocking`.
-    if let Some(store) = segment_store {
-        let snap_engine = engine.clone();
-        let snap_writer = writer.clone();
-        let snap_aof = aof_writer.clone();
-        let period = Duration::from_secs(args.snapshot_secs.max(1));
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(period);
-            ticker.tick().await; // skip immediate fire
-            loop {
-                ticker.tick().await;
-                let _checkpoint_permit = match snap_writer.mutation_gate() {
-                    Some(gate) => match gate.shared().await {
-                        Ok(permit) => Some(permit),
-                        Err(e) => {
-                            tracing::error!(error = %e, "segment checkpoint blocked by durability state");
-                            continue;
-                        }
-                    },
-                    None => None,
-                };
-                let seq = snap_writer.applied_seq();
-                let store2 = store.clone();
-                let eng2 = snap_engine.clone();
-                let res = tokio::task::spawn_blocking(move || {
-                    store2
-                        .save(&eng2, seq)
-                        .map(|()| store2.prune(3).map(|_| ()))
-                })
-                .await;
-                match res {
-                    Ok(Ok(_)) => {
-                        tracing::info!(up_to_seq = seq, "segment checkpoint written");
-                        // The checkpoint at `seq` is now durable in the segment
-                        // RDB, so every AOF frame with `seq <= C` is redundant —
-                        // trim it (crash-safe rewrite-survivors + rename). Off the
-                        // hot path: a blocking thread, since it rewrites the file.
-                        if let Some(aof) = &snap_aof {
-                            let aof2 = aof.clone();
-                            let trim = tokio::task::spawn_blocking(move || {
-                                aof2.lock()
-                                    .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
-                                    .truncate_through(seq)
-                            })
-                            .await;
-                            match trim {
-                                Ok(Ok(())) => {
-                                    tracing::info!(through = seq, "AOF trimmed to checkpoint")
-                                }
-                                Ok(Err(e)) => tracing::warn!(error = %e, "AOF trim failed"),
-                                Err(e) => tracing::warn!(error = %e, "AOF trim task panicked"),
-                            }
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        // #2516: same treatment as the RDB path above — a
-                        // segment checkpoint ENOSPC is a durable write path
-                        // failure and must flip the sticky degraded flag.
-                        if lumen::coordinator::is_storage_full(&e) {
-                            tracing::error!(error = %e, "segment checkpoint save hit ENOSPC — entering degraded read-only mode");
-                            snap_engine.metrics().mark_storage_degraded();
-                        } else {
-                            tracing::warn!(error = %e, "segment checkpoint save failed");
-                        }
-                    }
-                    Err(e) => tracing::warn!(error = %e, "segment checkpoint task panicked"),
-                }
-            }
-        });
+    // Finish any bootstrap save before the driver that can trim AOF starts.
+    if let Some(driver) = &mut replay_checkpoint_driver {
+        driver
+            .stop_bootstrap()
+            .await
+            .context("finish recovery checkpoint driver")?;
     }
+    if segment_store.is_some() {
+        if let Some(driver) = &mut pending_spill {
+            driver
+                .stop_bootstrap()
+                .await
+                .context("finish private bootstrap spill")?;
+        }
+    }
+    // Manual and periodic saves share checkpoint_now. Retain the handle so
+    // its waiter thread receives shutdown with this serving scope.
+    let _segment_checkpoint_driver = segment_store.map(|store| {
+        Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store,
+            writer: writer.clone(),
+            aof: aof_writer.clone(),
+        })
+        .spawn_periodic_driver(Duration::from_secs(args.snapshot_secs.max(1)))
+    });
 
     // #2516: periodic ENOSPC re-probe. While this node is in degraded
     // read-only mode (`Metrics::storage_degraded`), attempt a small write
@@ -4381,45 +4305,6 @@ async fn cbor_cold_start(
     }
 }
 
-/// Connect to NATS, retrying the initial connect with exponential backoff
-/// (capped at 5s/attempt) until `timeout_secs` elapses. Once connected,
-/// `async-nats` auto-reconnects on its own, so only the initial connect needs
-/// this — it stops a serving node from crash-looping when it starts before
-/// the broker (e.g. mid-rollout). The last error is returned on timeout.
-async fn connect_nats_with_retry(url: &str, timeout_secs: u64) -> Result<NatsWal> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    let mut backoff = Duration::from_millis(250);
-    let mut attempt = 0u32;
-    loop {
-        attempt += 1;
-        match NatsWal::connect(url).await {
-            Ok(wal) => {
-                if attempt > 1 {
-                    tracing::info!(attempt, "connected to NATS write log");
-                }
-                return Ok(wal);
-            }
-            Err(e) => {
-                let now = tokio::time::Instant::now();
-                if now >= deadline {
-                    return Err(e).with_context(|| {
-                        format!("NATS unreachable after {timeout_secs}s ({attempt} attempts)")
-                    });
-                }
-                let sleep_for = backoff.min(deadline.saturating_duration_since(now));
-                tracing::warn!(
-                    attempt,
-                    retry_in_ms = sleep_for.as_millis() as u64,
-                    error = %e,
-                    "NATS connect failed; retrying"
-                );
-                tokio::time::sleep(sleep_for).await;
-                backoff = (backoff * 2).min(Duration::from_secs(5));
-            }
-        }
-    }
-}
-
 fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) -> Result<()> {
     let format = match format {
         LogFormat::Pretty => service_http::LogFormat::Pretty,
@@ -4634,51 +4519,6 @@ mod tests {
             loaded.engine.list_collections().unwrap(),
             vec!["new".to_string()]
         );
-    }
-
-    #[tokio::test]
-    async fn segment_nats_restore_is_unavailable_over_real_router() {
-        use axum::body::Body;
-        use axum::http::{Method, Request, StatusCode};
-        use tower::ServiceExt;
-
-        let engine = Arc::new(Engine::new());
-        let (writer, aof, _dir) = test_writer(engine.clone());
-        let restore_sink = segment_restore_sink(
-            true,
-            WalBackend::Nats,
-            engine.clone(),
-            None,
-            writer.clone(),
-            Some(aof),
-        )
-        .unwrap()
-        .expect("fail-closed segment sink");
-        let state = lumen::api::AppState::with_components(
-            engine,
-            Arc::new(lumen::auth::AuthConfig::open()),
-            writer,
-        )
-        .with_restore_sink(restore_sink);
-        let response = lumen::api::router(state)
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/admin/restore")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        serde_json::json!({"version": 1, "collections": {}}).to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(envelope["error"], "restore_unavailable");
     }
 
     #[tokio::test]

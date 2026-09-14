@@ -42,6 +42,7 @@ use axum::middleware::{from_fn, Next};
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
+use crate::change_admission::PendingChangeCapacity;
 use crate::coordinator::{
     MutationGate, RestartRequired, StorageFullError, SubmitStalled, WriteCoordinator, WriteSink,
 };
@@ -172,7 +173,7 @@ pub struct AppState {
     /// Shared bounded bridge for every local synchronous HTTP search path.
     search_executor: BlockingSearchExecutor,
     /// Writes go through a [`WriteSink`]: the WAL-seam coordinator for
-    /// embedded/nats, or the raft host for `--wal raft`. Reads use
+    /// embedded, or the raft host for `--wal raft`. Reads use
     /// `engine` directly. See `coordinator` / `wal` / `raft_sm`.
     pub writer: Arc<dyn WriteSink>,
     /// Write/mutation backend. Defaults to the local coordinator; sharded
@@ -2338,8 +2339,20 @@ async fn stats(
     Path(collection_id): Path<String>,
 ) -> Result<Json<StatsResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Read).await?;
+    // `Engine::stats` holds the state read lock and walks every live term of
+    // every field, including one checkpoint interval of un-absorbed staged
+    // Text rows (#4246). That is CPU-bound Engine work, so it goes through the
+    // same bounded blocking bridge the search handlers use rather than
+    // stalling the reactor worker that also serves `/healthz` (see the rule
+    // above `BlockingSearchExecutor`).
+    let engine = Arc::clone(&state.engine);
+    let requested = collection_id.clone();
     Ok(Json(
-        state.engine.stats(&collection_id).map_err(ApiErr::from)?,
+        state
+            .search_executor
+            .run(move || engine.stats(&requested))
+            .await
+            .map_err(ApiErr::from)?,
     ))
 }
 
@@ -3165,6 +3178,17 @@ impl ApiErr {
     fn not_found(msg: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", msg)
     }
+
+    fn pending_change_capacity(msg: impl Into<String>) -> Self {
+        Self(
+            service_http::ApiErr::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "pending_change_capacity",
+                msg,
+            )
+            .with_retry_after_seconds(1),
+        )
+    }
 }
 
 /// One-hop shard-forward failure — the owning shard was unreachable (pod
@@ -3256,6 +3280,9 @@ impl std::error::Error for ShardForwardMisrouted {}
 
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
+        if e.downcast_ref::<PendingChangeCapacity>().is_some() {
+            return Self::pending_change_capacity(e.to_string());
+        }
         // #1486 R2: a write waiter released without a genuine apply outcome
         // (dedup-guard skip or a bounded submit() timeout) is transient —
         // surface it as a retryable 503, never the generic 400 fallback
@@ -3461,6 +3488,80 @@ mod restore_sink_tests {
     }
 
     #[tokio::test]
+    async fn pending_change_capacity_is_retryable_without_changing_other_error_mappings() {
+        let pending = PendingChangeCapacity::from_prepublication(
+            crate::change_budget::AdmissionError::Full {
+                requested: 64,
+                used: 256,
+                hard_limit: 256,
+            },
+        )
+        .expect("pre-publication Full is retryable capacity pressure");
+        let oversized = PendingChangeCapacity::from_prepublication(
+            crate::change_budget::AdmissionError::Oversized {
+                requested: 512,
+                hard_limit: 256,
+            },
+        )
+        .expect("pre-publication oversized requests are refused before committing");
+        let oversized = ApiErr::from(anyhow::Error::new(oversized)).into_response();
+        assert_eq!(oversized.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(oversized.headers()[axum::http::header::RETRY_AFTER], "1");
+        let response = ApiErr::from(anyhow::Error::new(pending)).into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "1");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(envelope["error"], "pending_change_capacity");
+        assert_eq!(envelope["retryable"], true);
+        assert_eq!(envelope["retry_after_seconds"], 1);
+
+        let bad_request = ApiErr::from(anyhow::Error::msg("bad request")).into_response();
+        assert_eq!(bad_request.status(), StatusCode::BAD_REQUEST);
+        assert!(bad_request
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .is_none());
+        let body = axum::body::to_bytes(bad_request.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+            "bad_request"
+        );
+
+        let storage_full = ApiErr::from(anyhow::Error::new(StorageFullError(
+            "disk full".to_string(),
+        )))
+        .into_response();
+        assert_eq!(storage_full.status(), StatusCode::INSUFFICIENT_STORAGE);
+        assert!(storage_full
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .is_none());
+        let body = axum::body::to_bytes(storage_full.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+            "storage_full"
+        );
+
+        let unrelated_429 = ApiErr::from(anyhow::Error::new(StorageError::PruneAccumulatorFull {
+            count: 4,
+            max: 4,
+        }))
+        .into_response();
+        assert_eq!(unrelated_429.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(unrelated_429
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn restore_not_committed_maps_to_stable_500_envelope() {
         let response = ApiErr::from(anyhow::Error::new(RestoreNotCommitted(
             "CURRENT was not moved".to_string(),
@@ -3477,7 +3578,7 @@ mod restore_sink_tests {
     #[tokio::test]
     async fn restore_unavailable_maps_to_stable_503_envelope() {
         let response = ApiErr::from(anyhow::Error::new(RestoreUnavailable(
-            "NATS/Raft topology is unsupported".to_string(),
+            "non-embedded topology is unsupported".to_string(),
         )))
         .into_response();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -3530,6 +3631,50 @@ mod local_write_backend_tests {
                 .collections
                 .is_empty(),
             "invalid direct calls must not mutate engine state"
+        );
+    }
+}
+
+/// `/stats` is a CPU-bound Engine read (#4246): with a checkpoint interval of
+/// staged Text rows resident it walks every live term, so it belongs on the
+/// blocking executor with the search handlers, never on a reactor worker.
+#[cfg(test)]
+mod stats_executor_tests {
+    use super::*;
+    use crate::types::CreateCollectionRequest;
+
+    fn collection_request() -> CreateCollectionRequest {
+        serde_json::from_value(serde_json::json!({
+            "fields": { "body": { "type": "text" } }
+        }))
+        .expect("valid collection request")
+    }
+
+    #[tokio::test]
+    async fn stats_runs_the_engine_read_off_the_reactor_thread() {
+        let engine = Arc::new(Engine::new());
+        engine
+            .create_collection("c", collection_request())
+            .expect("create collection");
+        let state = AppState::open(engine);
+        crate::storage::reset_stats_thread();
+        // `#[tokio::test]` is a current-thread runtime: this IS the reactor
+        // worker, so an inline `Engine::stats` records exactly this thread.
+        let reactor = std::thread::current().id();
+
+        let response = stats(
+            State(state),
+            Extension(AuthContext::Open),
+            Path("c".to_string()),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("stats responds"));
+
+        assert_eq!(response.0.documents_indexed, 0);
+        let ran_on = crate::storage::last_stats_thread().expect("Engine::stats must have run");
+        assert_ne!(
+            ran_on, reactor,
+            "CPU-bound Engine::stats must run on the blocking executor, not the reactor"
         );
     }
 }

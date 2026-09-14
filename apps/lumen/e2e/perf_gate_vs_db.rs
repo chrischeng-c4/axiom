@@ -36,6 +36,37 @@
 //!   LUMEN_GATE_RELEASE_SOAK=1 cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture
 //!   LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
 //!
+//! ## HTTP index-item boundary regression
+//!
+//! # Facets
+//!
+//! - Behavior: `perf_gate_vs_db.rs:894-910` requires a partial 200 reply to
+//!   trigger the exact acknowledgement assertion. `perf_gate_vs_db.rs:992-1029`
+//!   reads every boundary document across all four field types.
+//! - Security: `perf_gate_vs_db.rs:1046-1064` refuses a 1,001-item request as
+//!   `batch_too_large`, then proves it has not mutated visible documents.
+//!   The mock response is an external acknowledgement boundary.
+//! - Performance: `apps/lumen/ROADMAP.md:90-94` defines 1,000 `/index` field
+//!   items as the current batch-limit case and says completed document work is
+//!   counted only after all fields complete. The test retains that boundary.
+//!
+//! ## Direct 100k scale seed publication regression
+//!
+//! # Facets
+//!
+//! - Behavior: `perf_gate_vs_db.rs:3889-3891` checks the complete live
+//!   fixture and sealed fields. Lines `:3893-3945` require an exact readable
+//!   `CURRENT`, then require the cold count and final deterministic document.
+//! - Security: the changed fixture path is the deterministic direct input at
+//!   `perf_gate_vs_db.rs:3117-3200` and its process-owned durable root at
+//!   `:3713-3827`; it adds no caller-controlled path or bytes boundary.
+//!   Existing `segment_startup_fail_closed_e2e.rs:816-843` refuses unknown
+//!   root content before a listener or `CURRENT` mutation.
+//! - Performance: `apps/lumen/ROADMAP.md:60-71` promises a 256 MiB total
+//!   active/frozen/reserved pending-change budget. The actual 100k invocation
+//!   at `perf_gate_vs_db.rs:3889` must complete under that cap; this case
+//!   intentionally adds no QPS or latency loop.
+//!
 //! ## Contracts inherited from the retired EC shells
 //!
 //! These 4 sentences were the whole of the `// Contract:` comment in 4 AW-EC shells
@@ -70,8 +101,12 @@ const DEFAULT_GATE_N: usize = 10_000;
 const RELEASE_SOAK_GATE_N: usize = 1_000_000;
 const DEFAULT_SCALE_ROWS: &[usize] = &[1_000, 10_000, 100_000];
 const DEFAULT_SCALE_MAX_ROWS: usize = 100_000;
+const SCALE_DURABLE_SEED_RANGE_ROWS: usize = 10_000;
 const SCALE_READ_CELLS: &[&str] = &["range", "filter_sort", "keyword_sort", "sorted_page_deep"];
 const SCALE_CURSOR_PAGE_SIZE: u32 = 100;
+/// Setup-only fixture watchdog for serial merge work after the direct seed.
+/// It is separate from the measured read, mutation, and reclaimer gates.
+const SCALE_SETUP_MERGE_WATCHDOG: Duration = Duration::from_secs(180);
 const SCALE_RECLAIMER_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 // EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
 // provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
@@ -763,20 +798,291 @@ async fn lumen_serve_native(engine: Arc<lumen::storage::Engine>) -> NativeEndpoi
 }
 
 async fn post_index(client: &reqwest::Client, base: &str, items: &[Value]) {
-    let response = client
-        .post(format!("{base}/collections/docs/index"))
-        .json(&json!({"items": items}))
+    for batch in items.chunks(lumen::types::MAX_INDEX_BATCH_SIZE) {
+        assert!(
+            batch.len() <= lumen::types::MAX_INDEX_BATCH_SIZE,
+            "index HTTP request exceeded the public field-item cap"
+        );
+        let response = client
+            .post(format!("{base}/collections/docs/index"))
+            .json(&json!({"items": batch}))
+            .send()
+            .await
+            .expect("scale index request");
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
+            panic!("scale index failed with HTTP {status}: {body}");
+        }
+        let body: Value = response
+            .json()
+            .await
+            .expect("scale index response JSON");
+        assert_eq!(
+            body["indexed"].as_u64(),
+            Some(batch.len() as u64),
+            "index HTTP response must acknowledge every submitted field item: {body}"
+        );
+    }
+}
+
+struct PartialIndexAckServer {
+    base: String,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl PartialIndexAckServer {
+    async fn start() -> Self {
+        let app = axum::Router::new().route(
+            "/collections/docs/index",
+            axum::routing::post(|| async {
+                axum::Json(json!({"indexed": lumen::types::MAX_INDEX_BATCH_SIZE - 1}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind partial index acknowledgement server");
+        let addr = listener
+            .local_addr()
+            .expect("partial index acknowledgement server address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve partial index acknowledgement server");
+        });
+        Self {
+            base: format!("http://{addr}"),
+            shutdown: Some(shutdown_tx),
+            task,
+        }
+    }
+
+    async fn shutdown(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        match tokio::time::timeout(Duration::from_secs(2), &mut self.task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => panic!("partial acknowledgement server failed: {error}"),
+            Err(_) => {
+                self.task.abort();
+                panic!("partial acknowledgement server did not stop within 2 seconds");
+            }
+        }
+    }
+}
+
+impl Drop for PartialIndexAckServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn post_index_rejects_partial_success_acknowledgement() {
+    let server = PartialIndexAckServer::start().await;
+    let items: Vec<Value> = (0..lumen::types::MAX_INDEX_BATCH_SIZE)
+        .map(|i| {
+            json!({
+                "external_id": format!("partial-ack-{i}"),
+                "field": "city",
+                "value": "partial-ack"
+            })
+        })
+        .collect();
+    let submitted = items.len();
+    let base = server.base.clone();
+    let client = reqwest::Client::new();
+    let mut call = tokio::spawn(async move { post_index(&client, &base, &items).await });
+    let completed = match tokio::time::timeout(Duration::from_secs(2), &mut call).await {
+        Ok(completed) => completed,
+        Err(_) => {
+            call.abort();
+            let _ = tokio::time::timeout(Duration::from_secs(2), &mut call).await;
+            server.shutdown().await;
+            panic!("partial acknowledgement call did not finish within 2 seconds");
+        }
+    };
+    server.shutdown().await;
+    let panic = completed.expect_err(&format!(
+        "post_index accepted a partial 200 acknowledgement for {submitted} submitted field items"
+    ));
+    assert!(
+        panic.is_panic(),
+        "post_index must not treat a task cancellation as an acknowledgement failure"
+    );
+    let panic = panic.into_panic();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
+    assert!(
+        message.contains("index HTTP response must acknowledge every submitted field item"),
+        "post_index must fail at its exact acknowledgement assertion, got: {message}"
+    );
+}
+
+const HTTP_INDEX_BOUNDARY_DOCS: usize = lumen::types::MAX_INDEX_BATCH_SIZE / 4 + 1;
+
+async fn boundary_search_ids(
+    client: &reqwest::Client,
+    base: &str,
+    query: Value,
+    expected_ids: &std::collections::BTreeSet<String>,
+    field: &str,
+) {
+    let response: Value = client
+        .post(format!("{base}/collections/docs/search"))
+        .json(&json!({"query": query, "limit": HTTP_INDEX_BOUNDARY_DOCS}))
         .send()
         .await
-        .expect("scale index request");
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
-        panic!("scale index failed with HTTP {status}: {body}");
-    }
+        .expect("boundary search request")
+        .error_for_status()
+        .expect("boundary search status")
+        .json()
+        .await
+        .expect("boundary search JSON");
+    assert_eq!(
+        response["total"].as_u64(),
+        Some(HTTP_INDEX_BOUNDARY_DOCS as u64),
+        "{field} must retain every boundary document: {response}"
+    );
+    let actual_ids: std::collections::BTreeSet<String> = response["hits"]
+        .as_array()
+        .expect("boundary search hits")
+        .iter()
+        .map(|hit| {
+            hit["external_id"]
+                .as_str()
+                .expect("boundary hit external_id")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        actual_ids, *expected_ids,
+        "{field} must retain the exact boundary document IDs"
+    );
+}
+
+async fn boundary_documents_indexed(client: &reqwest::Client, base: &str) -> u64 {
+    client
+        .get(format!("{base}/collections/docs/stats"))
+        .send()
+        .await
+        .expect("boundary stats request")
+        .error_for_status()
+        .expect("boundary stats status")
+        .json::<Value>()
+        .await
+        .expect("boundary stats JSON")["documents_indexed"]
+        .as_u64()
+        .expect("boundary stats documents_indexed")
+}
+
+#[tokio::test]
+async fn http_index_loader_chunks_field_items_at_public_cap() {
+    let docs: Vec<Doc> = (0..HTTP_INDEX_BOUNDARY_DOCS)
+        .map(|i| Doc {
+            eid: format!("batch-boundary-{i}"),
+            bio: "batch-boundary-bio".to_string(),
+            city: "batch-boundary-city",
+            age: 42,
+            note: Some("batch-boundary-note"),
+            embedding: None,
+        })
+        .collect();
+    let total_items = docs.len() * 4;
+    assert!(
+        total_items > lumen::types::MAX_INDEX_BATCH_SIZE,
+        "fixture must cross the public field-item request boundary"
+    );
+    let expected_ids: std::collections::BTreeSet<String> =
+        docs.iter().map(|doc| doc.eid.clone()).collect();
+
+    let (client, base, _engine) = lumen_serve_engine(&docs).await;
+
+    assert_eq!(
+        boundary_documents_indexed(&client, &base).await,
+        HTTP_INDEX_BOUNDARY_DOCS as u64,
+        "every complete boundary document must be indexed"
+    );
+
+    boundary_search_ids(
+        &client,
+        &base,
+        json!({"match":{"field":"bio","text":"batch-boundary-bio"}}),
+        &expected_ids,
+        "bio",
+    )
+    .await;
+    boundary_search_ids(
+        &client,
+        &base,
+        json!({"term":{"field":"city","value":"batch-boundary-city"}}),
+        &expected_ids,
+        "city",
+    )
+    .await;
+    boundary_search_ids(
+        &client,
+        &base,
+        json!({"term":{"field":"age","value":42}}),
+        &expected_ids,
+        "age",
+    )
+    .await;
+    boundary_search_ids(
+        &client,
+        &base,
+        json!({"term":{"field":"note","value":"batch-boundary-note"}}),
+        &expected_ids,
+        "note",
+    )
+    .await;
+
+    let oversized_items: Vec<Value> = (0..=lumen::types::MAX_INDEX_BATCH_SIZE)
+        .map(|i| {
+            json!({
+                "external_id": format!("batch-boundary-over-cap-{i}"),
+                "field": "city",
+                "value": "must-not-apply"
+            })
+        })
+        .collect();
+    let response = client
+        .post(format!("{base}/collections/docs/index"))
+        .json(&json!({"items": oversized_items}))
+        .send()
+        .await
+        .expect("oversized boundary request");
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "an over-cap field-item request must refuse before mutation"
+    );
+    let error: Value = response
+        .json()
+        .await
+        .expect("oversized boundary error JSON");
+    assert_eq!(
+        error["error"].as_str(),
+        Some("batch_too_large"),
+        "the over-cap request must report the fixed batch boundary: {error}"
+    );
+    assert_eq!(
+        boundary_documents_indexed(&client, &base).await,
+        HTTP_INDEX_BOUNDARY_DOCS as u64,
+        "an over-cap request must not make any boundary document visible"
+    );
 }
 
 async fn measure_lumen(client: &reqwest::Client, base: &str, cell: &str) -> Stat {
@@ -2575,10 +2881,11 @@ async fn competitive_perf_gate_disk() {
 // project-standard local row-count ladder with NO Postgres and NO OpenSearch.
 // The standard cap is 100k docs; 1M+ rows are explicit release-soak/research runs
 // so local benchmark cost does not become the development bottleneck.
-// For each N it stream-generates docs, indexes directly via the Engine API (NOT
-// over HTTP), `flush_to_segments` so queries are segment-backed (the disk path),
-// wraps the SAME engine in the axum server so `measure_lumen`/`run_load` hit it
-// over HTTP, and reports per-cell latency + optional qps ladder PLUS per-N
+// For each normal disk N it stream-generates docs, indexes directly via the Engine
+// API (NOT over HTTP), and checkpoints contiguous bounded ranges through the real
+// `SegmentRdbStore` so queries read the durable CURRENT generation. It wraps the
+// same engine in the axum server so `measure_lumen`/`run_load` hit it over HTTP,
+// and reports per-cell latency + optional qps ladder PLUS per-N
 // storage facts: on-disk segment MiB, bytes/doc (+ per-field breakdown), peak
 // process RSS, and the RSS/on-disk ratio. It is a MEASUREMENT/REPORT — no WIN
 // assertions; it only sanity-asserts results are non-empty and index bytes > 0.
@@ -2726,6 +3033,41 @@ fn scale_segment_bytes(dir: &std::path::Path) -> (u64, std::collections::BTreeMa
     (total, by_field)
 }
 
+/// Read the one generation selected by `CURRENT`.  Counting the whole root
+/// would charge inherited files from older, still-retained generations to the
+/// current scale row.
+fn scale_current_generation_segment_bytes(
+    root: &std::path::Path,
+) -> (u64, std::collections::BTreeMap<String, u64>) {
+    let current = std::fs::read_to_string(root.join("CURRENT"))
+        .expect("read scale CURRENT for current-generation storage facts");
+    let generation_name = current
+        .strip_prefix("generation:")
+        .expect("scale CURRENT must name a generation")
+        .trim();
+    let mut components = std::path::Path::new(generation_name).components();
+    assert!(
+        matches!(components.next(), Some(std::path::Component::Normal(_)))
+            && components.next().is_none(),
+        "scale CURRENT must name one direct child generation"
+    );
+    scale_segment_bytes(&root.join(generation_name))
+}
+
+async fn wait_for_scale_checkpoint_merges(
+    store: lumen::segment_rdb::SegmentRdbStore,
+    phase: &str,
+) {
+    let merge_result = tokio::task::spawn_blocking(move || {
+        store.wait_for_merges(SCALE_SETUP_MERGE_WATCHDOG)
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{phase}: checkpoint merge wait task failed: {error}"));
+    merge_result.unwrap_or_else(|error| {
+        panic!("{phase}: checkpoint merge drain did not complete: {error}")
+    });
+}
+
 fn scale_collection_fields() -> std::collections::BTreeMap<String, lumen::types::FieldSpec> {
     use lumen::types::{FieldSpec, FieldType};
     let spec = |ft: FieldType| FieldSpec {
@@ -2810,7 +3152,7 @@ fn scale_index_direct_range(
     for local_i in 0..count {
         // A sparse row has four or five fields. Flush before adding the next
         // maximum-size row so a near-full batch can never cross the public
-        // 10,000-item index cap.
+        // 1,000-item index cap.
         if items.len().saturating_add(5) > MAX_ITEMS {
             flush(&mut items);
         }
@@ -3371,48 +3713,121 @@ async fn measure_scale_mutations(
     }
 }
 
-/// Build a DISK-backed lumen for the scale bench: a fresh Engine, the `docs`
-/// schema, the corpus indexed DIRECTLY (fast path), then `flush_to_segments`
-/// IN PLACE (drivers dropped → segment-backed), then the SAME engine wrapped in
-/// the axum server (the exact `lumen::api::router` builder `lumen_serve_engine`
-/// uses) so `measure_lumen`/`run_load` can drive it over HTTP. Returns the
-/// client/base, the engine handle, the segment `TempDir` (kept alive so the
-/// mmaps stay mapped), and the flush sequence used.
-async fn scale_serve_disk(
-    n: usize,
-    seq: u64,
-) -> (
-    reqwest::Client,
-    String,
-    Arc<lumen::storage::Engine>,
-    tempfile::TempDir,
-) {
+/// Owns the one durable generation root and its HTTP server until every scale
+/// read and mutation has completed.  This prevents detached Axum work from
+/// retaining an unpublished Engine after the row ends.
+struct ScaleDiskServe {
+    client: reqwest::Client,
+    base: String,
+    engine: Arc<lumen::storage::Engine>,
+    root: tempfile::TempDir,
+    store: lumen::segment_rdb::SegmentRdbStore,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl ScaleDiskServe {
+    fn publish(&self, phase: &str) {
+        self.store
+            .save(&self.engine, 0)
+            .unwrap_or_else(|error| panic!("{phase}: publish direct scale checkpoint: {error}"));
+    }
+
+    async fn drain_merges(&self, phase: &str) {
+        wait_for_scale_checkpoint_merges(self.store.clone(), phase).await;
+    }
+
+    fn current_segment_bytes(&self) -> (u64, std::collections::BTreeMap<String, u64>) {
+        scale_current_generation_segment_bytes(self.root.path())
+    }
+
+    async fn shutdown(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        match tokio::time::timeout(Duration::from_secs(2), &mut self.task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => panic!("scale disk server task failed: {error}"),
+            Err(_) => {
+                self.task.abort();
+                let _ = (&mut self.task).await;
+                panic!("scale disk server did not stop within 2 seconds");
+            }
+        }
+    }
+}
+
+impl Drop for ScaleDiskServe {
+    fn drop(&mut self) {
+        let _ = self.shutdown.take();
+        self.task.abort();
+    }
+}
+
+/// Build a durable disk-backed lumen for the scale bench.  The standard
+/// single-engine corpus remains contiguous and non-chunked from the benchmark
+/// point of view.  Each bounded direct range publishes through the real
+/// `SegmentRdbStore`, so the 256 MiB pending-change budget can release only
+/// after a valid durable `CURRENT` cut.
+async fn scale_serve_disk(n: usize) -> ScaleDiskServe {
     let engine = Arc::new(lumen::storage::Engine::new());
     create_scale_collection(&engine, "docs");
 
-    // Fast in-process indexing, then seal to disk (drivers dropped).
-    scale_index_direct(&engine, n);
-    let dir = tempfile::tempdir().unwrap();
-    engine
-        .flush_to_segments(dir.path(), seq)
-        .expect("flush_to_segments (scale disk tier)");
+    let root = tempfile::tempdir().expect("create direct-scale checkpoint root");
+    let store = lumen::segment_rdb::SegmentRdbStore::new(root.path())
+        .expect("open direct-scale checkpoint root");
+    let mut rng = Lcg::new(SEED);
+    for start in (0..n).step_by(SCALE_DURABLE_SEED_RANGE_ROWS) {
+        let count = (n - start).min(SCALE_DURABLE_SEED_RANGE_ROWS);
+        scale_index_direct_range(&engine, "docs", start, count, n, start, &mut rng);
+        store
+            .save(&engine, 0)
+            .unwrap_or_else(|error| panic!("publish direct-scale range {start}: {error}"));
+    }
+    wait_for_scale_checkpoint_merges(store.clone(), "final direct-scale build").await;
 
     // Same engine, same router builder lumen_serve_engine uses, over HTTP.
     let app = lumen::api::router(lumen::api::AppState::open(engine.clone()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .expect("serve direct scale disk server");
     });
-    let base = format!("http://{addr}");
-    let client = reqwest::Client::new();
+    let scale = ScaleDiskServe {
+        client: reqwest::Client::new(),
+        base: format!("http://{addr}"),
+        engine,
+        root,
+        store,
+        shutdown: Some(shutdown_tx),
+        task,
+    };
+    let mut ready = false;
     for _ in 0..50 {
-        if client.get(format!("{base}/healthz")).send().await.is_ok() {
+        if scale
+            .client
+            .get(format!("{}/healthz", scale.base))
+            .send()
+            .await
+            .map(|response| response.status().is_success())
+            .unwrap_or(false)
+        {
+            ready = true;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    (client, base, engine, dir)
+    if !ready {
+        scale.shutdown().await;
+        panic!("direct scale disk server never became healthy");
+    }
+    scale
 }
 
 async fn scale_serve_inram(n: usize) -> (reqwest::Client, String, Arc<lumen::storage::Engine>) {
@@ -3442,8 +3857,8 @@ async fn scale_mutation_probe_waits_for_reclaimer_drain() {
     // This is a focused harness gate, not a scale-matrix row. A small corpus
     // exercises the same HTTP batch-unindex and truncate path without running
     // the DEV or full read/QPS matrix.
-    let (client, base, _engine, _dir) = scale_serve_disk(1_000, 91).await;
-    let measurement = measure_scale_mutations(&client, &base, 1_000).await;
+    let scale = scale_serve_disk(1_000).await;
+    let measurement = measure_scale_mutations(&scale.client, &scale.base, 1_000).await;
 
     assert_eq!(measurement.batch_ids, 1_000);
     assert!(
@@ -3462,6 +3877,77 @@ async fn scale_mutation_probe_waits_for_reclaimer_drain() {
         measurement.reclaimer_drain <= SCALE_RECLAIMER_DRAIN_TIMEOUT,
         "focused scale mutation probe exceeded its reclaimer drain timeout"
     );
+    scale.publish("publish focused scale mutation result");
+    scale
+        .drain_merges("drain focused scale mutation result")
+        .await;
+    scale.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scale_direct_100k_seed_publishes_current_and_cold_reopens() {
+    const DOCUMENTS: usize = 100_000;
+
+    // This is the standard, non-chunked direct scale corpus.
+    let scale = scale_serve_disk(DOCUMENTS).await;
+    scale_preflight_fixture(&scale.client, &scale.base, DOCUMENTS).await;
+    assert_segment_backed(&scale.engine);
+
+    assert!(
+        scale.root.path().join("CURRENT").is_file(),
+        "the direct 100k seed must publish a durable CURRENT generation"
+    );
+    // `load_current_generation` opens a fresh cold Engine from the exact
+    // CURRENT generation while the serving fixture keeps its one store alive.
+    let current = scale
+        .store
+        .load_current_generation()
+        .expect("read direct-scale CURRENT generation")
+        .expect("direct 100k seed must leave a CURRENT generation");
+    assert_segment_backed(current.engine.as_ref());
+
+    let all_documents: lumen::types::SearchRequest = serde_json::from_value(json!({
+        "query":{"range":{"field":"age","gte":0}},
+        "limit": 1,
+        "track_total": true
+    }))
+    .expect("decode cold all-documents request");
+    assert_eq!(
+        current
+            .engine
+            .search("docs", all_documents)
+            .expect("cold direct-scale all-documents search")
+            .total,
+        DOCUMENTS as u64,
+        "cold CURRENT must retain every direct-scale document"
+    );
+
+    let final_document: lumen::types::SearchRequest = serde_json::from_value(json!({
+        "query":{"term":{"field":"doc_key","value":scale_doc_key(DOCUMENTS - 1)}},
+        "limit": 1,
+        "track_total": true
+    }))
+    .expect("decode cold final-document request");
+    let final_document = current
+        .engine
+        .search("docs", final_document)
+        .expect("cold direct-scale final-document search");
+    assert_eq!(
+        final_document.total, 1,
+        "cold CURRENT must retain the final deterministic direct-scale document"
+    );
+    assert_eq!(
+        final_document.hits.len(),
+        1,
+        "cold CURRENT must return one hit for the final deterministic direct-scale document"
+    );
+    assert_eq!(
+        final_document.hits[0].external_id,
+        format!("d{}", DOCUMENTS - 1),
+        "cold CURRENT must return the final deterministic direct-scale document"
+    );
+    drop(current);
+    scale.shutdown().await;
 }
 
 struct ScaleShard {
@@ -4012,8 +4498,8 @@ async fn lumen_scale_bench() {
             if !(disk && chunk_rows.is_some()) {
                 panic!(
                     "LUMEN_SCALE_ROWS contains {too_large}, above the default in-memory-build guard {max_inmem_rows}. \
-                     The scale bench stream-generates docs, but the single-segment path still holds the mutable index \
-                     until flush_to_segments. Keep the standard benchmark at 100k, or set LUMEN_SCALE_CHUNK_ROWS=<rows_per_chunk> \
+                     The scale bench stream-generates docs and checkpoints normal disk rows in bounded direct ranges. \
+                     Keep the standard benchmark at 100k, or set LUMEN_SCALE_CHUNK_ROWS=<rows_per_chunk> \
                      only for an explicit release-soak/research run."
                 );
             }
@@ -4038,8 +4524,10 @@ async fn lumen_scale_bench() {
     println!("#   row ladder : {rows:?}");
     println!(
         "#   disk path  : {}",
-        if disk {
-            "ON (flush_to_segments → segment-backed)"
+        if disk && chunk_rows.is_none() {
+            "ON (checkpointed CURRENT generation → segment-backed)"
+        } else if disk {
+            "ON (chunked flush_to_segments → segment-backed)"
         } else {
             "OFF (in-RAM drivers)"
         }
@@ -4062,7 +4550,7 @@ async fn lumen_scale_bench() {
                     format!("ON ({n} rows/chunk, sharded direct merge)")
                 }
             })
-            .unwrap_or_else(|| "OFF (single segment build)".to_string())
+            .unwrap_or_else(|| "OFF (single-engine durable generation build)".to_string())
     );
     println!(
         "#   per cell   : fixed read matrix (range, boolean, number sort, high-cardinality keyword sort, cursor pagination){}",
@@ -4096,8 +4584,10 @@ async fn lumen_scale_bench() {
 
         println!(
             "  streaming + indexing {n} docs DIRECTLY (in-process), then {} ...",
-            if disk {
-                "flush_to_segments (disk path)"
+            if disk && chunk_rows.is_none() {
+                "checkpointed CURRENT generations (disk path)"
+            } else if disk {
+                "chunked flush_to_segments (disk path)"
             } else {
                 "serving in-RAM"
             }
@@ -4110,6 +4600,7 @@ async fn lumen_scale_bench() {
         let mut base: Option<String> = None;
         let mut engine: Option<Arc<lumen::storage::Engine>> = None;
         let mut dir: Option<tempfile::TempDir> = None;
+        let mut disk_serve: Option<ScaleDiskServe> = None;
         let mut sharded: Option<Arc<ShardedScale>> = None;
         let mut storage_only_chunks: Option<StorageOnlyChunks> = None;
         if storage_only {
@@ -4139,11 +4630,11 @@ async fn lumen_scale_bench() {
                 sharded = Some(Arc::new(scale_serve_disk_sharded(n, 1, chunk)));
             }
         } else if disk {
-            let (c, b, e, d) = scale_serve_disk(n, 1).await;
-            client = Some(c);
-            base = Some(b);
-            engine = Some(e);
-            dir = Some(d);
+            let scale = scale_serve_disk(n).await;
+            client = Some(scale.client.clone());
+            base = Some(scale.base.clone());
+            engine = Some(scale.engine.clone());
+            disk_serve = Some(scale);
         } else {
             // In-RAM A/B fallback: same streaming direct index path, no flush.
             let (c, b, e) = scale_serve_inram(n).await;
@@ -4161,13 +4652,17 @@ async fn lumen_scale_bench() {
             peak_rss = peak_rss.max(chunks.peak_rss);
         }
 
-        // On-disk segment accounting (only meaningful on the disk path).
+        // On-disk segment accounting. The normal disk path counts only the
+        // single generation selected by CURRENT, not retained predecessor data.
         let (on_disk_bytes, by_field) = if let Some(chunks) = &storage_only_chunks {
             (chunks.on_disk_bytes, chunks.by_field.clone())
         } else if let Some(scale) = &sharded {
             scale.segment_bytes()
         } else if disk {
-            scale_segment_bytes(dir.as_ref().unwrap().path())
+            disk_serve
+                .as_ref()
+                .expect("normal disk scale must retain its durable server")
+                .current_segment_bytes()
         } else {
             (0, std::collections::BTreeMap::new())
         };
@@ -4413,6 +4908,16 @@ async fn lumen_scale_bench() {
             );
         }
 
+        // The direct disk fixture retains the same store through HTTP reads
+        // and mutations. Publish the post-mutation state before its owned
+        // server and durable root leave this row.
+        if let Some(scale) = &disk_serve {
+            scale.publish("publish direct scale post-mutation state");
+            scale
+                .drain_merges("drain direct scale post-mutation state")
+                .await;
+        }
+
         // -------------------- per-N storage summary line -----------------------
         let bytes_per_doc = if n > 0 {
             storage.on_disk_bytes as f64 / n as f64
@@ -4452,10 +4957,16 @@ async fn lumen_scale_bench() {
             println!();
         }
 
-        // Keep the engine + tempdir alive across all measurement above; drop now.
+        // Keep the engine + tempdir alive across all measurement above. Drop
+        // external clones, then stop the owned disk server before it releases
+        // the checkpoint store and root.
         drop(client);
+        drop(base);
         drop(engine);
         drop(dir);
+        if let Some(scale) = disk_serve {
+            scale.shutdown().await;
+        }
         drop(sharded);
         drop(storage_only_chunks);
     }

@@ -286,6 +286,5 @@ mod tests {
             Some("spiffe://lumen-prod.svc.id.goog/ns/staging/sa/lumen")
         );
     }
-
 }
 // HANDWRITE-END

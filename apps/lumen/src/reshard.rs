@@ -1011,7 +1011,9 @@ mod tests {
     #[test]
     fn snapshot_reshard_batches_splits_oversized_bucket_delta_by_bytes() {
         let collection_id = "docs";
-        let source = Engine::new();
+        let source = std::sync::Arc::new(Engine::new());
+        let checkpoint_dir = tempfile::tempdir().unwrap();
+        let checkpoint = crate::segment_rdb::SegmentRdbStore::new(checkpoint_dir.path()).unwrap();
         source
             .create_collection(
                 collection_id,
@@ -1035,7 +1037,12 @@ mod tests {
         let vocab: Vec<String> = (0..VOCAB_SIZE).map(|i| format!("tok{i}")).collect();
         let big_body = vocab.join(" ");
         let ids: Vec<String> = (0..200).map(|i| format!("d-{i:04}")).collect();
-        for id in &ids {
+        for (position, id) in ids.iter().enumerate() {
+            // Build the same large reshard source through bounded pending
+            // changes. Its already checkpointed index is not pending work.
+            if position != 0 && position % 32 == 0 {
+                checkpoint.save(&source, 0).unwrap();
+            }
             source
                 .index(
                     collection_id,
@@ -1054,15 +1061,9 @@ mod tests {
         // A generous id-count cap so byte size, not id count, is what
         // forces the split.
         let all_buckets: BTreeSet<u32> = BTreeSet::from([0]);
-        let batches = snapshot_reshard_batches(
-            &snapshot,
-            &from,
-            &to,
-            &all_buckets,
-            10_000,
-            MAX_BATCH_BYTES,
-        )
-        .unwrap();
+        let batches =
+            snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 10_000, MAX_BATCH_BYTES)
+                .unwrap();
 
         assert!(
             batches.len() > 1,

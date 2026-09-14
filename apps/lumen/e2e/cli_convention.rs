@@ -89,6 +89,22 @@ fn run_lumen(args: &[&str]) -> String {
     run_command(&mut command, &format!("lumen {args:?}"))
 }
 
+/// Run a CLI spelling which must be rejected during parsing. All callers add
+/// `--help`, so a correct rejection needs no listener, broker, or network.
+fn run_lumen_rejected(args: &[&str]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_lumen"))
+        .args(args)
+        .output()
+        .unwrap_or_else(|err| panic!("run rejected lumen {args:?}: {err}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "lumen {args:?} must be rejected before serving\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    format!("{stdout}\n{stderr}")
+}
+
 fn run_lumen_chainable(args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
     command.args(args);
@@ -119,6 +135,68 @@ fn help_ships_standard_issue_group_not_report_issue() {
     assert!(
         !help.contains("report-issue"),
         "deprecated report-issue command still appears in:\n{help}"
+    );
+}
+
+/// NATS was a retired external write-log backend. These are parser-level
+/// refusals, so the contract cannot pass because a broker happens to be down.
+///
+/// # Facets
+///
+/// - Behavior: `cli_convention.rs:160` requires `serve --help` to omit every
+///   retired NATS spelling. `:101` requires each old spelling to exit nonzero,
+///   while `:169`, `:183`, and `:197` identify the refused backend and flags.
+/// - Security: the assertions at `:101`, `:169`, `:183`, and `:197` feed
+///   untrusted command-line values into `serve` and require refusal before it
+///   can create a listener or contact a broker. They cover the retired input fields at
+///   `apps/lumen/src/bin/lumen.rs:1117-1127`.
+/// - Performance: those parse-only refusals reach no request, scan, startup,
+///   or build path. They make no timing claim. The existing durable performance
+///   gate remains the measurement for write execution.
+#[test]
+fn serve_help_omits_retired_nats_backend_and_connection_flags() {
+    let help = run_lumen(&["serve", "--help"]);
+    let lower = help.to_ascii_lowercase();
+    assert!(
+        !lower.contains("nats"),
+        "serve help still advertises the retired NATS backend or connection flags:\\n{help}"
+    );
+}
+
+#[test]
+fn serve_rejects_retired_nats_wal_backend() {
+    let output = run_lumen_rejected(&["serve", "--wal", "nats", "--help"]);
+    assert!(
+        output.contains("--wal") && output.to_ascii_lowercase().contains("nats"),
+        "the rejected backend spelling must identify the rejected CLI input:\\n{output}"
+    );
+}
+
+#[test]
+fn serve_rejects_retired_nats_url_flag() {
+    let output = run_lumen_rejected(&[
+        "serve",
+        "--nats-url",
+        "nats://127.0.0.1:4222",
+        "--help",
+    ]);
+    assert!(
+        output.contains("--nats-url"),
+        "the rejected URL spelling must identify the rejected CLI input:\\n{output}"
+    );
+}
+
+#[test]
+fn serve_rejects_retired_nats_connect_timeout_flag() {
+    let output = run_lumen_rejected(&[
+        "serve",
+        "--nats-connect-timeout-secs",
+        "1",
+        "--help",
+    ]);
+    assert!(
+        output.contains("--nats-connect-timeout-secs"),
+        "the rejected timeout spelling must identify the rejected CLI input:\\n{output}"
     );
 }
 

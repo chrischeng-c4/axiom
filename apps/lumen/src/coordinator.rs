@@ -23,36 +23,121 @@
 //! so the handler still maps them to the right HTTP status.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{bail, Result};
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use raft_runtime::OutcomeWindow;
 use rustc_hash::FxHashMap;
-use tokio::sync::{oneshot, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
+use tokio::sync::{
+    oneshot, Mutex as AsyncMutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock,
+};
 
+use crate::change_admission::PendingChangeCapacity;
+use crate::change_budget::AdmissionError;
 use crate::log_entry::RaftLogEntry;
-use crate::storage::{ApplyOutcome, Engine};
-use crate::wal::{SharedWal, WalRecord};
+use crate::storage::{
+    ApplyOutcome, Engine, RecordAdmissionError, RecordApplyGuard, RecordReservation, RepriceRecord,
+};
+use crate::wal::{SharedWal, WalDelivery, WalRecord};
+
+mod committed_scalar;
+use committed_scalar::MappedApply;
 
 /// How many recent outcomes to retain, via [`OutcomeWindow`]. A publisher
 /// reads its outcome within microseconds of the apply loop reaching its
 /// sequence, far inside this window; outcomes for sequences no local
 /// handler is waiting on (writes that originated on other nodes) age out.
 const OUTCOME_WINDOW: u64 = 8192;
-const APPLY_LOOP_BATCH: usize = 128;
 /// Bound on `submit()`'s wait for local apply (#1486 R2). Comfortably above
-/// any realistic single-batch apply latency (`APPLY_LOOP_BATCH` folds
-/// synchronously in one `spawn_blocking` task), so this only fires on a
-/// genuine stall — turning what would otherwise be an infinite hang into a
+/// realistic single-record apply latency, so this only fires on a genuine
+/// stall — turning what would otherwise be an infinite hang into a
 /// retryable 5xx.
 const SUBMIT_TIMEOUT_SECS: u64 = 30;
 const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(SUBMIT_TIMEOUT_SECS);
 
 struct PendingApply {
     seq: u64,
-    rec: WalRecord,
-    aof_rec: Option<WalRecord>,
+    delivery: WalDelivery,
+    admitted_bytes: usize,
+    reservation: Option<RecordReservation>,
+}
+
+enum PreparedLocalRecord<'a> {
+    Prepared(RecordApplyGuard<'a>),
+    /// A committed record reached no charged apply guard. The coordinator must
+    /// retain its reservation and source at the unresolved head.
+    Unresolved {
+        reservation: RecordReservation,
+        error: anyhow::Error,
+    },
+}
+
+/// Repricing happens after the WAL record has a sequence, but before its
+/// capture-barrier lease. A larger valid record waits only for the missing
+/// delta, then revalidates. Any failure before a guard keeps the reservation
+/// for the unresolved committed head; it cannot enter generic apply.
+fn prepare_local_record<'a>(
+    engine: &'a Engine,
+    mut entry: RaftLogEntry,
+    mut reservation: RecordReservation,
+    mut ensure_capacity_owner: impl FnMut() -> Result<()>,
+) -> Result<PreparedLocalRecord<'a>> {
+    loop {
+        match engine.begin_admitted_record(entry, reservation) {
+            Ok(guard) => return Ok(PreparedLocalRecord::Prepared(guard)),
+            Err(RepriceRecord {
+                entry: repriced_entry,
+                reservation: mut repriced_reservation,
+                required: Some(required),
+                error: _,
+            }) => match repriced_reservation.try_grow_to(required) {
+                Ok(()) => {
+                    entry = repriced_entry;
+                    reservation = repriced_reservation;
+                }
+                Err(AdmissionError::Full { .. }) => {
+                    // The committed source remains retained while this owner
+                    // publishes only real local work to release capacity.
+                    if let Err(owner_error) = ensure_capacity_owner() {
+                        return Ok(PreparedLocalRecord::Unresolved {
+                            reservation: repriced_reservation,
+                            error: owner_error,
+                        });
+                    }
+                    engine.request_pending_checkpoint();
+                    match repriced_reservation.wait_grow_to(required) {
+                        Ok(()) => {
+                            entry = repriced_entry;
+                            reservation = repriced_reservation;
+                        }
+                        Err(grow_error) => {
+                            return Ok(PreparedLocalRecord::Unresolved {
+                                reservation: repriced_reservation,
+                                error: anyhow::Error::new(RecordAdmissionError::Capacity(
+                                    grow_error,
+                                )),
+                            });
+                        }
+                    }
+                }
+                Err(grow_error) => {
+                    return Ok(PreparedLocalRecord::Unresolved {
+                        reservation: repriced_reservation,
+                        error: anyhow::Error::new(RecordAdmissionError::Capacity(grow_error)),
+                    });
+                }
+            },
+            Err(RepriceRecord {
+                reservation, error, ..
+            }) => {
+                return Ok(PreparedLocalRecord::Unresolved {
+                    reservation,
+                    error: anyhow::Error::new(error),
+                });
+            }
+        }
+    }
 }
 
 /// A `submit()` waiter was released without a genuine [`ApplyOutcome`]
@@ -124,6 +209,9 @@ pub fn is_storage_full(e: &anyhow::Error) -> bool {
 
 struct CompletionState {
     outcomes: OutcomeWindow<Result<ApplyOutcome>>,
+    /// An unresolved committed head can fail before its publisher installs a
+    /// waiter. Keep its typed failure separate from applied outcomes.
+    unresolved: FxHashMap<u64, Result<ApplyOutcome>>,
     waiters: FxHashMap<u64, oneshot::Sender<Result<ApplyOutcome>>>,
     /// A permit moves here immediately after publish and stays bound to the
     /// sequence until the apply loop completes it. Caller cancellation or a
@@ -205,8 +293,26 @@ pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
 
 pub struct WriteCoordinator {
     wal: SharedWal,
+    engine: Arc<Engine>,
+    /// A local submit holds this lock from WAL publication through installing
+    /// its sequence-keyed reservation. The apply loop takes and removes the
+    /// reservation before it enters `spawn_blocking`; therefore a subscriber
+    /// that observes a record while `publish` is still returning cannot apply
+    /// it through the unadmitted path.
+    local_reservations: AsyncMutex<FxHashMap<u64, RecordReservation>>,
+    has_local_aof: bool,
+    /// A refused local request can need source relief without an apply waiter.
+    capacity_relief_requested: AtomicBool,
+    layer_capacity_owner: Mutex<Option<crate::segment_capacity::Fallback>>,
     applied: AtomicU64,
     completions: Mutex<CompletionState>,
+    /// A failed committed head can still retain its WAL source. Keep any
+    /// reservation that the engine did not adopt until process exit.
+    failed_head_reservations: Mutex<Vec<RecordReservation>>,
+    failed_head_retentions: Mutex<FxHashMap<u64, crate::change_budget::SourceRetention>>,
+    /// A non-owning self reference lets a cancelled request leave a publisher
+    /// task alive without retaining the coordinator forever.
+    self_weak: Weak<WriteCoordinator>,
     /// Serializes one Standalone-wide replacement against ordinary writes.
     ///
     /// `submit` holds a shared permit from publish through local apply. A
@@ -219,6 +325,16 @@ pub struct WriteCoordinator {
 }
 
 impl WriteCoordinator {
+    /// Start or reuse the native checkpoint owner before this coordinator waits
+    /// on capacity for a committed record. This holds no apply lease.
+    fn ensure_capacity_owner(&self) -> Result<()> {
+        let mut owner = self
+            .layer_capacity_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("capacity owner poisoned"))?;
+        crate::segment_capacity::Fallback::ensure(&mut owner, &self.engine, None)
+    }
+
     /// Spawn the apply loop and return the coordinator. The loop tails
     /// the log from the beginning and folds it into `engine`.
     pub fn start(wal: SharedWal, engine: Arc<Engine>) -> Arc<Self> {
@@ -256,16 +372,27 @@ impl WriteCoordinator {
         from_seq: u64,
         aof: Option<SharedAof>,
     ) -> Arc<Self> {
-        let coord = Arc::new(Self {
+        engine.capture_barrier.apply().initialize_sequence(from_seq);
+        let coord = Arc::new_cyclic(|self_weak| Self {
             wal: wal.clone(),
+            engine: engine.clone(),
+            local_reservations: AsyncMutex::new(FxHashMap::default()),
+            has_local_aof: aof.is_some(),
+            capacity_relief_requested: AtomicBool::new(false),
+            layer_capacity_owner: Mutex::new(None),
             applied: AtomicU64::new(from_seq),
             completions: Mutex::new(CompletionState {
                 outcomes: OutcomeWindow::new(OUTCOME_WINDOW),
+                unresolved: FxHashMap::default(),
                 waiters: FxHashMap::default(),
                 mutation_permits: FxHashMap::default(),
             }),
+            failed_head_reservations: Mutex::new(Vec::new()),
+            failed_head_retentions: Mutex::new(FxHashMap::default()),
+            self_weak: self_weak.clone(),
             mutation_gate: MutationGate::default(),
         });
+        Self::start_capacity_relief(&coord);
         let loop_coord = coord.clone();
         tokio::spawn(async move {
             let mut backoff = std::time::Duration::from_millis(100);
@@ -277,7 +404,7 @@ impl WriteCoordinator {
             // redelivery is skipped idempotently below.
             loop {
                 let from = loop_coord.applied.load(Ordering::Acquire);
-                let mut sub = match wal.subscribe(from).await {
+                let mut sub = match wal.subscribe_admitted(from).await {
                     Ok(s) => {
                         backoff = std::time::Duration::from_millis(100);
                         s
@@ -289,88 +416,298 @@ impl WriteCoordinator {
                         continue;
                     }
                 };
+                // A retry reservation covers the next decoded working copy.
+                // Its source subscription is installed before the old one drops.
+                let mut replay_reservation: Option<(u64, RecordReservation)> = None;
                 while let Some(item) = sub.next().await {
-                    let mut stream_ended = false;
                     match item {
-                        Ok((seq, rec)) => {
+                        Ok((seq, mut delivery)) => {
                             // Idempotent under redelivery: skip anything at or
                             // below what we've already applied. Defense-in-depth
                             // (#1486): a skipped sequence never reaches `complete`,
                             // so any local waiter for it (a submit() that published
                             // this exact seq) would otherwise hang forever — release
                             // it with a distinct, retryable error instead.
+                            let local_reservation = loop_coord.take_local_reservation(seq).await;
+                            let mut reservation = if let Some((expected, reservation)) =
+                                replay_reservation.take()
+                            {
+                                if seq != expected || local_reservation.is_some() {
+                                    // Losing the pinned head is a broken WAL contract. Never
+                                    // acknowledge a later sequence as if that head had applied.
+                                    engine.capture_barrier.apply().mark_uncertain();
+                                    loop_coord.mutation_gate.require_restart();
+                                    tracing::error!(seq, expected, "WAL replay did not return its capacity-blocked head; restart required");
+                                    return;
+                                }
+                                Some(reservation)
+                            } else {
+                                local_reservation
+                            };
                             if seq <= loop_coord.applied.load(Ordering::Acquire) {
                                 loop_coord.complete_stale(seq);
                                 continue;
                             }
-                            let mut batch = Vec::with_capacity(APPLY_LOOP_BATCH);
-                            batch.push(PendingApply {
-                                seq,
-                                aof_rec: aof.as_ref().map(|_| rec.clone()),
-                                rec,
-                            });
-                            while batch.len() < APPLY_LOOP_BATCH {
-                                match sub.next().now_or_never() {
-                                    Some(Some(Ok((seq, rec)))) => {
-                                        if seq <= loop_coord.applied.load(Ordering::Acquire) {
-                                            loop_coord.complete_stale(seq);
+                            if reservation.is_none() {
+                                match loop_coord
+                                    .try_apply_mapped_delivery(seq, delivery, aof.clone())
+                                    .await
+                                {
+                                    Ok(MappedApply::Fallback(retained)) => delivery = retained,
+                                    Ok(MappedApply::Applied) => {
+                                        loop_coord
+                                            .failed_head_retentions
+                                            .lock()
+                                            .expect("failed-head retentions poisoned")
+                                            .remove(&seq);
+                                        continue;
+                                    }
+                                    Ok(MappedApply::Unresolved) => {
+                                        // Advancing this subscription would release the source
+                                        // whose AOF completion is uncertain. Retain it at head.
+                                        futures::future::pending::<()>().await;
+                                        unreachable!("unresolved mapped source remains pinned");
+                                    }
+                                    Err(error) => {
+                                        engine.capture_barrier.apply().mark_uncertain();
+                                        loop_coord.mutation_gate.require_restart();
+                                        loop_coord.fail_unresolved(seq, Err(anyhow::Error::new(
+                                            RestartRequired(format!("committed mapped WAL apply failed: {error}; source retained"))
+                                        )), None);
+                                        futures::future::pending::<()>().await;
+                                        unreachable!("failed mapped source remains pinned");
+                                    }
+                                }
+                                // Foreign delivery has no local publication reservation. Own
+                                // its raw working copy first; the apply preparation below must
+                                // acquire the rest before cloning AOF or normalized values.
+                                let request = delivery.decoded_owned_bytes().ok().and_then(|raw| {
+                                    delivery
+                                        .extra_delivery_bytes(aof.is_some())
+                                        .ok()
+                                        .map(|extra| {
+                                            engine.record_ram_request_from_bound(raw, extra)
+                                        })
+                                });
+                                if let Some(request) = request {
+                                    match engine.try_reserve_record_ram(&request) {
+                                        Ok(admitted) => reservation = Some(admitted),
+                                        Err(RecordAdmissionError::Capacity(AdmissionError::Full { .. })) => {
+                                            // The current MemWal delivery is not acknowledged
+                                            // until another poll. Pin the unchanged applied cut
+                                            // before dropping that subscription and working copy.
+                                            let replay = loop {
+                                                match wal.subscribe_admitted(loop_coord.applied.load(Ordering::Acquire)).await {
+                                                    Ok(replay) => break replay,
+                                                    Err(error) => {
+                                                        tracing::warn!(seq, %error, "could not pin committed WAL head for capacity retry");
+                                                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                                    }
+                                                }
+                                            };
+                                            drop(delivery);
+                                            sub = replay;
+                                            if let Err(error) = loop_coord.ensure_capacity_owner() {
+                                                engine.capture_barrier.apply().mark_uncertain();
+                                                loop_coord.mutation_gate.require_restart();
+                                                loop_coord.fail_unresolved(
+                                                    seq,
+                                                    Err(anyhow::Error::new(RestartRequired(format!(
+                                                        "could not start committed WAL capacity maintenance: {error}; source retained"
+                                                    )))),
+                                                    None,
+                                                );
+                                                futures::future::pending::<()>().await;
+                                                unreachable!("failed committed head remains pinned");
+                                            }
+                                            let eng = engine.clone();
+                                            match tokio::task::spawn_blocking(move || eng.wait_reserve_record_ram(&request)).await {
+                                                Ok(Ok(admitted)) => replay_reservation = Some((seq, admitted)),
+                                                result => {
+                                                    engine.capture_barrier.apply().mark_uncertain();
+                                                    loop_coord.mutation_gate.require_restart();
+                                                    tracing::error!(seq, error = ?result.map(|admission| admission.map(|_| ())), "committed WAL admission wait failed; restart required");
+                                                    return;
+                                                }
+                                            }
                                             continue;
                                         }
-                                        batch.push(PendingApply {
-                                            seq,
-                                            aof_rec: aof.as_ref().map(|_| rec.clone()),
-                                            rec,
-                                        });
+                                        // Oversized raw records still need the streaming source
+                                        // adapter. This branch retains the established dispatch
+                                        // until that distinct preparation route is installed.
+                                        Err(error) => tracing::warn!(seq, ?error, "committed WAL raw record requires streaming preparation"),
                                     }
-                                    Some(Some(Err(e))) => {
-                                        tracing::warn!(
-                                            error = %e,
-                                            "apply loop: stream item error"
-                                        );
-                                    }
-                                    Some(None) => {
-                                        stream_ended = true;
-                                        break;
-                                    }
-                                    None => break,
                                 }
                             }
-                            // apply_raft_entry is synchronous and CPU-bound (a bulk index folds
-                            // thousands of items + BM25 stats). Run ready records in one blocking
-                            // task to keep broker I/O moving without paying a thread handoff per WAL
-                            // record.
-                            let eng = engine.clone();
-                            let seqs: Vec<u64> = batch.iter().map(|pending| pending.seq).collect();
-                            let results = match tokio::task::spawn_blocking(move || {
-                                let mut results = Vec::with_capacity(batch.len());
-                                for pending in batch {
-                                    let outcome = eng.apply_raft_entry(pending.rec.entry);
-                                    results.push((pending.seq, outcome, pending.aof_rec));
-                                }
-                                results
-                            })
-                            .await
-                            {
-                                Ok(results) => results,
-                                Err(e) => {
-                                    let err = e.to_string();
-                                    seqs.into_iter()
-                                        .map(|seq| {
-                                            (
-                                                seq,
-                                                Err(anyhow::anyhow!(
-                                                    "apply batch task panicked: {err}"
-                                                )),
-                                                None,
-                                            )
-                                        })
-                                        .collect()
-                                }
+                            let Some(admitted_bytes) =
+                                reservation.as_ref().map(RecordReservation::bytes)
+                            else {
+                                // A source larger than the process budget needs a streaming
+                                // apply representation. Never decode it with invented credit.
+                                engine.capture_barrier.apply().mark_uncertain();
+                                loop_coord.mutation_gate.require_restart();
+                                loop_coord.fail_unresolved(
+                                    seq,
+                                    Err(anyhow::Error::new(RestartRequired(
+                                        "committed WAL record has no bounded delivery admission; source retained".into(),
+                                    ))),
+                                    reservation,
+                                );
+                                // Keep the subscription at the unresolved source. A next poll
+                                // would release its bytes and permit a successor to apply.
+                                futures::future::pending::<()>().await;
+                                unreachable!(
+                                    "the unresolved failed head must retain its subscription"
+                                )
                             };
-
-                            for (seq, mut outcome, aof_rec) in results {
-                                if outcome.is_ok() && loop_coord.mutation_gate.is_restart_required()
-                                {
+                            let mut pending = PendingApply {
+                                seq,
+                                delivery,
+                                admitted_bytes,
+                                reservation,
+                            };
+                            if let Some(retention) = pending
+                                .reservation
+                                .as_mut()
+                                .map(RecordReservation::source_retention)
+                            {
+                                let retained = pending.delivery.retain_source(retention.clone());
+                                loop_coord
+                                    .failed_head_retentions
+                                    .lock()
+                                    .expect("failed-head retentions poisoned")
+                                    .insert(seq, retention);
+                                if let Err(error) = retained {
+                                    engine.capture_barrier.apply().mark_uncertain();
+                                    loop_coord.mutation_gate.require_restart();
+                                    loop_coord.fail_unresolved(
+                                        seq,
+                                        Err(anyhow::Error::new(RestartRequired(format!(
+                                            "cannot retain committed WAL source {seq}: {error}"
+                                        )))),
+                                        pending.reservation.take(),
+                                    );
+                                    futures::future::pending::<()>().await;
+                                }
+                            }
+                            // A local record is admitted before publish and then applied one at a
+                            // time. Do not prefetch another decoded record while this record owns
+                            // capacity through its AOF and watermark boundary.
+                            let eng = engine.clone();
+                            let applying_coord = loop_coord.clone();
+                            let local_aof = aof.clone();
+                            let applied = tokio::task::spawn_blocking(move || {
+                                let aof = local_aof;
+                                let seq = pending.seq;
+                                let rec = match pending.delivery.read(pending.admitted_bytes) {
+                                    Ok(rec) => rec,
+                                    Err(error) => {
+                                        eng.capture_barrier.apply().mark_uncertain();
+                                        applying_coord.mutation_gate.require_restart();
+                                        applying_coord.fail_unresolved(
+                                            seq,
+                                            Err(anyhow::Error::new(RestartRequired(format!(
+                                                "committed WAL source read failed: {error}; restart required"
+                                            )))),
+                                            pending.reservation,
+                                        );
+                                        return false;
+                                    }
+                                };
+                                let version = rec.version;
+                                let aof_rec;
+                                // A prepared guard owns the apply lease and its retained charge
+                                // until after AOF persistence and watermark advancement below.
+                                let mut prepared = None;
+                                // #4326: per-record apply cost, measured across the whole
+                                // prepare+apply span below (including any reprice/
+                                // wait_grow_to retry inside `prepare_local_record`) so a
+                                // 500k-doc perf probe can read per-record apply cost from
+                                // `GET /metrics` — see `Metrics::observe_coordinator_apply`.
+                                let apply_started_at = std::time::Instant::now();
+                                let mut outcome = match pending.reservation {
+                                    Some(reservation) => match prepare_local_record(
+                                        eng.as_ref(),
+                                        rec.entry,
+                                        reservation,
+                                        || applying_coord.ensure_capacity_owner(),
+                                    ) {
+                                        Ok(PreparedLocalRecord::Prepared(mut guard)) => {
+                                            // This copy is made only after the full normalized
+                                            // and transport reservation became a retained charge.
+                                            let prepared_entry =
+                                                guard.entry().expect("unapplied prepared entry");
+                                            let apply_kind =
+                                                crate::metrics::ApplyKind::from_entry(prepared_entry);
+                                            let apply_items =
+                                                crate::metrics::apply_item_count(prepared_entry);
+                                            aof_rec = aof.as_ref().map(|_| WalRecord {
+                                                version,
+                                                entry: prepared_entry.clone(),
+                                            });
+                                            let outcome = eng.apply_prepared_raft_entry(&mut guard);
+                                            eng.metrics().observe_coordinator_apply(
+                                                apply_kind,
+                                                apply_items,
+                                                apply_started_at.elapsed(),
+                                            );
+                                            prepared = Some(guard);
+                                            outcome
+                                        }
+                                        Ok(PreparedLocalRecord::Unresolved {
+                                            reservation,
+                                            error,
+                                        }) => {
+                                            // No apply guard proves the full normalized record is
+                                            // charged. Retain this committed source and stop at its
+                                            // prefix instead of using generic uncharged apply.
+                                            eng.capture_barrier.apply().mark_uncertain();
+                                            applying_coord.mutation_gate.require_restart();
+                                            applying_coord.fail_unresolved(
+                                                seq,
+                                                Err(anyhow::Error::new(RestartRequired(format!(
+                                                "committed WAL record has no charged apply guard: {error}; source retained"
+                                                )))),
+                                                Some(reservation),
+                                            );
+                                            return false;
+                                        }
+                                        Err(error) => {
+                                            eng.capture_barrier.apply().mark_uncertain();
+                                            applying_coord.mutation_gate.require_restart();
+                                            applying_coord.fail_unresolved(
+                                                seq,
+                                                Err(anyhow::Error::new(RestartRequired(format!(
+                                                "committed WAL preparation returned unexpectedly: {error}; source retained"
+                                                )))),
+                                                None,
+                                            );
+                                            return false;
+                                        }
+                                    },
+                                    None => {
+                                        // Admission reaches this branch only when no bounded
+                                        // committed representation exists. Do not let it escape
+                                        // through an uncharged generic apply.
+                                        eng.capture_barrier.apply().mark_uncertain();
+                                        applying_coord.mutation_gate.require_restart();
+                                        applying_coord.fail_unresolved(
+                                            seq,
+                                            Err(anyhow::Error::new(RestartRequired(
+                                                "committed WAL record has no charged apply guard; source retained"
+                                                    .into(),
+                                            ))),
+                                            None,
+                                        );
+                                        return false;
+                                    }
+                                };
+                                let apply = prepared.as_ref().map(|guard| guard.apply_lease());
+                                // A preceding AOF gap makes every later record
+                                // unrecoverable, including one whose Engine
+                                // application reports a normal validation
+                                // error.  Do not append or acknowledge it.
+                                if applying_coord.mutation_gate.is_restart_required() {
                                     outcome = Err(anyhow::Error::new(RestartRequired(format!(
                                         "sequence {seq} applied after an earlier local AOF gap; restart this Lumen process"
                                     ))));
@@ -386,7 +723,12 @@ impl WriteCoordinator {
                                 // before publishing `applied` or acknowledging the caller. The
                                 // production writer uses `Always`, so `append` crosses the fsync
                                 // boundary here. A graceful SIGTERM also performs a final sync.
-                                if outcome.is_ok() {
+                                // A committed record can have changed earlier
+                                // items and then return an error.  The AOF is
+                                // therefore keyed to a non-uncertain apply
+                                // interval, not `ApplyOutcome::Ok`.
+                                let mut unresolved = false;
+                                if !applying_coord.mutation_gate.is_restart_required() {
                                     if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec) {
                                         let persisted = {
                                             let mut writer =
@@ -401,7 +743,10 @@ impl WriteCoordinator {
                                             // but its recoverable AOF record did
                                             // not. Disk-space recovery cannot
                                             // repair that gap in this process.
-                                            loop_coord.mutation_gate.require_restart();
+                                            applying_coord.mutation_gate.require_restart();
+                                            apply
+                                                .expect("AOF persistence follows a charged apply guard")
+                                                .mark_uncertain();
                                             if is_storage_full(&e) {
                                                 // #2516: local disk is out of
                                                 // space. Flip the sticky
@@ -418,7 +763,7 @@ impl WriteCoordinator {
                                                     error = %e,
                                                     "AOF persist failed: ENOSPC — entering degraded read-only mode"
                                                 );
-                                                engine.metrics().mark_storage_degraded();
+                                                eng.metrics().mark_storage_degraded();
                                                 outcome = Err(anyhow::Error::new(
                                                     StorageFullError(format!(
                                                         "local storage is full (ENOSPC) persisting sequence {seq}; \
@@ -437,16 +782,52 @@ impl WriteCoordinator {
                                                     )),
                                                 ));
                                             }
+                                            unresolved = true;
                                         }
                                     }
                                 }
-                                loop_coord.complete(seq, outcome);
+                                if unresolved {
+                                    applying_coord.fail_unresolved(seq, outcome, None);
+                                    return false;
+                                }
+                                apply
+                                    .expect("completed committed record has a charged apply guard")
+                                    .advance_sequence(seq);
+                                applying_coord.complete(seq, outcome);
+                                true
+                            }).await;
+                            match applied {
+                                Ok(true) => {
+                                    loop_coord
+                                        .failed_head_retentions
+                                        .lock()
+                                        .expect("failed-head retentions poisoned")
+                                        .remove(&seq);
+                                }
+                                Ok(false) => {
+                                    // Keep this subscription at its failed head. Polling again
+                                    // would acknowledge source bytes and permit a successor.
+                                    futures::future::pending::<()>().await;
+                                }
+                                Err(error) => {
+                                    // The lease also latches uncertainty while unwinding, before
+                                    // another checkpoint can enter the failed apply interval.
+                                    engine.capture_barrier.apply().mark_uncertain();
+                                    loop_coord.mutation_gate.require_restart();
+                                    loop_coord.fail_unresolved(
+                                        seq,
+                                        Err(anyhow::Error::new(RestartRequired(format!(
+                                            "apply task panicked: {error}; restart required"
+                                        )))),
+                                        None,
+                                    );
+                                    // Retain the subscription floor after a panic too. The source
+                                    // might still own the committed head's bytes.
+                                    futures::future::pending::<()>().await;
+                                }
                             }
                         }
                         Err(e) => tracing::warn!(error = %e, "apply loop: stream item error"),
-                    }
-                    if stream_ended {
-                        break;
                     }
                 }
                 // Stream ended (e.g. external-log restart killed the ephemeral
@@ -485,6 +866,165 @@ impl WriteCoordinator {
         drop(mutation_permit);
     }
 
+    /// Capacity can be held by later publications or by already applied
+    /// sources pinned by a slow reader. This task needs neither an apply lease
+    /// nor MutationGate. Source charges remain until native replacement proves
+    /// that the original payload has left RAM.
+    ///
+    /// `capacity_relief_requested` (a pre-publication door refusal, e.g. an
+    /// HTTP 429) always drives the applied-source staging scan below — it
+    /// releases sources of records already folded into the engine and needs
+    /// no waiter. It alone must never steal a *pending* local reservation
+    /// from `local_reservations`: that ledger holds already-admitted records
+    /// simply waiting their turn to apply, not spare capacity. Stealing one
+    /// forces its apply to re-reserve from scratch and can park it in
+    /// `wait_reserve_record_ram` until checkpoint frees bytes. The ledger
+    /// steal below runs only when `has_capacity_waiters()` reports a real
+    /// committed apply or replay blocked on capacity.
+    fn start_capacity_relief(coord: &Arc<Self>) {
+        let weak = Arc::downgrade(coord);
+        let mut staged_through = coord.applied_seq();
+        tokio::spawn(async move {
+            let mut requested_through = staged_through;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                let Some(coord) = weak.upgrade() else {
+                    return;
+                };
+                let requested = coord
+                    .capacity_relief_requested
+                    .swap(false, Ordering::AcqRel);
+                let waiting = coord.engine.has_capacity_waiters();
+                if requested || waiting {
+                    requested_through = requested_through.max(coord.applied_seq());
+                }
+                // Scan each applied sequence once, in bounded groups. Even a
+                // refused request with no waiting apply must finish its group.
+                // Checkpoint may have retired the journal while native readers
+                // still retain these sources and their independent charges.
+                for _ in 0..64 {
+                    if staged_through >= requested_through {
+                        break;
+                    }
+                    let seq = staged_through + 1;
+                    match coord.wal.stage_source(seq).await {
+                        Ok(None) => staged_through = seq,
+                        Ok(Some(proof)) if proof.sequence() == seq => staged_through = seq,
+                        Ok(Some(_)) => {
+                            tracing::error!(
+                                seq,
+                                "WAL source returned an offload proof for another sequence"
+                            );
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(seq, %error, "applied WAL source staging failed; retaining source charge");
+                            break;
+                        }
+                    }
+                }
+                if !waiting {
+                    // A door refusal (`requested`) with no committed apply
+                    // blocked on capacity has already been served above: the
+                    // applied-source staging scan advanced `staged_through`.
+                    // Stealing a pending ledger reservation here would only
+                    // rob an already-admitted, not-yet-applied local record
+                    // that is simply waiting its turn — forcing its apply to
+                    // re-reserve from scratch and park in
+                    // `wait_reserve_record_ram` for no genuine waiter.
+                    continue;
+                }
+                let mut ledger = coord.local_reservations.lock().await;
+                // Select without copying the pending ledger into a second buffer.
+                // One attempt per tick lets the waiting head take released capacity.
+                if let Some(seq) = ledger
+                    .iter()
+                    .max_by_key(|(&seq, reservation)| (reservation.bytes(), std::cmp::Reverse(seq)))
+                    .map(|(&seq, _)| seq)
+                {
+                    match coord.wal.stage_source(seq).await {
+                        Ok(Some(proof)) if proof.sequence() == seq => {
+                            // No apply worker can take this reservation while the ledger
+                            // is locked. Its decoded delivery and normalized data do not
+                            // exist yet. The source payload is now gone as well.
+                            drop(ledger.remove(&seq));
+                        }
+                        Ok(None) => {}
+                        Ok(Some(_)) => {
+                            tracing::error!(
+                                seq,
+                                "WAL source returned an offload proof for another sequence"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(seq, %error, "WAL source staging failed; retaining pending reservation");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async fn take_local_reservation(&self, seq: u64) -> Option<RecordReservation> {
+        self.local_reservations.lock().await.remove(&seq)
+    }
+
+    /// `try_reserve_record` prices the submitted raw record. Without an AOF,
+    /// two extras cover the retained WAL record and an encode `Vec` with up to
+    /// two raw bounds of capacity: three total raw bounds. With an AOF, four
+    /// extras cover the retained WAL record, delivered record, AOF clone, and
+    /// encode `Vec` up to two raw bounds: five total raw bounds.
+    /// An unrepresentable bound is refused before the WAL assigns a sequence.
+    ///
+    /// `Ok(None)` means "publish with no reservation at all" — the WAL
+    /// delivery loop's post-publication path then has nothing to grow from
+    /// and waits on capacity with no bound. `try_reserve_record` never
+    /// returns that gap for a domain pricing failure (unresolved
+    /// schema/context maps to at least a minimal raw+transport reservation,
+    /// or a capacity refusal here); this `None` arm stays only for an
+    /// admission error `PendingChangeCapacity` does not classify at all
+    /// (e.g. `RecordAdmissionError::WrongEngine`), which cannot occur for a
+    /// same-Engine local submit today.
+    fn try_admit_local_record(&self, entry: &RaftLogEntry) -> Result<Option<RecordReservation>> {
+        let raw = match Engine::record_owned_bytes(entry) {
+            Ok(raw) => raw,
+            Err(RecordAdmissionError::Overflow) => {
+                return Err(self.prepublication_backpressure(PendingChangeCapacity::Overflow));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let copies = if self.has_local_aof { 4 } else { 2 };
+        let Some(extra_owned) = raw.checked_mul(copies) else {
+            return Err(self.prepublication_backpressure(PendingChangeCapacity::Overflow));
+        };
+        match self.engine.try_reserve_record(entry, extra_owned) {
+            Ok(reservation) => Ok(Some(reservation)),
+            // Unknown schema/context preparation is likewise not a reason to
+            // discard a valid record; apply returns its original domain outcome.
+            Err(error) => {
+                if matches!(
+                    error,
+                    RecordAdmissionError::Capacity(AdmissionError::Full { .. })
+                ) {
+                    self.engine.request_pending_checkpoint();
+                    self.capacity_relief_requested
+                        .store(true, Ordering::Release);
+                }
+                match PendingChangeCapacity::from_record_prepublication(&error) {
+                    Some(pending) => Err(self.prepublication_backpressure(pending)),
+                    None => Ok(None),
+                }
+            }
+        }
+    }
+
+    /// Count only a final local refusal before this process publishes a WAL
+    /// record. Committed replay and ordinary domain errors do not pass here.
+    fn prepublication_backpressure(&self, pending: PendingChangeCapacity) -> anyhow::Error {
+        self.engine.metrics().incr_segment_backpressure();
+        anyhow::Error::new(pending)
+    }
+
     fn complete(&self, seq: u64, outcome: Result<ApplyOutcome>) {
         let mut direct = None;
         let mutation_permit;
@@ -514,6 +1054,29 @@ impl WriteCoordinator {
         }
     }
 
+    /// Notify the caller that a committed head is unresolved without claiming
+    /// it was applied. The sequence permit stays closed and the watermark
+    /// stays at the last known-good prefix.
+    fn fail_unresolved(
+        &self,
+        seq: u64,
+        outcome: Result<ApplyOutcome>,
+        reservation: Option<RecordReservation>,
+    ) {
+        if let Some(reservation) = reservation {
+            self.failed_head_reservations
+                .lock()
+                .expect("failed-head reservations poisoned")
+                .push(reservation);
+        }
+        let mut completions = self.completions.lock().expect("completions poisoned");
+        if let Some(waiter) = completions.waiters.remove(&seq) {
+            let _ = waiter.send(outcome);
+        } else {
+            completions.unresolved.insert(seq, outcome);
+        }
+    }
+
     fn register_waiter(
         &self,
         seq: u64,
@@ -522,6 +1085,18 @@ impl WriteCoordinator {
         let mut m = self.completions.lock().expect("completions poisoned");
         if let Some(result) = m.outcomes.claim(seq) {
             let (tx, rx) = oneshot::channel();
+            let _ = tx.send(result);
+            return Ok(rx);
+        }
+        if let Some(result) = m.unresolved.remove(&seq) {
+            if m.mutation_permits.contains_key(&seq) {
+                bail!("duplicate mutation permit for sequence {seq}");
+            }
+            let (tx, rx) = oneshot::channel();
+            // The failed head still owns the shared permit. Install it before
+            // exposing the typed error to a caller that may immediately start
+            // a restore attempt.
+            m.mutation_permits.insert(seq, mutation_permit);
             let _ = tx.send(result);
             return Ok(rx);
         }
@@ -552,13 +1127,64 @@ impl WriteCoordinator {
     /// stall must surface as a retryable 5xx to the caller, never an
     /// unbounded hang that leaks a server task per request.
     pub async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
+        // Full local admission is a retryable refusal before this record can
+        // consume a WAL sequence. Oversized and context-dependent records
+        // preserve the old path until root wires durable preparation.
+        let reservation = self.try_admit_local_record(&entry)?;
         // Keep the shared permit through publish AND local apply. An exclusive
         // restore fence can therefore observe one exact applied/WAL boundary:
         // no earlier submit remains in flight and no later submit has obtained
         // a sequence yet.
         let mutation_permit = self.mutation_gate.shared().await?;
-        let seq = self.wal.publish(WalRecord::new(entry)).await?;
-        let rx = self.register_waiter(seq, mutation_permit)?;
+        let (published_tx, published_rx) = oneshot::channel();
+        let publisher = self
+            .self_weak
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("write coordinator stopped before publish"))?;
+        let wal = self.wal.clone();
+        tokio::spawn(async move {
+            // This task owns the shared permit from before WAL publication. A
+            // caller may cancel after the WAL accepts its record, but it cannot
+            // release the restore fence before sequence ownership is installed.
+            let result = if let Some(reservation) = reservation {
+                // The subscriber cannot take this ledger while publication is
+                // still returning, so it sees the reservation for this exact
+                // sequence before it can start local apply.
+                let mut ledger = publisher.local_reservations.lock().await;
+                match wal.publish(WalRecord::new(entry)).await {
+                    Ok(seq) => {
+                        if ledger.insert(seq, reservation).is_some() {
+                            Err(anyhow::anyhow!(
+                                "duplicate local reservation for sequence {seq}"
+                            ))
+                        } else {
+                            drop(ledger);
+                            publisher
+                                .register_waiter(seq, mutation_permit)
+                                .map(|receiver| (seq, receiver))
+                        }
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                match wal.publish(WalRecord::new(entry)).await {
+                    Ok(seq) => publisher
+                        .register_waiter(seq, mutation_permit)
+                        .map(|receiver| (seq, receiver)),
+                    Err(error) => Err(error),
+                }
+            };
+            let _ = published_tx.send(result);
+        });
+        let (seq, rx) = match published_rx.await {
+            Ok(Ok(pair)) => pair,
+            Ok(Err(error)) => return Err(error),
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "publish task stopped before registering a waiter"
+                ))
+            }
+        };
         match tokio::time::timeout(SUBMIT_TIMEOUT, rx).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(_)) => Err(anyhow::anyhow!(
@@ -612,7 +1238,7 @@ impl WriteCoordinator {
 
 /// The write seam the API binds to: submit a log entry, get its applied outcome,
 /// and report the applied head. Implemented by [`WriteCoordinator`] (the WAL-seam
-/// path for embedded/nats) and by `RaftWriteSink` (the raft-runtime path).
+/// path for embedded WAL) and by `RaftWriteSink` (the raft-runtime path).
 #[async_trait::async_trait]
 pub trait WriteSink: Send + Sync {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome>;
@@ -644,11 +1270,82 @@ impl WriteSink for WriteCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::change_admission::PendingChangeCapacity;
+    use crate::change_budget::ChangeBudget;
     use crate::types::{
         CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
     };
-    use crate::wal::{MemWal, WalLog};
+    use crate::wal::{MemWal, WalLog, WalStream};
     use std::collections::BTreeMap as Map;
+    use std::sync::atomic::AtomicU8;
+    use tokio::sync::Notify;
+
+    #[derive(Clone)]
+    struct ControlledWal {
+        record: Arc<Mutex<Option<WalRecord>>>,
+        latest: Arc<AtomicU64>,
+        published: Arc<Notify>,
+        observed_publish: Arc<Notify>,
+        delivered: Arc<Notify>,
+        release_publish: Arc<Notify>,
+        release_delivery: Arc<Notify>,
+        mode: Arc<AtomicU8>,
+    }
+
+    impl ControlledWal {
+        const PAUSE_PUBLISH: u8 = 1;
+        const PAUSE_DELIVERY: u8 = 2;
+
+        fn paused(mode: u8) -> Arc<Self> {
+            Arc::new(Self {
+                record: Arc::new(Mutex::new(None)),
+                latest: Arc::new(AtomicU64::new(0)),
+                published: Arc::new(Notify::new()),
+                observed_publish: Arc::new(Notify::new()),
+                delivered: Arc::new(Notify::new()),
+                release_publish: Arc::new(Notify::new()),
+                release_delivery: Arc::new(Notify::new()),
+                mode: Arc::new(AtomicU8::new(mode)),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WalLog for ControlledWal {
+        async fn publish(&self, record: WalRecord) -> Result<u64> {
+            *self.record.lock().unwrap() = Some(record);
+            self.latest.store(1, Ordering::Release);
+            self.published.notify_one();
+            self.observed_publish.notify_one();
+            if self.mode.load(Ordering::Acquire) & Self::PAUSE_PUBLISH != 0 {
+                self.release_publish.notified().await;
+            }
+            Ok(1)
+        }
+
+        async fn subscribe(&self, _from_seq: u64) -> Result<WalStream> {
+            let wal = self.clone();
+            Ok(Box::pin(futures::stream::unfold(false, move |delivered| {
+                let wal = wal.clone();
+                async move {
+                    if delivered {
+                        return futures::future::pending().await;
+                    }
+                    wal.published.notified().await;
+                    if wal.mode.load(Ordering::Acquire) & Self::PAUSE_DELIVERY != 0 {
+                        wal.release_delivery.notified().await;
+                    }
+                    let record = wal.record.lock().unwrap().clone()?;
+                    wal.delivered.notify_one();
+                    Some((Ok((1, record)), true))
+                }
+            })))
+        }
+
+        async fn latest_seq(&self) -> Result<u64> {
+            Ok(self.latest.load(Ordering::Acquire))
+        }
+    }
 
     fn keyword_schema() -> CreateCollectionRequest {
         let mut fields = Map::new();
@@ -665,6 +1362,443 @@ mod tests {
             },
         );
         CreateCollectionRequest { fields }
+    }
+
+    fn admitted_index_entry() -> RaftLogEntry {
+        RaftLogEntry::Index {
+            collection_id: "u".into(),
+            req: IndexRequest {
+                items: vec![IndexItem {
+                    external_id: "u1".into(),
+                    field: "email".into(),
+                    value: FieldValue::String("v".into()),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn future_local_reservation_cannot_starve_earlier_external_record() {
+        struct DeferredWal {
+            inner: MemWal,
+            released: Arc<std::sync::atomic::AtomicBool>,
+            changed: Arc<tokio::sync::Notify>,
+        }
+        #[async_trait::async_trait]
+        impl WalLog for DeferredWal {
+            async fn publish(&self, record: WalRecord) -> Result<u64> {
+                self.inner.publish(record).await
+            }
+            async fn latest_seq(&self) -> Result<u64> {
+                self.inner.latest_seq().await
+            }
+            async fn stage_source(&self, seq: u64) -> Result<Option<crate::wal::WalSourceRelease>> {
+                self.inner.stage_source(seq).await
+            }
+            async fn subscribe_admitted(
+                &self,
+                from: u64,
+            ) -> Result<crate::wal::WalAdmissionStream> {
+                let stream = self.inner.subscribe_admitted(from).await?;
+                let state = (stream, self.released.clone(), self.changed.clone());
+                Ok(Box::pin(futures::stream::unfold(
+                    state,
+                    |(mut stream, released, changed)| async move {
+                        loop {
+                            let wake = changed.notified();
+                            if released.load(Ordering::Acquire) {
+                                break;
+                            }
+                            wake.await;
+                        }
+                        stream
+                            .next()
+                            .await
+                            .map(|record| (record, (stream, released, changed)))
+                    },
+                )))
+            }
+            async fn subscribe(&self, from: u64) -> Result<WalStream> {
+                let stream = self.inner.subscribe(from).await?;
+                let state = (stream, self.released.clone(), self.changed.clone());
+                Ok(Box::pin(futures::stream::unfold(
+                    state,
+                    |(mut stream, released, changed)| async move {
+                        loop {
+                            let wake = changed.notified();
+                            if released.load(Ordering::Acquire) {
+                                break;
+                            }
+                            wake.await;
+                        }
+                        stream
+                            .next()
+                            .await
+                            .map(|record| (record, (stream, released, changed)))
+                    },
+                )))
+            }
+        }
+        let entry = |id: &str| RaftLogEntry::Index {
+            collection_id: "u".into(),
+            req: IndexRequest {
+                items: vec![IndexItem {
+                    external_id: id.into(),
+                    field: "email".into(),
+                    value: FieldValue::String(format!("{id}-{}", "x".repeat(8192))),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        };
+        let external = entry("external");
+        let local = entry("local");
+        let calibration = Engine::with_change_budget(ChangeBudget::with_hard_limit(1024 * 1024));
+        calibration
+            .create_collection("u", keyword_schema())
+            .unwrap();
+        let local_raw = Engine::record_owned_bytes(&local).unwrap();
+        let local_price = calibration
+            .try_reserve_record(&local, local_raw * 2)
+            .unwrap()
+            .bytes();
+        let external_raw = Engine::record_owned_bytes(&external).unwrap() * 3;
+        let external_price = calibration
+            .try_reserve_record(&external, external_raw / 3 * 2)
+            .unwrap()
+            .bytes();
+        let hard = local_price + external_raw - 1;
+        assert!(external_price < hard && local_price < hard);
+        let budget = ChangeBudget::with_hard_limit(hard);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let wal = Arc::new(DeferredWal {
+            inner: MemWal::new(),
+            released: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            changed: Arc::new(tokio::sync::Notify::new()),
+        });
+        assert_eq!(wal.publish(WalRecord::new(external)).await.unwrap(), 1);
+        let coord = WriteCoordinator::start(wal.clone(), engine.clone());
+        let mut submitted = tokio::spawn({
+            let coord = coord.clone();
+            async move { coord.submit(local).await }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if wal.latest_seq().await.unwrap() >= 2 || submitted.is_finished() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the local publication attempt must finish before delivery starts");
+        let committed_local = wal.latest_seq().await.unwrap() == 2;
+        assert_eq!(coord.applied_seq(), 0);
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(crate::segment_rdb::SegmentRdbStore::new(directory.path()).unwrap());
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let checkpoint = tokio::spawn({
+            let stop = stop.clone();
+            let engine = engine.clone();
+            let coord = coord.clone();
+            let store = store.clone();
+            async move {
+                while !stop.load(Ordering::Acquire) {
+                    let engine = engine.clone();
+                    let store = store.clone();
+                    let seq = coord.applied_seq();
+                    tokio::task::spawn_blocking(move || store.save(&engine, seq))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+            }
+        });
+        wal.released.store(true, Ordering::Release);
+        wal.changed.notify_waiters();
+        let mut delivered_outcome = None;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            delivered_outcome = Some((&mut submitted).await);
+            let expected = if committed_local { 2 } else { 1 };
+            while coord.applied_seq() < expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let completed_without_reservation_discard = result.is_ok();
+        let outcome = match result {
+            Ok(()) => delivered_outcome.take().expect("local result returned"),
+            Err(_) => {
+                // Teardown only: unblock a broken implementation so the Tokio
+                // runtime does not wait forever for its native capacity waiter.
+                // The acceptance boolean was captured before this intervention.
+                drop(coord.local_reservations.lock().await.remove(&2));
+                match delivered_outcome.take() {
+                    Some(outcome) => outcome,
+                    None => tokio::time::timeout(std::time::Duration::from_secs(3), &mut submitted)
+                        .await
+                        .expect("failure teardown must release the stalled reservation"),
+                }
+            }
+        };
+        stop.store(true, Ordering::Release);
+        checkpoint.await.unwrap();
+        if committed_local {
+            outcome.unwrap().unwrap();
+            assert_eq!(coord.applied_seq(), 2);
+            assert_eq!(engine.stats("u").unwrap().documents_indexed, 2);
+        } else {
+            let error = outcome.unwrap().unwrap_err();
+            assert!(error.downcast_ref::<PendingChangeCapacity>().is_some());
+            assert_eq!(coord.applied_seq(), 1);
+            assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+        }
+        assert!(budget.high_water_bytes() <= hard);
+        assert!(completed_without_reservation_discard,
+            "future local reservation blocked the earlier external record despite a running checkpoint worker");
+    }
+
+    async fn wait_for_reserved(budget: &ChangeBudget) {
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while budget.snapshot().reserved == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("local published record must retain its reservation");
+    }
+
+    #[tokio::test]
+    async fn no_guard_reprice_retains_charge_without_mutating_state_or_watermark() {
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let first = Engine::with_change_budget(budget.clone());
+        let second = Arc::new(Engine::with_change_budget(budget));
+        first.create_collection("u", keyword_schema()).unwrap();
+        second.create_collection("u", keyword_schema()).unwrap();
+        let coord = WriteCoordinator::start(Arc::new(MemWal::new()), second.clone());
+        let entry = admitted_index_entry();
+        let reservation = first.try_reserve_record(&entry, 0).unwrap();
+        let bytes = reservation.bytes();
+
+        let result = prepare_local_record(second.as_ref(), entry, reservation, || {
+            panic!("wrong-engine reprice has no capacity wait")
+        })
+        .expect("wrong-engine reprice must return its original reservation");
+        match result {
+            PreparedLocalRecord::Prepared(_) => {
+                panic!("wrong-engine reprice cannot acquire an apply guard")
+            }
+            PreparedLocalRecord::Unresolved { reservation, error } => {
+                assert_eq!(
+                    reservation.bytes(),
+                    bytes,
+                    "no-guard failure must retain reservation bytes"
+                );
+                assert!(
+                    matches!(
+                        error.downcast_ref::<RecordAdmissionError>(),
+                        Some(RecordAdmissionError::WrongEngine)
+                    ),
+                    "wrong-engine no-guard failure must keep its typed admission error: {error:#}"
+                );
+            }
+        }
+        assert_eq!(
+            second.stats("u").unwrap().documents_indexed,
+            0,
+            "preparation failure must not mutate collection state"
+        );
+        assert_eq!(
+            coord.applied_seq(),
+            0,
+            "preparation failure must not advance the coordinator watermark"
+        );
+    }
+
+    #[test]
+    fn fitting_published_reprice_does_not_start_capacity_owner() {
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let active = Engine::with_change_budget(budget.clone());
+        active.create_collection("u", keyword_schema()).unwrap();
+        let entry = admitted_index_entry();
+
+        // Build real stale state. The reservation predates a restore, so the
+        // next begin must reprice it; the 1 MiB budget leaves room for growth.
+        let initial = active.try_reserve_record(&entry, 0).unwrap();
+        let initial = match prepare_local_record(&active, entry.clone(), initial, || {
+            Err(anyhow::anyhow!("initial fitting reprice must not need an owner"))
+        })
+        .unwrap() {
+            PreparedLocalRecord::Prepared(mut guard) => {
+                active.apply_prepared_raft_entry(&mut guard).unwrap();
+                drop(guard);
+                active.freeze_checkpoint_collections(None).unwrap()
+            }
+            PreparedLocalRecord::Unresolved { .. } => {
+                panic!("initial fitting record must be prepared")
+            }
+        };
+        let replacement = Engine::with_change_budget(budget.clone());
+        replacement.create_collection("u", keyword_schema()).unwrap();
+        let reservation = active.try_reserve_record(&entry, 0).unwrap();
+        active.restore(replacement.snapshot().unwrap()).unwrap();
+        let before = budget.snapshot().total;
+        let owner_called = std::sync::atomic::AtomicBool::new(false);
+
+        let prepared = prepare_local_record(&active, entry, reservation, || {
+            owner_called.store(true, Ordering::Release);
+            Err(anyhow::anyhow!("fitting reprice must not start fallback maintenance"))
+        })
+        .expect("stale fitting reprice must grow without fallback maintenance");
+        assert!(
+            !owner_called.load(Ordering::Acquire),
+            "fitting reprice must not call the capacity-owner callback"
+        );
+        assert!(
+            budget.snapshot().total > before,
+            "fixture must exercise a real fitting reprice growth"
+        );
+        match prepared {
+            PreparedLocalRecord::Prepared(mut guard) => {
+                active.apply_prepared_raft_entry(&mut guard).unwrap();
+                drop(guard);
+            }
+            PreparedLocalRecord::Unresolved { .. } => {
+                panic!("fitting reprice must not use legacy fallback")
+            }
+        }
+        drop(initial);
+    }
+
+    #[tokio::test]
+    async fn full_local_admission_refuses_before_wal_publication() {
+        let entry = admitted_index_entry();
+        let calibration_budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let calibration = Engine::with_change_budget(calibration_budget);
+        calibration
+            .create_collection("u", keyword_schema())
+            .unwrap();
+        let base = calibration.try_reserve_record(&entry, 0).unwrap().bytes();
+        let raw = Engine::record_owned_bytes(&entry).unwrap();
+        let requested = calibration
+            .try_reserve_record(&entry, raw.checked_mul(2).unwrap())
+            .unwrap()
+            .bytes();
+        assert!(requested > base);
+
+        let budget = ChangeBudget::with_hard_limit(requested.checked_mul(2).unwrap());
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let remaining = requested.checked_mul(2).unwrap() - budget.snapshot().total;
+        let _held = engine.try_reserve_record(&entry, remaining - base).unwrap();
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal.clone(), engine);
+        let before = coord.engine.metrics().segment_backpressure_total.get();
+
+        let error = coord.submit(entry).await.unwrap_err();
+        assert!(error.downcast_ref::<PendingChangeCapacity>().is_some());
+        assert_eq!(
+            coord.engine.metrics().segment_backpressure_total.get(),
+            before + 1,
+            "one final pre-publication refusal increments once"
+        );
+        assert_eq!(wal.latest_seq().await.unwrap(), 0);
+        assert_eq!(coord.applied_seq(), 0);
+    }
+
+    #[tokio::test]
+    async fn local_success_and_domain_error_do_not_count_segment_backpressure() {
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let coord = WriteCoordinator::start(Arc::new(MemWal::new()), engine.clone());
+        let before = engine.metrics().segment_backpressure_total.get();
+
+        coord.submit(admitted_index_entry()).await.unwrap();
+        let mut invalid = admitted_index_entry();
+        let RaftLogEntry::Index { req, .. } = &mut invalid else {
+            unreachable!("the admitted fixture is an Index request")
+        };
+        req.items[0].field = "missing-field".to_owned();
+        let error = coord.submit(invalid).await.unwrap_err();
+
+        assert!(error.downcast_ref::<PendingChangeCapacity>().is_none());
+        assert_eq!(
+            engine.metrics().segment_backpressure_total.get(),
+            before,
+            "successful and domain-error applies are not pre-publication capacity refusals"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_local_submit_keeps_its_reservation_until_apply_finishes() {
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let wal = ControlledWal::paused(ControlledWal::PAUSE_DELIVERY);
+        let coord = WriteCoordinator::start(wal.clone(), engine);
+        let submit = tokio::spawn({
+            let coord = coord.clone();
+            async move { coord.submit(admitted_index_entry()).await }
+        });
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            wal.observed_publish.notified(),
+        )
+        .await
+        .expect("submit must publish after pre-admission");
+        wait_for_reserved(&budget).await;
+        submit.abort();
+        assert!(submit.await.unwrap_err().is_cancelled());
+        assert!(budget.snapshot().reserved > 0);
+        assert_eq!(coord.applied_seq(), 0);
+
+        wal.release_delivery.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while coord.applied_seq() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("apply must consume the cancelled caller's sequence reservation");
+        assert_eq!(budget.snapshot().reserved, 0);
+        assert!(budget.snapshot().active > 0);
+    }
+
+    #[tokio::test]
+    async fn publication_lookup_race_cannot_apply_before_reservation_installation() {
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let wal = ControlledWal::paused(ControlledWal::PAUSE_PUBLISH);
+        let coord = WriteCoordinator::start(wal.clone(), engine);
+        let submit = tokio::spawn({
+            let coord = coord.clone();
+            async move { coord.submit(admitted_index_entry()).await }
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), wal.delivered.notified())
+            .await
+            .expect("subscriber must observe the record while publish is paused");
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        assert_eq!(
+            coord.applied_seq(),
+            0,
+            "apply must wait for the sequence reservation installed after publish returns"
+        );
+
+        wal.release_publish.notify_one();
+        assert!(matches!(
+            submit.await.unwrap().unwrap(),
+            ApplyOutcome::Indexed(_)
+        ));
+        assert_eq!(coord.applied_seq(), 1);
     }
 
     #[tokio::test]
@@ -710,6 +1844,70 @@ mod tests {
 
         // The write is visible via a direct engine read (read-your-write).
         assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    /// #4326: `lumen_coordinator_apply_seconds`/`lumen_coordinator_apply_items_total`
+    /// must observe exactly once per admitted local `submit`, under the
+    /// `index` kind with `items_total` equal to the submitted doc count —
+    /// the per-record apply cost a 500k-doc perf probe reads from
+    /// `GET /metrics`.
+    #[tokio::test]
+    async fn submit_of_index_record_observes_coordinator_apply_histogram() {
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal, engine.clone());
+
+        coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "u".into(),
+                req: keyword_schema(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            engine
+                .metrics()
+                .render()
+                .matches("lumen_coordinator_apply_seconds_count{kind=\"index\"} 0")
+                .count(),
+            1,
+            "index kind must still emit its zero row before any index submit"
+        );
+
+        coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![
+                        IndexItem {
+                            external_id: "u1".into(),
+                            field: "email".into(),
+                            value: FieldValue::String("a@x.com".into()),
+                            version: None,
+                        },
+                        IndexItem {
+                            external_id: "u2".into(),
+                            field: "email".into(),
+                            value: FieldValue::String("b@x.com".into()),
+                            version: None,
+                        },
+                    ],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap();
+
+        let out = engine.metrics().render();
+        assert!(
+            out.contains("lumen_coordinator_apply_seconds_count{kind=\"index\"} 1"),
+            "expected exactly one observed index apply in:\n{out}"
+        );
+        assert!(
+            out.contains("lumen_coordinator_apply_items_total{kind=\"index\"} 2"),
+            "expected items_total to equal the submitted doc count in:\n{out}"
+        );
     }
 
     #[tokio::test]
@@ -854,6 +2052,131 @@ mod tests {
         assert_eq!(restarted.stats("u").unwrap().documents_indexed, 1);
     }
 
+    #[tokio::test]
+    async fn partial_error_record_is_persisted_and_replays_its_earlier_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let aof_path = dir.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
+        let engine = Arc::new(Engine::new());
+        let coord =
+            WriteCoordinator::start_from_with_aof(Arc::new(MemWal::new()), engine.clone(), 0, aof);
+        coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "u".into(),
+                req: keyword_schema(),
+            })
+            .await
+            .unwrap();
+        let error = coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![
+                        IndexItem {
+                            external_id: "u1".into(),
+                            field: "email".into(),
+                            value: FieldValue::String("ok".into()),
+                            version: None,
+                        },
+                        IndexItem {
+                            external_id: "u2".into(),
+                            field: "missing".into(),
+                            value: FieldValue::String("bad".into()),
+                            version: None,
+                        },
+                    ],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap_err();
+        assert!(error
+            .downcast_ref::<crate::storage::StorageError>()
+            .is_some());
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+        let mut seqs = Vec::new();
+        crate::aof::AofReader::replay(&aof_path, 0, |seq, _| seqs.push(seq)).unwrap();
+        assert_eq!(seqs, vec![1, 2]);
+        let restarted = Arc::new(Engine::new());
+        assert_eq!(
+            crate::aof::replay_aof_into(&restarted, &aof_path, 0).unwrap(),
+            2
+        );
+        assert_eq!(restarted.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    #[tokio::test]
+    async fn partial_error_aof_gap_is_uncertain_and_blocks_later_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let aof_path = dir.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
+        let engine = Arc::new(Engine::new());
+        let coord = WriteCoordinator::start_from_with_aof(
+            Arc::new(MemWal::new()),
+            engine.clone(),
+            0,
+            aof.clone(),
+        );
+        coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "u".into(),
+                req: keyword_schema(),
+            })
+            .await
+            .unwrap();
+        aof.lock().unwrap().set_inject_storage_full(true);
+        let error = coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![
+                        IndexItem {
+                            external_id: "u1".into(),
+                            field: "email".into(),
+                            value: FieldValue::String("kept-live".into()),
+                            version: None,
+                        },
+                        IndexItem {
+                            external_id: "u2".into(),
+                            field: "missing".into(),
+                            value: FieldValue::String("invalid".into()),
+                            version: None,
+                        },
+                    ],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            error.downcast_ref::<StorageFullError>().is_some(),
+            "{error}"
+        );
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+        assert!(coord.is_restart_required());
+        aof.lock().unwrap().set_inject_storage_full(false);
+
+        let later = coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "u3".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("must-not-append".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap_err();
+        assert!(later.downcast_ref::<RestartRequired>().is_some(), "{later}");
+        let mut persisted = Vec::new();
+        crate::aof::AofReader::replay(&aof_path, 0, |seq, _| persisted.push(seq)).unwrap();
+        assert_eq!(persisted, vec![1]);
+    }
+
     /// #2516: prove the REAL ENOSPC detection/classification/metrics path
     /// end to end, through the actual production write path — not a
     /// parallel fake. Uses `AofWriter::set_inject_storage_full` (the
@@ -960,20 +2283,21 @@ mod tests {
         let engine = Arc::new(Engine::new());
         let coord = WriteCoordinator::start_from_with_aof(wal, engine.clone(), 0, aof);
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while coord.applied_seq() < 2 {
+            while !coord.is_restart_required() {
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("the backlogged records must apply");
+        .expect("the unresolved AOF head must require restart");
 
         assert!(coord.is_restart_required());
-        assert_eq!(engine.list_collections().unwrap(), vec!["first", "second"]);
+        assert_eq!(coord.applied_seq(), 0);
+        assert_eq!(engine.list_collections().unwrap(), vec!["first"]);
         let mut persisted = Vec::new();
         crate::aof::AofReader::replay(&aof_path, 0, |seq, _| persisted.push(seq)).unwrap();
         assert!(
             persisted.is_empty(),
-            "no sequence after the first AOF gap may be persisted or acknowledged"
+            "the unresolved head and every later record must stay outside the AOF"
         );
     }
 
@@ -1007,6 +2331,18 @@ mod tests {
                 .unwrap_or(false),
             "StorageError must survive coordinator routing, got: {err}"
         );
+        assert_eq!(coord.applied_seq(), 1);
+        assert!(matches!(
+            coord
+                .submit(RaftLogEntry::CreateCollection {
+                    collection_id: "u".into(),
+                    req: keyword_schema(),
+                })
+                .await
+                .unwrap(),
+            ApplyOutcome::Created(_)
+        ));
+        assert_eq!(coord.applied_seq(), 2);
     }
 
     /// #1486 AC1/AC2: an engine "restored" to a non-zero watermark (mirrors
@@ -1119,6 +2455,112 @@ mod tests {
         assert_eq!(engine.stats("u").unwrap().documents_indexed, 0);
     }
 
+    #[tokio::test]
+    async fn full_raw_delivery_replays_the_same_head_before_later_records() {
+        use crate::change_budget::ChangeBudget;
+        use crate::wal::{WalLog, WalStream};
+
+        struct ObservedWal {
+            inner: MemWal,
+            subscriptions: AtomicU64,
+            subscribed: tokio::sync::Notify,
+        }
+        #[async_trait::async_trait]
+        impl WalLog for ObservedWal {
+            async fn publish(&self, record: WalRecord) -> Result<u64> {
+                self.inner.publish(record).await
+            }
+            async fn subscribe(&self, from: u64) -> Result<WalStream> {
+                let stream = self.inner.subscribe(from).await?;
+                self.subscriptions.fetch_add(1, Ordering::Release);
+                self.subscribed.notify_one();
+                Ok(stream)
+            }
+            async fn latest_seq(&self) -> Result<u64> {
+                self.inner.latest_seq().await
+            }
+        }
+
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let blocking_owner = budget.owner();
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        // Keep this fixture reserved-only. A fallback owner may validly publish
+        // real active schema work, which would make a synthetic Full assertion
+        // race with maintenance rather than exercise the pinned raw head.
+        let schema_dir = tempfile::tempdir().unwrap();
+        let schema_store = crate::segment_rdb::SegmentRdbStore::new(schema_dir.path()).unwrap();
+        schema_store.save(&engine, 0).unwrap();
+        assert_eq!(budget.snapshot().active, 0, "schema checkpoint must freeze fixture work");
+        let blocking = blocking_owner
+            .try_reserve(1024 * 1024 - budget.snapshot().total)
+            .unwrap();
+        let wal = Arc::new(ObservedWal {
+            inner: MemWal::new(),
+            subscriptions: AtomicU64::new(0),
+            subscribed: tokio::sync::Notify::new(),
+        });
+        let record = |id: &str| {
+            WalRecord::new(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: id.into(),
+                        field: "email".into(),
+                        value: FieldValue::String(format!("{id}@example.test")),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+        };
+        assert_eq!(wal.publish(record("first")).await.unwrap(), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let aof_path = dir.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
+        let coord = WriteCoordinator::start_from_with_aof(wal.clone(), engine.clone(), 0, aof);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while wal.subscriptions.load(Ordering::Acquire) < 2 {
+                wal.subscribed.notified().await;
+            }
+        })
+        .await
+        .expect("full raw admission must pin a replay subscription");
+        assert!(
+            coord
+                .layer_capacity_owner
+                .lock()
+                .expect("capacity owner poisoned")
+                .is_some(),
+            "committed native raw admission must start independent capacity maintenance before waiting",
+        );
+        assert_eq!(wal.publish(record("second")).await.unwrap(), 2);
+        assert_eq!(coord.applied_seq(), 0, "no unowned working copy may apply");
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 0);
+        assert_eq!(budget.snapshot().total, 1024 * 1024);
+        // The raw delivery was destroyed before the blocking reserve. Dropping
+        // the real competing reservation supplies space without an apply lease.
+        drop(blocking);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while coord.applied_seq() < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the original head and its successor must both apply");
+        assert!(!coord.is_restart_required());
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 2);
+        let mut persisted = Vec::new();
+        crate::aof::AofReader::replay(&aof_path, 0, |seq, rec| {
+            let RaftLogEntry::Index { req, .. } = rec.entry else {
+                panic!("unexpected AOF operation")
+            };
+            persisted.push((seq, req.items[0].external_id.clone()));
+        })
+        .unwrap();
+        assert_eq!(persisted, vec![(1, "first".into()), (2, "second".into())]);
+    }
+
     /// #1486 R2: `submit()` is bounded by `SUBMIT_TIMEOUT`, so even a
     /// completely stalled apply (nothing ever calls `complete`) surfaces as
     /// a distinct, retryable `SubmitStalled` error rather than an infinite
@@ -1149,6 +2591,280 @@ mod tests {
             err.downcast_ref::<SubmitStalled>().is_some(),
             "expected SubmitStalled, got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn unresolved_head_result_survives_waiter_registration_race() {
+        let coord = WriteCoordinator::start(Arc::new(MemWal::new()), Arc::new(Engine::new()));
+        coord.fail_unresolved(
+            1,
+            Err(anyhow::Error::new(RestartRequired(
+                "committed source is unresolved".into(),
+            ))),
+            None,
+        );
+
+        let permit = coord.mutation_gate.shared().await.unwrap();
+        let receiver = coord
+            .register_waiter(1, permit)
+            .expect("late waiter must receive the unresolved head result");
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), receiver)
+            .await
+            .expect("unresolved head result must not wait for submit timeout")
+            .expect("unresolved head result must be sent")
+            .expect_err("unresolved head cannot report success");
+        assert!(error.downcast_ref::<RestartRequired>().is_some(), "{error}");
+        assert_eq!(coord.applied_seq(), 0);
+    }
+
+    #[tokio::test]
+    async fn unbounded_committed_delivery_latches_at_the_last_applied_head() {
+        let engine = Arc::new(Engine::with_change_budget(ChangeBudget::with_hard_limit(1)));
+        let wal = Arc::new(MemWal::new());
+        for collection_id in ["first", "second"] {
+            wal.publish(WalRecord::new(RaftLogEntry::CreateCollection {
+                collection_id: collection_id.into(),
+                req: keyword_schema(),
+            }))
+            .await
+            .unwrap();
+        }
+
+        let coord = WriteCoordinator::start(wal, engine.clone());
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !coord.is_restart_required() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("an unbounded committed delivery must require restart");
+
+        assert_eq!(coord.applied_seq(), 0);
+        assert!(engine.list_collections().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capacity_relief_stages_applied_sources_pinned_by_a_slow_subscriber() {
+        check_slow_subscriber_capacity_relief(true).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capacity_refusal_stages_applied_sources_without_a_waiting_apply() {
+        check_slow_subscriber_capacity_relief(false).await;
+    }
+
+    async fn check_slow_subscriber_capacity_relief(wait_for_capacity: bool) {
+        const LIMIT: usize = 4 * 1024 * 1024;
+        let budget = ChangeBudget::with_hard_limit(LIMIT);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let wal = Arc::new(MemWal::new());
+        let _slow = wal.subscribe_admitted(0).await.unwrap();
+        let coord = WriteCoordinator::start(wal.clone(), engine.clone());
+        coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "u".into(),
+                req: keyword_schema(),
+            })
+            .await
+            .unwrap();
+        coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "retained".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("x".repeat(32 * 1024)),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::segment_rdb::SegmentRdbStore::new(dir.path()).unwrap();
+        store.save(&engine, coord.applied_seq()).unwrap();
+        let pinned = budget.snapshot().total;
+        assert!(
+            pinned >= 32 * 1024,
+            "checkpoint must retain the slow subscriber's raw source charge"
+        );
+        let filler_owner = budget.owner();
+        let filler = filler_owner.try_reserve(LIMIT - pinned).unwrap();
+        if wait_for_capacity {
+            let waiting_owner = budget.owner();
+            let mut waiting = tokio::task::spawn_blocking(move || waiting_owner.wait_reserve(1));
+            let progressed =
+                tokio::time::timeout(std::time::Duration::from_secs(5), &mut waiting).await;
+            let staged_without_releasing_filler = progressed.is_ok();
+            // Always join the blocking waiter, including the failed progress case.
+            drop(filler);
+            if let Ok(result) = progressed {
+                drop(result.unwrap().unwrap());
+            } else {
+                drop(waiting.await.unwrap().unwrap());
+            }
+            assert!(
+                staged_without_releasing_filler,
+                "capacity relief must stage an applied source held by a slow subscriber"
+            );
+        } else {
+            let error = coord
+                .submit(RaftLogEntry::CreateCollection {
+                    collection_id: "refused".into(),
+                    req: keyword_schema(),
+                })
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<PendingChangeCapacity>().is_some());
+            assert_eq!(coord.applied_seq(), 2);
+            assert!(!budget.has_capacity_waiters());
+            let relieved = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while budget.snapshot().total == LIMIT {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            drop(filler);
+            assert!(
+                relieved.is_ok(),
+                "pre-publication capacity refusal must stage pinned sources without a waiting apply"
+            );
+            assert!(engine.stats("refused").is_err());
+        }
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+        assert!(!coord.is_restart_required());
+    }
+
+    /// A door refusal (HTTP 429) sets `capacity_relief_requested` with no
+    /// committed apply blocked on capacity. That alone must not let the
+    /// relief task steal the ledger reservation of a different, already
+    /// admitted local record that is simply waiting its turn to apply.
+    /// Stealing it forces the apply loop to re-reserve from scratch and can
+    /// park it in `wait_reserve_record_ram` until checkpoint frees bytes —
+    /// exactly the > 5s perf-run stall this test guards against.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capacity_relief_leaves_a_fresh_local_reservation_when_no_apply_is_waiting() {
+        struct DeferredAdmittedWal {
+            inner: MemWal,
+            released: Arc<std::sync::atomic::AtomicBool>,
+            changed: Arc<tokio::sync::Notify>,
+        }
+        #[async_trait::async_trait]
+        impl WalLog for DeferredAdmittedWal {
+            async fn publish(&self, record: WalRecord) -> Result<u64> {
+                self.inner.publish(record).await
+            }
+            async fn latest_seq(&self) -> Result<u64> {
+                self.inner.latest_seq().await
+            }
+            async fn stage_source(&self, seq: u64) -> Result<Option<crate::wal::WalSourceRelease>> {
+                self.inner.stage_source(seq).await
+            }
+            async fn subscribe(&self, from: u64) -> Result<WalStream> {
+                self.inner.subscribe(from).await
+            }
+            async fn subscribe_admitted(
+                &self,
+                from: u64,
+            ) -> Result<crate::wal::WalAdmissionStream> {
+                let stream = self.inner.subscribe_admitted(from).await?;
+                let state = (stream, self.released.clone(), self.changed.clone());
+                Ok(Box::pin(futures::stream::unfold(
+                    state,
+                    |(mut stream, released, changed)| async move {
+                        loop {
+                            let wake = changed.notified();
+                            if released.load(Ordering::Acquire) {
+                                break;
+                            }
+                            wake.await;
+                        }
+                        stream
+                            .next()
+                            .await
+                            .map(|record| (record, (stream, released, changed)))
+                    },
+                )))
+            }
+        }
+
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let wal = Arc::new(DeferredAdmittedWal {
+            inner: MemWal::new(),
+            released: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            changed: Arc::new(tokio::sync::Notify::new()),
+        });
+        let coord = WriteCoordinator::start(wal.clone(), engine.clone());
+
+        let entry = RaftLogEntry::Index {
+            collection_id: "u".into(),
+            req: IndexRequest {
+                items: vec![IndexItem {
+                    external_id: "admitted".into(),
+                    field: "email".into(),
+                    value: FieldValue::String("x".repeat(4096)),
+                    version: None,
+                }],
+                request_id: None,
+            },
+        };
+        let mut submitted = tokio::spawn({
+            let coord = coord.clone();
+            async move { coord.submit(entry).await }
+        });
+
+        // Wait until the door-admitted record's reservation lands in the
+        // pending ledger, while the apply loop stays deferred and cannot
+        // take it yet.
+        let seq = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(seq) = coord
+                    .local_reservations
+                    .lock()
+                    .await
+                    .keys()
+                    .next()
+                    .copied()
+                {
+                    return seq;
+                }
+                assert!(!submitted.is_finished(), "submit finished before installing its reservation");
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the admitted local reservation must appear in the pending ledger");
+
+        // Simulate a door refusal that requested relief with no committed
+        // apply blocked on capacity.
+        coord
+            .capacity_relief_requested
+            .store(true, Ordering::Release);
+        assert!(!engine.has_capacity_waiters());
+
+        // Give the relief task (25ms tick) several chances to (mis)fire.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+
+        assert!(
+            coord.local_reservations.lock().await.contains_key(&seq),
+            "a door refusal alone must not steal an already-admitted, unapplied local reservation"
+        );
+
+        // Release the deferred apply loop and confirm the record still
+        // applies cleanly, without going through a capacity wait.
+        wal.released.store(true, Ordering::Release);
+        wal.changed.notify_waiters();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), &mut submitted)
+            .await
+            .expect("submit must complete once the apply loop is released")
+            .expect("submit task must not panic")
+            .expect("submit must apply successfully");
+        assert!(matches!(outcome, ApplyOutcome::Indexed(_)));
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
     }
 }
 // CODEGEN-END

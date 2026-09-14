@@ -537,12 +537,104 @@ pub fn for_whitespace_lower_cow<'a>(mut text: &'a str, mut emit: impl FnMut(Cow<
 }
 
 #[cfg(feature = "jieba")]
-fn jieba(text: &str) -> Vec<String> {
+fn jieba_dictionary() -> &'static jieba_rs::Jieba {
     use std::sync::OnceLock;
-
     static JIEBA: OnceLock<jieba_rs::Jieba> = OnceLock::new();
-    JIEBA
-        .get_or_init(jieba_rs::Jieba::new)
+    JIEBA.get_or_init(jieba_rs::Jieba::new)
+}
+
+/// Storage for the exact no-HMM dictionary route. Callers may use a bounded
+/// file cache instead of keeping a route and graph for the whole input in RAM.
+#[cfg(feature = "jieba")]
+pub use jieba_rs::RouteStore as JiebaRouteStore;
+
+/// Visit the same lowercase, nonempty tokens as `tokenize(text, Jieba)`.
+/// The shared dictionary is initialized once. The caller supplies route storage
+/// and owns each emitted token only for the duration of its callback.
+#[cfg(feature = "jieba")]
+pub fn for_jieba_no_hmm(
+    text: &str,
+    route: &mut impl JiebaRouteStore,
+    mut emit: impl FnMut(&str) -> std::io::Result<()>,
+) -> std::io::Result<u32> {
+    let mut count = 0u32;
+    jieba_dictionary().cut_no_hmm_visit(text, route, |raw| {
+        let token = raw.to_lowercase();
+        if !token.trim().is_empty() {
+            count = count.checked_add(1).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Jieba document length exceeds u32",
+                )
+            })?;
+            emit(&token)?;
+        }
+        Ok(())
+    })?;
+    Ok(count)
+}
+
+#[cfg(all(test, feature = "jieba"))]
+mod jieba_stream_tests {
+    use super::*;
+    use std::io;
+
+    #[derive(Default)]
+    struct Route(Vec<(f64, usize)>);
+    impl JiebaRouteStore for Route {
+        fn reset(&mut self, slots: usize) -> io::Result<()> {
+            self.0.clear();
+            // Initialization deliberately does not supply the terminal score.
+            self.0.resize(slots, (f64::NAN, usize::MAX));
+            Ok(())
+        }
+        fn get(&mut self, index: usize) -> io::Result<(f64, usize)> {
+            Ok(self.0[index])
+        }
+        fn set(&mut self, index: usize, value: (f64, usize)) -> io::Result<()> {
+            self.0[index] = value;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn stream_matches_owned_jieba_tokens_counts_and_unicode_normalization() {
+        let mut route = Route::default();
+        for text in [
+            "南京市长江大桥 ΣΟΣ İSTANBUL, Straße",
+            "\r\n\t  中文。👪𠀀 ABC123+_#&.%-XYZ  ",
+            "",
+        ] {
+            let mut tokens = Vec::new();
+            let count = for_jieba_no_hmm(text, &mut route, |token| {
+                tokens.push(token.to_owned());
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(tokens, tokenize(text, Analyzer::Jieba));
+            assert_eq!(count as usize, tokens.len());
+            assert!(route.0.is_empty());
+        }
+    }
+
+    #[test]
+    fn stream_returns_callback_error_without_emitting_another_token() {
+        let mut route = Route::default();
+        let mut calls = 0;
+        let error = for_jieba_no_hmm("南京市长江大桥", &mut route, |_| {
+            calls += 1;
+            Err(io::Error::new(io::ErrorKind::Interrupted, "stop callback"))
+        })
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(route.0.is_empty());
+    }
+}
+
+#[cfg(feature = "jieba")]
+fn jieba(text: &str) -> Vec<String> {
+    jieba_dictionary()
         .cut(text, false)
         .into_iter()
         .map(str::to_lowercase)

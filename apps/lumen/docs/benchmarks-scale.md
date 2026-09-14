@@ -9,9 +9,10 @@ handoff for what the current numbers mean.
 > run at `N=1,000,000` docs. At that size lumen cleared every OpenSearch
 > read/search cell in both in-memory and segment-disk modes, cleared the
 > `LUMEN_PERF_STRICT=1` qps100 and qps1000 OpenSearch + pg-native rows with no
-> TARGET rows, and cleared the NATS write gate against both Postgres and
-> OpenSearch. Routine AW/release checks do not remeasure Postgres/OpenSearch;
-> they run a 10K Lumen-only regression against retained calibrated floors.
+> TARGET rows. The retired NATS write measurements do not establish a current
+> write-throughput result. Routine AW/release checks do not remeasure
+> Postgres/OpenSearch; they run a 10K Lumen-only regression against retained
+> calibrated floors.
 > Refresh peer data only when benchmark cells, peer versions/configuration, or
 > an explicit release-soak request require it.
 
@@ -159,29 +160,18 @@ The second command makes qps10 part of the strict peer diagnostic proof. The
 third command is a focused diagnostic path for one qps cell. Defaults keep the
 routine runner Lumen-only.
 
-Historical write-path qps gate through the legacy NATS JetStream WAL path:
+Local write-path trend (not a release gate):
 
 ```sh
 LUMEN_WRITE_MODES=embedded,sharded LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=0.3 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
-LUMEN_WRITE_MODES=nats,natssharded LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=1.0 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
-LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
 ```
 
-`tests/write_qps.rs` also reports a local `sharded` lumen leg. It uses
+`e2e/write_qps.rs` also reports a local `sharded` lumen leg. It uses
 `LUMEN_WRITE_SHARDS` (default 4) to route one HTTP `/index` request by
 `external_id` across independent `WriteCoordinator`/`Engine` shards. That row is
-for multi-core write-apply exploration. The retained historical JetStream
-comparison is against Postgres and OpenSearch; the current serving/operator HA
-path uses Lumen-owned raft. The strict historical cell is the single-stream row
-(`nats_index_100`); the partitioned row
-(`natssharded_index_100`) is a TARGET/trend row until it is stable under the same
-timeout/error envelope. `LUMEN_WRITE_MODES=embedded,sharded` plus a short
-`LUMEN_WRITE_WARMUP_S`/`LUMEN_WRITE_WINDOW_S` is the fast local trend check; do
-not treat it as a replacement for the full strict gate.
-`LUMEN_WRITE_MODES=nats,natssharded` compares the historical single JetStream
-stream (`lumen_wal` / `lumen.wal`) with the partitioned shape
-(`lumen_wal_N` / `lumen.wal.N`) enabled by `NatsWalConfig`. It requires
-JetStream (`nats-server -js`), not a plain NATS broker.
+for multi-core write-apply exploration. It does not set a throughput floor or
+prove a release result. The current serving/operator HA path uses Lumen-owned
+Raft.
 
 Latest warm-cache quick trend (`LUMEN_WRITE_MODES=embedded,sharded`,
 `LUMEN_WRITE_WARMUP_S=0.1`, `LUMEN_WRITE_WINDOW_S=1.0`,
@@ -193,9 +183,8 @@ Latest warm-cache quick trend (`LUMEN_WRITE_MODES=embedded,sharded`,
 | sharded local write backend, 4 shards | 1,258.1k | 1,362.9k | 7.016 ms |
 
 That is a **1.46x** 100-worker improvement over the single-engine embedded path
-on the same 1s quick window. The result is useful for direction; the retained
-NATS-vs-peer run below is historical benchmark evidence, not the current broker
-deployment path.
+on the same 1s quick window. The result is useful for direction. It is not a
+release performance result.
 
 Retired Relay write-path quick trend (`LUMEN_WRITE_MODES=embedded,relay`,
 `LUMEN_WRITE_WARMUP_S=0.1`, `LUMEN_WRITE_WINDOW_S=1.0`,
@@ -211,38 +200,15 @@ run. That row includes the HTTP/2 broker hop plus the Lumen apply path waiting
 for subscriber delivery. This is retained only as historical evidence; Relay WAL
 is no longer an active Lumen backend or perf gate.
 
-Latest JetStream trend (`LUMEN_TEST_NATS_URL=nats://localhost:4223`,
-`LUMEN_WRITE_MODES=nats,natssharded`, `LUMEN_WRITE_WARMUP_S=0.1`,
-`LUMEN_WRITE_WINDOW_S=1.0`, `LUMEN_WRITE_BATCH_DOCS=100`, 2026-06-07):
+### Retired NATS write observations
 
-| path | workers=10 docs/s | workers=100 docs/s | p50 at workers=100 | p99 at workers=100 |
-|---|---:|---:|---:|---:|
-| single JetStream WAL | 434.5k | 891.7k | 10.167 ms | 56.998 ms |
-| partitioned JetStream WAL, 4 streams | 349.5k | 987.0k | 9.870 ms | 21.842 ms |
-
-The partitioned JetStream row is **1.11x** faster at 100 workers and materially
-reduces p99 in this 1s quick run. It is useful production-shape evidence, but the
-official competitive row remains the single-stream JetStream gate until the
-partitioned path is timeout-free at the full 5s strict window.
-
-Latest strict write gate (`LUMEN_PERF_STRICT=1`,
-`LUMEN_TEST_NATS_URL=nats://localhost:4223`, 5s window, 2s warmup,
-`LUMEN_WRITE_BATCH_DOCS=100`, 2026-06-07):
-
-| path | workers=100 docs/s | p50 at workers=100 | p95 at workers=100 | p99 at workers=100 | errors |
-|---|---:|---:|---:|---:|---:|
-| single JetStream WAL | 822.6k | 11.166 ms | 14.415 ms | 16.621 ms | 0 |
-| Postgres bulk insert + indexes | 96.7k | 97.084 ms | 166.037 ms | 215.448 ms | 0 |
-| OpenSearch `_bulk` | 241.9k | 35.533 ms | 71.033 ms | 130.768 ms | 0 |
-
-Strict gate verdicts: single JetStream **8.51x vs pg** and **3.40x vs
-OpenSearch**. The same-code full partitioned JetStream trend run timed out at
-100 workers (200 timeouts), so `natssharded_index_100` remains TARGET/report-only
-instead of a release blocker.
-
-The explicit peer gates need Postgres `dbname=lumenbench` and OpenSearch on
-`localhost:9200`. The write peer gate also needs a JetStream broker; set
-`LUMEN_TEST_NATS_URL` when it is not on the default local URL.
+Before the NATS backend was removed, a 2026-06-07 local JetStream run recorded
+822.6k docs/s at 100 workers for the single-stream path, 96.7k for Postgres,
+and 241.9k for OpenSearch. A partitioned JetStream trend run recorded 987.0k
+docs/s at 100 workers in its short window and later timed out in its longer
+window. These are archived measurements only. They set no current threshold,
+gate, configuration requirement, or 0.6.1 performance result. Current Lumen
+benchmarks do not need a NATS service.
 
 Corpus per doc: `bio` (Text), `city` (Keyword), and `age` (Number). No vectors in
 the competitive search gate.
@@ -356,29 +322,11 @@ runs the load client, lumen server, Postgres backends, and OpenSearch JVM
 together. The strict gate is useful for local proof; release-stable qps
 claims should be repeated on an isolated perf host.
 
-## Current Write Gate
+## Current Write Measurements
 
-The write comparison uses the real serving path:
-
-- lumen: HTTP `POST /collections/{id}/index` through NATS JetStream WAL, local
-  apply, and the storage engine.
-- Postgres: batched inserts into a table with text, keyword, number, generated
-  tsvector, GIN, and btree indexes.
-- OpenSearch: `_bulk` into a single-shard, no-replica index with refresh disabled.
-
-Latest retained strict 5s release run:
-
-| path | workers=100 docs/s |
-|---|---:|
-| lumen NATS WAL `POST /index` | 822.6k |
-| Postgres insert | 96.7k |
-| OpenSearch bulk | 241.9k |
-
-That is **8.51x vs Postgres** and **3.40x vs OpenSearch** at the 100-worker
-NATS write row. `LUMEN_PERF_STRICT=1` enforces the ratcheted margins from
-`perf-baseline.json` only on explicit write-peer runs where NATS, Postgres, and
-OpenSearch are all reachable; `LUMEN_WRITE_GATE=1` remains available for
-write-only debug.
+The embedded and sharded local trends above are exploratory measurements. They
+do not compare a current Lumen write path with peers and they do not set a
+release threshold.
 
 Direct `Engine::index` isolates the storage hot path from HTTP/WAL and currently
 measures about **912.5k docs/s** at 100 workers on the same 100-doc batch shape.

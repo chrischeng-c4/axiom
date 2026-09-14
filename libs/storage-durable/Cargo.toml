@@ -13,6 +13,7 @@ path = "src/lib.rs"
 anyhow = { workspace = true }
 crc32fast = "1.4"
 fs2 = "0.4"
+memmap2 = "0.9"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

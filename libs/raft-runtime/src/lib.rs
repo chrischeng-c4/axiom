@@ -41,8 +41,8 @@ pub use fenced_assignment::{
 pub use group::{GroupId, LEGACY_GROUP_ID};
 pub use host::{
     AdmissionRefused, ChunkSink, HostShutdownReport, LeadershipHandoff, MembershipPhase,
-    PhaseRecord, PhaseStatus, ProposalOutcome, RaftHost, RaftStatus, ShutdownCaller, ShutdownPhase,
-    SnapshotCompactionOutcome, StorageFailed, SNAPSHOT_CHUNK_SIZE,
+    PhaseRecord, PhaseStatus, ProposalBackpressure, ProposalOutcome, RaftHost, RaftStatus,
+    ShutdownCaller, ShutdownPhase, SnapshotCompactionOutcome, StorageFailed, SNAPSHOT_CHUNK_SIZE,
 };
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use peer_transport::PeerTransport;
@@ -50,7 +50,9 @@ pub use proposal_cache::{ProposalCache, DEFAULT_PROPOSAL_CACHE_CAPACITY};
 pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
 pub use registry::{GroupRegistry, RaftRegistry, RegistryError};
 pub use replica_host::{MembershipPolicy, ReplicaHostBuilder, ReplicaHostRuntime};
-pub use state_machine::{Command, RaftStateMachine};
+pub use state_machine::{
+    AdmissionPermit, Command, PreparedSnapshot, RaftStateMachine, SnapshotPreparation,
+};
 pub use store::{FsyncPolicy, RaftStore};
 pub use view::{ClusterStateView, PeerAddr, RaftRole};
 
@@ -72,17 +74,27 @@ mod tests {
     struct CounterSm {
         log: Mutex<Vec<(Index, u64)>>,
         applied: AtomicU64,
+        apply_mode: AtomicU64,
     }
     impl CounterSm {
         fn new() -> Arc<Self> {
             Arc::new(CounterSm {
                 log: Mutex::new(Vec::new()),
                 applied: AtomicU64::new(0),
+                apply_mode: AtomicU64::new(0),
             })
         }
     }
     impl RaftStateMachine for CounterSm {
         fn apply(&self, index: Index, command: &[u8]) -> anyhow::Result<()> {
+            match self.apply_mode.load(Ordering::Acquire) {
+                1 => {
+                    self.applied.store(index, Ordering::Release);
+                    anyhow::bail!("injected completed domain refusal")
+                }
+                2 => anyhow::bail!("injected incomplete infrastructure failure"),
+                _ => {}
+            }
             let v = u64::from_le_bytes(command.try_into().unwrap_or([0; 8]));
             self.log.lock().unwrap().push((index, v));
             self.applied.store(index, Ordering::Release);
@@ -109,6 +121,26 @@ mod tests {
 
     fn store(dir: &std::path::Path, id: NodeId) -> RaftStore {
         RaftStore::open(dir.to_str().unwrap(), id, FsyncPolicy::Os).unwrap()
+    }
+
+    #[test]
+    fn default_apply_admitted_preserves_completed_domain_error() {
+        let sm = CounterSm::new();
+        sm.apply_mode.store(1, Ordering::Release);
+
+        RaftStateMachine::apply_admitted(&*sm, 7, &7_u64.to_le_bytes(), None).unwrap();
+        assert_eq!(sm.applied_index(), 7);
+    }
+
+    #[test]
+    fn default_apply_admitted_preserves_incomplete_infrastructure_error() {
+        let sm = CounterSm::new();
+        sm.apply_mode.store(2, Ordering::Release);
+
+        let error = RaftStateMachine::apply_admitted(&*sm, 7, &7_u64.to_le_bytes(), None)
+            .expect_err("an unchanged floor must preserve the apply error");
+        assert!(error.to_string().contains("incomplete infrastructure"));
+        assert_eq!(sm.applied_index(), 0);
     }
 
     #[tokio::test]

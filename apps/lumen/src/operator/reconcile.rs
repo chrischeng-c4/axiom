@@ -576,7 +576,10 @@ impl AuthDelegatorControl for KubeAuthDelegatorControl {
 /// thing: not Ready, and *why*, naming the ClusterRoleBinding operation that
 /// was refused. The 30-second requeue retries it either way, so nothing is
 /// lost by not erroring.
-async fn apply_auth_delegator_binding(control: &dyn AuthDelegatorControl, lumen: &Lumen) -> Option<String> {
+async fn apply_auth_delegator_binding(
+    control: &dyn AuthDelegatorControl,
+    lumen: &Lumen,
+) -> Option<String> {
     let binding = render::auth_delegator_binding(lumen);
     let name = render::auth_delegator_binding_name(lumen);
     match control.apply_binding(&binding).await {
@@ -729,7 +732,6 @@ fn check_peer_identity(lumen: &Lumen) -> Option<String> {
     }
     None
 }
-
 
 /// The reconcile-context key carrying [`apply_auth_delegator_binding`]'s
 /// verdict from the plan hook to the condition projection (#2876).
@@ -1054,7 +1056,8 @@ impl Observation {
                 "PeerIdentityReady",
                 ConditionStatus::True,
                 "PeerTlsSecretProjected",
-                "spec.peerTlsSecret is configured; peer TLS material is required at member startup".to_string(),
+                "spec.peerTlsSecret is configured; peer TLS material is required at member startup"
+                    .to_string(),
             ),
         };
 
@@ -1105,13 +1108,7 @@ impl Observation {
             )
         };
 
-        vec![
-            ready,
-            progressing,
-            reshard,
-            auth_delegation,
-            peer_identity,
-        ]
+        vec![ready, progressing, reshard, auth_delegation, peer_identity]
     }
 }
 
@@ -2119,7 +2116,9 @@ mod tests {
             Ok(())
         }
 
-        async fn managed_bindings(&self) -> anyhow::Result<Vec<(String, BTreeMap<String, String>)>> {
+        async fn managed_bindings(
+            &self,
+        ) -> anyhow::Result<Vec<(String, BTreeMap<String, String>)>> {
             if self.list_fails {
                 anyhow::bail!("the server was unable to return a response");
             }
@@ -2354,8 +2353,7 @@ mod tests {
     fn a_replicated_instance_with_no_secret_named_says_which_keys_it_needs() {
         let lumen = peer_test_lumen(None);
 
-        let error = check_peer_identity(&lumen)
-            .expect("a replicated instance owes peer identity");
+        let error = check_peer_identity(&lumen).expect("a replicated instance owes peer identity");
 
         assert!(error.contains("spec.peerTlsSecret"), "got: {error}");
         for key in render::PEER_TLS_KEYS {
@@ -2372,14 +2370,24 @@ mod tests {
     #[test]
     fn check_peer_identity_message_pins_spec_field_required_keys_and_replica_count() {
         let lumen = peer_test_lumen(None);
-        let error = check_peer_identity(&lumen).expect("replicated CR without peerTlsSecret must return error");
-        assert!(error.contains("spec.peerTlsSecret"), "message must name spec field: {error}");
+        let error = check_peer_identity(&lumen)
+            .expect("replicated CR without peerTlsSecret must return error");
         assert!(
-            error.contains(&format!("replicasPerShard={}", lumen.spec.replicas_per_shard)),
+            error.contains("spec.peerTlsSecret"),
+            "message must name spec field: {error}"
+        );
+        assert!(
+            error.contains(&format!(
+                "replicasPerShard={}",
+                lumen.spec.replicas_per_shard
+            )),
             "message must state replicasPerShard value: {error}"
         );
         for key in render::PEER_TLS_KEYS {
-            assert!(error.contains(key), "message must name required key {key}: {error}");
+            assert!(
+                error.contains(key),
+                "message must name required key {key}: {error}"
+            );
         }
         assert!(
             error.contains("replicated Raft traffic has no plaintext fallback"),

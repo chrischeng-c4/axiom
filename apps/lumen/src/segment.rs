@@ -28,14 +28,147 @@
 //! queries is fully exercised and is NOT covered by this allow.
 #![cfg_attr(not(test), allow(dead_code))]
 
+#[path = "segment_stream.rs"]
+pub(crate) mod stream;
+
+#[path = "text_row_stage.rs"]
+pub(crate) mod text_row_stage;
+
+use std::borrow::Cow;
 use std::fs::File;
-use std::io::Write;
-use std::path::Path;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+#[cfg(test)]
+use std::cell::Cell;
 
 use anyhow::{anyhow, bail, Context, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Serialize};
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static DICTIONARY_SEARCHES: Cell<usize> = const { Cell::new(0) };
+    static VAR_SKIP_INDEX_DECODES: Cell<usize> = const { Cell::new(0) };
+    static OWNED_STAGE_OPEN_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Stable external IDs for the local rows of an immutable sparse delta.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SparseLocalRows(Vec<String>);
+
+impl SparseLocalRows {
+    pub fn external_id(&self, local_row: u32) -> Option<&str> {
+        self.0.get(local_row as usize).map(String::as_str)
+    }
+    pub fn len(&self) -> u32 {
+        self.0.len() as u32
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+pub fn encode_sparse_local_rows(path: &Path, external_ids: &[String]) -> Result<()> {
+    let count: u32 = external_ids
+        .len()
+        .try_into()
+        .context("sparse local rows exceed u32 row capacity")?;
+    validate_sparse_rows(external_ids, count)?;
+    let mut bytes = Vec::new();
+    ciborium::into_writer(external_ids, &mut bytes)
+        .map_err(|error| anyhow!("encode sparse local rows: {error}"))?;
+    std::fs::write(path, bytes)
+        .with_context(|| format!("write sparse local rows {}", path.display()))
+}
+
+pub fn decode_sparse_local_rows(path: &Path, expected_count: u32) -> Result<SparseLocalRows> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("read sparse local rows {}", path.display()))?;
+    if expected_count as usize > bytes.len() {
+        bail!("sparse local rows count mismatch: declared {expected_count}, input is too short");
+    }
+    let rows = decode_cbor_string_array(&bytes, expected_count as usize)?;
+    Ok(SparseLocalRows(rows))
+}
+
+fn decode_cbor_string_array(bytes: &[u8], expected: usize) -> Result<Vec<String>> {
+    let mut at = 0usize;
+    let Some(head) = bytes.get(at).copied() else {
+        bail!("decode sparse local rows: truncated CBOR");
+    };
+    at += 1;
+    if head >> 5 != 4 {
+        bail!("decode sparse local rows: expected CBOR array");
+    }
+    let count = cbor_len(head & 31, bytes, &mut at)?;
+    if count != expected {
+        bail!("sparse local rows count mismatch");
+    }
+    let mut rows = Vec::with_capacity(expected);
+    for _ in 0..count {
+        let head = *bytes
+            .get(at)
+            .ok_or_else(|| anyhow!("decode sparse local rows: truncated CBOR"))?;
+        at += 1;
+        if head >> 5 != 3 {
+            bail!("decode sparse local rows: expected text string");
+        }
+        let len = cbor_len(head & 31, bytes, &mut at)?;
+        let end = at
+            .checked_add(len)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| anyhow!("decode sparse local rows: truncated CBOR"))?;
+        rows.push(
+            std::str::from_utf8(&bytes[at..end])
+                .context("decode sparse local rows: invalid UTF-8")?
+                .to_owned(),
+        );
+        at = end;
+    }
+    if at != bytes.len() {
+        bail!("decode sparse local rows: trailing bytes");
+    }
+    validate_sparse_rows(&rows, expected as u32)?;
+    Ok(rows)
+}
+fn cbor_len(ai: u8, bytes: &[u8], at: &mut usize) -> Result<usize> {
+    let n = match ai {
+        0..=23 => ai as u64,
+        24 => take(bytes, at, 1)?,
+        25 => take(bytes, at, 2)?,
+        26 => take(bytes, at, 4)?,
+        27 => take(bytes, at, 8)?,
+        _ => bail!("decode sparse local rows: indefinite or reserved CBOR length"),
+    };
+    usize::try_from(n).context("decode sparse local rows: length exceeds platform")
+}
+fn take(bytes: &[u8], at: &mut usize, width: usize) -> Result<u64> {
+    let end = at
+        .checked_add(width)
+        .filter(|end| *end <= bytes.len())
+        .ok_or_else(|| anyhow!("decode sparse local rows: truncated CBOR"))?;
+    let mut n = 0;
+    for b in &bytes[*at..end] {
+        n = (n << 8) | u64::from(*b);
+    }
+    *at = end;
+    Ok(n)
+}
+
+fn validate_sparse_rows(rows: &[String], expected: u32) -> Result<()> {
+    if rows.len() != expected as usize {
+        bail!("sparse local rows count mismatch");
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for id in rows {
+        if !seen.insert(id) {
+            bail!("sparse local rows contain duplicate external id `{id}`");
+        }
+    }
+    Ok(())
+}
 
 /// Header magic, "LSEG" little-endian.
 const MAGIC1: u32 = 0x4C53_4547;
@@ -150,12 +283,19 @@ const ROLE_NUMBER_SORTED: u8 = 13;
 /// Located by the value's index in the sorted column (the binary-search result),
 /// NOT by a string dict-id — Number has no [`ROLE_DICT`].
 const ROLE_NUMBER_POSTINGS: u8 = 14;
+/// Byte offsets for a [`CODEC_RAW_VAR`] [`ROLE_DICT`].  This is deliberately a
+/// separate fixed mmap column: `elem_count` is the number of dictionary terms,
+/// while this column has `elem_count + 1` `u64` byte offsets.
+const ROLE_DICT_OFFSETS: u8 = 15;
 
 /// Codec discriminant for [`ColumnRef::codec`]. A fixed-width column is stored
 /// raw (zero-copy `try_cast_slice` on read); a var-width column is LZ4-blocked.
 const CODEC_FIXED: u8 = 0;
 /// LZ4-framed variable-width blocks (the var-column codec). Phase 2e-A.
 const CODEC_LZ4_VAR: u8 = 1;
+/// Raw concatenated UTF-8 dictionary bytes.  Only [`ROLE_DICT`] may use this
+/// codec; [`ROLE_DICT_OFFSETS`] supplies its mmap-resident entry boundaries.
+const CODEC_RAW_VAR: u8 = 2;
 
 /// Sentinel dict-id meaning "no keyword for this doc" in the Keyword forward
 /// column. `u32::MAX` can never be a real dict-id (a dict that large would
@@ -715,6 +855,15 @@ struct VarBlockMeta {
     length: u32,
 }
 
+fn decode_var_skip_index(column: &ColumnRef) -> Option<SparseVarIndex> {
+    if column.codec != CODEC_LZ4_VAR {
+        return None;
+    }
+    #[cfg(test)]
+    VAR_SKIP_INDEX_DECODES.with(|count| count.set(count.get() + 1));
+    ciborium::from_reader(&column.skip_index[..]).ok()
+}
+
 /// The shared-prefix length of two byte strings (the delta-encode leg).
 fn shared_prefix(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
@@ -726,7 +875,53 @@ struct VarEntry {
     /// Bytes shared with the previous entry in the block (delta-encode).
     shared: u32,
     /// New bytes appended after the shared prefix.
+    #[serde(with = "var_suffix_bytes")]
     suffix: Vec<u8>,
+}
+
+// New checkpoints encode byte payloads directly. The visitor also accepts
+// integer arrays written by 0.6.0, so existing segment files remain readable.
+mod var_suffix_bytes {
+    use serde::{
+        de::{Error, SeqAccess, Visitor},
+        Deserializer, Serializer,
+    };
+    use std::fmt;
+
+    pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(bytes)
+    }
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u8>, D::Error> {
+        struct Bytes;
+        impl<'de> Visitor<'de> for Bytes {
+            type Value = Vec<u8>;
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a byte string or legacy byte array")
+            }
+            fn visit_bytes<E: Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+                Ok(bytes.to_vec())
+            }
+            fn visit_byte_buf<E: Error>(self, bytes: Vec<u8>) -> Result<Self::Value, E> {
+                Ok(bytes)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut bytes =
+                    Vec::with_capacity(sequence.size_hint().unwrap_or(0).min(64 * 1024));
+                while let Some(byte) = sequence.next_element::<u8>()? {
+                    bytes.push(byte);
+                }
+                Ok(bytes)
+            }
+        }
+        // The owned suffix can exceed the decoder's borrowed scratch buffer.
+        // Request an owned byte buffer so large entries use its streaming path.
+        deserializer.deserialize_byte_buf(Bytes)
+    }
 }
 
 /// The decoded body of one var block: prefix-delta entries. A whole block is
@@ -957,6 +1152,37 @@ fn decode_posting_block(blob: &[u8]) -> Option<(Vec<u32>, Vec<u32>)> {
         prev = id;
     }
     Some((docids, tfs))
+}
+
+/// Membership probe over an ascending, distinct docid slice for a stream of
+/// queries that is *usually* ascending (#4246): a query at or beyond the last
+/// one advances a cursor (amortized O(1) per query), and a query that steps
+/// backwards falls back to a binary search without moving the cursor, so the
+/// answer is exact in every order. This is what lets [`SegmentReader::text_posting_scan`]
+/// visitors filter a 500k-entry posting against tombstones, live overlays and
+/// a candidate set at decode speed instead of a binary search per entry.
+pub(crate) struct SortedIdCursor<'a> {
+    ids: &'a [u32],
+    pos: usize,
+}
+
+impl<'a> SortedIdCursor<'a> {
+    pub(crate) fn new(ids: &'a [u32]) -> Self {
+        debug_assert!(ids.windows(2).all(|w| w[0] < w[1]));
+        SortedIdCursor { ids, pos: 0 }
+    }
+
+    /// Whether `id` is in the slice.
+    #[inline]
+    pub(crate) fn contains(&mut self, id: u32) -> bool {
+        if self.pos > 0 && self.ids[self.pos - 1] >= id {
+            return self.ids.binary_search(&id).is_ok();
+        }
+        while self.pos < self.ids.len() && self.ids[self.pos] < id {
+            self.pos += 1;
+        }
+        self.pos < self.ids.len() && self.ids[self.pos] == id
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1447,7 +1673,7 @@ type CachedPosting = Arc<roaring::RoaringBitmap>;
 
 /// A resident decoded Text posting: the `(docids, tfs)` SoA streams the live
 /// `Postings` held. `Arc`-shared like [`CachedPosting`].
-type CachedTextPosting = Arc<(Vec<u32>, Vec<u32>)>;
+pub(crate) type CachedTextPosting = Arc<(Vec<u32>, Vec<u32>)>;
 
 /// Pack a `(role, id)` pair into a collision-free `u64` cache key. `role` is a
 /// `ROLE_*` discriminant (small); `id` is a dense segment-local dict-id or
@@ -1470,7 +1696,7 @@ fn cached_posting_weight(p: &CachedPosting) -> u32 {
 
 /// Approximate retained-byte weight of a cached Text posting (`docids` + `tfs`
 /// `u32` vectors plus a small constant).
-fn cached_text_posting_weight(p: &CachedTextPosting) -> u32 {
+pub(crate) fn cached_text_posting_weight(p: &CachedTextPosting) -> u32 {
     let (docids, tfs) = p.as_ref();
     let bytes = docids
         .len()
@@ -1491,7 +1717,7 @@ const DEFAULT_POSTING_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 /// set and parseable, else [`DEFAULT_POSTING_CACHE_BYTES`]. A value of `0`
 /// disables the cache (max_capacity 0 ⇒ every insert is immediately evicted, so
 /// the accessors fall back to a fresh decode — the pre-cache behaviour).
-fn posting_cache_bytes() -> u64 {
+pub(crate) fn posting_cache_bytes() -> u64 {
     match std::env::var("LUMEN_SEG_POSTING_CACHE_MB") {
         Ok(s) => match s.trim().parse::<u64>() {
             Ok(mb) => mb.saturating_mul(1024 * 1024),
@@ -1514,6 +1740,9 @@ fn posting_cache_bytes() -> u64 {
 pub struct SegmentReader {
     mmap: Arc<memmap2::Mmap>,
     dir: Vec<ColumnRef>,
+    /// Parsed once at open, in the same order as `dir`. A malformed VAR skip
+    /// index remains `None`, preserving the prior no-panic lookup refusal.
+    var_skip_indices: Vec<Option<SparseVarIndex>>,
     applied_seq: u64,
     n_docs: u32,
     /// Phase 2e-B BM25 corpus scalars (0 for a non-text segment): the document
@@ -1538,6 +1767,20 @@ pub struct SegmentReader {
     /// because Text carries a parallel `tf` stream the docid-only cache cannot
     /// hold. Same budget + tombstone-after-fetch discipline.
     text_posting_cache: moka::sync::Cache<u64, CachedTextPosting>,
+    /// A locally authored, private staging directory.  Its final `Arc` drop
+    /// removes only this exact directory after the mmap and every reader clone
+    /// have released it.
+    owned_stage: Option<Arc<OwnedStageDirectory>>,
+}
+
+struct OwnedStageDirectory {
+    path: PathBuf,
+}
+
+impl Drop for OwnedStageDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 impl std::fmt::Debug for SegmentReader {
@@ -1553,7 +1796,230 @@ impl std::fmt::Debug for SegmentReader {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ScalarPayloadKind {
+    Keyword,
+    Number,
+    Set,
+}
+
+/// Fail closed before constructing a reader.  Raw dictionary entry boundaries
+/// must stay in the mmap; decoding them into a `Vec` would reintroduce an
+/// O(dictionary) heap allocation during staging.
+fn validate_column_codecs(
+    mmap: &memmap2::Mmap,
+    dir_offset: usize,
+    dir: &[ColumnRef],
+) -> Result<()> {
+    for column in dir {
+        match column.codec {
+            CODEC_FIXED | CODEC_LZ4_VAR => {}
+            CODEC_RAW_VAR if column.role == ROLE_DICT => {}
+            codec => bail!(
+                "unsupported segment column codec {codec} for role {}",
+                column.role
+            ),
+        }
+    }
+    let mut dicts = dir.iter().filter(|column| column.role == ROLE_DICT);
+    let dict = dicts.next();
+    if dicts.next().is_some() {
+        bail!("segment has duplicate dictionary columns");
+    }
+    let mut offset_columns = dir.iter().filter(|column| column.role == ROLE_DICT_OFFSETS);
+    let offsets = offset_columns.next();
+    if offset_columns.next().is_some() {
+        bail!("segment has duplicate raw dictionary offsets columns");
+    }
+    let Some(dict) = dict else {
+        if offsets.is_some() {
+            bail!("segment has orphan raw dictionary offsets column");
+        }
+        return Ok(());
+    };
+    if dict.codec != CODEC_RAW_VAR {
+        if offsets.is_some() {
+            bail!("segment has orphan raw dictionary offsets column");
+        }
+        return Ok(());
+    }
+    if !dict.skip_index.is_empty() || dict.width != 0 {
+        bail!("raw dictionary has variable metadata")
+    }
+    if dict.elem_count > u64::from(u32::MAX) {
+        bail!("raw dictionary exceeds u32 ordinal capacity")
+    }
+    let offsets = offsets.ok_or_else(|| anyhow!("raw dictionary is missing offsets column"))?;
+    if offsets.codec != CODEC_FIXED
+        || offsets.width != 8
+        || !offsets.skip_index.is_empty()
+        || offsets.byte_offset % 8 != 0
+        || offsets.byte_len % 8 != 0
+    {
+        bail!("raw dictionary offsets must be fixed u64")
+    }
+    let expected_count = dict
+        .elem_count
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("raw dictionary offset count overflow"))?;
+    if offsets.elem_count != expected_count || offsets.byte_len != expected_count.saturating_mul(8)
+    {
+        bail!("raw dictionary offset count does not match dictionary")
+    }
+    let range = |column: &ColumnRef| -> Result<&[u8]> {
+        let start = usize::try_from(column.byte_offset).context("segment column offset")?;
+        let len = usize::try_from(column.byte_len).context("segment column length")?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("segment column range overflow"))?;
+        if start < HEADER_LEN || end > dir_offset {
+            bail!("segment column exceeds directory boundary")
+        }
+        mmap.get(start..end)
+            .ok_or_else(|| anyhow!("segment column is out of range"))
+    };
+    let data = range(dict)?;
+    let offset_bytes = range(offsets)?;
+    let ranges_overlap = |left: &ColumnRef, right: &ColumnRef| {
+        let left_start = left.byte_offset;
+        let left_end = left_start.saturating_add(left.byte_len);
+        let right_start = right.byte_offset;
+        let right_end = right_start.saturating_add(right.byte_len);
+        left_start < right_end && right_start < left_end
+    };
+    if ranges_overlap(dict, offsets) {
+        bail!("raw dictionary bytes overlap offsets column")
+    }
+    let values = bytemuck::try_cast_slice::<u8, u64>(offset_bytes)
+        .map_err(|_| anyhow!("raw dictionary offsets are misaligned"))?;
+    if values.first() != Some(&0) || values.last() != Some(&(data.len() as u64)) {
+        bail!("raw dictionary offsets must start at zero and end at dictionary length")
+    }
+    if values.windows(2).any(|pair| pair[0] > pair[1]) {
+        bail!("raw dictionary offsets are not monotone")
+    }
+    for (index, pair) in values.windows(2).enumerate() {
+        let start = usize::try_from(pair[0]).context("raw dictionary offset")?;
+        let end = usize::try_from(pair[1]).context("raw dictionary offset")?;
+        let entry = data
+            .get(start..end)
+            .ok_or_else(|| anyhow!("raw dictionary offset is out of range"))?;
+        std::str::from_utf8(entry).context("raw dictionary entry is not UTF-8")?;
+        if index != 0 {
+            // Compare adjacent mmap slices directly; do not retain a `Vec` or
+            // `String` for the previous (possibly huge) dictionary term.
+            let prior_start =
+                usize::try_from(values[index - 1]).context("raw dictionary offset")?;
+            let prior_end = usize::try_from(values[index]).context("raw dictionary offset")?;
+            let prior = data
+                .get(prior_start..prior_end)
+                .ok_or_else(|| anyhow!("raw dictionary offset is out of range"))?;
+            if prior >= entry {
+                bail!("raw dictionary entries are not strictly sorted")
+            }
+        }
+    }
+    Ok(())
+}
+
 impl SegmentReader {
+    /// Identify a complete scalar column family without interpreting a row as
+    /// absent when a staged file was created for another field kind.
+    pub(crate) fn scalar_payload_kind(&self) -> Option<ScalarPayloadKind> {
+        let keyword = self.column(ROLE_KEYWORD_DICTID).is_some()
+            && self.column(ROLE_DICT).is_some()
+            && self.column(ROLE_KEYWORD_POSTINGS).is_some();
+        let set = self.column(ROLE_SET_OFFSETS).is_some()
+            && self.column(ROLE_SET_PACKED).is_some()
+            && self.column(ROLE_DICT).is_some()
+            && self.column(ROLE_SET_POSTINGS).is_some();
+        let number = self.column(ROLE_NUMBER).is_some()
+            && self.column(ROLE_NUMBER_SORTED).is_some()
+            && self.column(ROLE_NUMBER_POSTINGS).is_some();
+        match (keyword, number, set) {
+            (true, false, false) => Some(ScalarPayloadKind::Keyword),
+            (false, true, false) => Some(ScalarPayloadKind::Number),
+            (false, false, true) => Some(ScalarPayloadKind::Set),
+            _ => None,
+        }
+    }
+
+    /// Bound heap metadata needed to open a locally authored staged segment.
+    /// This deliberately reads only the fixed footer and validates its directory
+    /// range. It does not mmap or decode CBOR before the caller reserves this
+    /// reader-owned allocation.
+    pub(crate) fn staged_metadata_bound(path: &Path) -> Result<usize> {
+        let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+        let len = usize::try_from(file.seek(SeekFrom::End(0))?)
+            .context("staged segment exceeds platform size")?;
+        if len < HEADER_LEN + FOOTER_LEN {
+            bail!("segment too small: {len} bytes");
+        }
+        file.seek(SeekFrom::End(-(FOOTER_LEN as i64)))?;
+        let mut footer_bytes = [0u8; FOOTER_LEN];
+        file.read_exact(&mut footer_bytes)?;
+        let footer = Footer::from_bytes(&footer_bytes)?;
+        if footer.magic2 != MAGIC2 {
+            bail!("bad footer magic2: {:#x}", footer.magic2);
+        }
+        let dir_offset = usize::try_from(footer.dir_offset).context("directory offset")?;
+        let dir_len = usize::try_from(footer.dir_len).context("directory length")?;
+        let footer_offset = len - FOOTER_LEN;
+        let dir_end = dir_offset
+            .checked_add(dir_len)
+            .ok_or_else(|| anyhow!("directory length overflow"))?;
+        if dir_offset < HEADER_LEN || dir_end > footer_offset {
+            bail!("directory out of range: [{dir_offset}..{dir_end}) vs footer at {footer_offset}");
+        }
+
+        // CBOR directory data is decoded into `Vec<ColumnRef>`, strings and
+        // skip-index Vecs. A locally authored directory cannot need more
+        // element payload than its encoded bytes, but charge one ColumnRef per
+        // encoded byte as a conservative sparse-entry bound. The fixed reader
+        // and three cache handles are reader-owned allocations as well.
+        let directory = dir_len
+            .checked_mul(std::mem::size_of::<ColumnRef>())
+            .and_then(|n| n.checked_add(dir_len))
+            .ok_or_else(|| anyhow!("staged directory metadata overflows usize"))?;
+        // Each encoded skip byte may describe one sparse block entry in the
+        // most pessimistic valid layout. The reader retains both encoded
+        // directory bytes and this parsed immutable index.
+        let parsed_skip = dir_len
+            .checked_mul(std::mem::size_of::<VarBlockMeta>())
+            .and_then(|n| n.checked_add(dir_len))
+            .ok_or_else(|| anyhow!("staged parsed skip metadata overflows usize"))?;
+        std::mem::size_of::<SegmentReader>()
+            .checked_add(directory)
+            .and_then(|n| n.checked_add(parsed_skip))
+            .and_then(|n| n.checked_add(3 * std::mem::size_of::<usize>()))
+            .ok_or_else(|| anyhow!("staged reader metadata overflows usize"))
+    }
+
+    /// Open a staged segment after its metadata bound has been reserved. The
+    /// private directory is retained by every `Arc<SegmentReader>` clone.
+    pub(crate) fn open_owned_stage(path: &Path, stage_dir: PathBuf) -> Result<SegmentReader> {
+        #[cfg(test)]
+        OWNED_STAGE_OPEN_CALLS.with(|count| count.set(count.get() + 1));
+        let mut reader = Self::open(path)?;
+        reader.owned_stage = Some(Arc::new(OwnedStageDirectory { path: stage_dir }));
+        Ok(reader)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owned_stage_dir(&self) -> Option<&Path> {
+        self.owned_stage.as_ref().map(|stage| stage.path.as_path())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_owned_stage_open_calls() {
+        OWNED_STAGE_OPEN_CALLS.with(|count| count.set(0));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owned_stage_open_calls() -> usize {
+        OWNED_STAGE_OPEN_CALLS.with(Cell::get)
+    }
+
     /// Open and validate a segment file. Reads the footer first, validates
     /// `magic2`, the directory crc32, then the header magic / version /
     /// endianness. Any mismatch (bad magic, bad crc, wrong endian, directory
@@ -1626,6 +2092,8 @@ impl SegmentReader {
         // --- DIRECTORY (CBOR) ---
         let dir: Vec<ColumnRef> = ciborium::from_reader(dir_bytes)
             .map_err(|e| anyhow!("cbor decode segment directory: {e}"))?;
+        validate_column_codecs(&mmap, dir_offset, &dir)?;
+        let var_skip_indices = dir.iter().map(decode_var_skip_index).collect();
 
         let block_cache: moka::sync::Cache<u64, DecodedBlock> = moka::sync::Cache::builder()
             .weigher(|_k: &u64, v: &DecodedBlock| decoded_block_weight(v))
@@ -1648,6 +2116,7 @@ impl SegmentReader {
         Ok(SegmentReader {
             mmap: Arc::new(mmap),
             dir,
+            var_skip_indices,
             applied_seq: header.applied_seq,
             n_docs: header.n_docs,
             doc_count: header.doc_count,
@@ -1655,6 +2124,7 @@ impl SegmentReader {
             block_cache,
             posting_cache,
             text_posting_cache,
+            owned_stage: None,
         })
     }
 
@@ -1669,8 +2139,13 @@ impl SegmentReader {
     }
 
     /// Locate the first directory entry with the given role.
+    fn column_index(&self, role: u8) -> Option<usize> {
+        self.dir.iter().position(|column| column.role == role)
+    }
+
     fn column(&self, role: u8) -> Option<&ColumnRef> {
-        self.dir.iter().find(|c| c.role == role)
+        self.column_index(role)
+            .and_then(|index| self.dir.get(index))
     }
 
     /// Borrow a column's bytes, bounds-checked against the mmap. A column ref
@@ -1692,13 +2167,39 @@ impl SegmentReader {
         bytemuck::try_cast_slice::<u8, u32>(bytes).ok()
     }
 
-    /// Decode the per-column skip-index carried inline in a VAR column's
-    /// directory entry. `None` if the codec is not LZ4-var or the CBOR is torn.
-    fn var_skip_index(&self, col: &ColumnRef) -> Option<SparseVarIndex> {
-        if col.codec != CODEC_LZ4_VAR {
-            return None;
+    fn u64_column(&self, role: u8) -> Option<&[u64]> {
+        let col = self.column(role)?;
+        let bytes = self.column_bytes(col)?;
+        bytemuck::try_cast_slice::<u8, u64>(bytes).ok()
+    }
+
+    /// Raw dictionaries are borrowed directly from the mapping.  Older LZ4
+    /// dictionaries still decode through the bounded block cache and therefore
+    /// return an owned fallback.
+    fn dict_value(&self, id: u32) -> Option<Cow<'_, str>> {
+        let dict = self.column(ROLE_DICT)?;
+        match dict.codec {
+            CODEC_RAW_VAR => {
+                let offsets = self.u64_column(ROLE_DICT_OFFSETS)?;
+                let start = usize::try_from(*offsets.get(id as usize)?).ok()?;
+                let end = usize::try_from(*offsets.get(id as usize + 1)?).ok()?;
+                let bytes = self.column_bytes(dict)?.get(start..end)?;
+                std::str::from_utf8(bytes).ok().map(Cow::Borrowed)
+            }
+            CODEC_LZ4_VAR => {
+                let (block, within) = self.dict_block_at(ROLE_DICT, id)?;
+                String::from_utf8(block.get(within)?.clone())
+                    .ok()
+                    .map(Cow::Owned)
+            }
+            _ => None,
         }
-        ciborium::from_reader(&col.skip_index[..]).ok()
+    }
+
+    /// Borrow the parsed per-column skip-index. A malformed index was recorded
+    /// as `None` during open, matching the former lookup refusal behavior.
+    fn var_skip_index(&self, column_index: usize) -> Option<&SparseVarIndex> {
+        self.var_skip_indices.get(column_index)?.as_ref()
     }
 
     /// Decompress one var block (or return the cached copy). The block frame is
@@ -1735,11 +2236,12 @@ impl SegmentReader {
     /// bounds-checks the position. `None` for an out-of-range id or a torn
     /// block — never panics.
     fn dict_block_at(&self, dict_role: u8, id: u32) -> Option<(DecodedBlock, usize)> {
-        let col = self.column(dict_role)?;
+        let column_index = self.column_index(dict_role)?;
+        let col = self.dir.get(column_index)?;
         if id as u64 >= col.elem_count {
             return None;
         }
-        let index = self.var_skip_index(col)?;
+        let index = self.var_skip_index(column_index)?;
         let mut lo = 0usize;
         let mut hi = index.blocks.len();
         while lo < hi {
@@ -1795,9 +2297,7 @@ impl SegmentReader {
     /// owned because the bytes live in the moka-cached decompressed block, not
     /// on the mmap page — see [`Self::keyword_at`].
     fn dict_string(&self, id: u32) -> Option<String> {
-        let (block, within) = self.dict_block_at(ROLE_DICT, id)?;
-        let bytes = block.get(within)?;
-        String::from_utf8(bytes.clone()).ok()
+        self.dict_value(id).map(Cow::into_owned)
     }
 
     /// `true` if doc `id` is in range AND its present-bit is set. `false` for
@@ -2134,6 +2634,13 @@ impl SegmentReader {
     /// sound API; the equality / membership compares in `storage.rs` work
     /// identically against an owned `String`.
     pub fn keyword_at(&self, id: u32) -> Option<String> {
+        self.keyword_at_cow(id).map(Cow::into_owned)
+    }
+
+    /// Internal raw-or-legacy dictionary view for staging and merge paths.
+    /// Raw scalar dictionaries borrow the mmap; LZ4 dictionaries allocate only
+    /// the selected legacy term.
+    pub(crate) fn keyword_at_cow(&self, id: u32) -> Option<Cow<'_, str>> {
         if !self.is_present(id) {
             return None;
         }
@@ -2142,7 +2649,7 @@ impl SegmentReader {
         if dict_id == DICT_ABSENT {
             return None;
         }
-        self.dict_string(dict_id)
+        self.dict_value(dict_id)
     }
 
     /// The dict-id of keyword `value` in the shared sorted [`ROLE_DICT`]
@@ -2187,10 +2694,17 @@ impl SegmentReader {
     /// materializing every term. `None` is fail-closed for an invalid ordinal
     /// or torn dictionary data.
     pub fn keyword_term_at_ordinal(&self, ordinal: u32) -> Option<String> {
+        self.keyword_term_at_ordinal_cow(ordinal)
+            .map(Cow::into_owned)
+    }
+
+    /// Internal ordinal dictionary view for scalar checkpoint streaming. A raw
+    /// dictionary lends mmap bytes; a legacy compressed block owns one term.
+    pub(crate) fn keyword_term_at_ordinal_cow(&self, ordinal: u32) -> Option<Cow<'_, str>> {
         if ordinal >= self.keyword_ordinal_count()? {
             return None;
         }
-        self.dict_string(ordinal)
+        self.dict_value(ordinal)
     }
 
     /// Keyword posting bucket at a lexical dictionary ordinal. Ordinal `0` is
@@ -2220,9 +2734,7 @@ impl SegmentReader {
         let n = u32::try_from(col.elem_count).ok()?;
         let mut out = Vec::with_capacity(n as usize);
         for dict_id in 0..n {
-            let (block, within) = self.dict_block_at(ROLE_DICT, dict_id)?;
-            let term_bytes = block.get(within)?;
-            let term = String::from_utf8(term_bytes.clone()).ok()?;
+            let term = self.dict_value(dict_id)?.into_owned();
             let (pblock, pwithin) = self.dict_block_at(ROLE_KEYWORD_POSTINGS, dict_id)?;
             let blob = pblock.get(pwithin)?;
             let docids = decode_docid_block(blob)?;
@@ -2265,18 +2777,66 @@ impl SegmentReader {
             return None;
         }
         let mut out = Vec::with_capacity(hi - lo);
-        for &dict_id in &packed[lo..hi] {
+        for member in 0..(hi - lo) {
             // A torn dict entry aborts the whole doc rather than silently
             // dropping a member (a partial member set would be a wrong answer).
-            out.push(self.dict_string(dict_id)?);
+            out.push(self.set_member_at_cow(id, member as u32)?.into_owned());
         }
         Some(out)
+    }
+
+    /// Internal raw-or-legacy access to one set member. The ordinal is the
+    /// member's position within this row, not its dictionary id.
+    pub(crate) fn set_member_at_cow(&self, id: u32, member: u32) -> Option<Cow<'_, str>> {
+        if !self.is_present(id) {
+            return None;
+        }
+        let offsets = self.u32_column(ROLE_SET_OFFSETS)?;
+        let packed = self.u32_column(ROLE_SET_PACKED)?;
+        let lo = *offsets.get(id as usize)? as usize;
+        let hi = *offsets.get(id as usize + 1)? as usize;
+        let index = lo.checked_add(member as usize)?;
+        if index >= hi || hi > packed.len() {
+            return None;
+        }
+        self.dict_value(*packed.get(index)?)
     }
 
     /// The dict-id of set element `value` in the shared sorted [`ROLE_DICT`]
     /// dictionary, or `None` if absent. The Set, Keyword and Text dicts all
     /// share [`ROLE_DICT`] and the identical sorted layout, so this delegates to
     /// [`Self::text_dict_id`]. Phase 2h-2. Never panics.
+    /// `(present, member_count)` without copying the CSR member row. `None`
+    /// means its index, offsets or packed range is invalid.
+    pub(crate) fn set_row_member_count(&self, id: u32) -> Option<(bool, u32)> {
+        if id >= self.n_docs {
+            return None;
+        }
+        if !self.is_present(id) {
+            return Some((false, 0));
+        }
+        let offsets = self.u32_column(ROLE_SET_OFFSETS)?;
+        let packed = self.u32_column(ROLE_SET_PACKED)?;
+        let lo = *offsets.get(id as usize)? as usize;
+        let hi = *offsets.get(id as usize + 1)? as usize;
+        if hi < lo || hi > packed.len() {
+            return None;
+        }
+        Some((true, u32::try_from(hi - lo).ok()?))
+    }
+
+    /// Decode one Set member for a streaming checkpoint projection.
+    pub(crate) fn set_member_at(&self, id: u32, member: u32) -> Option<String> {
+        let (present, count) = self.set_row_member_count(id)?;
+        if !present || member >= count {
+            return None;
+        }
+        let offsets = self.u32_column(ROLE_SET_OFFSETS)?;
+        let packed = self.u32_column(ROLE_SET_PACKED)?;
+        let index = (*offsets.get(id as usize)?).checked_add(member)? as usize;
+        self.dict_string(*packed.get(index)?)
+    }
+
     fn set_dict_id(&self, value: &str) -> Option<u32> {
         self.text_dict_id(value)
     }
@@ -2324,9 +2884,7 @@ impl SegmentReader {
         let n = u32::try_from(col.elem_count).ok()?;
         let mut out = Vec::with_capacity(n as usize);
         for dict_id in 0..n {
-            let (block, within) = self.dict_block_at(ROLE_DICT, dict_id)?;
-            let el_bytes = block.get(within)?;
-            let el = String::from_utf8(el_bytes.clone()).ok()?;
+            let el = self.dict_value(dict_id)?.into_owned();
             let (pblock, pwithin) = self.dict_block_at(ROLE_SET_POSTINGS, dict_id)?;
             let blob = pblock.get(pwithin)?;
             let docids = decode_docid_block(blob)?;
@@ -2344,7 +2902,9 @@ impl SegmentReader {
     /// write), so this binary-searches the dict-id space comparing the decoded
     /// dictionary bytes against `token`. Each probe decodes one var block
     /// (cache-on-touch). Never panics.
-    fn text_dict_id(&self, token: &str) -> Option<u32> {
+    pub(crate) fn text_dict_id(&self, token: &str) -> Option<u32> {
+        #[cfg(test)]
+        DICTIONARY_SEARCHES.with(|count| count.set(count.get() + 1));
         let col = self.column(ROLE_DICT)?;
         let n = u32::try_from(col.elem_count).ok()?;
         let needle = token.as_bytes();
@@ -2352,15 +2912,29 @@ impl SegmentReader {
         let mut hi = n; // exclusive
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            let (block, within) = self.dict_block_at(ROLE_DICT, mid)?;
-            let entry = block.get(within)?;
-            match entry.as_slice().cmp(needle) {
+            let entry = self.dict_value(mid)?;
+            match entry.as_bytes().cmp(needle) {
                 std::cmp::Ordering::Less => lo = mid + 1,
                 std::cmp::Ordering::Greater => hi = mid,
                 std::cmp::Ordering::Equal => return Some(mid),
             }
         }
         None
+    }
+
+    /// Whether this segment carries a Text posting column at all. A scalar
+    /// segment shares [`ROLE_DICT`] with Text, so this is what separates a Text
+    /// dictionary from a keyword one (#4246).
+    pub(crate) fn has_text_postings(&self) -> bool {
+        self.column(ROLE_TEXT_POSTINGS).is_some()
+    }
+
+    /// Whether `token` is in this segment's dictionary, without decoding its
+    /// posting. One binary search over the dict-id space (#4246): a distinct
+    /// term count folds each staged/tail token with this, never by decoding a
+    /// posting per dictionary entry.
+    pub(crate) fn text_has_term(&self, token: &str) -> bool {
+        self.text_dict_id(token).is_some()
     }
 
     /// Token `token`'s stored postings as `(docids, tfs)`, docid-ascending — the
@@ -2396,6 +2970,76 @@ impl SegmentReader {
         let cached: CachedTextPosting = Arc::new((docids, tfs));
         self.text_posting_cache.insert(key, cached.clone());
         Some(cached)
+    }
+
+    /// The cache-resident posting for `token`, or `None` without decoding
+    /// anything (#4246). A miss means [`Self::text_postings_arc`] would have
+    /// to materialize the posting; callers that only need a few docids stream
+    /// it with [`Self::text_posting_scan`] instead.
+    pub(crate) fn text_posting_cached(&self, token: &str) -> Option<CachedTextPosting> {
+        let dict_id = self.text_dict_id(token)?;
+        self.text_posting_cache
+            .get(&posting_cache_key(ROLE_TEXT_POSTINGS, dict_id))
+    }
+
+    /// Stream `token`'s stored posting — `visit(docid, tf)` for every entry in
+    /// ascending docid order — decoding the delta-varint blob in place and
+    /// materializing nothing: the posting cache is neither read nor filled
+    /// (#4246: a 500k-row posting is 4 MiB decoded, so the bounded cache
+    /// cannot hold a 90-token ngram query's working set and re-decodes every
+    /// token on every cold request). Returns the stored entry count (the
+    /// token's df), or `None` for a token absent from the dictionary or a
+    /// torn blob — never panics. A torn blob may have visited a prefix;
+    /// callers treat `None` as "no posting", exactly as
+    /// [`Self::text_postings_arc`] does.
+    pub(crate) fn text_posting_scan(
+        &self,
+        token: &str,
+        mut visit: impl FnMut(u32, u32),
+    ) -> Option<usize> {
+        let dict_id = self.text_dict_id(token)?;
+        let (block, within) = self.dict_block_at(ROLE_TEXT_POSTINGS, dict_id)?;
+        let blob = block.get(within)?;
+        let mut pos = 0usize;
+        let count = usize::try_from(read_varint(blob, &mut pos)?).ok()?;
+        let mut prev: u32 = 0;
+        for _ in 0..count {
+            let gap = u32::try_from(read_varint(blob, &mut pos)?).ok()?;
+            let tf = u32::try_from(read_varint(blob, &mut pos)?).ok()?;
+            let id = prev.checked_add(gap)?;
+            visit(id, tf);
+            prev = id;
+        }
+        Some(count)
+    }
+
+    /// Whether the posting stored at dictionary ordinal `dict_id` holds a docid
+    /// `accept` returns true for, decoding the delta-varint blob only as far as
+    /// that docid (#4246). Nothing is materialized and the posting cache is
+    /// neither read nor filled: a distinct-term count visits every dictionary
+    /// entry once per request and must neither allocate per term nor evict the
+    /// query working set. `None` for an ordinal outside the posting column or
+    /// a torn block — never panics.
+    pub(crate) fn text_posting_any_at(
+        &self,
+        dict_id: u32,
+        mut accept: impl FnMut(u32) -> bool,
+    ) -> Option<bool> {
+        let (block, within) = self.dict_block_at(ROLE_TEXT_POSTINGS, dict_id)?;
+        let blob = block.get(within)?;
+        let mut pos = 0usize;
+        let count = read_varint(blob, &mut pos)?;
+        let mut prev: u32 = 0;
+        for _ in 0..count {
+            let gap = u32::try_from(read_varint(blob, &mut pos)?).ok()?;
+            let _tf = read_varint(blob, &mut pos)?;
+            let id = prev.checked_add(gap)?;
+            if accept(id) {
+                return Some(true);
+            }
+            prev = id;
+        }
+        Some(false)
     }
 
     /// Doc `id`'s BM25 length from the fixed [`ROLE_TEXT_DOCLEN`] column, read
@@ -2451,6 +3095,26 @@ impl SegmentReader {
         self.total_doc_len
     }
 
+    /// Count a Text dictionary without materializing its terms or postings.
+    /// One decoded dictionary block is borrowed at a time; the bounded reader
+    /// cache controls retained decompressed blocks.
+    pub(crate) fn text_dictionary_stats(&self) -> Option<(u64, u64)> {
+        let column = self.column(ROLE_DICT)?;
+        let count = column.elem_count;
+        let mut bytes = 0u64;
+        for ordinal in 0..count {
+            let id = u32::try_from(ordinal).ok()?;
+            let len = if column.codec == CODEC_RAW_VAR {
+                self.dict_value(id)?.len()
+            } else {
+                let (block, within) = self.dict_block_at(ROLE_DICT, id)?;
+                block.get(within)?.len()
+            };
+            bytes = bytes.checked_add(u64::try_from(len).ok()?)?;
+        }
+        Some((count, bytes))
+    }
+
     // -----------------------------------------------------------------------
     // Collection EID column (Phase 2f-1)
     // -----------------------------------------------------------------------
@@ -2502,9 +3166,7 @@ impl SegmentReader {
         let n = u32::try_from(col.elem_count).ok()?;
         let mut out = Vec::with_capacity(n as usize);
         for dict_id in 0..n {
-            let (block, within) = self.dict_block_at(ROLE_DICT, dict_id)?;
-            let tok_bytes = block.get(within)?;
-            let tok = String::from_utf8(tok_bytes.clone()).ok()?;
+            let tok = self.dict_value(dict_id)?.into_owned();
             let (pblock, pwithin) = self.dict_block_at(ROLE_TEXT_POSTINGS, dict_id)?;
             let blob = pblock.get(pwithin)?;
             let (docids, tfs) = decode_posting_block(blob)?;
@@ -2529,6 +3191,41 @@ mod tests {
             std::env::temp_dir().join(format!("lumen-segment-{}-{}", std::process::id(), tag));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("col.lseg")
+    }
+
+    #[test]
+    fn var_suffix_uses_cbor_bytes_and_still_reads_legacy_integer_arrays() {
+        #[derive(serde::Serialize)]
+        struct LegacyEntry {
+            shared: u32,
+            suffix: Vec<u8>,
+        }
+        let mut legacy = Vec::new();
+        ciborium::into_writer(
+            &LegacyEntry {
+                shared: 2,
+                suffix: vec![0, 127, 255],
+            },
+            &mut legacy,
+        )
+        .unwrap();
+        let decoded: VarEntry = ciborium::from_reader(legacy.as_slice()).unwrap();
+        assert_eq!(decoded.shared, 2);
+        assert_eq!(decoded.suffix, vec![0, 127, 255]);
+        let mut current = Vec::new();
+        ciborium::into_writer(&decoded, &mut current).unwrap();
+        let value: ciborium::Value = ciborium::from_reader(current.as_slice()).unwrap();
+        let ciborium::Value::Map(fields) = value else {
+            panic!("entry must be a map")
+        };
+        let suffix = fields
+            .iter()
+            .find(|(key, _)| key == &ciborium::Value::Text("suffix".into()))
+            .unwrap();
+        assert!(matches!(&suffix.1, ciborium::Value::Bytes(bytes) if bytes == &[0, 127, 255]),
+            "new segment suffixes must encode one byte string instead of visiting every byte as an integer");
+        let roundtrip: VarEntry = ciborium::from_reader(current.as_slice()).unwrap();
+        assert_eq!(roundtrip.suffix, decoded.suffix);
     }
 
     #[test]
@@ -3547,6 +4244,183 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_var_skip_index_stays_a_lookup_refusal() {
+        let column = ColumnRef {
+            name: "dict".into(),
+            role: ROLE_DICT,
+            byte_offset: 0,
+            byte_len: 0,
+            elem_count: 0,
+            width: 0,
+            codec: CODEC_LZ4_VAR,
+            skip_index: vec![0xff, 0x00],
+        };
+        assert!(decode_var_skip_index(&column).is_none());
+    }
+
+    #[test]
+    fn reader_parses_var_skip_indexes_once_and_reuses_them_for_text_lookups() {
+        use crate::storage::Postings;
+        let path = tmp_path("text-skip-index-once");
+        let mut tokens = std::collections::BTreeMap::new();
+        tokens.insert("alpha".into(), Postings::from_sorted(vec![0], vec![2]));
+        tokens.insert("beta".into(), Postings::from_sorted(vec![0], vec![1]));
+        write_text_segment(&path, 1, &tokens, &[3], &[true], 1, 3).unwrap();
+
+        VAR_SKIP_INDEX_DECODES.with(|count| count.set(0));
+        let reader = SegmentReader::open(&path).unwrap();
+        let at_open = VAR_SKIP_INDEX_DECODES.with(Cell::get);
+        assert_eq!(at_open, 2, "dict and text postings parse once at open");
+        for _ in 0..4 {
+            assert_eq!(reader.text_postings("alpha"), Some((vec![0], vec![2])));
+            assert_eq!(reader.text_postings("beta"), Some((vec![0], vec![1])));
+        }
+        assert_eq!(
+            VAR_SKIP_INDEX_DECODES.with(Cell::get),
+            at_open,
+            "lookups borrow immutable parsed skip indexes instead of decoding CBOR again"
+        );
+        assert_eq!(reader.text_dictionary_stats(), Some((2, 9)));
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// #4246: a liveness probe decodes a posting only as far as its first
+    /// accepted docid, through no cache and with no dictionary search.
+    #[test]
+    fn text_posting_scan_streams_the_stored_posting_without_filling_the_cache() {
+        use crate::storage::Postings;
+        let path = tmp_path("text-posting-scan");
+        let mut tokens: std::collections::BTreeMap<String, Postings> =
+            std::collections::BTreeMap::new();
+        let ids: Vec<u32> = (0..5000u32).filter(|i| i % 3 != 1).collect();
+        let tfs: Vec<u32> = ids.iter().map(|i| 1 + i % 7).collect();
+        tokens.insert("apple".into(), Postings::from_sorted(ids.clone(), tfs.clone()));
+        tokens.insert("banana".into(), Postings::from_sorted(vec![1, 3], vec![5, 1]));
+        let lens: Vec<u32> = vec![3; 5000];
+        let present = vec![true; lens.len()];
+        write_text_segment(&path, 1, &tokens, &lens, &present, 5000, 15000).unwrap();
+        let r = SegmentReader::open(&path).unwrap();
+
+        assert!(r.text_posting_cached("apple").is_none(), "cold reader: nothing resident");
+        let mut seen = Vec::new();
+        assert_eq!(
+            r.text_posting_scan("apple", |id, tf| seen.push((id, tf))),
+            Some(ids.len()),
+            "the count prefix is the token's df"
+        );
+        let want: Vec<(u32, u32)> = ids.iter().copied().zip(tfs.iter().copied()).collect();
+        assert_eq!(seen, want, "the scan visits exactly the encoded stream, ascending");
+        assert!(
+            r.text_posting_cached("apple").is_none(),
+            "a scan neither reads nor fills the posting cache"
+        );
+        assert_eq!(r.text_posting_scan("cherry", |_, _| unreachable!()), None);
+
+        let resident = r.text_postings_arc("apple").unwrap();
+        assert!(
+            r.text_posting_cached("apple")
+                .is_some_and(|hit| std::sync::Arc::ptr_eq(&hit, &resident)),
+            "after a materializing read the same Arc is resident"
+        );
+        assert_eq!(resident.0, ids);
+        assert_eq!(resident.1, tfs);
+        assert!(r.text_posting_cached("banana").is_none());
+    }
+
+    #[test]
+    fn sorted_id_cursor_is_exact_in_every_query_order() {
+        let ids: Vec<u32> = (0..400u32).filter(|i| i % 3 == 0 || i % 7 == 0).collect();
+        let mut cursor = SortedIdCursor::new(&ids);
+        let mut state = 0x4246u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for step in 0..5000u32 {
+            // Mostly ascending runs with occasional backwards jumps and repeats.
+            let id = match next() % 10 {
+                0 => (next() % 420) as u32,
+                _ => ((step * 7 + (next() % 5) as u32) / 8) % 420,
+            };
+            assert_eq!(
+                cursor.contains(id),
+                ids.binary_search(&id).is_ok(),
+                "step {step} id {id}"
+            );
+        }
+        let mut empty = SortedIdCursor::new(&[]);
+        assert!(!empty.contains(0));
+        assert!(!empty.contains(u32::MAX));
+    }
+
+    #[test]
+    fn text_posting_any_at_stops_at_the_first_accepted_docid() {
+        use crate::storage::Postings;
+        let path = tmp_path("text-any-at");
+        let mut tokens: std::collections::BTreeMap<String, Postings> =
+            std::collections::BTreeMap::new();
+        tokens.insert(
+            "apple".into(),
+            Postings::from_sorted(vec![0, 2, 3], vec![3, 1, 2]),
+        );
+        tokens.insert(
+            "banana".into(),
+            Postings::from_sorted(vec![1, 3], vec![5, 1]),
+        );
+        let lens: Vec<u32> = vec![3, 5, 1, 3];
+        let present = vec![true; lens.len()];
+        write_text_segment(&path, 1, &tokens, &lens, &present, 4, 12).unwrap();
+        let r = SegmentReader::open(&path).unwrap();
+
+        DICTIONARY_SEARCHES.with(|count| count.set(0));
+        let mut seen = Vec::new();
+        assert_eq!(
+            r.text_posting_any_at(0, |id| {
+                seen.push(id);
+                id == 2
+            }),
+            Some(true)
+        );
+        assert_eq!(seen, [0, 2], "decoding stops at the first accepted docid");
+        seen.clear();
+        assert_eq!(
+            r.text_posting_any_at(0, |id| {
+                seen.push(id);
+                false
+            }),
+            Some(false)
+        );
+        assert_eq!(seen, [0, 2, 3], "a rejected posting is decoded to its end");
+        seen.clear();
+        assert_eq!(
+            r.text_posting_any_at(1, |id| {
+                seen.push(id);
+                id == 3
+            }),
+            Some(true)
+        );
+        assert_eq!(seen, [1, 3]);
+        assert_eq!(
+            r.text_posting_any_at(2, |_| true),
+            None,
+            "an ordinal past the dictionary is torn, not false"
+        );
+        assert_eq!(
+            DICTIONARY_SEARCHES.with(|count| count.get()),
+            0,
+            "the ordinal is the posting address: no dictionary search"
+        );
+        assert!(
+            r.text_posting_cache
+                .get(&posting_cache_key(ROLE_TEXT_POSTINGS, 0))
+                .is_none(),
+            "the probe fills no posting cache"
+        );
+    }
+
+    #[test]
     fn text_segment_presence_is_independent_from_doclen() {
         use crate::storage::Postings;
         let tokens: std::collections::BTreeMap<String, Postings> =
@@ -3696,6 +4570,26 @@ mod tests {
             assert_eq!(r.text_token_df(&tok), want.docids().len());
         }
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn sparse_local_rows_reject_bad_cbor_without_unbounded_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rows.cbor");
+        let ids = vec!["a".to_owned(), "日本語".to_owned()];
+        encode_sparse_local_rows(&path, &ids).unwrap();
+        let rows = decode_sparse_local_rows(&path, 2).unwrap();
+        assert_eq!(rows.external_id(1), Some("日本語"));
+        assert_eq!(rows.external_id(2), None);
+        assert!(decode_sparse_local_rows(&path, 3).is_err());
+        assert!(encode_sparse_local_rows(&path, &["x".into(), "x".into()]).is_err());
+        // Indefinite array says it contains more than the declared one row.
+        std::fs::write(&path, [0x9f, 0x61, b'a', 0x61, b'b', 0xff]).unwrap();
+        assert!(decode_sparse_local_rows(&path, 1).is_err());
+        std::fs::write(&path, [0x9a, 0xff, 0xff, 0xff, 0xff]).unwrap();
+        assert!(decode_sparse_local_rows(&path, 0).is_err());
+        std::fs::write(&path, [0x81, 0x61]).unwrap();
+        assert!(decode_sparse_local_rows(&path, 1).is_err());
     }
 }
 // CODEGEN-END

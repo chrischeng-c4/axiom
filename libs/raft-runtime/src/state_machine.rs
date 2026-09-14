@@ -1,6 +1,7 @@
 // CODEGEN-BEGIN
 //! The `RaftStateMachine` a consumer supplies to [`crate::RaftHost`].
 
+use std::any::Any;
 use std::io::{Read, Write};
 
 use raft_core::Index;
@@ -9,15 +10,72 @@ use raft_core::Index;
 /// looks inside — the state machine encodes/decodes its own commands.
 pub type Command = Vec<u8>;
 
+/// Opaque application-owned memory admission retained by the host from Raft
+/// index allocation through the matching state-machine apply callback.
+pub type AdmissionPermit = Box<dyn Any + Send>;
+
+/// Resources prepared without excluding ordered apply. This owned handle may
+/// retain a product's checkpoint-writer reservation across the capture cut.
+pub trait SnapshotPreparation: Send + 'static {
+    /// Freeze exactly `index` while the host serializes state-machine changes.
+    /// This step must not perform file I/O or wait for memory or a save permit.
+    /// A consumer that cannot represent this exact prefix must return an error.
+    fn capture_at(self: Box<Self>, index: Index) -> anyhow::Result<Box<dyn PreparedSnapshot>>;
+}
+
+/// An immutable captured state whose output no longer needs the host's apply
+/// serialization lease. Dropping the handle must release its owned resources.
+pub trait PreparedSnapshot: Send + 'static {
+    /// Encode the captured prefix outside the host's state-machine lease.
+    /// Failure prevents compaction; it must not be reported as a complete cut.
+    fn write_to(self: Box<Self>, writer: &mut dyn Write) -> anyhow::Result<()>;
+}
+
 /// The consumer's replicated state machine. The host owns the **only** applier:
 /// every committed entry is fed to [`apply`](RaftStateMachine::apply) exactly
-/// once, in index order, on every node, from a single task under the node lock.
+/// once after success, in index order, on every node, from one ordered worker.
+/// File reads, capacity waits, and callbacks run outside the node mutex.
 /// [`snapshot`](RaftStateMachine::snapshot) / [`restore`](RaftStateMachine::restore)
 /// bound the log (compaction) and let a lagging/fresh replica catch up.
 ///
 /// Implementors are `&self` interior-mutable (engines are `Arc<_>` with internal
 /// locks); the host holds an `Arc<dyn RaftStateMachine>`.
 pub trait RaftStateMachine: Send + Sync + 'static {
+    /// Admit one leader-side proposal before the host allocates a Raft index.
+    ///
+    /// A returned permit becomes host-owned once an index is allocated. The
+    /// default preserves the existing unadmitted behavior for all consumers.
+    fn admit_proposal(&self, _command: &[u8]) -> anyhow::Result<Option<AdmissionPermit>> {
+        Ok(None)
+    }
+
+    /// Apply one committed command while retaining the exact permit that was
+    /// created before its leader-side index allocation. The default retains the
+    /// permit through the synchronous `apply` callback and then drops it. For
+    /// compatibility, an `apply` error is treated as a completed domain no-op
+    /// only when the callback has already advanced its public applied floor to
+    /// `index`. An error before that floor remains incomplete.
+    fn apply_admitted(
+        &self,
+        index: Index,
+        command: &[u8],
+        permit: Option<AdmissionPermit>,
+    ) -> anyhow::Result<()> {
+        let _permit = permit;
+        match self.apply(index, command) {
+            Ok(()) => Ok(()),
+            Err(error) if self.applied_index() >= index => {
+                tracing::warn!(
+                    index,
+                    error = %error,
+                    "state machine reported an error after advancing its applied floor; preserving legacy completed no-op"
+                );
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Wire capability required before the host sends a coordinated snapshot
     /// to every voter. `None` keeps the legacy behavior. A versioned product
     /// returns a stable token so a new leader cannot compact through a voter
@@ -28,14 +86,27 @@ pub trait RaftStateMachine: Send + Sync + 'static {
 
     /// Apply one committed command at `index` (1-based, strictly increasing, once
     /// per entry). `index` equals the raft log index (for lumen, the WAL seq).
-    /// An `Err` is logged by the host and the entry is treated as applied
-    /// (no-op) so the log keeps advancing — the implementor must still advance
-    /// its own [`applied_index`](RaftStateMachine::applied_index) past `index`.
+    /// Return `Ok(())` only after advancing the durable applied watermark.
+    /// A normal domain refusal should be a completed no-op represented in the
+    /// consumer's own outcome store. For legacy callers of the default
+    /// `apply_admitted` adapter, an `Err` after this public floor reaches
+    /// `index` is also treated as a completed no-op. An `Err` before that floor
+    /// is incomplete: the host stops and retains this committed head for
+    /// recovery before any later command. An `apply_admitted` override controls
+    /// its own error handling.
     fn apply(&self, index: Index, command: &[u8]) -> anyhow::Result<()>;
 
     /// Serialize the full state as of the last applied index. The host ships
     /// these bytes via `InstallSnapshot` and stores them through `node.compact`.
     fn snapshot(&self, writer: &mut dyn Write) -> anyhow::Result<()>;
+
+    /// Prepare an optional immutable snapshot path outside apply serialization.
+    /// File validation and waits for checkpoint capacity belong here. The host
+    /// then calls `capture_at` under its lease and exports after releasing it.
+    /// `None` preserves `snapshot_at` and its existing serialization behavior.
+    fn preflight_snapshot(&self) -> anyhow::Result<Option<Box<dyn SnapshotPreparation>>> {
+        Ok(None)
+    }
 
     /// Serialize a state that is safe for compaction through `index`.
     ///

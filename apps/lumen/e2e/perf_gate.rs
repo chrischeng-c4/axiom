@@ -637,6 +637,80 @@ fn median_statistic_and_ignored_inventory() {
             ),
             ("number_read_costs_on_100k_documents", true),
             ("median_statistic_and_ignored_inventory", false),
+            ("approved_30_minute_durable_workload", true),
+            (
+                "fingerprint_only_readback_cannot_pass_an_ignored_field_predicate",
+                false,
+            ),
+            (
+                "vector_readback_rejects_the_target_for_both_candidate_vectors",
+                false,
+            ),
+            (
+                "selected_qualifying_cell_is_explicit_and_never_a_diagnostic_false_green",
+                false,
+            ),
+            (
+                "approved_index_operation_requires_the_frozen_fourteen_field_schema",
+                false,
+            ),
+            ("runtime_metrics_reject_a_missing_required_row", false),
+            ("runtime_metrics_reject_a_duplicate_required_row", false),
+            ("runtime_metrics_reject_an_invalid_required_row", false),
+            ("runtime_metrics_reject_an_unavailable_vmhwm_probe", false,),
+            (
+                "duration_counters_reject_backward_and_nonfinite_values",
+                false,
+            ),
+            (
+                "warmup_retry_policy_accepts_only_the_one_second_backpressure_hint",
+                false,
+            ),
+            ("request_deadline_is_the_approved_five_seconds", false),
+            (
+                "post_restart_backend_residency_rejects_flat_and_hnsw_coercion",
+                false,
+            ),
+            (
+                "post_restart_backend_residency_rejects_missing_or_unknown_stats",
+                false,
+            ),
+            (
+                "post_restart_backend_residency_covers_every_fixed_collection_and_vector_field",
+                false,
+            ),
+            (
+                "bounded_failure_streams_keep_success_stderr_and_http_bodies_small",
+                false,
+            ),
+            (
+                "docker_log_tail_keeps_final_stdout_and_stderr_within_artifact_cap",
+                false,
+            ),
+            (
+                "failure_evidence_keeps_request_chain_and_collects_before_cleanup",
+                false,
+            ),
+            (
+                "journal_records_a_real_reqwest_connect_error_with_full_chain",
+                false,
+            ),
+            (
+                "request_error_journal_lands_in_the_failure_evidence_bundle",
+                false,
+            ),
+            (
+                "request_error_journal_caps_entries_and_counts_the_overflow",
+                false,
+            ),
+            (
+                "non_success_status_record_carries_status_and_a_truncated_body",
+                false,
+            ),
+            (
+                "qualifying_matrix_keeps_every_mutation_endpoint_and_backend",
+                false,
+            ),
         ]
     );
 
@@ -665,4 +739,4981 @@ fn median_statistic_and_ignored_inventory() {
         .is_err());
     }
 }
+
+// DURABLE-WORKLOAD-BEGIN
+#[path = "support/perf_cell_receipt.rs"]
+mod perf_cell_receipt;
+#[path = "support/perf_workload_ledger.rs"]
+mod perf_workload_ledger;
+
+mod durable_workload {
+    //! Approved #4246 durable workload in the existing `perf_gate` target.
+    //!
+    //! # Facets
+    //!
+    //! - Behavior: `apps/lumen/e2e/perf_gate.rs:2868` drives all mutation and
+    //!   query paths before it writes one receipt. `perf_cell_receipt.rs:1529`
+    //!   accepts only a complete exact sixteen-cell aggregate. This target runs
+    //!   under `cargo test -p lumen --test perf_gate -- --ignored` for release.
+    //! - Security: `perf_gate.rs:2923` rejects an ambiguous selected mode.
+    //!   `perf_cell_receipt.rs:1545`, `:1573`, and `:1595` reject malformed,
+    //!   duplicate, unexpected, mismatched, diagnostic, or failed receipts.
+    //!   `perf_cell_receipt.rs:1694` refuses an existing output file.
+    //! - Performance: `perf_cell_receipt.rs:1620`, `:1658`, and `:1677` bind
+    //!   the approved 30-minute, 100 offered docops/s, 95% in-window completion,
+    //!   10 QPS, latency, drain, RSS, checkpoint, and merge observations.
+    //!   `perf_workload_ledger.rs:1068` records actual request/query drain.
+
+    use std::collections::{BTreeSet, VecDeque};
+    use std::env;
+    use std::error::Error as StdError;
+    use std::fmt::{self, Display};
+    use std::fs;
+    use std::future::Future;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::Arc;
+    #[cfg(test)]
+    use std::sync::Mutex as StdMutex;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    use super::perf_cell_receipt::{
+        self, percent_milli, rate_milli, Binding as ReceiptBinding, Cell as ReceiptCell,
+        Limits as ReceiptLimits, Measurement as ReceiptMeasurement, Outcome as ReceiptOutcome,
+        Receipt,
+    };
+    use super::perf_workload_ledger::{
+        Backend, DocumentOperation, Endpoint, GateFailure, Outcome, QueryClass, Request,
+        RequestItem, WorkloadCase, WorkloadLedger, WorkloadReport,
+    };
+    use async_trait::async_trait;
+    use futures::StreamExt;
+    use serde_json::{json, Map, Value};
+    use tokio::io::{AsyncRead, AsyncReadExt};
+    #[cfg(test)]
+    use tokio::io::AsyncWriteExt;
+    use tokio::sync::Mutex;
+    use tokio::task::JoinSet;
+
+    const HOT_COLLECTION: &str = "perf-hot";
+    const IDLE_COLLECTIONS: usize = 181;
+    const HOT_DOCUMENTS: usize = 500_000;
+    const MUTATION_DOCUMENTS_PER_CLASS: usize = (INPUT_SECONDS as usize / 3) * DOCOPS_PER_SECOND;
+    // This base document is seeded once and lies outside the delete and replace
+    // turns. Its fixed vector makes the bounded two-candidate kNN readback
+    // independent of global HNSW recall.
+    const VECTOR_READBACK_REFERENCE_NUMBER: usize = 400_000;
+    const READBACK_MISMATCH_TOKEN: &str = "readback-mismatch";
+    const IDLE_DOCUMENTS_PER_COLLECTION: usize = 100;
+    const FIELD_COUNT: usize = 14;
+    const WORKLOAD_SEED: u64 = perf_cell_receipt::WORKLOAD_SEED;
+    const NGRAM_TEXT_FIELDS: u64 = perf_cell_receipt::NGRAM_TEXT_FIELDS;
+    const VECTOR_DIMENSIONS: u64 = perf_cell_receipt::VECTOR_DIMENSIONS;
+    const INPUT_SECONDS: u64 = 30 * 60;
+    const DOCOPS_PER_SECOND: usize = 100;
+    const QUERY_QPS: usize = 10;
+    const DOCKER_CPUS: &str = "2.5";
+    const DOCKER_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+    // An explicit byte count avoids Docker's unit-parser ambiguity. The
+    // subsequent inspect assertion requires this exact 16 GiB value.
+    const DOCKER_MEMORY: &str = "17179869184";
+    const SNAPSHOT_SECONDS: &str = "15";
+    const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+    const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+    // Failure collection runs only after a case has already failed. Keep the
+    // retained log bounded even when the failed container produced a large log.
+    const EVIDENCE_LOG_TAIL_LINES: &str = "2000";
+    const EVIDENCE_ARTIFACT_MAX_BYTES: usize = 1_024 * 1_024;
+    // Keep each process channel below half the artifact cap so a successful
+    // command retains both stdout and stderr without a later whole-artifact
+    // truncation hiding stderr.
+    const EVIDENCE_COMMAND_CHANNEL_MAX_BYTES: usize = (EVIDENCE_ARTIFACT_MAX_BYTES - 1_024) / 2;
+    const EVIDENCE_HTTP_BODY_MAX_BYTES: usize = EVIDENCE_ARTIFACT_MAX_BYTES - 1_024;
+    const REQUEST_CONCURRENCY: usize = 256;
+    const QUERY_CONCURRENCY: usize = 64;
+    const CHECKPOINT_COUNTER: &str = "lumen_segment_checkpoint_completed_total";
+    const MERGE_COUNTER: &str = "lumen_segment_merge_completed_total";
+    const CHECKPOINT_DURATION_COUNT: &str = "lumen_segment_checkpoint_duration_seconds_count";
+    const CHECKPOINT_DURATION_SUM: &str = "lumen_segment_checkpoint_duration_seconds_sum";
+    const CAPTURE_LOCK_DURATION_COUNT: &str = "lumen_segment_capture_lock_seconds_count";
+    const CAPTURE_LOCK_DURATION_SUM: &str = "lumen_segment_capture_lock_seconds_sum";
+    const CHECKPOINT_BYTES_COUNTER: &str = "lumen_segment_checkpoint_bytes_total";
+    const MERGE_READ_BYTES_COUNTER: &str = "lumen_segment_merge_read_bytes_total";
+    const MERGE_WRITE_BYTES_COUNTER: &str = "lumen_segment_merge_write_bytes_total";
+    const BACKPRESSURE_COUNTER: &str = "lumen_segment_backpressure_total";
+    const PENDING_DELTA_BYTES: &str = "lumen_segment_pending_delta_bytes";
+    const PENDING_DELTA_LAYERS: &str = "lumen_segment_pending_delta_layers";
+    const SEGMENT_DISK_BYTES: &str = "lumen_segment_disk_bytes";
+    const PROCESS_RSS_HIGH_WATER_BYTES: &str = "lumen_process_rss_high_water_bytes";
+
+    const FIELD_NAMES: [&str; FIELD_COUNT] = [
+        "tag",
+        "category",
+        "status",
+        "price",
+        "rank",
+        "labels",
+        "fingerprint",
+        "title_ngram",
+        "body_ngram",
+        "summary_ngram",
+        "title_text",
+        "body_text",
+        "embedding",
+        "region",
+    ];
+    // Every collection in the fixed workload has exactly this one vector field.
+    // The post-restart proof below checks its public resident-byte observation
+    // instead of trusting the requested schema backend or receipt label.
+    const WORKLOAD_VECTOR_FIELD: &str = "embedding";
+
+    #[derive(Debug, Clone)]
+    struct RequestFailure {
+        display: String,
+        source_chain: Vec<String>,
+        is_timeout: bool,
+        is_connect: bool,
+        is_request: bool,
+        is_body: bool,
+        is_decode: bool,
+        // Set by readback call sites (`semantic_search`) so the evidence
+        // bundle can name which oracle observation failed. Transport
+        // failures recorded straight into the request-error journal have
+        // no separate context string; their endpoint/request id already
+        // identify them.
+        context: Option<String>,
+    }
+
+    impl RequestFailure {
+        fn from_reqwest(error: reqwest::Error) -> Self {
+            let display = error.to_string();
+            let mut source_chain = vec![display.clone()];
+            let mut source = error.source();
+            while let Some(next) = source {
+                source_chain.push(next.to_string());
+                source = next.source();
+            }
+            Self {
+                display,
+                source_chain,
+                is_timeout: error.is_timeout(),
+                is_connect: error.is_connect(),
+                is_request: error.is_request(),
+                is_body: error.is_body(),
+                is_decode: error.is_decode(),
+                context: None,
+            }
+        }
+
+        /// Synthesizes a chain-carrying failure for a harness-observed
+        /// condition with no underlying [`reqwest::Error`] — a non-2xx
+        /// workload response or the outer per-request deadline elapsing.
+        /// `source_chain` still carries the single display line so every
+        /// evidence consumer renders it exactly like a transport error.
+        fn synthetic(display: String, is_timeout: bool) -> Self {
+            Self {
+                source_chain: vec![display.clone()],
+                display,
+                is_timeout,
+                is_connect: false,
+                is_request: false,
+                is_body: false,
+                is_decode: false,
+                context: None,
+            }
+        }
+
+        fn with_context(mut self, context: impl Into<String>) -> Self {
+            self.context = Some(context.into());
+            self
+        }
+    }
+
+    #[derive(Debug)]
+    enum HarnessError {
+        MissingEnvironment(&'static str),
+        InvalidSelection(String),
+        UnpinnedImage(String),
+        Command {
+            program: &'static str,
+            args: Vec<String>,
+            detail: String,
+        },
+        DockerLimits(String),
+        Startup(String),
+        Http(String),
+        RequestFailure(RequestFailure),
+        MissingRuntimeMetric(&'static str),
+        DuplicateRuntimeMetric(&'static str),
+        MetricParse {
+            name: &'static str,
+            value: String,
+        },
+        Workload(Vec<GateFailure>),
+        Task(String),
+        DataInvariant(String),
+    }
+
+    impl HarnessError {
+        fn request_failure(error: reqwest::Error) -> Self {
+            Self::RequestFailure(RequestFailure::from_reqwest(error))
+        }
+    }
+
+    impl Display for HarnessError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::MissingEnvironment(name) => {
+                    write!(formatter, "required environment is missing: {name}")
+                }
+                Self::InvalidSelection(detail) => {
+                    write!(formatter, "invalid performance matrix selection: {detail}")
+                }
+                Self::UnpinnedImage(image) => write!(
+                    formatter,
+                    "LUMEN_PERF_IMAGE must be repo@sha256:<64hex> or local sha256:<64hex>: {image}"
+                ),
+                Self::Command {
+                    program,
+                    args,
+                    detail,
+                } => write!(formatter, "{program} {} failed: {detail}", args.join(" ")),
+                Self::DockerLimits(detail) => write!(
+                    formatter,
+                    "Docker did not apply the approved resource limits: {detail}"
+                ),
+                Self::Startup(detail) => {
+                    write!(formatter, "Lumen container did not become ready: {detail}")
+                }
+                Self::Http(detail) => write!(formatter, "HTTP workload request failed: {detail}"),
+                Self::RequestFailure(detail) => {
+                    write!(formatter, "HTTP workload request failed: {}", detail.display)
+                }
+                Self::MissingRuntimeMetric(name) => {
+                    write!(formatter, "required runtime metric is absent: {name}")
+                }
+                Self::DuplicateRuntimeMetric(name) => {
+                    write!(
+                        formatter,
+                        "required runtime metric appears more than once: {name}"
+                    )
+                }
+                Self::MetricParse { name, value } => {
+                    write!(formatter, "cannot parse metric {name}: {value}")
+                }
+                Self::Workload(failures) => {
+                    write!(formatter, "approved workload gate failed: {failures:?}")
+                }
+                Self::Task(detail) => write!(formatter, "workload task failed: {detail}"),
+                Self::DataInvariant(detail) => {
+                    write!(formatter, "workload fixture invariant failed: {detail}")
+                }
+            }
+        }
+    }
+
+    impl StdError for HarnessError {}
+
+    type Result<T> = std::result::Result<T, HarnessError>;
+
+    #[derive(Debug, Clone, Copy)]
+    enum VectorBackend {
+        FlatCpu,
+        HnswCpu,
+    }
+
+    impl VectorBackend {
+        fn ledger_backend(self) -> Backend {
+            match self {
+                Self::FlatCpu => Backend::FlatCpu,
+                Self::HnswCpu => Backend::HnswCpu,
+            }
+        }
+
+        fn wire_name(self) -> &'static str {
+            match self {
+                Self::FlatCpu => "flat-cpu",
+                Self::HnswCpu => "hnsw-cpu",
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct CaseConfig {
+        primary_endpoint: Endpoint,
+        primary_batch_size: usize,
+        vector_backend: VectorBackend,
+    }
+
+    impl CaseConfig {
+        fn from_optional_selection(selection: &SelectionInput) -> Result<Option<Self>> {
+            let endpoint_value = match selection.endpoint.as_deref() {
+                Some(value) => value,
+                None => return Ok(None),
+            };
+            let endpoint = match endpoint_value {
+                "index" => Endpoint::Index,
+                "replace" => Endpoint::Replace,
+                "unindex" => Endpoint::Unindex,
+                other => {
+                    return Err(HarnessError::InvalidSelection(format!(
+                        "LUMEN_PERF_ENDPOINT={other}; expected index, replace, or unindex"
+                    )))
+                }
+            };
+            let batch = selection
+                .batch
+                .as_deref()
+                .ok_or(HarnessError::MissingEnvironment("LUMEN_PERF_BATCH"))?
+                .parse::<usize>()
+                .map_err(|error| {
+                    HarnessError::InvalidSelection(format!("LUMEN_PERF_BATCH: {error}"))
+                })?;
+            let valid = match endpoint {
+                Endpoint::Index | Endpoint::Unindex => matches!(batch, 1 | 100 | 1_000),
+                Endpoint::Replace => matches!(batch, 1 | 32),
+            };
+            if !valid {
+                return Err(HarnessError::InvalidSelection(format!(
+                    "endpoint {endpoint:?} does not admit batch {batch}"
+                )));
+            }
+            let vector_backend = match selection
+                .backend
+                .as_deref()
+                .ok_or(HarnessError::MissingEnvironment("LUMEN_PERF_BACKEND"))?
+            {
+                "flat-cpu" => VectorBackend::FlatCpu,
+                "hnsw-cpu" => VectorBackend::HnswCpu,
+                other => {
+                    return Err(HarnessError::InvalidSelection(format!(
+                        "LUMEN_PERF_BACKEND={other}; expected flat-cpu or hnsw-cpu"
+                    )))
+                }
+            };
+            Ok(Some(Self {
+                primary_endpoint: endpoint,
+                primary_batch_size: batch,
+                vector_backend,
+            }))
+        }
+
+        fn ledger_case(self) -> WorkloadCase {
+            WorkloadCase::new(
+                self.primary_endpoint,
+                self.primary_batch_size,
+                self.vector_backend.ledger_backend(),
+            )
+        }
+
+        fn batch_size_for(self, endpoint: Endpoint) -> usize {
+            self.ledger_case().batch_size_for(endpoint)
+        }
+
+        fn receipt_cell(self) -> ReceiptCell {
+            ReceiptCell::new(
+                endpoint_name(self.primary_endpoint),
+                self.primary_batch_size as u64,
+                self.vector_backend.wire_name(),
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct SelectionInput {
+        endpoint: Option<String>,
+        batch: Option<String>,
+        backend: Option<String>,
+        diagnostic: Option<String>,
+        qualifying: Option<String>,
+    }
+
+    impl SelectionInput {
+        fn from_environment() -> Result<Self> {
+            Ok(Self {
+                endpoint: optional_env("LUMEN_PERF_ENDPOINT")?,
+                batch: optional_env("LUMEN_PERF_BATCH")?,
+                backend: optional_env("LUMEN_PERF_BACKEND")?,
+                diagnostic: optional_env("LUMEN_PERF_DIAGNOSTIC")?,
+                qualifying: optional_env("LUMEN_PERF_QUALIFYING_CELL")?,
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum SelectedMode {
+        FullMatrix,
+        Diagnostic(CaseConfig),
+        Qualifying(CaseConfig),
+    }
+
+    impl SelectedMode {
+        fn from_selection(selection: &SelectionInput) -> Result<Self> {
+            let config = CaseConfig::from_optional_selection(selection)?;
+            let diagnostic = exact_flag(selection.diagnostic.as_deref(), "LUMEN_PERF_DIAGNOSTIC")?;
+            let qualifying = exact_flag(
+                selection.qualifying.as_deref(),
+                "LUMEN_PERF_QUALIFYING_CELL",
+            )?;
+            if diagnostic && qualifying {
+                return Err(HarnessError::InvalidSelection(
+                    "LUMEN_PERF_DIAGNOSTIC and LUMEN_PERF_QUALIFYING_CELL are mutually exclusive"
+                        .to_owned(),
+                ));
+            }
+            match (config, diagnostic, qualifying) {
+                (None, false, false) => Ok(Self::FullMatrix),
+                (None, _, _) => Err(HarnessError::InvalidSelection(
+                    "a diagnostic or qualifying mode needs endpoint, batch, and backend"
+                        .to_owned(),
+                )),
+                (Some(config), true, false) => Ok(Self::Diagnostic(config)),
+                (Some(config), false, true) => Ok(Self::Qualifying(config)),
+                (Some(_), true, true) => Err(HarnessError::InvalidSelection(
+                    "LUMEN_PERF_DIAGNOSTIC and LUMEN_PERF_QUALIFYING_CELL are mutually exclusive"
+                        .to_owned(),
+                )),
+                (Some(_), false, false) => Err(HarnessError::InvalidSelection(
+                    "a selected endpoint/batch/backend cell needs exactly one of LUMEN_PERF_DIAGNOSTIC=1 or LUMEN_PERF_QUALIFYING_CELL=1"
+                        .to_owned(),
+                )),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct QualifyingContext {
+        repository: String,
+        run_id: String,
+        run_attempt: String,
+        commit: String,
+        image_reference: String,
+        receipt_path: PathBuf,
+    }
+
+    impl QualifyingContext {
+        fn from_environment() -> Result<Self> {
+            let image_reference = required_env("LUMEN_PERF_IMAGE")?;
+            if !is_repository_digest(&image_reference) {
+                return Err(HarnessError::InvalidSelection(
+                    "a qualifying receipt requires LUMEN_PERF_IMAGE=repo@sha256:<64hex>; local image IDs are diagnostic only"
+                        .to_owned(),
+                ));
+            }
+            let receipt_path = required_env("LUMEN_PERF_RECEIPT_PATH")?;
+            if receipt_path.is_empty() {
+                return Err(HarnessError::InvalidSelection(
+                    "LUMEN_PERF_RECEIPT_PATH must name a new receipt file".to_owned(),
+                ));
+            }
+            Ok(Self {
+                repository: required_env("LUMEN_PERF_REPOSITORY")?,
+                run_id: required_env("LUMEN_PERF_RUN_ID")?,
+                run_attempt: required_env("LUMEN_PERF_RUN_ATTEMPT")?,
+                commit: required_env("LUMEN_PERF_COMMIT")?,
+                image_reference,
+                receipt_path: PathBuf::from(receipt_path),
+            })
+        }
+
+        fn binding(&self, actual_image_id: String) -> ReceiptBinding {
+            ReceiptBinding {
+                repository: self.repository.clone(),
+                run_id: self.run_id.clone(),
+                run_attempt: self.run_attempt.clone(),
+                commit: self.commit.clone(),
+                image_reference: self.image_reference.clone(),
+                actual_image_id,
+            }
+        }
+    }
+
+    fn optional_env(name: &'static str) -> Result<Option<String>> {
+        match env::var(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(env::VarError::NotPresent) => Ok(None),
+            Err(error) => Err(HarnessError::InvalidSelection(format!("{name}: {error}"))),
+        }
+    }
+
+    fn exact_flag(value: Option<&str>, name: &'static str) -> Result<bool> {
+        match value {
+            None => Ok(false),
+            Some("1") => Ok(true),
+            Some(other) => Err(HarnessError::InvalidSelection(format!(
+                "{name}={other}; expected exactly 1"
+            ))),
+        }
+    }
+
+    fn endpoint_name(endpoint: Endpoint) -> &'static str {
+        match endpoint {
+            Endpoint::Index => "index",
+            Endpoint::Replace => "replace",
+            Endpoint::Unindex => "unindex",
+        }
+    }
+
+    fn qualifying_matrix() -> Vec<CaseConfig> {
+        let mut cases = Vec::new();
+        let cells: &[(Endpoint, &[usize])] = &[
+            (Endpoint::Index, &[1, 100, 1_000]),
+            (Endpoint::Replace, &[1, 32]),
+            (Endpoint::Unindex, &[1, 100, 1_000]),
+        ];
+        for vector_backend in [VectorBackend::FlatCpu, VectorBackend::HnswCpu] {
+            for &(primary_endpoint, batch_sizes) in cells {
+                for primary_batch_size in batch_sizes {
+                    cases.push(CaseConfig {
+                        primary_endpoint,
+                        primary_batch_size: *primary_batch_size,
+                        vector_backend,
+                    });
+                }
+            }
+        }
+        assert_eq!(
+            cases.len(),
+            16,
+            "the approved matrix has eight cells per backend"
+        );
+        cases
+    }
+
+    fn required_env(name: &'static str) -> Result<String> {
+        env::var(name).map_err(|_| HarnessError::MissingEnvironment(name))
+    }
+
+    #[derive(Debug)]
+    struct DockerLumen {
+        container: String,
+        volume: String,
+        base: String,
+        client: reqwest::Client,
+        image_reference: String,
+        image_id: String,
+        cleanup_armed: bool,
+        // Shared across every `send_*` task the request pump spawns for
+        // this server so a failed durable cell's evidence bundle can name
+        // why, not only that, each counted `Outcome::Failed`/`TimedOut`.
+        request_error_journal: Arc<Mutex<RequestErrorJournal>>,
+    }
+
+    trait CleanupCommandRunner {
+        fn run_cleanup(&mut self, args: Vec<String>);
+    }
+
+    struct DockerCleanupCommandRunner;
+
+    impl CleanupCommandRunner for DockerCleanupCommandRunner {
+        fn run_cleanup(&mut self, args: Vec<String>) {
+            let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+            let _ = docker(&borrowed);
+        }
+    }
+
+    fn cleanup_docker_resources<R: CleanupCommandRunner>(
+        runner: &mut R,
+        container: &str,
+        volume: &str,
+    ) {
+        runner.run_cleanup(vec!["rm".to_owned(), "-f".to_owned(), container.to_owned()]);
+        runner.run_cleanup(vec![
+            "volume".to_owned(),
+            "rm".to_owned(),
+            "-f".to_owned(),
+            volume.to_owned(),
+        ]);
+    }
+
+    #[async_trait]
+    trait EvidenceCommandRunner {
+        async fn run(&mut self, args: Vec<String>) -> std::result::Result<String, String>;
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum EvidenceRetention {
+        // Inspect and HTTP evidence starts with the request context.
+        Prefix,
+        // Docker service logs need the final records nearest the failed request.
+        Tail,
+    }
+
+    #[derive(Debug)]
+    struct BoundedEvidence {
+        retained: Vec<u8>,
+        total_bytes: u64,
+        limit: usize,
+        truncated: bool,
+        retention: EvidenceRetention,
+    }
+
+    impl BoundedEvidence {
+        fn new(limit: usize, retention: EvidenceRetention) -> Self {
+            Self {
+                retained: Vec::with_capacity(limit),
+                total_bytes: 0,
+                limit,
+                truncated: false,
+                retention,
+            }
+        }
+
+        fn push(&mut self, bytes: &[u8]) {
+            self.total_bytes = self.total_bytes.saturating_add(bytes.len() as u64);
+            match self.retention {
+                EvidenceRetention::Prefix => {
+                    let remaining = self.limit.saturating_sub(self.retained.len());
+                    let kept = remaining.min(bytes.len());
+                    self.retained.extend_from_slice(&bytes[..kept]);
+                    self.truncated |= kept < bytes.len();
+                }
+                EvidenceRetention::Tail => {
+                    if bytes.len() >= self.limit {
+                        self.retained.clear();
+                        self.retained
+                            .extend_from_slice(&bytes[bytes.len().saturating_sub(self.limit)..]);
+                    } else {
+                        let dropped = self
+                            .retained
+                            .len()
+                            .saturating_add(bytes.len())
+                            .saturating_sub(self.limit);
+                        if dropped > 0 {
+                            self.retained.drain(..dropped);
+                        }
+                        self.retained.extend_from_slice(bytes);
+                    }
+                    self.truncated |= self.total_bytes > self.retained.len() as u64;
+                }
+            }
+        }
+
+        fn render(&self, channel: &str) -> String {
+            let channel_label = match self.retention {
+                EvidenceRetention::Prefix => channel.to_owned(),
+                EvidenceRetention::Tail => format!("{channel} tail"),
+            };
+            let mut rendered = format!(
+                "[{channel_label}]\n{}",
+                String::from_utf8_lossy(&self.retained)
+            );
+            if self.truncated {
+                let retained_description = match self.retention {
+                    EvidenceRetention::Prefix => "retaining",
+                    EvidenceRetention::Tail => "retaining final",
+                };
+                rendered.push_str(&format!(
+                    "\n[{channel_label} truncated after {retained_description} {} of at least {} bytes]\n",
+                    self.retained.len(), self.total_bytes
+                ));
+            } else if !rendered.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered
+        }
+    }
+
+    async fn read_bounded_reader<R: AsyncRead + Unpin>(
+        mut reader: R,
+        limit: usize,
+        retention: EvidenceRetention,
+    ) -> std::result::Result<BoundedEvidence, String> {
+        let mut evidence = BoundedEvidence::new(limit, retention);
+        let mut buffer = [0_u8; 8_192];
+        loop {
+            let count = reader
+                .read(&mut buffer)
+                .await
+                .map_err(|error| format!("cannot drain evidence stream: {error}"))?;
+            if count == 0 {
+                return Ok(evidence);
+            }
+            evidence.push(&buffer[..count]);
+        }
+    }
+
+    async fn read_bounded_chunks<Stream, Chunk, Error, Describe>(
+        stream: Stream,
+        limit: usize,
+        describe_error: Describe,
+    ) -> std::result::Result<BoundedEvidence, String>
+    where
+        Stream: futures::Stream<Item = std::result::Result<Chunk, Error>>,
+        Chunk: AsRef<[u8]>,
+        Describe: Fn(Error) -> String,
+    {
+        let mut evidence = BoundedEvidence::new(limit, EvidenceRetention::Prefix);
+        futures::pin_mut!(stream);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| describe_error(error))?;
+            evidence.push(chunk.as_ref());
+        }
+        Ok(evidence)
+    }
+
+    fn render_command_streams(stdout: &BoundedEvidence, stderr: &BoundedEvidence) -> String {
+        format!("{}{}", stdout.render("stdout"), stderr.render("stderr"))
+    }
+
+    fn command_result(
+        rendered: &str,
+        succeeded: bool,
+        status: &str,
+        stdout: BoundedEvidence,
+        stderr: BoundedEvidence,
+    ) -> std::result::Result<String, String> {
+        let streams = render_command_streams(&stdout, &stderr);
+        if succeeded {
+            Ok(streams)
+        } else {
+            Err(format!("docker {rendered} exited with {status}:\n{streams}"))
+        }
+    }
+
+    async fn collect_docker_output(
+        mut child: tokio::process::Child,
+        retention: EvidenceRetention,
+    ) -> std::result::Result<(std::process::ExitStatus, BoundedEvidence, BoundedEvidence), String>
+    {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "docker evidence command has no stdout pipe".to_owned())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "docker evidence command has no stderr pipe".to_owned())?;
+        let (status, stdout, stderr) = tokio::join!(
+            child.wait(),
+            read_bounded_reader(stdout, EVIDENCE_COMMAND_CHANNEL_MAX_BYTES, retention),
+            read_bounded_reader(stderr, EVIDENCE_COMMAND_CHANNEL_MAX_BYTES, retention),
+        );
+        Ok((
+            status.map_err(|error| format!("cannot wait for docker evidence command: {error}"))?,
+            stdout?,
+            stderr?,
+        ))
+    }
+
+    fn docker_evidence_retention(args: &[String]) -> EvidenceRetention {
+        match args.first().map(String::as_str) {
+            Some("logs") => EvidenceRetention::Tail,
+            _ => EvidenceRetention::Prefix,
+        }
+    }
+
+    struct DockerEvidenceCommandRunner;
+
+    #[async_trait]
+    impl EvidenceCommandRunner for DockerEvidenceCommandRunner {
+        async fn run(&mut self, args: Vec<String>) -> std::result::Result<String, String> {
+            let rendered = args.join(" ");
+            let retention = docker_evidence_retention(&args);
+            let mut command = tokio::process::Command::new("docker");
+            command.args(&args);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::piped());
+            command.kill_on_drop(true);
+            let (status, stdout, stderr) = tokio::time::timeout(REQUEST_TIMEOUT, async {
+                let child = command
+                    .spawn()
+                    .map_err(|error| format!("cannot start docker {rendered}: {error}"))?;
+                collect_docker_output(child, retention).await
+            })
+            .await
+            .map_err(|_| {
+                format!(
+                    "docker {rendered} exceeded the {}-second evidence collection deadline",
+                    REQUEST_TIMEOUT.as_secs()
+                )
+            })??;
+            command_result(
+                &rendered,
+                status.success(),
+                &status.to_string(),
+                stdout,
+                stderr,
+            )
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailureEvidenceDirectory {
+        path: PathBuf,
+    }
+
+    impl FailureEvidenceDirectory {
+        fn create(
+            container: &str,
+            volume: &str,
+            error: &HarnessError,
+        ) -> std::result::Result<Self, String> {
+            let evidence = Self::create_in(&env::temp_dir(), container, volume, error)?;
+            eprintln!(
+                "PERF_FAILURE_EVIDENCE path={} container={} volume={}",
+                evidence.path.display(),
+                container,
+                volume
+            );
+            Ok(evidence)
+        }
+
+        fn create_in(
+            root: &Path,
+            container: &str,
+            volume: &str,
+            error: &HarnessError,
+        ) -> std::result::Result<Self, String> {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            for attempt in 0..100 {
+                let path = root.join(format!(
+                    "lumen-perf-failure-{}-{}-{}",
+                    std::process::id(),
+                    nonce,
+                    attempt
+                ));
+                match fs::create_dir(&path) {
+                    Ok(()) => {
+                        let evidence = Self { path };
+                        evidence.write_text("failure.txt", &failure_report(error))?;
+                        evidence.write_text("container.txt", container)?;
+                        evidence.write_text("volume.txt", volume)?;
+                        return Ok(evidence);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot create failure evidence directory {}: {error}",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+            Err("cannot allocate a unique failure evidence directory".to_owned())
+        }
+
+        fn write_text(&self, name: &str, content: &str) -> std::result::Result<(), String> {
+            fs::write(self.path.join(name), bounded_evidence_text(content)).map_err(|error| {
+                format!(
+                    "cannot write failure evidence {}: {error}",
+                    self.path.join(name).display()
+                )
+            })
+        }
+
+        fn record_result(&self, name: &str, result: std::result::Result<String, String>) {
+            let content = match result {
+                Ok(content) => content,
+                Err(error) => format!("ERROR: {error}\n"),
+            };
+            if let Err(error) = self.write_text(name, &content) {
+                eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+            }
+        }
+
+        async fn record_container<R: EvidenceCommandRunner + Send>(
+            &self,
+            runner: &mut R,
+            container: &str,
+        ) {
+            self.record_result(
+                "docker-logs.txt",
+                runner
+                    .run(vec![
+                        "logs".to_owned(),
+                        "--tail".to_owned(),
+                        EVIDENCE_LOG_TAIL_LINES.to_owned(),
+                        container.to_owned(),
+                    ])
+                    .await,
+            );
+            self.record_result(
+                "docker-inspect.json",
+                runner.run(vec!["inspect".to_owned(), container.to_owned()]).await,
+            );
+        }
+    }
+
+    fn bounded_evidence_text(content: &str) -> String {
+        if content.len() <= EVIDENCE_ARTIFACT_MAX_BYTES {
+            return content.to_owned();
+        }
+        format!(
+            "{}\n[truncated after {} bytes]\n",
+            String::from_utf8_lossy(&content.as_bytes()[..EVIDENCE_ARTIFACT_MAX_BYTES]),
+            EVIDENCE_ARTIFACT_MAX_BYTES
+        )
+    }
+
+    fn request_failure_report(detail: &RequestFailure) -> String {
+        let mut report = format!(
+            "request_display={}\nrequest_timeout={}\nrequest_connect={}\nrequest_request={}\nrequest_body={}\nrequest_decode={}\nrequest_context={}\nrequest_source_chain:\n",
+            detail.display,
+            detail.is_timeout,
+            detail.is_connect,
+            detail.is_request,
+            detail.is_body,
+            detail.is_decode,
+            detail.context.as_deref().unwrap_or("none")
+        );
+        for (index, source) in detail.source_chain.iter().enumerate() {
+            report.push_str(&format!("{index}: {source}\n"));
+        }
+        report
+    }
+
+    fn failure_report(error: &HarnessError) -> String {
+        let mut report = format!("original_error_display={error}\n");
+        match error {
+            HarnessError::RequestFailure(detail) => report.push_str(&request_failure_report(detail)),
+            _ => report.push_str(
+                "request_timeout=unavailable\nrequest_connect=unavailable\nrequest_request=unavailable\nrequest_body=unavailable\nrequest_decode=unavailable\nrequest_context=unavailable\n",
+            ),
+        }
+        report
+    }
+
+    fn request_error_for_evidence(error: reqwest::Error) -> String {
+        request_failure_report(&RequestFailure::from_reqwest(error))
+    }
+
+    /// One workload request that ended `Outcome::Failed` or
+    /// `Outcome::TimedOut`, retained with its full classified error so a
+    /// failed durable cell's evidence bundle can name why every counted
+    /// `RequestErrors`/`TimedOut` outcome happened instead of only the last
+    /// error the harness happened to observe.
+    #[derive(Debug, Clone)]
+    struct RequestErrorRecord {
+        elapsed_since_clock_start: Duration,
+        endpoint: String,
+        identifier: String,
+        error: RequestFailure,
+        status: Option<u16>,
+        body: Option<String>,
+    }
+
+    fn render_request_error_record(index: usize, record: &RequestErrorRecord) -> String {
+        let mut report = format!(
+            "record={index} elapsed_ms={} endpoint={} identifier={} status={} timeout={} connect={} request={} body_err={} decode={}\n",
+            record.elapsed_since_clock_start.as_millis(),
+            record.endpoint,
+            record.identifier,
+            record
+                .status
+                .map(|status| status.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            record.error.is_timeout,
+            record.error.is_connect,
+            record.error.is_request,
+            record.error.is_body,
+            record.error.is_decode,
+        );
+        report.push_str(&format!("  display={}\n", record.error.display));
+        for (chain_index, source) in record.error.source_chain.iter().enumerate() {
+            report.push_str(&format!("  chain[{chain_index}]={source}\n"));
+        }
+        if let Some(body) = &record.body {
+            report.push_str(&format!("  response_body={body}\n"));
+        }
+        report
+    }
+
+    /// Bounded, shared record of every classified workload request failure
+    /// observed during one durable cell. Capped independently of the ledger
+    /// so a pathological run cannot grow the evidence bundle without limit;
+    /// entries past the cap are only counted, in `overflow`.
+    const REQUEST_ERROR_JOURNAL_CAP: usize = 256;
+    // The response body captured alongside a non-2xx workload failure is
+    // untrusted server output; cap it well below the whole-artifact bound.
+    const REQUEST_ERROR_BODY_MAX_BYTES: usize = 512;
+
+    #[derive(Debug, Default)]
+    struct RequestErrorJournal {
+        records: Vec<RequestErrorRecord>,
+        overflow: u64,
+    }
+
+    impl RequestErrorJournal {
+        fn push(&mut self, record: RequestErrorRecord) {
+            if self.records.len() < REQUEST_ERROR_JOURNAL_CAP {
+                self.records.push(record);
+            } else {
+                self.overflow += 1;
+            }
+        }
+    }
+
+    fn render_request_error_journal(journal: &RequestErrorJournal) -> String {
+        if journal.records.is_empty() && journal.overflow == 0 {
+            return "no workload request failures were observed\n".to_owned();
+        }
+        let mut report = String::new();
+        for (index, record) in journal.records.iter().enumerate() {
+            report.push_str(&render_request_error_record(index, record));
+        }
+        if journal.overflow > 0 {
+            report.push_str(&format!("overflow={}\n", journal.overflow));
+        }
+        report
+    }
+
+    fn truncate_evidence_body(body: &str) -> String {
+        if body.len() <= REQUEST_ERROR_BODY_MAX_BYTES {
+            return body.to_owned();
+        }
+        format!(
+            "{}...[truncated after {} bytes]",
+            String::from_utf8_lossy(&body.as_bytes()[..REQUEST_ERROR_BODY_MAX_BYTES]),
+            REQUEST_ERROR_BODY_MAX_BYTES
+        )
+    }
+
+    /// The classified failure `post_json` (and the `send_unindex` inline
+    /// transport call) returns instead of the bare [`Outcome`] the ledger
+    /// still records. `outcome` is exactly the value the caller would have
+    /// computed before this change, so ledger counts never move; only the
+    /// evidence carried alongside them is new.
+    #[derive(Debug, Clone)]
+    struct PostJsonFailure {
+        error: RequestFailure,
+        outcome: Outcome,
+        status: Option<u16>,
+        body: Option<String>,
+    }
+
+    /// Appends one classified failure to the shared journal and returns the
+    /// [`Outcome`] the ledger must still record — the one call site every
+    /// workload request failure funnels through on its way into evidence.
+    async fn record_request_error(
+        journal: &Arc<Mutex<RequestErrorJournal>>,
+        elapsed_since_clock_start: Duration,
+        endpoint: impl Into<String>,
+        identifier: impl Into<String>,
+        failure: PostJsonFailure,
+    ) -> Outcome {
+        let outcome = failure.outcome;
+        journal.lock().await.push(RequestErrorRecord {
+            elapsed_since_clock_start,
+            endpoint: endpoint.into(),
+            identifier: identifier.into(),
+            error: failure.error,
+            status: failure.status,
+            body: failure.body,
+        });
+        outcome
+    }
+
+    #[async_trait]
+    trait FailureProbe {
+        async fn metrics(&mut self) -> std::result::Result<String, String>;
+        async fn hot_stats(&mut self) -> std::result::Result<String, String>;
+    }
+
+    struct DockerFailureProbe<'a> {
+        server: &'a DockerLumen,
+    }
+
+    #[async_trait]
+    impl<'a> FailureProbe for DockerFailureProbe<'a> {
+        async fn metrics(&mut self) -> std::result::Result<String, String> {
+            self.server.evidence_get("/metrics").await
+        }
+
+        async fn hot_stats(&mut self) -> std::result::Result<String, String> {
+            self.server
+                .evidence_get(&format!("/collections/{HOT_COLLECTION}/stats"))
+                .await
+        }
+    }
+
+    struct UnavailableFailureProbe;
+
+    #[async_trait]
+    impl FailureProbe for UnavailableFailureProbe {
+        async fn metrics(&mut self) -> std::result::Result<String, String> {
+            Err("HTTP client was not constructed during startup".to_owned())
+        }
+
+        async fn hot_stats(&mut self) -> std::result::Result<String, String> {
+            Err("HTTP client was not constructed during startup".to_owned())
+        }
+    }
+
+    async fn finish_failed_docker_run<
+        Evidence: EvidenceCommandRunner + Send,
+        Probe: FailureProbe + Send,
+        Cleanup: CleanupCommandRunner,
+    >(
+        evidence: &FailureEvidenceDirectory,
+        evidence_runner: &mut Evidence,
+        probe: &mut Probe,
+        cleanup_runner: &mut Cleanup,
+        container: &str,
+        volume: &str,
+        request_error_report: &str,
+    ) {
+        evidence.record_container(evidence_runner, container).await;
+        evidence.record_result("metrics.txt", probe.metrics().await);
+        evidence.record_result("hot-stats.json", probe.hot_stats().await);
+        eprintln!("PERF_REQUEST_ERRORS {request_error_report}");
+        if let Err(error) = evidence.write_text("request-errors.txt", request_error_report) {
+            eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+        }
+        cleanup_docker_resources(cleanup_runner, container, volume);
+    }
+
+    /// Owns Docker cleanup while startup has not yet produced a [`DockerLumen`].
+    /// This closes failures after `docker run` but before port discovery or
+    /// readiness completes.
+    struct DockerCleanup {
+        container: String,
+        volume: String,
+        armed: bool,
+    }
+
+    impl DockerCleanup {
+        fn new(container: String, volume: String) -> Self {
+            Self {
+                container,
+                volume,
+                armed: true,
+            }
+        }
+
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+
+        async fn finish_failure(&mut self, error: &HarnessError) {
+            let evidence = match FailureEvidenceDirectory::create(&self.container, &self.volume, error)
+            {
+                Ok(evidence) => evidence,
+                Err(capture_error) => {
+                    eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
+                    return;
+                }
+            };
+            let mut runner = DockerEvidenceCommandRunner;
+            let mut probe = UnavailableFailureProbe;
+            let mut cleanup_runner = DockerCleanupCommandRunner;
+            finish_failed_docker_run(
+                &evidence,
+                &mut runner,
+                &mut probe,
+                &mut cleanup_runner,
+                &self.container,
+                &self.volume,
+                "no request-error journal: failure occurred before the workload client existed\n",
+            )
+            .await;
+            self.armed = false;
+        }
+    }
+
+    impl Drop for DockerCleanup {
+        fn drop(&mut self) {
+            if self.armed {
+                let mut runner = DockerCleanupCommandRunner;
+                cleanup_docker_resources(&mut runner, &self.container, &self.volume);
+            }
+        }
+    }
+
+    impl DockerLumen {
+        async fn start() -> Result<Self> {
+            let image = required_env("LUMEN_PERF_IMAGE")?;
+            if !is_immutable_image_reference(&image) {
+                return Err(HarnessError::UnpinnedImage(image));
+            }
+            let nonce = format!(
+                "{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|error| HarnessError::Startup(error.to_string()))?
+                    .as_nanos()
+            );
+            let container = format!("lumen-perf-{nonce}");
+            let volume = format!("lumen-perf-data-{nonce}");
+            docker(&["volume", "create", &volume])?;
+            let mut cleanup = DockerCleanup::new(container.clone(), volume.clone());
+            let mut server = match (|| -> Result<Self> {
+                docker(&[
+                    "run",
+                    "-d",
+                    "--rm",
+                    "--name",
+                    &container,
+                    "--cpus",
+                    DOCKER_CPUS,
+                    "--memory",
+                    DOCKER_MEMORY,
+                    "--memory-swap",
+                    DOCKER_MEMORY,
+                    "--mount",
+                    &format!("type=volume,src={volume},dst=/var/lib/lumen/data"),
+                    "-e",
+                    "LUMEN_AUTH=off",
+                    "-e",
+                    "LUMEN_WAL=embedded",
+                    "-e",
+                    "LUMEN_PERSISTENCE=segment",
+                    "-e",
+                    "LUMEN_DATA_DIR=/var/lib/lumen/data",
+                    "-e",
+                    &format!("LUMEN_SNAPSHOT_SECS={SNAPSHOT_SECONDS}"),
+                    "-p",
+                    "127.0.0.1::7373",
+                    &image,
+                ])?;
+                let image_id = verify_image_identity(&image)?;
+                let port_output = docker(&["port", &container, "7373/tcp"])?;
+                let port = port_output
+                    .trim()
+                    .rsplit(':')
+                    .next()
+                    .and_then(|value| value.parse::<u16>().ok())
+                    .ok_or_else(|| {
+                        HarnessError::Startup(format!(
+                            "cannot parse published port: {port_output:?}"
+                        ))
+                    })?;
+                Ok(Self {
+                    container: container.clone(),
+                    volume: volume.clone(),
+                    base: format!("http://127.0.0.1:{port}"),
+                    client: reqwest::Client::builder()
+                        .timeout(REQUEST_TIMEOUT)
+                        .build()
+                        .map_err(HarnessError::request_failure)?,
+                    image_reference: image.clone(),
+                    image_id,
+                    cleanup_armed: true,
+                    request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+                })
+            })() {
+                Ok(server) => server,
+                Err(error) => {
+                    cleanup.finish_failure(&error).await;
+                    return Err(error);
+                }
+            };
+            cleanup.disarm();
+            if let Err(error) = server.assert_docker_limits() {
+                server.finish_failure(&error).await;
+                return Err(error);
+            }
+            if let Err(error) = server.wait_ready().await {
+                server.finish_failure(&error).await;
+                return Err(error);
+            }
+            eprintln!(
+                "approved workload image reference={} actual_image_id={}",
+                server.image_reference, server.image_id
+            );
+            Ok(server)
+        }
+
+        fn assert_docker_limits(&self) -> Result<()> {
+            let output = docker(&[
+                "inspect",
+                "--format",
+                "{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}",
+                &self.container,
+            ])?;
+            let values = output.split_whitespace().collect::<Vec<_>>();
+            let expected_cpu = "2500000000";
+            let expected_memory = DOCKER_MEMORY_BYTES.to_string();
+            if values.as_slice() != [expected_cpu, expected_memory.as_str()] {
+                return Err(HarnessError::DockerLimits(format!(
+                    "expected nano_cpus={} memory_bytes={}; got {output:?}",
+                    expected_cpu, expected_memory
+                )));
+            }
+            Ok(())
+        }
+
+        async fn wait_ready(&self) -> Result<()> {
+            let deadline = Instant::now() + STARTUP_TIMEOUT;
+            loop {
+                if let Ok(response) = self
+                    .client
+                    .get(format!("{}/readyz", self.base))
+                    .send()
+                    .await
+                {
+                    if response.status().is_success() {
+                        return Ok(());
+                    }
+                }
+                if Instant::now() >= deadline {
+                    return Err(HarnessError::Startup(format!(
+                        "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
+                        STARTUP_TIMEOUT.as_secs()
+                    )));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
+        async fn metrics(&self) -> Result<String> {
+            let response = self
+                .client
+                .get(format!("{}/metrics", self.base))
+                .send()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            if !status.is_success() {
+                return Err(HarnessError::Http(format!(
+                    "GET /metrics returned {status}: {text}"
+                )));
+            }
+            Ok(text)
+        }
+
+        async fn evidence_get(&self, path: &str) -> std::result::Result<String, String> {
+            tokio::time::timeout(REQUEST_TIMEOUT, async {
+                let response = self
+                    .client
+                    .get(format!("{}{}", self.base, path))
+                    .send()
+                    .await
+                    .map_err(request_error_for_evidence)?;
+                let status = response.status();
+                let body = read_bounded_chunks(
+                    response.bytes_stream(),
+                    EVIDENCE_HTTP_BODY_MAX_BYTES,
+                    request_error_for_evidence,
+                )
+                .await?;
+                Ok(format!("status={status}\n{}", body.render("body")))
+            })
+            .await
+            .map_err(|_| {
+                format!(
+                    "GET {path} exceeded the {}-second evidence collection deadline",
+                    REQUEST_TIMEOUT.as_secs()
+                )
+            })?
+        }
+
+        async fn finish_failure(&mut self, error: &HarnessError) {
+            let evidence = match FailureEvidenceDirectory::create(&self.container, &self.volume, error)
+            {
+                Ok(evidence) => evidence,
+                Err(capture_error) => {
+                    eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
+                    return;
+                }
+            };
+            let mut evidence_runner = DockerEvidenceCommandRunner;
+            let mut probe = DockerFailureProbe { server: self };
+            let mut cleanup_runner = DockerCleanupCommandRunner;
+            let request_error_report =
+                render_request_error_journal(&*self.request_error_journal.lock().await);
+            finish_failed_docker_run(
+                &evidence,
+                &mut evidence_runner,
+                &mut probe,
+                &mut cleanup_runner,
+                &self.container,
+                &self.volume,
+                &request_error_report,
+            )
+            .await;
+            drop(probe);
+            self.cleanup_armed = false;
+        }
+
+        async fn restart_and_wait_ready(&self) -> Result<Duration> {
+            let started = Instant::now();
+            let container = self.container.clone();
+            tokio::task::spawn_blocking(move || docker(&["restart", &container]))
+                .await
+                .map_err(|error| HarnessError::Task(error.to_string()))??;
+            self.wait_ready().await?;
+            Ok(started.elapsed())
+        }
+    }
+
+    impl Drop for DockerLumen {
+        fn drop(&mut self) {
+            if self.cleanup_armed {
+                let mut runner = DockerCleanupCommandRunner;
+                cleanup_docker_resources(&mut runner, &self.container, &self.volume);
+            }
+        }
+    }
+
+    fn docker(args: &[&str]) -> Result<String> {
+        let output = Command::new("docker")
+            .args(args)
+            .output()
+            .map_err(|error| HarnessError::Command {
+                program: "docker",
+                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+                detail: error.to_string(),
+            })?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        } else {
+            Err(HarnessError::Command {
+                program: "docker",
+                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+                detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            })
+        }
+    }
+
+    fn is_sha256_identifier(value: &str) -> bool {
+        let Some(hex) = value.strip_prefix("sha256:") else {
+            return false;
+        };
+        hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+
+    fn is_immutable_image_reference(value: &str) -> bool {
+        is_sha256_identifier(value)
+            || value
+                .rsplit_once('@')
+                .is_some_and(|(_, digest)| is_sha256_identifier(digest))
+    }
+
+    fn is_repository_digest(value: &str) -> bool {
+        value.rsplit_once('@').is_some_and(|(repository, digest)| {
+            !repository.is_empty() && is_sha256_identifier(digest)
+        })
+    }
+
+    fn verify_image_identity(reference: &str) -> Result<String> {
+        let image_id = docker(&["image", "inspect", "--format", "{{.Id}}", reference])?;
+        if !is_sha256_identifier(&image_id) {
+            return Err(HarnessError::DataInvariant(format!(
+                "Docker did not return an immutable image ID for {reference}: {image_id:?}"
+            )));
+        }
+        if is_sha256_identifier(reference) {
+            if image_id != reference {
+                return Err(HarnessError::DataInvariant(format!(
+                "local immutable image ID changed: requested {reference}, Docker ran {image_id}"
+            )));
+            }
+            return Ok(image_id);
+        }
+
+        let repo_digests = docker(&[
+            "image",
+            "inspect",
+            "--format",
+            "{{json .RepoDigests}}",
+            reference,
+        ])?;
+        let repo_digests = serde_json::from_str::<Vec<String>>(&repo_digests).map_err(|error| {
+            HarnessError::DataInvariant(format!(
+                "Docker returned invalid RepoDigests for {reference}: {error}"
+            ))
+        })?;
+        if !repo_digests.iter().any(|digest| digest == reference) {
+            return Err(HarnessError::DataInvariant(format!(
+            "Docker image ID {image_id} has no RepoDigest matching requested {reference}; got {repo_digests:?}"
+        )));
+        }
+        Ok(image_id)
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct RuntimeCounters {
+        checkpoints: u64,
+        merges: u64,
+        checkpoint_duration_count: u64,
+        checkpoint_duration_seconds: f64,
+        capture_lock_duration_count: u64,
+        capture_lock_duration_seconds: f64,
+        checkpoint_bytes: u64,
+        merge_read_bytes: u64,
+        merge_write_bytes: u64,
+        backpressure_events: u64,
+        pending_delta_bytes: u64,
+        pending_delta_layers: u64,
+        segment_disk_bytes: u64,
+        process_rss_high_water_bytes: u64,
+    }
+
+    impl RuntimeCounters {
+        fn parse(metrics: &str) -> Result<Self> {
+            if prometheus_counter(metrics, "lumen_process_rss_high_water_available")? != 1 {
+                return Err(HarnessError::DataInvariant(
+                    "process VmHWM measurement is unavailable".to_owned(),
+                ));
+            }
+            Ok(Self {
+                checkpoints: prometheus_counter(metrics, CHECKPOINT_COUNTER)?,
+                merges: prometheus_counter(metrics, MERGE_COUNTER)?,
+                checkpoint_duration_count: prometheus_counter(metrics, CHECKPOINT_DURATION_COUNT)?,
+                checkpoint_duration_seconds: prometheus_float(metrics, CHECKPOINT_DURATION_SUM)?,
+                capture_lock_duration_count: prometheus_counter(
+                    metrics,
+                    CAPTURE_LOCK_DURATION_COUNT,
+                )?,
+                capture_lock_duration_seconds: prometheus_float(
+                    metrics,
+                    CAPTURE_LOCK_DURATION_SUM,
+                )?,
+                checkpoint_bytes: prometheus_counter(metrics, CHECKPOINT_BYTES_COUNTER)?,
+                merge_read_bytes: prometheus_counter(metrics, MERGE_READ_BYTES_COUNTER)?,
+                merge_write_bytes: prometheus_counter(metrics, MERGE_WRITE_BYTES_COUNTER)?,
+                backpressure_events: prometheus_counter(metrics, BACKPRESSURE_COUNTER)?,
+                pending_delta_bytes: prometheus_counter(metrics, PENDING_DELTA_BYTES)?,
+                pending_delta_layers: prometheus_counter(metrics, PENDING_DELTA_LAYERS)?,
+                segment_disk_bytes: prometheus_counter(metrics, SEGMENT_DISK_BYTES)?,
+                process_rss_high_water_bytes: prometheus_counter(
+                    metrics,
+                    PROCESS_RSS_HIGH_WATER_BYTES,
+                )?,
+            })
+        }
+
+        fn delta(self, before: Self) -> Result<Self> {
+            Ok(Self {
+                checkpoints: counter_delta(
+                    CHECKPOINT_COUNTER,
+                    self.checkpoints,
+                    before.checkpoints,
+                )?,
+                merges: counter_delta(MERGE_COUNTER, self.merges, before.merges)?,
+                checkpoint_duration_count: counter_delta(
+                    CHECKPOINT_DURATION_COUNT,
+                    self.checkpoint_duration_count,
+                    before.checkpoint_duration_count,
+                )?,
+                checkpoint_duration_seconds: float_delta(
+                    CHECKPOINT_DURATION_SUM,
+                    self.checkpoint_duration_seconds,
+                    before.checkpoint_duration_seconds,
+                )?,
+                capture_lock_duration_count: counter_delta(
+                    CAPTURE_LOCK_DURATION_COUNT,
+                    self.capture_lock_duration_count,
+                    before.capture_lock_duration_count,
+                )?,
+                capture_lock_duration_seconds: float_delta(
+                    CAPTURE_LOCK_DURATION_SUM,
+                    self.capture_lock_duration_seconds,
+                    before.capture_lock_duration_seconds,
+                )?,
+                checkpoint_bytes: counter_delta(
+                    CHECKPOINT_BYTES_COUNTER,
+                    self.checkpoint_bytes,
+                    before.checkpoint_bytes,
+                )?,
+                merge_read_bytes: counter_delta(
+                    MERGE_READ_BYTES_COUNTER,
+                    self.merge_read_bytes,
+                    before.merge_read_bytes,
+                )?,
+                merge_write_bytes: counter_delta(
+                    MERGE_WRITE_BYTES_COUNTER,
+                    self.merge_write_bytes,
+                    before.merge_write_bytes,
+                )?,
+                backpressure_events: counter_delta(
+                    BACKPRESSURE_COUNTER,
+                    self.backpressure_events,
+                    before.backpressure_events,
+                )?,
+                // Gauges are end-of-interval observations, not warmup deltas.
+                pending_delta_bytes: self.pending_delta_bytes,
+                pending_delta_layers: self.pending_delta_layers,
+                segment_disk_bytes: self.segment_disk_bytes,
+                // The source metric reports Lumen's own VmHWM. It is not a
+                // once-per-second `docker top` sample nor a maximum across an
+                // arbitrary process list.
+                process_rss_high_water_bytes: self.process_rss_high_water_bytes,
+            })
+        }
+
+        fn assert_complete_interval_evidence(self) -> Result<()> {
+            if self.checkpoints == 0 || self.merges == 0 {
+                return Err(HarnessError::DataInvariant(format!(
+                "measured interval needs checkpoint and merge completion, got checkpoints={} merges={}",
+                self.checkpoints, self.merges
+            )));
+            }
+            if self.checkpoint_duration_count < self.checkpoints
+                || self.capture_lock_duration_count < self.checkpoints
+            {
+                return Err(HarnessError::DataInvariant(format!(
+                "checkpoint duration/capture-lock observations do not cover completed checkpoints: checkpoints={} duration_count={} capture_lock_count={}",
+                self.checkpoints, self.checkpoint_duration_count, self.capture_lock_duration_count
+            )));
+            }
+            if self.checkpoint_bytes == 0
+                || self.merge_read_bytes == 0
+                || self.merge_write_bytes == 0
+            {
+                return Err(HarnessError::DataInvariant(format!(
+                "completed interval work lacks checkpoint or merge IO bytes: checkpoint={} merge_read={} merge_write={}",
+                self.checkpoint_bytes, self.merge_read_bytes, self.merge_write_bytes
+            )));
+            }
+            if self.segment_disk_bytes == 0 || self.process_rss_high_water_bytes == 0 {
+                return Err(HarnessError::DataInvariant(format!(
+                    "disk/RSS observability is incomplete: disk_bytes={} rss_high_water_bytes={}",
+                    self.segment_disk_bytes, self.process_rss_high_water_bytes
+                )));
+            }
+            Ok(())
+        }
+    }
+
+    fn prometheus_counter(metrics: &str, name: &'static str) -> Result<u64> {
+        let value = prometheus_value(metrics, name)?;
+        value.parse::<u64>().map_err(|_| HarnessError::MetricParse {
+            name,
+            value: value.to_owned(),
+        })
+    }
+
+    fn prometheus_float(metrics: &str, name: &'static str) -> Result<f64> {
+        let raw = prometheus_value(metrics, name)?;
+        let value = raw.parse::<f64>().map_err(|_| HarnessError::MetricParse {
+            name,
+            value: raw.to_owned(),
+        })?;
+        if !value.is_finite() {
+            return Err(HarnessError::MetricParse {
+                name,
+                value: raw.to_owned(),
+            });
+        }
+        Ok(value)
+    }
+
+    fn prometheus_value<'a>(metrics: &'a str, name: &'static str) -> Result<&'a str> {
+        let mut values = metrics.lines().filter_map(|line| {
+            let (metric, value) = line.split_once(|character: char| character.is_whitespace())?;
+            (metric == name).then_some(value.trim())
+        });
+        let value = values
+            .next()
+            .ok_or(HarnessError::MissingRuntimeMetric(name))?;
+        if values.next().is_some() {
+            return Err(HarnessError::DuplicateRuntimeMetric(name));
+        }
+        if value.is_empty() {
+            return Err(HarnessError::MetricParse {
+                name,
+                value: value.to_owned(),
+            });
+        }
+        Ok(value)
+    }
+
+    fn counter_delta(name: &'static str, after: u64, before: u64) -> Result<u64> {
+        after.checked_sub(before).ok_or_else(|| {
+        HarnessError::DataInvariant(format!(
+            "runtime counter moved backwards during measured interval: {name} before={before} after={after}"
+        ))
+    })
+    }
+
+    fn float_delta(name: &'static str, after: f64, before: f64) -> Result<f64> {
+        if !after.is_finite() || !before.is_finite() || after < before {
+            return Err(HarnessError::DataInvariant(format!(
+            "runtime cumulative duration moved backwards or was not finite: {name} before={before} after={after}"
+        )));
+        }
+        Ok(after - before)
+    }
+
+    #[derive(Debug, Clone)]
+    struct Clock {
+        started: Instant,
+    }
+
+    impl Clock {
+        fn new() -> Self {
+            Self {
+                started: Instant::now(),
+            }
+        }
+
+        fn elapsed(&self) -> Duration {
+            self.started.elapsed()
+        }
+
+        fn deadline(&self, offset: Duration) -> tokio::time::Instant {
+            tokio::time::Instant::from_std(self.started + offset)
+        }
+    }
+
+    #[derive(Clone)]
+    struct IndexedField {
+        operation: u64,
+        field: String,
+        body: Value,
+    }
+
+    #[derive(Clone)]
+    struct Replacement {
+        operation: u64,
+        body: Value,
+    }
+
+    #[derive(Clone)]
+    struct Removal {
+        operation: u64,
+        external_id: String,
+    }
+
+    struct Batcher<T> {
+        capacity: usize,
+        pending: VecDeque<T>,
+    }
+
+    impl<T> Batcher<T> {
+        fn new(capacity: usize) -> Self {
+            Self {
+                capacity,
+                pending: VecDeque::new(),
+            }
+        }
+
+        fn push(&mut self, item: T) {
+            self.pending.push_back(item);
+        }
+
+        fn take_full(&mut self) -> Option<Vec<T>> {
+            (self.pending.len() >= self.capacity)
+                .then(|| self.pending.drain(..self.capacity).collect::<Vec<_>>())
+        }
+
+        fn is_empty(&self) -> bool {
+            self.pending.is_empty()
+        }
+    }
+
+    struct RequestPump {
+        tasks: JoinSet<()>,
+        max_in_flight: usize,
+    }
+
+    impl RequestPump {
+        fn new(max_in_flight: usize) -> Self {
+            Self {
+                tasks: JoinSet::new(),
+                max_in_flight,
+            }
+        }
+
+        async fn push<F>(&mut self, future: F) -> Result<()>
+        where
+            F: Future<Output = ()> + Send + 'static,
+        {
+            while self.tasks.len() >= self.max_in_flight {
+                self.tasks
+                    .join_next()
+                    .await
+                    .ok_or_else(|| HarnessError::Task("request pump lost a task".to_owned()))?
+                    .map_err(|error| HarnessError::Task(error.to_string()))?;
+            }
+            self.tasks.spawn(future);
+            Ok(())
+        }
+
+        async fn drain(mut self) -> Result<()> {
+            while let Some(result) = self.tasks.join_next().await {
+                result.map_err(|error| HarnessError::Task(error.to_string()))?;
+            }
+            Ok(())
+        }
+    }
+
+    async fn post_json(
+        request: reqwest::RequestBuilder,
+    ) -> std::result::Result<Value, PostJsonFailure> {
+        match tokio::time::timeout(REQUEST_TIMEOUT, async {
+            let response = request.send().await.map_err(|error| PostJsonFailure {
+                error: RequestFailure::from_reqwest(error),
+                outcome: Outcome::Failed,
+                status: None,
+                body: None,
+            })?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(PostJsonFailure {
+                    error: RequestFailure::synthetic(
+                        format!("workload request returned non-success status {status}"),
+                        false,
+                    ),
+                    outcome: Outcome::Failed,
+                    status: Some(status.as_u16()),
+                    body: Some(truncate_evidence_body(&body)),
+                });
+            }
+            response.json::<Value>().await.map_err(|error| PostJsonFailure {
+                error: RequestFailure::from_reqwest(error),
+                outcome: Outcome::Failed,
+                status: Some(status.as_u16()),
+                body: None,
+            })
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(PostJsonFailure {
+                error: RequestFailure::synthetic(
+                    format!(
+                        "workload request exceeded the {}-second deadline",
+                        REQUEST_TIMEOUT.as_secs()
+                    ),
+                    true,
+                ),
+                outcome: Outcome::TimedOut,
+                status: None,
+                body: None,
+            }),
+        }
+    }
+
+    fn is_warmup_retry_after_one(status: reqwest::StatusCode, retry_after: Option<&str>) -> bool {
+        status == reqwest::StatusCode::TOO_MANY_REQUESTS && retry_after == Some("1")
+    }
+
+    async fn send_index(
+        client: reqwest::Client,
+        base: String,
+        ledger: Arc<Mutex<WorkloadLedger>>,
+        clock: Clock,
+        journal: Arc<Mutex<RequestErrorJournal>>,
+        request_id: u64,
+        scheduled_at: Duration,
+        entries: Vec<IndexedField>,
+    ) {
+        let items = entries
+            .iter()
+            .map(|entry| RequestItem::new(entry.operation, entry.field.clone()))
+            .collect::<Vec<_>>();
+        let body = json!({
+            "items": entries.iter().map(|entry| entry.body.clone()).collect::<Vec<_>>()
+        });
+        let request = client
+            .post(format!("{base}/collections/{HOT_COLLECTION}/index"))
+            .json(&body);
+        // Acquire the evidence lock before the timestamp. A stalled ledger
+        // must not make queued work look as if its body had already started.
+        // `post_json(request)` calls `send` immediately after this scope.
+        let mut ledger_guard = ledger.lock().await;
+        let body_started = clock.elapsed();
+        ledger_guard.submit_request(Request::new(
+            request_id,
+            Endpoint::Index,
+            scheduled_at,
+            body_started,
+            items,
+        ));
+        drop(ledger_guard);
+        let outcome = match post_json(request).await {
+            Ok(response) if response["indexed"].as_u64() == Some(entries.len() as u64) => {
+                Outcome::Succeeded
+            }
+            Ok(_) => Outcome::Failed,
+            Err(failure) => {
+                record_request_error(
+                    &journal,
+                    clock.elapsed(),
+                    format!("POST /collections/{HOT_COLLECTION}/index"),
+                    format!("request_id={request_id}"),
+                    failure,
+                )
+                .await
+            }
+        };
+        let mut ledger = ledger.lock().await;
+        for entry in &entries {
+            ledger.record_item_result(request_id, entry.operation, &entry.field, outcome);
+        }
+        ledger.finish_request(request_id, clock.elapsed(), outcome);
+    }
+
+    async fn send_replace(
+        client: reqwest::Client,
+        base: String,
+        ledger: Arc<Mutex<WorkloadLedger>>,
+        clock: Clock,
+        journal: Arc<Mutex<RequestErrorJournal>>,
+        request_id: u64,
+        scheduled_at: Duration,
+        entries: Vec<Replacement>,
+    ) {
+        let items = entries
+            .iter()
+            .map(|entry| RequestItem::new(entry.operation, "$document"))
+            .collect::<Vec<_>>();
+        let body = json!({
+            "docs": entries.iter().map(|entry| entry.body.clone()).collect::<Vec<_>>()
+        });
+        let request = client
+            .put(format!("{base}/collections/{HOT_COLLECTION}/docs:replace"))
+            .json(&body);
+        let mut ledger_guard = ledger.lock().await;
+        let body_started = clock.elapsed();
+        ledger_guard.submit_request(Request::new(
+            request_id,
+            Endpoint::Replace,
+            scheduled_at,
+            body_started,
+            items,
+        ));
+        drop(ledger_guard);
+        let outcome = match post_json(request).await {
+            Ok(response)
+                if response["results"].as_array().is_some_and(|results| {
+                    results.len() == entries.len()
+                        && results.iter().all(|result| result["status"] == "ok")
+                }) =>
+            {
+                Outcome::Succeeded
+            }
+            Ok(_) => Outcome::Failed,
+            Err(failure) => {
+                record_request_error(
+                    &journal,
+                    clock.elapsed(),
+                    format!("PUT /collections/{HOT_COLLECTION}/docs:replace"),
+                    format!("request_id={request_id}"),
+                    failure,
+                )
+                .await
+            }
+        };
+        let mut ledger = ledger.lock().await;
+        for entry in &entries {
+            ledger.record_item_result(request_id, entry.operation, "$document", outcome);
+        }
+        ledger.finish_request(request_id, clock.elapsed(), outcome);
+    }
+
+    async fn send_unindex(
+        client: reqwest::Client,
+        base: String,
+        ledger: Arc<Mutex<WorkloadLedger>>,
+        clock: Clock,
+        journal: Arc<Mutex<RequestErrorJournal>>,
+        request_id: u64,
+        scheduled_at: Duration,
+        entries: Vec<Removal>,
+    ) {
+        let items = entries
+            .iter()
+            .map(|entry| RequestItem::new(entry.operation, "$external_id"))
+            .collect::<Vec<_>>();
+        let body = json!({
+            "external_ids": entries
+                .iter()
+                .map(|entry| entry.external_id.clone())
+                .collect::<Vec<_>>()
+        });
+        let request = client
+            .post(format!("{base}/collections/{HOT_COLLECTION}/docs:unindex"))
+            .json(&body);
+        let mut ledger_guard = ledger.lock().await;
+        let body_started = clock.elapsed();
+        ledger_guard.submit_request(Request::new(
+            request_id,
+            Endpoint::Unindex,
+            scheduled_at,
+            body_started,
+            items,
+        ));
+        drop(ledger_guard);
+        let unindex_endpoint = format!("POST /collections/{HOT_COLLECTION}/docs:unindex");
+        let unindex_identifier = format!("request_id={request_id}");
+        let outcome = match tokio::time::timeout(REQUEST_TIMEOUT, request.send()).await {
+            Ok(Ok(response)) if response.status().as_u16() == 204 => Outcome::Succeeded,
+            Ok(Ok(response)) => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                record_request_error(
+                    &journal,
+                    clock.elapsed(),
+                    unindex_endpoint.clone(),
+                    unindex_identifier.clone(),
+                    PostJsonFailure {
+                        error: RequestFailure::synthetic(
+                            format!("workload request returned non-success status {status}"),
+                            false,
+                        ),
+                        outcome: Outcome::Failed,
+                        status: Some(status.as_u16()),
+                        body: Some(truncate_evidence_body(&body)),
+                    },
+                )
+                .await
+            }
+            Ok(Err(error)) => {
+                record_request_error(
+                    &journal,
+                    clock.elapsed(),
+                    unindex_endpoint.clone(),
+                    unindex_identifier.clone(),
+                    PostJsonFailure {
+                        error: RequestFailure::from_reqwest(error),
+                        outcome: Outcome::Failed,
+                        status: None,
+                        body: None,
+                    },
+                )
+                .await
+            }
+            Err(_) => {
+                record_request_error(
+                    &journal,
+                    clock.elapsed(),
+                    unindex_endpoint,
+                    unindex_identifier,
+                    PostJsonFailure {
+                        error: RequestFailure::synthetic(
+                            format!(
+                                "workload request exceeded the {}-second deadline",
+                                REQUEST_TIMEOUT.as_secs()
+                            ),
+                            true,
+                        ),
+                        outcome: Outcome::TimedOut,
+                        status: None,
+                        body: None,
+                    },
+                )
+                .await
+            }
+        };
+        let mut ledger = ledger.lock().await;
+        for entry in &entries {
+            ledger.record_item_result(request_id, entry.operation, "$external_id", outcome);
+        }
+        ledger.finish_request(request_id, clock.elapsed(), outcome);
+    }
+
+    async fn send_query(
+        client: reqwest::Client,
+        base: String,
+        ledger: Arc<Mutex<WorkloadLedger>>,
+        clock: Clock,
+        journal: Arc<Mutex<RequestErrorJournal>>,
+        scheduled_at: Duration,
+        class: QueryClass,
+        collection: String,
+        body: Value,
+    ) {
+        // Semantic readbacks do not call this function, so these are only
+        // the fixed ten-QPS workload requests. Build the body before the
+        // timing mark; `post_json` calls `send` immediately after it.
+        let request = client
+            .post(format!("{base}/collections/{collection}/search"))
+            .json(&body);
+        let body_started = clock.elapsed();
+        let outcome = match post_json(request).await {
+            Ok(response)
+                if response["hits"]
+                    .as_array()
+                    .is_some_and(|hits| !hits.is_empty()) =>
+            {
+                Outcome::Succeeded
+            }
+            Ok(_) => Outcome::Failed,
+            Err(failure) => {
+                record_request_error(
+                    &journal,
+                    clock.elapsed(),
+                    format!("POST /collections/{collection}/search"),
+                    format!("query_class={class:?}"),
+                    failure,
+                )
+                .await
+            }
+        };
+        ledger.lock().await.record_classified_query(
+            class,
+            scheduled_at,
+            body_started,
+            Some(clock.elapsed()),
+            outcome,
+        );
+    }
+
+    async fn seed(server: &DockerLumen, backend: VectorBackend) -> Result<()> {
+        create_collection(server, HOT_COLLECTION, backend).await?;
+        seed_collection(server, HOT_COLLECTION, HOT_DOCUMENTS, 0, "hot").await?;
+        assert_document_count(server, HOT_COLLECTION, HOT_DOCUMENTS).await?;
+        for collection_number in 0..IDLE_COLLECTIONS {
+            let collection = idle_collection(collection_number);
+            create_collection(server, &collection, backend).await?;
+            seed_collection(
+                server,
+                &collection,
+                IDLE_DOCUMENTS_PER_COLLECTION,
+                collection_number * IDLE_DOCUMENTS_PER_COLLECTION,
+                "idle",
+            )
+            .await?;
+            assert_document_count(server, &collection, IDLE_DOCUMENTS_PER_COLLECTION).await?;
+        }
+        Ok(())
+    }
+
+    async fn create_collection(
+        server: &DockerLumen,
+        collection: &str,
+        backend: VectorBackend,
+    ) -> Result<()> {
+        let response = server
+            .client
+            .put(format!("{}/collections/{collection}", server.base))
+            .json(&schema(backend))
+            .send()
+            .await
+            .map_err(|error| HarnessError::request_failure(error))?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(HarnessError::Http(format!(
+                "create collection {collection} returned {}",
+                response.status()
+            )))
+        }
+    }
+
+    async fn seed_collection(
+        server: &DockerLumen,
+        collection: &str,
+        documents: usize,
+        start: usize,
+        tag: &str,
+    ) -> Result<()> {
+        let mut items = Vec::with_capacity(1_000);
+        for number in start..start + documents {
+            let external_id = if collection == HOT_COLLECTION {
+                format!("hot-base-{number:06}")
+            } else {
+                format!("{collection}-base-{number:06}")
+            };
+            for (field, value) in document_fields(number, tag).into_iter() {
+                items.push(json!({
+                    "external_id": external_id,
+                    "field": field,
+                    "value": value,
+                }));
+                if items.len() == 1_000 {
+                    seed_index_batch(server, collection, &items).await?;
+                    items.clear();
+                }
+            }
+        }
+        if !items.is_empty() {
+            seed_index_batch(server, collection, &items).await?;
+        }
+        Ok(())
+    }
+
+    async fn seed_index_batch(
+        server: &DockerLumen,
+        collection: &str,
+        items: &[Value],
+    ) -> Result<()> {
+        let body = json!({ "items": items });
+        loop {
+            // Only setup may honor an explicit one-second backpressure hint.
+            // Measured mutations use `post_json` or `send_unindex` and record
+            // every refusal or timeout in the ledger without a retry.
+            let response = tokio::time::timeout(REQUEST_TIMEOUT, async {
+                let response = server
+                    .client
+                    .post(format!("{}/collections/{collection}/index", server.base))
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|error| HarnessError::request_failure(error))?;
+                let status = response.status();
+                let retry_after_one = is_warmup_retry_after_one(
+                    status,
+                    response
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok()),
+                );
+                if retry_after_one {
+                    return Ok::<_, HarnessError>(None);
+                }
+                let body = response
+                    .json::<Value>()
+                    .await
+                    .map_err(|error| HarnessError::request_failure(error))?;
+                Ok(Some((status, body)))
+            })
+            .await
+            .map_err(|_| {
+                HarnessError::Http(format!(
+                    "seed index {collection} exceeded the five-second request deadline"
+                ))
+            })??;
+            let Some((status, response_body)) = response else {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            };
+            if status.is_success() && response_body["indexed"].as_u64() == Some(items.len() as u64)
+            {
+                return Ok(());
+            }
+            return Err(HarnessError::Http(format!(
+                "seed index {collection} returned {status}: {response_body}"
+            )));
+        }
+    }
+
+    async fn assert_document_count(
+        server: &DockerLumen,
+        collection: &str,
+        expected: usize,
+    ) -> Result<()> {
+        let response = server
+            .client
+            .get(format!("{}/collections/{collection}/stats", server.base))
+            .send()
+            .await
+            .map_err(|error| HarnessError::request_failure(error))?;
+        let status = response.status();
+        let body = response
+            .json::<Value>()
+            .await
+            .map_err(|error| HarnessError::request_failure(error))?;
+        if status.is_success() && body["documents_indexed"].as_u64() == Some(expected as u64) {
+            Ok(())
+        } else {
+            Err(HarnessError::DataInvariant(format!(
+                "collection {collection} expected {expected} documents, got {body}"
+            )))
+        }
+    }
+
+    fn workload_collections() -> impl Iterator<Item = String> {
+        std::iter::once(HOT_COLLECTION.to_owned()).chain((0..IDLE_COLLECTIONS).map(idle_collection))
+    }
+
+    fn post_restart_vector_bytes(collection: &str, stats: &Value) -> Result<u64> {
+        let fields = stats["fields"].as_object().ok_or_else(|| {
+            HarnessError::DataInvariant(format!(
+                "post-restart backend attestation for {collection} lacks a fields object: {stats}"
+            ))
+        })?;
+        let vector = fields
+            .get(WORKLOAD_VECTOR_FIELD)
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(format!(
+                    "post-restart backend attestation for {collection} lacks vector field {WORKLOAD_VECTOR_FIELD}: {stats}"
+                ))
+            })?;
+        match vector.get("type").and_then(Value::as_str) {
+            Some("vector") => {}
+            Some(other) => {
+                return Err(HarnessError::DataInvariant(format!(
+                    "post-restart backend attestation for {collection} reports {WORKLOAD_VECTOR_FIELD} as {other:?}, not vector"
+                )));
+            }
+            None => {
+                return Err(HarnessError::DataInvariant(format!(
+                    "post-restart backend attestation for {collection} lacks {WORKLOAD_VECTOR_FIELD}.type"
+                )));
+            }
+        }
+        vector
+            .get("bytes")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(format!(
+                    "post-restart backend attestation for {collection} lacks an unsigned {WORKLOAD_VECTOR_FIELD}.bytes observation"
+                ))
+            })
+    }
+
+    fn assert_post_restart_vector_residency(
+        backend: VectorBackend,
+        collection: &str,
+        bytes: u64,
+    ) -> Result<()> {
+        match backend {
+            VectorBackend::FlatCpu if bytes == 0 => Ok(()),
+            VectorBackend::FlatCpu => Err(HarnessError::DataInvariant(format!(
+                "post-restart backend attestation for {collection} expected flat-cpu {WORKLOAD_VECTOR_FIELD}.bytes=0 after segment reopen, got {bytes}"
+            ))),
+            VectorBackend::HnswCpu if bytes > 0 => Ok(()),
+            VectorBackend::HnswCpu => Err(HarnessError::DataInvariant(format!(
+                "post-restart backend attestation for {collection} expected hnsw-cpu {WORKLOAD_VECTOR_FIELD}.bytes>0 after segment reopen, got {bytes}"
+            ))),
+        }
+    }
+
+    async fn assert_post_restart_vector_backends(
+        server: &DockerLumen,
+        backend: VectorBackend,
+    ) -> Result<()> {
+        for collection in workload_collections() {
+            let response = server
+                .client
+                .get(format!("{}/collections/{collection}/stats", server.base))
+                .send()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            let status = response.status();
+            let stats = response
+                .json::<Value>()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            if !status.is_success() {
+                return Err(HarnessError::DataInvariant(format!(
+                    "post-restart backend attestation could not read stats for {collection}: {status} {stats}"
+                )));
+            }
+            let bytes = post_restart_vector_bytes(&collection, &stats)?;
+            assert_post_restart_vector_residency(backend, &collection, bytes)?;
+        }
+        Ok(())
+    }
+
+    async fn assert_recovered_text_query(server: &DockerLumen) -> Result<()> {
+        let response = server
+            .client
+            .post(format!(
+                "{}/collections/{HOT_COLLECTION}/search",
+                server.base
+            ))
+            .json(&json!({
+                "query": {
+                    "match": {
+                        "field": "title_ngram",
+                        "text": "durable search",
+                        "op": "and",
+                    }
+                },
+                "limit": 10,
+            }))
+            .send()
+            .await
+            .map_err(|error| HarnessError::request_failure(error))?;
+        let status = response.status();
+        let body = response
+            .json::<Value>()
+            .await
+            .map_err(|error| HarnessError::request_failure(error))?;
+        if status.is_success() && body["hits"].as_array().is_some_and(|hits| !hits.is_empty()) {
+            Ok(())
+        } else {
+            Err(HarnessError::DataInvariant(format!(
+                "cold restart did not recover a nonempty Text/BM25 result: {status} {body}"
+            )))
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct SemanticDocument {
+        external_id: String,
+        number: usize,
+        tag: &'static str,
+    }
+
+    #[derive(Debug, Clone)]
+    struct MutationReadback {
+        indexed: SemanticDocument,
+        replaced: SemanticDocument,
+        deleted: SemanticDocument,
+    }
+
+    fn mutation_readback() -> MutationReadback {
+        // These are the first deterministic operations on the three existing
+        // scheduler turns. They remain well away from each other: index adds
+        // a new ID, replace changes an untouched base ID, and unindex removes
+        // a separate base ID.
+        MutationReadback {
+            indexed: SemanticDocument {
+                external_id: "hot-added-000000".to_owned(),
+                number: HOT_DOCUMENTS,
+                tag: "hot",
+            },
+            replaced: SemanticDocument {
+                external_id: "hot-base-060000".to_owned(),
+                number: 60_000,
+                tag: "hot-updated",
+            },
+            deleted: SemanticDocument {
+                external_id: "hot-base-000000".to_owned(),
+                number: 0,
+                tag: "hot",
+            },
+        }
+    }
+
+    fn vector_readback_reference() -> SemanticDocument {
+        SemanticDocument {
+            external_id: format!("hot-base-{VECTOR_READBACK_REFERENCE_NUMBER:06}"),
+            number: VECTOR_READBACK_REFERENCE_NUMBER,
+            tag: "hot",
+        }
+    }
+
+    fn assert_vector_reference_is_untouched(reference: &SemanticDocument) -> Result<()> {
+        let first_untouched_base =
+            MUTATION_DOCUMENTS_PER_CLASS.checked_mul(2).ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "mutation schedule overflowed while locating vector readback reference"
+                        .to_owned(),
+                )
+            })?;
+        let expected_id = format!("hot-base-{:06}", reference.number);
+        // `offer_deletions` owns [0, M), `offer_replacements` owns [M, 2M),
+        // and `offer_additions` creates only hot-added IDs. This reference is
+        // therefore a seeded hot-base document whose fields are never changed
+        // by the full 30-minute schedule.
+        if reference.tag != "hot"
+            || reference.external_id != expected_id
+            || !(first_untouched_base..HOT_DOCUMENTS).contains(&reference.number)
+        {
+            return Err(HarnessError::DataInvariant(format!(
+                "vector readback reference must be an untouched seeded hot-base document; \
+                 id={} number={} untouched=[{first_untouched_base},{HOT_DOCUMENTS})",
+                reference.external_id, reference.number
+            )));
+        }
+        Ok(())
+    }
+
+    fn fingerprint_query(fingerprint: &str) -> Value {
+        json!({ "hamming": {
+            "field": "fingerprint",
+            "hash": fingerprint,
+            "max_distance": 0,
+        }})
+    }
+
+    fn anchored_semantic_query(fingerprint: &str, field_clause: Value) -> Value {
+        json!({ "and": [fingerprint_query(fingerprint), field_clause] })
+    }
+
+    fn readback_mismatch_value(field: &str, number: usize) -> String {
+        format!("{READBACK_MISMATCH_TOKEN}-window-{number}-{field}")
+    }
+
+    fn mismatched_fingerprint(fingerprint: &str) -> Result<String> {
+        let mut bytes = fingerprint.as_bytes().to_vec();
+        let Some(first) = bytes.first_mut() else {
+            return Err(HarnessError::DataInvariant(
+                "semantic fixture fingerprint is empty".to_owned(),
+            ));
+        };
+        if !first.is_ascii_hexdigit() {
+            return Err(HarnessError::DataInvariant(format!(
+                "semantic fixture fingerprint is not hexadecimal: {fingerprint}"
+            )));
+        }
+        *first = if *first == b'0' { b'1' } else { b'0' };
+        String::from_utf8(bytes).map_err(|error| {
+            HarnessError::DataInvariant(format!(
+                "semantic fixture fingerprint lost UTF-8 after mismatch mutation: {error}"
+            ))
+        })
+    }
+
+    fn semantic_field_clause(field: &str, value: &Value) -> Result<Value> {
+        match field {
+            "tag" | "category" | "status" | "region" => {
+                let value = value.as_str().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field {field} is not a string: {value}"
+                    ))
+                })?;
+                Ok(json!({ "term": { "field": field, "value": value } }))
+            }
+            "price" | "rank" => {
+                let value = value.as_f64().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field {field} is not a number: {value}"
+                    ))
+                })?;
+                Ok(json!({ "range": {
+                    "field": field,
+                    "gte": value,
+                    "lte": value,
+                }}))
+            }
+            "labels" => {
+                let labels = value.as_array().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field labels is not an array: {value}"
+                    ))
+                })?;
+                if labels.len() != 2 {
+                    return Err(HarnessError::DataInvariant(format!(
+                        "semantic fixture labels must have two values: {labels:?}"
+                    )));
+                }
+                let mut clauses = Vec::with_capacity(labels.len());
+                for label in labels {
+                    let label = label.as_str().ok_or_else(|| {
+                        HarnessError::DataInvariant(format!(
+                            "semantic fixture label is not a string: {label}"
+                        ))
+                    })?;
+                    clauses.push(json!({ "term": { "field": "labels", "value": label } }));
+                }
+                Ok(json!({ "and": clauses }))
+            }
+            "fingerprint" => {
+                let fingerprint = value.as_str().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture fingerprint is not a string: {value}"
+                    ))
+                })?;
+                Ok(fingerprint_query(fingerprint))
+            }
+            "title_ngram" | "body_ngram" | "summary_ngram" => {
+                let value = value.as_str().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field {field} is not text: {value}"
+                    ))
+                })?;
+                // Use every term in the actual long fixture value. A short
+                // prefix would let a partial or stale n-gram field look right.
+                Ok(json!({ "match": {
+                    "field": field,
+                    "text": value,
+                    "op": "and",
+                }}))
+            }
+            "title_text" | "body_text" => {
+                let value = value.as_str().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field {field} is not text: {value}"
+                    ))
+                })?;
+                Ok(json!({ "match": {
+                    "field": field,
+                    "text": value,
+                    "op": "and",
+                }}))
+            }
+            "embedding" => Err(HarnessError::DataInvariant(
+                "embedding readback requires the bounded two-document candidate pair".to_owned(),
+            )),
+            unexpected => {
+                return Err(HarnessError::DataInvariant(format!(
+                    "semantic readback has no query for frozen field {unexpected}"
+                )));
+            }
+        }
+    }
+
+    fn semantic_wrong_field_clause(field: &str, value: &Value, number: usize) -> Result<Value> {
+        match field {
+            "tag" | "category" | "status" | "region" => {
+                let _ = value.as_str().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field {field} is not a string: {value}"
+                    ))
+                })?;
+                Ok(json!({ "term": {
+                    "field": field,
+                    "value": readback_mismatch_value(field, number),
+                }}))
+            }
+            "price" | "rank" => {
+                let value = value.as_f64().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field {field} is not a number: {value}"
+                    ))
+                })?;
+                let mismatch = value + 1.0;
+                Ok(json!({ "range": {
+                    "field": field,
+                    "gte": mismatch,
+                    "lte": mismatch,
+                }}))
+            }
+            "labels" => {
+                let labels = value.as_array().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field labels is not an array: {value}"
+                    ))
+                })?;
+                if labels.len() != 2 || labels.iter().any(|label| !label.is_string()) {
+                    return Err(HarnessError::DataInvariant(format!(
+                        "semantic fixture labels must have two string values: {labels:?}"
+                    )));
+                }
+                Ok(json!({ "term": {
+                    "field": "labels",
+                    "value": readback_mismatch_value(field, number),
+                }}))
+            }
+            "fingerprint" => {
+                let fingerprint = value.as_str().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture fingerprint is not a string: {value}"
+                    ))
+                })?;
+                Ok(fingerprint_query(&mismatched_fingerprint(fingerprint)?))
+            }
+            "title_ngram" | "body_ngram" | "summary_ngram" | "title_text" | "body_text" => {
+                let value = value.as_str().ok_or_else(|| {
+                    HarnessError::DataInvariant(format!(
+                        "semantic fixture field {field} is not text: {value}"
+                    ))
+                })?;
+                // The known absent token and window make this a disjoint
+                // full-value probe, rather than a different document number
+                // whose n-grams could overlap the target's prefix.
+                Ok(json!({ "match": {
+                    "field": field,
+                    "text": format!(
+                        "{value} {READBACK_MISMATCH_TOKEN} window {number} field {field}"
+                    ),
+                    "op": "and",
+                }}))
+            }
+            "embedding" => Err(HarnessError::DataInvariant(
+                "embedding readback requires the bounded two-document candidate pair".to_owned(),
+            )),
+            unexpected => Err(HarnessError::DataInvariant(format!(
+                "semantic readback has no mismatch query for frozen field {unexpected}"
+            ))),
+        }
+    }
+
+    fn semantic_field_query(field: &str, value: &Value, fingerprint: &str) -> Result<Value> {
+        Ok(anchored_semantic_query(
+            fingerprint,
+            semantic_field_clause(field, value)?,
+        ))
+    }
+
+    fn semantic_wrong_field_query(
+        field: &str,
+        value: &Value,
+        fingerprint: &str,
+        number: usize,
+    ) -> Result<Value> {
+        Ok(anchored_semantic_query(
+            fingerprint,
+            semantic_wrong_field_clause(field, value, number)?,
+        ))
+    }
+
+    fn bounded_vector_query(
+        target_fingerprint: &str,
+        reference_fingerprint: &str,
+        vector: &Value,
+    ) -> Result<Value> {
+        let vector = vector.as_array().ok_or_else(|| {
+            HarnessError::DataInvariant(format!(
+                "semantic fixture embedding is not an array: {vector}"
+            ))
+        })?;
+        if vector.len() != VECTOR_DIMENSIONS as usize {
+            return Err(HarnessError::DataInvariant(format!(
+                "semantic fixture embedding has wrong dimension: {}",
+                vector.len()
+            )));
+        }
+        if target_fingerprint == reference_fingerprint {
+            return Err(HarnessError::DataInvariant(
+                "bounded vector readback candidate fingerprints must differ".to_owned(),
+            ));
+        }
+        Ok(json!({ "and": [
+            { "or": [
+                fingerprint_query(target_fingerprint),
+                fingerprint_query(reference_fingerprint),
+            ]},
+            { "knn": {
+                "field": "embedding",
+                "vector": vector,
+                "k": 1,
+            }},
+        ]}))
+    }
+
+    fn embedding_numerator(number: usize, dimension: usize) -> u64 {
+        (seeded_value(number, dimension + 3) % 997) + 1
+    }
+
+    fn assert_vector_pair_is_distinct_and_non_collinear(
+        target: &SemanticDocument,
+        reference: &SemanticDocument,
+    ) -> Result<()> {
+        let target_components = (0..VECTOR_DIMENSIONS as usize)
+            .map(|dimension| embedding_numerator(target.number, dimension))
+            .collect::<Vec<_>>();
+        let reference_components = (0..VECTOR_DIMENSIONS as usize)
+            .map(|dimension| embedding_numerator(reference.number, dimension))
+            .collect::<Vec<_>>();
+        if target_components == reference_components {
+            return Err(HarnessError::DataInvariant(format!(
+                "bounded vector readback target and reference have the same fixture vector: {} and {}",
+                target.external_id, reference.external_id
+            )));
+        }
+        let target_first = target_components[0];
+        let reference_first = reference_components[0];
+        let non_collinear = (1..VECTOR_DIMENSIONS as usize).any(|dimension| {
+            target_first * reference_components[dimension]
+                != target_components[dimension] * reference_first
+        });
+        if !non_collinear {
+            return Err(HarnessError::DataInvariant(format!(
+                "bounded vector readback target and reference are collinear: {} and {}",
+                target.external_id, reference.external_id
+            )));
+        }
+        Ok(())
+    }
+
+    async fn semantic_search(server: &DockerLumen, query: Value, context: &str) -> Result<Value> {
+        let response = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            server
+                .client
+                .post(format!(
+                    "{}/collections/{HOT_COLLECTION}/search",
+                    server.base
+                ))
+                .json(&json!({ "query": query, "limit": 1 }))
+                .send(),
+        )
+        .await
+        .map_err(|_| {
+            HarnessError::RequestFailure(
+                RequestFailure::synthetic(
+                    format!(
+                        "semantic readback exceeded the {}-second deadline",
+                        REQUEST_TIMEOUT.as_secs()
+                    ),
+                    true,
+                )
+                .with_context(context),
+            )
+        })?
+        .map_err(|error| {
+            HarnessError::RequestFailure(RequestFailure::from_reqwest(error).with_context(context))
+        })?;
+        let status = response.status();
+        let body = response.json::<Value>().await.map_err(|error| {
+            HarnessError::RequestFailure(RequestFailure::from_reqwest(error).with_context(context))
+        })?;
+        if status.is_success() {
+            Ok(body)
+        } else {
+            Err(HarnessError::DataInvariant(format!(
+                "{context}: semantic readback returned {status}: {body}"
+            )))
+        }
+    }
+
+    fn response_contains_id(response: &Value, external_id: &str) -> bool {
+        response["hits"].as_array().is_some_and(|hits| {
+            hits.iter()
+                .any(|hit| hit["external_id"].as_str() == Some(external_id))
+        })
+    }
+
+    async fn assert_bounded_embedding_readback(
+        server: &DockerLumen,
+        target: &SemanticDocument,
+        target_fields: &Map<String, Value>,
+        reference: &SemanticDocument,
+        phase: &str,
+    ) -> Result<()> {
+        assert_vector_reference_is_untouched(reference)?;
+        if target.external_id == reference.external_id {
+            return Err(HarnessError::DataInvariant(
+                "bounded vector readback target and reference IDs must differ".to_owned(),
+            ));
+        }
+        assert_vector_pair_is_distinct_and_non_collinear(target, reference)?;
+
+        let reference_fields = document_fields(reference.number, reference.tag);
+        let target_fingerprint = target_fields["fingerprint"].as_str().ok_or_else(|| {
+            HarnessError::DataInvariant("semantic target lacks string fingerprint".to_owned())
+        })?;
+        let reference_fingerprint = reference_fields["fingerprint"].as_str().ok_or_else(|| {
+            HarnessError::DataInvariant("semantic reference lacks string fingerprint".to_owned())
+        })?;
+        let target_vector = target_fields["embedding"].clone();
+        let reference_vector = reference_fields["embedding"].clone();
+
+        // The OR filter bounds each kNN probe to precisely these two live
+        // documents. With k=1, each document's exact fixture vector must rank
+        // its own ID first, without assuming global HNSW self-recall.
+        for (label, vector, expected_id) in [
+            ("target", target_vector, target.external_id.as_str()),
+            (
+                "reference",
+                reference_vector,
+                reference.external_id.as_str(),
+            ),
+        ] {
+            let query = bounded_vector_query(target_fingerprint, reference_fingerprint, &vector)?;
+            let context =
+                format!("{phase}: bounded embedding {label} probe must select {expected_id}");
+            let response = semantic_search(server, query, &context).await?;
+            if !response_contains_id(&response, expected_id) {
+                return Err(HarnessError::DataInvariant(format!(
+                    "{context}: wrong bounded vector candidate: {response}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    async fn assert_document_fields_readback(
+        server: &DockerLumen,
+        document: &SemanticDocument,
+        phase: &str,
+    ) -> Result<()> {
+        let fields = document_fields(document.number, document.tag);
+        let fingerprint = fields["fingerprint"].as_str().ok_or_else(|| {
+            HarnessError::DataInvariant("semantic fixture lacks string fingerprint".to_owned())
+        })?;
+        for field in FIELD_NAMES {
+            if field == "embedding" {
+                continue;
+            }
+            let value = fields.get(field).ok_or_else(|| {
+                HarnessError::DataInvariant(format!("semantic fixture lacks frozen field {field}"))
+            })?;
+            let query = semantic_field_query(field, value, fingerprint)?;
+            let context = format!("{phase}: expected {field} for {}", document.external_id);
+            let response = semantic_search(server, query, &context).await?;
+            if !response_contains_id(&response, &document.external_id) {
+                return Err(HarnessError::DataInvariant(format!(
+                    "{context}: expected target was not searchable: {response}"
+                )));
+            }
+
+            // The fingerprint holds this probe to the known target. A search
+            // implementation that ignores this field predicate would still
+            // return that target, so the disjoint value must exclude it.
+            let mismatch = semantic_wrong_field_query(field, value, fingerprint, document.number)?;
+            let mismatch_context = format!(
+                "{phase}: wrong {field} must exclude {}",
+                document.external_id
+            );
+            let mismatch_response = semantic_search(server, mismatch, &mismatch_context).await?;
+            if response_contains_id(&mismatch_response, &document.external_id) {
+                return Err(HarnessError::DataInvariant(format!(
+                    "{mismatch_context}: ignored field predicate retained target: {mismatch_response}"
+                )));
+            }
+        }
+        assert_bounded_embedding_readback(
+            server,
+            document,
+            &fields,
+            &vector_readback_reference(),
+            phase,
+        )
+        .await
+    }
+
+    async fn assert_deleted_document_readback(
+        server: &DockerLumen,
+        document: &SemanticDocument,
+        phase: &str,
+    ) -> Result<()> {
+        let fields = document_fields(document.number, document.tag);
+        let fingerprint = fields["fingerprint"].as_str().ok_or_else(|| {
+            HarnessError::DataInvariant("semantic fixture lacks string fingerprint".to_owned())
+        })?;
+        let context = format!("{phase}: deleted {}", document.external_id);
+        let response = semantic_search(server, fingerprint_query(fingerprint), &context).await?;
+        if response_contains_id(&response, &document.external_id) {
+            return Err(HarnessError::DataInvariant(format!(
+                "{context}: deleted target remained searchable: {response}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn assert_mutation_readback(server: &DockerLumen, phase: &str) -> Result<()> {
+        // These bounded queries run after the measured input and after its
+        // metric snapshot. They prove acknowledged target/content effects but
+        // never contribute to the ten-QPS workload ledger.
+        let oracle = mutation_readback();
+        assert_document_fields_readback(server, &oracle.indexed, phase).await?;
+        assert_document_fields_readback(server, &oracle.replaced, phase).await?;
+        assert_deleted_document_readback(server, &oracle.deleted, phase).await
+    }
+
+    async fn drive_workload(
+        server: &DockerLumen,
+        config: CaseConfig,
+    ) -> Result<(WorkloadReport, RuntimeCounters, Duration)> {
+        let ledger = Arc::new(Mutex::new(WorkloadLedger::new(config.ledger_case())));
+        ledger
+            .lock()
+            .await
+            .set_input_window(Duration::ZERO, Duration::from_secs(INPUT_SECONDS));
+        let clock = Clock::new();
+        // Only samples completed inside the input window may prove that
+        // checkpoint and compaction happened under the offered workload.
+        let sampler_client = server.client.clone();
+        let sampler_base = server.base.clone();
+        let sampler_clock = clock.clone();
+        let sampler = tokio::spawn(async move {
+            let mut first = None;
+            let mut last = None;
+            let input_end = Duration::from_secs(INPUT_SECONDS);
+            while sampler_clock.elapsed() < input_end {
+                let response = sampler_client
+                    .get(format!("{sampler_base}/metrics"))
+                    .send()
+                    .await
+                    .map_err(|error| HarnessError::request_failure(error))?;
+                let status = response.status();
+                let metrics = response
+                    .text()
+                    .await
+                    .map_err(|error| HarnessError::request_failure(error))?;
+                if !status.is_success() {
+                    return Err(HarnessError::Http(format!(
+                        "interval metrics returned {status}"
+                    )));
+                }
+                let counters = RuntimeCounters::parse(&metrics)?;
+                if sampler_clock.elapsed() >= input_end {
+                    break;
+                }
+                first.get_or_insert(counters);
+                last = Some(counters);
+                let next = (sampler_clock.elapsed() + Duration::from_secs(1)).min(input_end);
+                tokio::time::sleep_until(sampler_clock.deadline(next)).await;
+            }
+            let first = first.ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "no runtime metric sample completed within measured input".to_owned(),
+                )
+            })?;
+            let last = last.expect("first and last sample are set together");
+            last.delta(first)
+        });
+
+        let mut mutations = RequestPump::new(REQUEST_CONCURRENCY);
+        let mut queries = RequestPump::new(QUERY_CONCURRENCY);
+        let mut index_batch = Batcher::new(config.batch_size_for(Endpoint::Index));
+        let mut replace_batch = Batcher::new(config.batch_size_for(Endpoint::Replace));
+        let mut unindex_batch = Batcher::new(config.batch_size_for(Endpoint::Unindex));
+        let mut operation_id = 1u64;
+        let mut request_id = 1u64;
+
+        for second in 0..INPUT_SECONDS {
+            tokio::time::sleep_until(clock.deadline(Duration::from_secs(second))).await;
+            match second % 3 {
+                0 => {
+                    offer_additions(
+                        &ledger,
+                        &clock,
+                        second,
+                        &mut operation_id,
+                        &mut index_batch,
+                        &mut mutations,
+                        &mut request_id,
+                        server,
+                    )
+                    .await?;
+                }
+                1 => {
+                    offer_replacements(
+                        &ledger,
+                        &clock,
+                        second,
+                        &mut operation_id,
+                        &mut replace_batch,
+                        &mut mutations,
+                        &mut request_id,
+                        server,
+                    )
+                    .await?;
+                }
+                _ => {
+                    offer_deletions(
+                        &ledger,
+                        &clock,
+                        second,
+                        &mut operation_id,
+                        &mut unindex_batch,
+                        &mut mutations,
+                        &mut request_id,
+                        server,
+                    )
+                    .await?;
+                }
+            }
+            offer_queries(&clock, &ledger, &mut queries, server, second).await?;
+        }
+
+        // The receipt records this elapsed duration. The ledger keeps the
+        // fixed logical window for per-second classification, while this
+        // clock observation proves the driver reached its final input edge.
+        tokio::time::sleep_until(clock.deadline(Duration::from_secs(INPUT_SECONDS))).await;
+        let observed_input_duration = clock.elapsed();
+        if observed_input_duration < Duration::from_secs(INPUT_SECONDS) {
+            return Err(HarnessError::DataInvariant(format!(
+                "input driver stopped before the approved duration: observed={observed_input_duration:?} required={INPUT_SECONDS}s"
+            )));
+        }
+
+        if !(index_batch.is_empty() && replace_batch.is_empty() && unindex_batch.is_empty()) {
+            return Err(HarnessError::DataInvariant(
+                "approved 60,000-operation thirds must fill every selected batch exactly"
+                    .to_owned(),
+            ));
+        }
+        let mut deltas = sampler
+            .await
+            .map_err(|error| HarnessError::Task(error.to_string()))??;
+        mutations.drain().await?;
+        queries.drain().await?;
+
+        let counters_after = RuntimeCounters::parse(&server.metrics().await?)?;
+        // VmHWM remains a peak through the drain, while completion/IO evidence
+        // above remains strictly within measured input.
+        deltas.process_rss_high_water_bytes = counters_after.process_rss_high_water_bytes;
+        deltas.assert_complete_interval_evidence()?;
+        let mut ledger = ledger.lock().await;
+        for _ in 0..deltas.checkpoints {
+            ledger.record_checkpoint_completion();
+        }
+        for _ in 0..deltas.merges {
+            ledger.record_merge_completion();
+        }
+        ledger.observe_peak_rss_bytes(deltas.process_rss_high_water_bytes);
+        let report = ledger.validate().map_err(HarnessError::Workload)?;
+        eprintln!(
+        "interval durable evidence: checkpoint_duration_s={} capture_lock_s={} checkpoint_bytes={} merge_read_bytes={} merge_write_bytes={} pending_delta_bytes={} pending_delta_layers={} backpressure_events={} disk_bytes={} ledger_docops={}",
+        deltas.checkpoint_duration_seconds,
+        deltas.capture_lock_duration_seconds,
+        deltas.checkpoint_bytes,
+        deltas.merge_read_bytes,
+        deltas.merge_write_bytes,
+        deltas.pending_delta_bytes,
+        deltas.pending_delta_layers,
+        deltas.backpressure_events,
+        deltas.segment_disk_bytes,
+        report.docops_completed_in_input,
+    );
+        Ok((report, deltas, observed_input_duration))
+    }
+
+    async fn offer_additions(
+        ledger: &Arc<Mutex<WorkloadLedger>>,
+        clock: &Clock,
+        second: u64,
+        operation_id: &mut u64,
+        batch: &mut Batcher<IndexedField>,
+        pump: &mut RequestPump,
+        request_id: &mut u64,
+        server: &DockerLumen,
+    ) -> Result<()> {
+        let add_base = second / 3 * DOCOPS_PER_SECOND as u64;
+        for offset in 0..DOCOPS_PER_SECOND {
+            let operation = *operation_id;
+            *operation_id += 1;
+            let external_id = format!("hot-added-{:06}", add_base + offset as u64);
+            let fields = document_fields(HOT_DOCUMENTS + add_base as usize + offset, "hot");
+            let operation_record =
+                approved_index_operation(operation, external_id.clone(), &fields)?;
+            ledger
+                .lock()
+                .await
+                .begin_operation(clock.elapsed(), operation_record);
+            for (field, value) in fields {
+                batch.push(IndexedField {
+                    operation,
+                    field: field.clone(),
+                    body: json!({
+                        "external_id": external_id,
+                        "field": field,
+                        "value": value,
+                    }),
+                });
+            }
+            dispatch_full_index_batches(batch, pump, request_id, ledger, clock, server).await?;
+        }
+        Ok(())
+    }
+
+    async fn offer_replacements(
+        ledger: &Arc<Mutex<WorkloadLedger>>,
+        clock: &Clock,
+        second: u64,
+        operation_id: &mut u64,
+        batch: &mut Batcher<Replacement>,
+        pump: &mut RequestPump,
+        request_id: &mut u64,
+        server: &DockerLumen,
+    ) -> Result<()> {
+        let update_base = second / 3 * DOCOPS_PER_SECOND as u64;
+        for offset in 0..DOCOPS_PER_SECOND {
+            let operation = *operation_id;
+            *operation_id += 1;
+            let number = 60_000 + update_base as usize + offset;
+            let external_id = format!("hot-base-{number:06}");
+            ledger.lock().await.begin_operation(
+                clock.elapsed(),
+                DocumentOperation::replace(operation, external_id.clone()),
+            );
+            batch.push(Replacement {
+                operation,
+                body: json!({
+                    "external_id": external_id,
+                    "fields": document_fields(number, "hot-updated"),
+                }),
+            });
+            dispatch_full_replace_batches(batch, pump, request_id, ledger, clock, server).await?;
+        }
+        Ok(())
+    }
+
+    async fn offer_deletions(
+        ledger: &Arc<Mutex<WorkloadLedger>>,
+        clock: &Clock,
+        second: u64,
+        operation_id: &mut u64,
+        batch: &mut Batcher<Removal>,
+        pump: &mut RequestPump,
+        request_id: &mut u64,
+        server: &DockerLumen,
+    ) -> Result<()> {
+        let delete_base = second / 3 * DOCOPS_PER_SECOND as u64;
+        for offset in 0..DOCOPS_PER_SECOND {
+            let operation = *operation_id;
+            *operation_id += 1;
+            let external_id = format!("hot-base-{:06}", delete_base + offset as u64);
+            ledger.lock().await.begin_operation(
+                clock.elapsed(),
+                DocumentOperation::unindex(operation, external_id.clone()),
+            );
+            batch.push(Removal {
+                operation,
+                external_id,
+            });
+            dispatch_full_unindex_batches(batch, pump, request_id, ledger, clock, server).await?;
+        }
+        Ok(())
+    }
+
+    async fn dispatch_full_index_batches(
+        batch: &mut Batcher<IndexedField>,
+        pump: &mut RequestPump,
+        request_id: &mut u64,
+        ledger: &Arc<Mutex<WorkloadLedger>>,
+        clock: &Clock,
+        server: &DockerLumen,
+    ) -> Result<()> {
+        while let Some(entries) = batch.take_full() {
+            let id = *request_id;
+            *request_id += 1;
+            let scheduled_at = clock.elapsed();
+            pump.push(send_index(
+                server.client.clone(),
+                server.base.clone(),
+                ledger.clone(),
+                clock.clone(),
+                server.request_error_journal.clone(),
+                id,
+                scheduled_at,
+                entries,
+            ))
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn dispatch_full_replace_batches(
+        batch: &mut Batcher<Replacement>,
+        pump: &mut RequestPump,
+        request_id: &mut u64,
+        ledger: &Arc<Mutex<WorkloadLedger>>,
+        clock: &Clock,
+        server: &DockerLumen,
+    ) -> Result<()> {
+        while let Some(entries) = batch.take_full() {
+            let id = *request_id;
+            *request_id += 1;
+            let scheduled_at = clock.elapsed();
+            pump.push(send_replace(
+                server.client.clone(),
+                server.base.clone(),
+                ledger.clone(),
+                clock.clone(),
+                server.request_error_journal.clone(),
+                id,
+                scheduled_at,
+                entries,
+            ))
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn dispatch_full_unindex_batches(
+        batch: &mut Batcher<Removal>,
+        pump: &mut RequestPump,
+        request_id: &mut u64,
+        ledger: &Arc<Mutex<WorkloadLedger>>,
+        clock: &Clock,
+        server: &DockerLumen,
+    ) -> Result<()> {
+        while let Some(entries) = batch.take_full() {
+            let id = *request_id;
+            *request_id += 1;
+            let scheduled_at = clock.elapsed();
+            pump.push(send_unindex(
+                server.client.clone(),
+                server.base.clone(),
+                ledger.clone(),
+                clock.clone(),
+                server.request_error_journal.clone(),
+                id,
+                scheduled_at,
+                entries,
+            ))
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn offer_queries(
+        clock: &Clock,
+        ledger: &Arc<Mutex<WorkloadLedger>>,
+        pump: &mut RequestPump,
+        server: &DockerLumen,
+        second: u64,
+    ) -> Result<()> {
+        for offset in 0..QUERY_QPS {
+            let scheduled_at =
+                Duration::from_secs(second) + Duration::from_millis((offset * 100) as u64);
+            let (class, collection, body) = query_for(second, offset);
+            let client = server.client.clone();
+            let base = server.base.clone();
+            let ledger = ledger.clone();
+            let clock = clock.clone();
+            let journal = server.request_error_journal.clone();
+            pump.push(async move {
+                tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
+                send_query(
+                    client,
+                    base,
+                    ledger,
+                    clock,
+                    journal,
+                    scheduled_at,
+                    class,
+                    collection,
+                    body,
+                )
+                .await;
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    fn schema(backend: VectorBackend) -> Value {
+        assert_eq!(
+            NGRAM_TEXT_FIELDS, 3,
+            "the receipt must bind the three n-gram Text fields in the frozen schema"
+        );
+        json!({
+            "fields": {
+                "tag": { "type": "keyword" },
+                "category": { "type": "keyword" },
+                "status": { "type": "keyword" },
+                "price": { "type": "number" },
+                "rank": { "type": "number" },
+                "labels": { "type": "set" },
+                "fingerprint": { "type": "hash" },
+                "title_ngram": { "type": "text", "analyzer": "ngram" },
+                "body_ngram": { "type": "text", "analyzer": "ngram" },
+                "summary_ngram": { "type": "text", "analyzer": "ngram" },
+                "title_text": { "type": "text", "analyzer": "whitespace_lower" },
+                "body_text": { "type": "text", "analyzer": "whitespace_lower" },
+                "embedding": {
+                    "type": "vector",
+                    "dim": VECTOR_DIMENSIONS,
+                    "metric": "cosine",
+                    "backend": backend.wire_name(),
+                },
+                "region": { "type": "keyword" },
+            }
+        })
+    }
+
+    fn document_fields(number: usize, tag: &str) -> Map<String, Value> {
+        let mut fields = Map::new();
+        fields.insert("tag".to_owned(), json!(tag));
+        fields.insert(
+            "category".to_owned(),
+            json!(format!("category-{}", number % 17)),
+        );
+        fields.insert(
+            "status".to_owned(),
+            json!(if number % 2 == 0 { "active" } else { "pending" }),
+        );
+        fields.insert("price".to_owned(), json!(number as f64 + 0.25));
+        fields.insert("rank".to_owned(), json!((number % 10_000) as f64));
+        fields.insert(
+            "labels".to_owned(),
+            json!([
+                format!("label-{}", number % 13),
+                format!("group-{}", number % 7)
+            ]),
+        );
+        fields.insert("fingerprint".to_owned(), json!(format!("{number:016x}")));
+        fields.insert("title_ngram".to_owned(), json!(ngram_text(number, 0)));
+        fields.insert("body_ngram".to_owned(), json!(ngram_text(number, 1)));
+        fields.insert("summary_ngram".to_owned(), json!(ngram_text(number, 2)));
+        fields.insert(
+            "title_text".to_owned(),
+            json!(format!("title {tag} {number}")),
+        );
+        fields.insert(
+            "body_text".to_owned(),
+            json!(format!("body {tag} {}", number % 101)),
+        );
+        fields.insert("embedding".to_owned(), json!(embedding(number)));
+        fields.insert("region".to_owned(), json!(format!("region-{}", number % 5)));
+        assert_eq!(
+            fields.len(),
+            FIELD_COUNT,
+            "fixture must index all fourteen fields"
+        );
+        fields
+    }
+
+    /// Builds the ledger record from the approved schema, never from a partial
+    /// request body. A malformed fixture must fail before it can under-count an
+    /// Index document as complete.
+    fn approved_index_operation(
+        operation: u64,
+        external_id: String,
+        fields: &Map<String, Value>,
+    ) -> Result<DocumentOperation> {
+        let expected = FIELD_NAMES
+            .iter()
+            .map(|field| (*field).to_owned())
+            .collect::<BTreeSet<_>>();
+        let actual = fields.keys().cloned().collect::<BTreeSet<_>>();
+        if actual != expected {
+            let missing = expected.difference(&actual).cloned().collect::<Vec<_>>();
+            let extra = actual.difference(&expected).cloned().collect::<Vec<_>>();
+            return Err(HarnessError::DataInvariant(format!(
+            "approved Index operation must contain exactly {FIELD_COUNT} frozen fields; missing={missing:?} extra={extra:?}"
+        )));
+        }
+        Ok(DocumentOperation::index(
+            operation,
+            external_id,
+            FIELD_NAMES.iter().map(|field| (*field).to_owned()),
+        ))
+    }
+
+    fn ngram_text(number: usize, slot: usize) -> String {
+        let target = 250 + (seeded_value(number, slot) % 36) as usize;
+        let mut text = format!("ngram document {number} slot {slot} ");
+        while text.len() < target {
+            text.push_str("durable search token ");
+        }
+        text.truncate(target);
+        text
+    }
+
+    fn embedding(number: usize) -> Vec<f32> {
+        (0..VECTOR_DIMENSIONS as usize)
+            .map(|dimension| embedding_numerator(number, dimension) as f32 / 997.0)
+            .collect()
+    }
+
+    fn seeded_value(number: usize, slot: usize) -> u64 {
+        WORKLOAD_SEED
+            .wrapping_add((number as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .rotate_left(((slot * 13) % 64) as u32)
+            .wrapping_mul(0xd6e8_feb8_6659_fd93)
+    }
+
+    fn idle_collection(number: usize) -> String {
+        format!("perf-idle-{number:03}")
+    }
+
+    fn query_for(second: u64, offset: usize) -> (QueryClass, String, Value) {
+        match offset % 5 {
+            0 | 1 => (
+                QueryClass::Hot,
+                HOT_COLLECTION.to_owned(),
+                json!({
+                    "query": { "term": { "field": "tag", "value": "hot" } },
+                    "limit": 10,
+                }),
+            ),
+            2 => (
+                QueryClass::Hot,
+                HOT_COLLECTION.to_owned(),
+                json!({
+                    "query": {
+                        "match": {
+                            "field": "title_ngram",
+                            "text": "durable search",
+                            "op": "and",
+                        }
+                    },
+                    "limit": 10,
+                }),
+            ),
+            3 => (
+                QueryClass::Hot,
+                HOT_COLLECTION.to_owned(),
+                json!({
+                    "query": {
+                        "knn": {
+                            "field": "embedding",
+                            "vector": embedding((second as usize * 10 + offset) % HOT_DOCUMENTS),
+                            "k": 10,
+                        }
+                    },
+                    "limit": 10,
+                }),
+            ),
+            _ => (
+                QueryClass::Idle,
+                idle_collection((second as usize + offset) % IDLE_COLLECTIONS),
+                json!({
+                    "query": { "term": { "field": "tag", "value": "idle" } },
+                    "limit": 10,
+                }),
+            ),
+        }
+    }
+
+    fn emit_rate_report(report: &WorkloadReport, observed_input_duration: Duration) -> Result<()> {
+        let input_seconds = report
+            .input_duration
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "cannot report rates without the fixed input membership window".to_owned(),
+                )
+            })?
+            .as_secs_f64();
+        if input_seconds <= 0.0 {
+            return Err(HarnessError::DataInvariant(
+                "cannot report rates without a positive observed input interval".to_owned(),
+            ));
+        }
+        eprintln!(
+            "approved workload rates membership_seconds={input_seconds} observed_input_seconds={} input_requests_started_per_s={} input_requests_completed_per_s={} input_items_started_per_s={} input_items_completed_per_s={} input_docops_started_per_s={} input_docops_completed_per_s={} input_queries_started_per_s={} input_queries_completed_per_s={} input_index_requests={} input_replace_requests={} input_unindex_requests={} input_hot_queries={} input_idle_queries={}",
+            observed_input_duration.as_secs_f64(),
+            report.requests_started_in_input as f64 / input_seconds,
+            report.requests_completed_in_input as f64 / input_seconds,
+            report.items_started_in_input as f64 / input_seconds,
+            report.items_completed_in_input as f64 / input_seconds,
+            report.docops_offered_in_input as f64 / input_seconds,
+            report.docops_completed_in_input as f64 / input_seconds,
+            report.queries_started_in_input as f64 / input_seconds,
+            report.queries_completed_in_input as f64 / input_seconds,
+            report.index_requests_started_in_input,
+            report.replace_requests_started_in_input,
+            report.unindex_requests_started_in_input,
+            report.hot_queries_started_in_input,
+            report.idle_queries_started_in_input,
+        );
+        Ok(())
+    }
+
+    #[derive(Debug)]
+    struct CompletedCase {
+        report: WorkloadReport,
+        counter_delta: RuntimeCounters,
+        observed_input_duration: Duration,
+        restart_duration: Duration,
+        live_mutation_readback: bool,
+        cold_mutation_readback: bool,
+        image_reference: String,
+        actual_image_id: String,
+    }
+
+    fn duration_millis(name: &'static str, duration: Duration) -> Result<u64> {
+        u64::try_from(duration.as_millis()).map_err(|_| {
+            HarnessError::DataInvariant(format!(
+                "{name} duration does not fit receipt milliseconds"
+            ))
+        })
+    }
+
+    fn required_duration_millis(name: &'static str, duration: Option<Duration>) -> Result<u64> {
+        duration
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(format!(
+                    "{name} has no completed latency or drain observation"
+                ))
+            })
+            .and_then(|duration| duration_millis(name, duration))
+    }
+
+    fn seconds_to_nanos(name: &'static str, seconds: f64) -> Result<u64> {
+        let nanos = seconds * 1_000_000_000.0;
+        if !nanos.is_finite() || nanos < 0.0 || nanos > u64::MAX as f64 {
+            return Err(HarnessError::DataInvariant(format!(
+                "{name} cannot be represented as receipt nanoseconds: {seconds}"
+            )));
+        }
+        Ok(nanos.round() as u64)
+    }
+
+    fn receipt_for(
+        context: &QualifyingContext,
+        config: CaseConfig,
+        completed: &CompletedCase,
+    ) -> Result<Receipt> {
+        if completed.image_reference != context.image_reference {
+            return Err(HarnessError::DataInvariant(format!(
+                "qualifying image changed from {} to {}",
+                context.image_reference, completed.image_reference
+            )));
+        }
+        let report = &completed.report;
+        let input_duration_ms =
+            required_duration_millis("input membership", report.input_duration)?;
+        let observed_input_elapsed_ms =
+            duration_millis("observed input", completed.observed_input_duration)?;
+        let measurement = ReceiptMeasurement {
+            input_duration_ms,
+            observed_input_elapsed_ms,
+            requests_offered: report.requests_offered,
+            requests_finished: report.requests_finished,
+            requests_completed: report.requests_completed,
+            requests_started_in_input: report.requests_started_in_input,
+            requests_finished_in_input: report.requests_finished_in_input,
+            requests_completed_in_input: report.requests_completed_in_input,
+            requests_started_per_second_milli: rate_milli(
+                report.requests_started_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            requests_completed_per_second_milli: rate_milli(
+                report.requests_completed_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            request_errors: report.request_errors,
+            client_cancellations: report.client_cancellations,
+            items_offered: report.items_offered,
+            items_completed: report.items_completed,
+            items_failed: report.items_failed,
+            items_started_in_input: report.items_started_in_input,
+            items_completed_in_input: report.items_completed_in_input,
+            items_started_per_second_milli: rate_milli(
+                report.items_started_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            items_completed_per_second_milli: rate_milli(
+                report.items_completed_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            docops_offered: report.docops_offered,
+            docops_completed: report.docops_completed,
+            docops_offered_in_input: report.docops_offered_in_input,
+            docops_completed_in_input: report.docops_completed_in_input,
+            index_requests_started_in_input: report.index_requests_started_in_input,
+            replace_requests_started_in_input: report.replace_requests_started_in_input,
+            unindex_requests_started_in_input: report.unindex_requests_started_in_input,
+            docops_offered_per_second_milli: rate_milli(
+                report.docops_offered_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            docops_completed_per_second_milli: rate_milli(
+                report.docops_completed_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            docops_completion_percent_milli: percent_milli(
+                report.docops_completed_in_input,
+                report.docops_offered_in_input,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            request_latency_p99_ms: required_duration_millis(
+                "request p99",
+                report.request_latency_p99,
+            )?,
+            request_latency_max_ms: required_duration_millis(
+                "request maximum",
+                report.request_latency_max,
+            )?,
+            queries_offered: report.queries_offered,
+            queries_completed: report.queries_completed,
+            queries_started_in_input: report.queries_started_in_input,
+            queries_completed_in_input: report.queries_completed_in_input,
+            hot_queries_started_in_input: report.hot_queries_started_in_input,
+            idle_queries_started_in_input: report.idle_queries_started_in_input,
+            queries_started_per_second_milli: rate_milli(
+                report.queries_started_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            queries_completed_per_second_milli: rate_milli(
+                report.queries_completed_in_input,
+                input_duration_ms,
+            )
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?,
+            query_errors_or_timeouts: report.query_errors_or_timeouts,
+            query_latency_p99_ms: required_duration_millis("query p99", report.query_latency_p99)?,
+            query_latency_max_ms: required_duration_millis(
+                "query maximum",
+                report.query_latency_max,
+            )?,
+            request_drain_ms: required_duration_millis("request drain", report.request_drain)?,
+            query_drain_ms: required_duration_millis("query drain", report.query_drain)?,
+            checkpoint_delta: completed.counter_delta.checkpoints,
+            merge_delta: completed.counter_delta.merges,
+            checkpoint_bytes: completed.counter_delta.checkpoint_bytes,
+            merge_read_bytes: completed.counter_delta.merge_read_bytes,
+            merge_write_bytes: completed.counter_delta.merge_write_bytes,
+            // The runtime exports a cumulative hold duration and count. It
+            // does not export a true maximum, so the receipt makes no max claim.
+            capture_hold_ns_total: seconds_to_nanos(
+                "capture hold total",
+                completed.counter_delta.capture_lock_duration_seconds,
+            )?,
+            pending_delta_bytes: completed.counter_delta.pending_delta_bytes,
+            pending_delta_layers: completed.counter_delta.pending_delta_layers,
+            backpressure_events: completed.counter_delta.backpressure_events,
+            segment_disk_bytes: completed.counter_delta.segment_disk_bytes,
+            peak_rss_bytes: completed.counter_delta.process_rss_high_water_bytes,
+            restart_duration_ms: duration_millis("restart", completed.restart_duration)?,
+            restart_recovered: true,
+            live_mutation_readback: completed.live_mutation_readback,
+            cold_mutation_readback: completed.cold_mutation_readback,
+        };
+        let receipt = Receipt {
+            schema_version: perf_cell_receipt::SCHEMA_VERSION,
+            kind: perf_cell_receipt::RECEIPT_KIND.to_owned(),
+            binding: context.binding(completed.actual_image_id.clone()),
+            cell: config.receipt_cell(),
+            limits: ReceiptLimits::approved(),
+            measurement,
+            outcome: ReceiptOutcome {
+                qualifying: true,
+                diagnostic: false,
+                succeeded: true,
+            },
+        };
+        receipt
+            .validate()
+            .map_err(|error| HarnessError::DataInvariant(error.to_string()))?;
+        Ok(receipt)
+    }
+
+    async fn run_case(config: CaseConfig) -> Result<CompletedCase> {
+        let mut server = DockerLumen::start().await?;
+        let result = run_case_with_server(&server, config).await;
+        if let Err(error) = &result {
+            server.finish_failure(error).await;
+        }
+        result
+    }
+
+    async fn run_case_with_server(
+        server: &DockerLumen,
+        config: CaseConfig,
+    ) -> Result<CompletedCase> {
+        // The metric preflight is intentionally before the costly seed. Current
+        // production metrics do not yet expose this complete set, so integration
+        // fails closed before the costly seed until all runtime seams land.
+        RuntimeCounters::parse(&server.metrics().await?)?;
+
+        seed(&server, config.vector_backend).await?;
+        let (report, counter_delta, observed_input_duration) =
+            drive_workload(&server, config).await?;
+        assert_mutation_readback(&server, "live after measured drain").await?;
+        let live_mutation_readback = true;
+        assert!(
+            counter_delta.checkpoints > 0,
+            "periodic SegmentRdbStore checkpoints must complete during measured input"
+        );
+        assert!(
+            counter_delta.merges > 0,
+            "a real segment merge must complete during measured input"
+        );
+        let restart_elapsed = server.restart_and_wait_ready().await?;
+        // The restart opens the segment payload after the measured checkpoint
+        // and merge work. This is the first post-restart data-plane observation:
+        // it runs before any cold semantic or kNN readback can change a lazy
+        // vector footprint, and no mutation follows the measured drain.
+        assert_post_restart_vector_backends(&server, config.vector_backend).await?;
+        assert_document_count(&server, HOT_COLLECTION, HOT_DOCUMENTS)
+            .await
+            .map_err(|error| {
+                HarnessError::DataInvariant(format!(
+                    "restart must recover the durable hot collection: {error}"
+                ))
+            })?;
+        assert_recovered_text_query(&server)
+            .await
+            .map_err(|error| {
+                HarnessError::DataInvariant(format!(
+                    "restart must recover Text/BM25 query data: {error}"
+                ))
+            })?;
+        assert_mutation_readback(&server, "cold after restart").await?;
+        let cold_mutation_readback = true;
+        eprintln!(
+        "approved durable workload endpoint={:?} batch={} backend={} snapshot_secs={} restart_seconds={}",
+        config.primary_endpoint,
+        config.primary_batch_size,
+        config.vector_backend.wire_name(),
+        SNAPSHOT_SECONDS,
+        restart_elapsed.as_secs_f64(),
+    );
+        emit_rate_report(&report, observed_input_duration)?;
+        eprintln!("approved durable workload report: {report:#?}");
+        Ok(CompletedCase {
+            report,
+            counter_delta,
+            observed_input_duration,
+            restart_duration: restart_elapsed,
+            live_mutation_readback,
+            cold_mutation_readback,
+            image_reference: server.image_reference.clone(),
+            actual_image_id: server.image_id.clone(),
+        })
+    }
+
+    #[test]
+    #[ignore = "30-minute Docker release workload; default execution runs all sixteen matrix cells serially"]
+    fn approved_30_minute_durable_workload() {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .expect("build performance workload runtime")
+            .block_on(async {
+                let selection = SelectionInput::from_environment()
+                    .expect("read performance workload mode environment");
+                match SelectedMode::from_selection(&selection)
+                    .expect("validate performance workload mode")
+                {
+                    SelectedMode::Diagnostic(config) => {
+                        eprintln!("NON-QUALIFYING diagnostic performance cell selected");
+                        run_case(config)
+                            .await
+                            .expect("drive selected diagnostic performance cell");
+                    }
+                    SelectedMode::Qualifying(config) => {
+                        let context = QualifyingContext::from_environment()
+                            .expect("read qualifying receipt environment");
+                        let completed = run_case(config)
+                            .await
+                            .expect("drive selected qualifying performance cell");
+                        let receipt = receipt_for(&context, config, &completed)
+                            .expect("build a complete qualifying performance receipt");
+                        perf_cell_receipt::write_new(&context.receipt_path, &receipt)
+                            .expect("write one new qualifying performance receipt");
+                        eprintln!(
+                            "QUALIFYING durable performance receipt cell={} path={}",
+                            receipt.cell.id,
+                            context.receipt_path.display()
+                        );
+                    }
+                    SelectedMode::FullMatrix => {
+                        for config in qualifying_matrix() {
+                            run_case(config)
+                                .await
+                                .expect("drive one qualifying performance matrix cell");
+                        }
+                    }
+                }
+            });
+    }
+
+    fn selected_cell(endpoint: &str, batch: &str, backend: &str) -> SelectionInput {
+        SelectionInput {
+            endpoint: Some(endpoint.to_owned()),
+            batch: Some(batch.to_owned()),
+            backend: Some(backend.to_owned()),
+            ..SelectionInput::default()
+        }
+    }
+
+    #[cfg(test)]
+    #[derive(Clone, Copy)]
+    enum FakeReadbackBehavior {
+        FingerprintOnly,
+        ScalarPredicatesThenWrongVectorOrder,
+    }
+
+    #[cfg(test)]
+    #[derive(Clone)]
+    struct FakeReadbackState {
+        behavior: FakeReadbackBehavior,
+        target: SemanticDocument,
+        fields: Map<String, Value>,
+    }
+
+    #[cfg(test)]
+    fn json_contains_key(value: &Value, wanted: &str) -> bool {
+        match value {
+            Value::Array(values) => values.iter().any(|value| json_contains_key(value, wanted)),
+            Value::Object(values) => {
+                values.contains_key(wanted)
+                    || values
+                        .values()
+                        .any(|value| json_contains_key(value, wanted))
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    fn fake_response_is_wrong_scalar_predicate(query: &Value, fields: &Map<String, Value>) -> bool {
+        let Some(object) = query.as_object() else {
+            return false;
+        };
+        if let Some(hamming) = object.get("hamming") {
+            let expected = fields.get("fingerprint").and_then(Value::as_str);
+            let actual = hamming.get("hash").and_then(Value::as_str);
+            if actual != expected {
+                return true;
+            }
+        }
+        if let Some(term) = object.get("term") {
+            if term
+                .get("value")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.contains(READBACK_MISMATCH_TOKEN))
+            {
+                return true;
+            }
+        }
+        if let Some(matching) = object.get("match") {
+            if matching
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains(READBACK_MISMATCH_TOKEN))
+            {
+                return true;
+            }
+        }
+        if let Some(range) = object.get("range") {
+            let field = range.get("field").and_then(Value::as_str);
+            let actual = range.get("gte").and_then(Value::as_f64);
+            let expected = field
+                .and_then(|field| fields.get(field))
+                .and_then(Value::as_f64);
+            if let (Some(actual), Some(expected)) = (actual, expected) {
+                if actual != expected {
+                    return true;
+                }
+            }
+        }
+        object
+            .values()
+            .any(|value| fake_response_is_wrong_scalar_predicate(value, fields))
+    }
+
+    #[cfg(test)]
+    async fn fake_readback_handler(
+        axum::extract::State(state): axum::extract::State<FakeReadbackState>,
+        axum::Json(request): axum::Json<Value>,
+    ) -> axum::Json<Value> {
+        let query = &request["query"];
+        let emits_target = match state.behavior {
+            FakeReadbackBehavior::FingerprintOnly => true,
+            FakeReadbackBehavior::ScalarPredicatesThenWrongVectorOrder => {
+                if json_contains_key(query, "knn") {
+                    // This deliberately gives the target for both exact vectors.
+                    // The production pair must reject that wrong candidate order.
+                    true
+                } else {
+                    !fake_response_is_wrong_scalar_predicate(query, &state.fields)
+                }
+            }
+        };
+        let hits = if emits_target {
+            vec![json!({ "external_id": state.target.external_id })]
+        } else {
+            Vec::new()
+        };
+        axum::Json(json!({ "hits": hits }))
+    }
+
+    #[cfg(test)]
+    async fn fake_readback_lumen(
+        behavior: FakeReadbackBehavior,
+        target: SemanticDocument,
+    ) -> (&'static DockerLumen, tokio::sync::oneshot::Sender<()>) {
+        let fields = document_fields(target.number, target.tag);
+        let app = axum::Router::new()
+            .route(
+                "/collections/perf-hot/search",
+                axum::routing::post(fake_readback_handler),
+            )
+            .with_state(FakeReadbackState {
+                behavior,
+                target: target.clone(),
+                fields,
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake semantic readback listener");
+        let address = listener
+            .local_addr()
+            .expect("read fake semantic readback listener address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve fake semantic readback responder");
+        });
+        let server = Box::leak(Box::new(DockerLumen {
+            // This test-only value must never drop, because production Drop
+            // owns Docker cleanup. Leaking this tiny client fixture keeps the
+            // ordinary oracle entirely local and does not invoke Docker.
+            container: "fake-readback-never-dropped".to_owned(),
+            volume: "fake-readback-never-dropped".to_owned(),
+            base: format!("http://{address}"),
+            client: reqwest::Client::builder()
+                .build()
+                .expect("build fake semantic readback client"),
+            image_reference: "fake-readback".to_owned(),
+            image_id: "fake-readback".to_owned(),
+            cleanup_armed: false,
+            request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+        }));
+        (server, shutdown_tx)
+    }
+
+    #[cfg(test)]
+    fn run_readback_oracle(behavior: FakeReadbackBehavior) -> Result<()> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build local readback oracle runtime")
+            .block_on(async move {
+                let target = mutation_readback().indexed;
+                let (server, shutdown) = fake_readback_lumen(behavior, target.clone()).await;
+                let result =
+                    assert_document_fields_readback(server, &target, "fake readback").await;
+                let _ = shutdown.send(());
+                result
+            })
+    }
+
+    #[test]
+    fn fingerprint_only_readback_cannot_pass_an_ignored_field_predicate() {
+        assert!(
+            run_readback_oracle(FakeReadbackBehavior::FingerprintOnly).is_err(),
+            "a responder that returns the fingerprint target for every field predicate must fail readback"
+        );
+    }
+
+    #[test]
+    fn vector_readback_rejects_the_target_for_both_candidate_vectors() {
+        assert!(
+            run_readback_oracle(FakeReadbackBehavior::ScalarPredicatesThenWrongVectorOrder)
+                .is_err(),
+            "the exact reference vector must select the known reference, not the target"
+        );
+    }
+
+    #[test]
+    fn selected_qualifying_cell_is_explicit_and_never_a_diagnostic_false_green() {
+        assert!(matches!(
+            SelectedMode::from_selection(&SelectionInput::default()),
+            Ok(SelectedMode::FullMatrix)
+        ));
+
+        let mut diagnostic = selected_cell("index", "100", "flat-cpu");
+        diagnostic.diagnostic = Some("1".to_owned());
+        assert!(matches!(
+            SelectedMode::from_selection(&diagnostic),
+            Ok(SelectedMode::Diagnostic(_))
+        ));
+
+        let mut qualifying = selected_cell("replace", "32", "hnsw-cpu");
+        qualifying.qualifying = Some("1".to_owned());
+        assert!(matches!(
+            SelectedMode::from_selection(&qualifying),
+            Ok(SelectedMode::Qualifying(_))
+        ));
+
+        let no_mode = selected_cell("unindex", "1", "flat-cpu");
+        assert!(SelectedMode::from_selection(&no_mode).is_err());
+
+        let mut both = selected_cell("index", "1", "flat-cpu");
+        both.diagnostic = Some("1".to_owned());
+        both.qualifying = Some("1".to_owned());
+        assert!(SelectedMode::from_selection(&both).is_err());
+
+        let missing_cell = SelectionInput {
+            qualifying: Some("1".to_owned()),
+            ..SelectionInput::default()
+        };
+        assert!(SelectedMode::from_selection(&missing_cell).is_err());
+    }
+
+    #[test]
+    fn approved_index_operation_requires_the_frozen_fourteen_field_schema() {
+        let fields = document_fields(7, "hot");
+        let operation = approved_index_operation(1, "hot-base-000007".to_owned(), &fields)
+            .expect("the frozen production fixture contains all fourteen fields");
+        assert_eq!(operation.required_items.len(), FIELD_COUNT);
+        assert_eq!(
+            operation
+                .required_items
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            FIELD_NAMES
+                .iter()
+                .map(|field| (*field).to_owned())
+                .collect::<BTreeSet<_>>(),
+            "the ledger must require the frozen schema, not only the submitted fields"
+        );
+
+        let mut thirteen_fields = fields.clone();
+        thirteen_fields.remove("region");
+        assert!(
+            matches!(
+                approved_index_operation(2, "missing-region".to_owned(), &thirteen_fields),
+                Err(HarnessError::DataInvariant(_))
+            ),
+            "a thirteen-field Index operation must not enter the workload ledger"
+        );
+
+        let mut one_field = Map::new();
+        one_field.insert("tag".to_owned(), json!("hot"));
+        assert!(
+            matches!(
+                approved_index_operation(3, "one-field".to_owned(), &one_field),
+                Err(HarnessError::DataInvariant(_))
+            ),
+            "a one-field Index operation must not enter the workload ledger"
+        );
+
+        let declared = schema(VectorBackend::FlatCpu)["fields"]
+            .as_object()
+            .expect("approved schema has fields")
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let expected = FIELD_NAMES
+            .iter()
+            .map(|field| (*field).to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            declared, expected,
+            "the schema must declare exactly the frozen fourteen fields"
+        );
+    }
+
+    #[cfg(test)]
+    fn complete_runtime_metrics(vmhwm_available: u64) -> String {
+        [
+            format!("lumen_process_rss_high_water_available {vmhwm_available}"),
+            format!("{CHECKPOINT_COUNTER} 10"),
+            format!("{MERGE_COUNTER} 5"),
+            format!("{CHECKPOINT_DURATION_COUNT} 10"),
+            format!("{CHECKPOINT_DURATION_SUM} 1.5"),
+            format!("{CAPTURE_LOCK_DURATION_COUNT} 10"),
+            format!("{CAPTURE_LOCK_DURATION_SUM} 0.5"),
+            format!("{CHECKPOINT_BYTES_COUNTER} 100"),
+            format!("{MERGE_READ_BYTES_COUNTER} 100"),
+            format!("{MERGE_WRITE_BYTES_COUNTER} 100"),
+            format!("{BACKPRESSURE_COUNTER} 0"),
+            format!("{PENDING_DELTA_BYTES} 10"),
+            format!("{PENDING_DELTA_LAYERS} 1"),
+            format!("{SEGMENT_DISK_BYTES} 100"),
+            format!("{PROCESS_RSS_HIGH_WATER_BYTES} 1024"),
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn runtime_metrics_reject_a_missing_required_row() {
+        let metrics = complete_runtime_metrics(1)
+            .lines()
+            .filter(|line| !line.starts_with(MERGE_COUNTER))
+            .collect::<Vec<_>>()
+            .join("\n");
+        match RuntimeCounters::parse(&metrics) {
+            Err(HarnessError::MissingRuntimeMetric(name)) if name == MERGE_COUNTER => {}
+            other => panic!("expected missing merge metric, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_metrics_reject_a_duplicate_required_row() {
+        let metrics = format!("{}\n{CHECKPOINT_COUNTER} 11", complete_runtime_metrics(1));
+        match RuntimeCounters::parse(&metrics) {
+            Err(HarnessError::DuplicateRuntimeMetric(name)) if name == CHECKPOINT_COUNTER => {}
+            other => panic!("expected duplicate checkpoint metric, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_metrics_reject_an_invalid_required_row() {
+        let expected = format!("{CHECKPOINT_COUNTER} 10");
+        let invalid = complete_runtime_metrics(1).replacen(
+            &expected,
+            &format!("{CHECKPOINT_COUNTER} not-a-counter"),
+            1,
+        );
+        match RuntimeCounters::parse(&invalid) {
+            Err(HarnessError::MetricParse { name, .. }) if name == CHECKPOINT_COUNTER => {}
+            other => panic!("expected invalid checkpoint metric, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_metrics_reject_an_unavailable_vmhwm_probe() {
+        match RuntimeCounters::parse(&complete_runtime_metrics(0)) {
+            Err(HarnessError::DataInvariant(detail))
+                if detail == "process VmHWM measurement is unavailable" => {}
+            other => panic!("expected unavailable VmHWM metric, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duration_counters_reject_backward_and_nonfinite_values() {
+        for (after, before) in [
+            (1.0, 2.0),
+            (f64::NAN, 0.0),
+            (f64::INFINITY, 0.0),
+            (1.0, f64::NEG_INFINITY),
+        ] {
+            assert!(
+                matches!(
+                    float_delta(CHECKPOINT_DURATION_SUM, after, before),
+                    Err(HarnessError::DataInvariant(_))
+                ),
+                "duration values must be finite and monotonic: before={before} after={after}"
+            );
+        }
+        let expected = format!("{CHECKPOINT_DURATION_SUM} 1.5");
+        let invalid = complete_runtime_metrics(1).replacen(
+            &expected,
+            &format!("{CHECKPOINT_DURATION_SUM} NaN"),
+            1,
+        );
+        match RuntimeCounters::parse(&invalid) {
+            Err(HarnessError::MetricParse { name, .. }) if name == CHECKPOINT_DURATION_SUM => {}
+            other => panic!("expected nonfinite checkpoint duration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn warmup_retry_policy_accepts_only_the_one_second_backpressure_hint() {
+        assert!(is_warmup_retry_after_one(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            Some("1")
+        ));
+        assert!(!is_warmup_retry_after_one(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            Some("2")
+        ));
+        assert!(!is_warmup_retry_after_one(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            None
+        ));
+        assert!(!is_warmup_retry_after_one(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            Some("1")
+        ));
+    }
+
+    #[test]
+    fn request_deadline_is_the_approved_five_seconds() {
+        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn post_restart_backend_residency_rejects_flat_and_hnsw_coercion() {
+        assert!(
+            assert_post_restart_vector_residency(VectorBackend::FlatCpu, HOT_COLLECTION, 0).is_ok()
+        );
+        assert!(
+            assert_post_restart_vector_residency(VectorBackend::HnswCpu, HOT_COLLECTION, 1).is_ok()
+        );
+        assert!(matches!(
+            assert_post_restart_vector_residency(VectorBackend::FlatCpu, HOT_COLLECTION, 1),
+            Err(HarnessError::DataInvariant(_))
+        ));
+        assert!(matches!(
+            assert_post_restart_vector_residency(VectorBackend::HnswCpu, HOT_COLLECTION, 0),
+            Err(HarnessError::DataInvariant(_))
+        ));
+    }
+
+    #[test]
+    fn post_restart_backend_residency_rejects_missing_or_unknown_stats() {
+        let valid = json!({
+            "fields": {
+                "embedding": { "type": "vector", "bytes": 0 }
+            }
+        });
+        assert_eq!(
+            post_restart_vector_bytes(HOT_COLLECTION, &valid).unwrap(),
+            0
+        );
+
+        for stats in [
+            json!({}),
+            json!({ "fields": {} }),
+            json!({ "fields": { "embedding": { "type": "keyword", "bytes": 0 } } }),
+            json!({ "fields": { "embedding": { "type": "vector" } } }),
+            json!({ "fields": { "embedding": { "type": "vector", "bytes": "0" } } }),
+            json!({ "fields": { "embedding": { "type": "vector", "bytes": -1 } } }),
+        ] {
+            assert!(matches!(
+                post_restart_vector_bytes(HOT_COLLECTION, &stats),
+                Err(HarnessError::DataInvariant(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn post_restart_backend_residency_covers_every_fixed_collection_and_vector_field() {
+        let collections = workload_collections().collect::<Vec<_>>();
+        assert_eq!(collections.len(), IDLE_COLLECTIONS + 1);
+        assert_eq!(
+            collections.first().map(String::as_str),
+            Some(HOT_COLLECTION)
+        );
+        assert_eq!(
+            collections.last().map(String::as_str),
+            Some("perf-idle-180")
+        );
+        assert_eq!(
+            collections.iter().collect::<BTreeSet<_>>().len(),
+            collections.len(),
+            "every workload collection needs one distinct post-restart observation"
+        );
+
+        let schema = schema(VectorBackend::FlatCpu);
+        let fields = schema["fields"]
+            .as_object()
+            .expect("fixed workload schema has fields");
+        let vector_fields = fields
+            .iter()
+            .filter_map(|(name, spec)| {
+                (spec["type"].as_str() == Some("vector")).then_some(name.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            vector_fields,
+            vec![WORKLOAD_VECTOR_FIELD],
+            "a new workload vector field needs an explicit post-restart backend attestation"
+        );
+    }
+
+    #[cfg(test)]
+    struct FakeEvidenceRunner {
+        results: VecDeque<std::result::Result<String, String>>,
+        events: Arc<StdMutex<Vec<String>>>,
+    }
+
+    #[cfg(test)]
+    #[async_trait]
+    impl EvidenceCommandRunner for FakeEvidenceRunner {
+        async fn run(&mut self, args: Vec<String>) -> std::result::Result<String, String> {
+            self.events
+                .lock()
+                .expect("record fake evidence command")
+                .push(format!("docker {}", args.join(" ")));
+            self.results
+                .pop_front()
+                .expect("fake evidence runner has one result per collection command")
+        }
+    }
+
+    #[cfg(test)]
+    struct FakeFailureProbe {
+        metrics: Option<std::result::Result<String, String>>,
+        hot_stats: Option<std::result::Result<String, String>>,
+        events: Arc<StdMutex<Vec<String>>>,
+    }
+
+    #[cfg(test)]
+    #[async_trait]
+    impl FailureProbe for FakeFailureProbe {
+        async fn metrics(&mut self) -> std::result::Result<String, String> {
+            self.events
+                .lock()
+                .expect("record fake metrics probe")
+                .push("GET /metrics".to_owned());
+            self.metrics
+                .take()
+                .expect("fake metrics probe has one result")
+        }
+
+        async fn hot_stats(&mut self) -> std::result::Result<String, String> {
+            self.events
+                .lock()
+                .expect("record fake hot-stats probe")
+                .push("GET /collections/perf-hot/stats".to_owned());
+            self.hot_stats
+                .take()
+                .expect("fake hot-stats probe has one result")
+        }
+    }
+
+    #[cfg(test)]
+    struct FakeCleanupRunner {
+        events: Arc<StdMutex<Vec<String>>>,
+    }
+
+    #[cfg(test)]
+    impl CleanupCommandRunner for FakeCleanupRunner {
+        fn run_cleanup(&mut self, args: Vec<String>) {
+            self.events
+                .lock()
+                .expect("record fake cleanup command")
+                .push(format!("docker {}", args.join(" ")));
+        }
+    }
+
+    #[cfg(test)]
+    async fn read_in_memory_evidence(
+        bytes: Vec<u8>,
+        limit: usize,
+        retention: EvidenceRetention,
+    ) -> BoundedEvidence {
+        let (mut writer, reader) = tokio::io::duplex(8_192);
+        let writer_task = async move {
+            writer
+                .write_all(&bytes)
+                .await
+                .expect("write in-memory evidence");
+            writer.shutdown().await.expect("close in-memory evidence");
+        };
+        let (evidence, ()) = tokio::join!(read_bounded_reader(reader, limit, retention), writer_task);
+        evidence.expect("read bounded in-memory evidence")
+    }
+
+    #[test]
+    fn bounded_failure_streams_keep_success_stderr_and_http_bodies_small() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build bounded evidence unit-test runtime");
+        runtime.block_on(async {
+            let mut stdout_bytes = b"stdout diagnostic line\n".to_vec();
+            stdout_bytes.extend(vec![b'o'; EVIDENCE_COMMAND_CHANNEL_MAX_BYTES]);
+            let mut stderr_bytes = b"stderr tracing line\n".to_vec();
+            stderr_bytes.extend(vec![b'e'; EVIDENCE_COMMAND_CHANNEL_MAX_BYTES]);
+            let stdout = read_in_memory_evidence(
+                stdout_bytes,
+                EVIDENCE_COMMAND_CHANNEL_MAX_BYTES,
+                EvidenceRetention::Prefix,
+            )
+            .await;
+            let stderr = read_in_memory_evidence(
+                stderr_bytes,
+                EVIDENCE_COMMAND_CHANNEL_MAX_BYTES,
+                EvidenceRetention::Prefix,
+            )
+            .await;
+            assert_eq!(stdout.retained.len(), EVIDENCE_COMMAND_CHANNEL_MAX_BYTES);
+            assert_eq!(stderr.retained.len(), EVIDENCE_COMMAND_CHANNEL_MAX_BYTES);
+            assert!(stdout.total_bytes > stdout.retained.len() as u64);
+            assert!(stderr.total_bytes > stderr.retained.len() as u64);
+            assert!(stdout.truncated);
+            assert!(stderr.truncated);
+
+            let command = command_result(
+                "logs --tail 2000 container-under-test",
+                true,
+                "exit status: 0",
+                stdout,
+                stderr,
+            )
+            .expect("successful docker logs retains both streams");
+            assert!(command.contains("[stdout]"));
+            assert!(command.contains("[stderr]"));
+            assert!(command.contains("stderr tracing line"));
+            assert!(command.contains("[stdout truncated after retaining"));
+            assert!(command.contains("[stderr truncated after retaining"));
+            assert!(
+                command.len() <= EVIDENCE_ARTIFACT_MAX_BYTES,
+                "combined successful stdout and stderr stay bounded before artifact writing"
+            );
+
+            let http_chunks = futures::stream::iter(vec![
+                Ok::<Vec<u8>, String>(b"http diagnostic body\n".to_vec()),
+                Ok(vec![b'h'; EVIDENCE_HTTP_BODY_MAX_BYTES]),
+            ]);
+            let http = read_bounded_chunks(
+                http_chunks,
+                EVIDENCE_HTTP_BODY_MAX_BYTES,
+                |error| error,
+            )
+            .await
+            .expect("stream bounded HTTP evidence");
+            assert_eq!(http.retained.len(), EVIDENCE_HTTP_BODY_MAX_BYTES);
+            assert!(http.total_bytes > http.retained.len() as u64);
+            assert!(http.truncated);
+            let rendered_http = http.render("body");
+            assert!(rendered_http.contains("http diagnostic body"));
+            assert!(rendered_http.contains("[body truncated after retaining"));
+            assert!(
+                rendered_http.len() <= EVIDENCE_ARTIFACT_MAX_BYTES,
+                "streamed HTTP evidence stays bounded before artifact writing"
+            );
+        });
+    }
+
+    #[test]
+    fn docker_log_tail_keeps_final_stdout_and_stderr_within_artifact_cap() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tail evidence unit-test runtime");
+        runtime.block_on(async {
+            let mut stdout_bytes = b"stdout early marker must be omitted\n".to_vec();
+            stdout_bytes.extend(vec![b'o'; EVIDENCE_COMMAND_CHANNEL_MAX_BYTES]);
+            stdout_bytes.extend_from_slice(b"\nstdout final timeout marker\n");
+            let mut stderr_bytes = b"stderr early marker must be omitted\n".to_vec();
+            stderr_bytes.extend(vec![b'e'; EVIDENCE_COMMAND_CHANNEL_MAX_BYTES]);
+            stderr_bytes.extend_from_slice(b"\nstderr final timeout marker\n");
+            let retention = docker_evidence_retention(&[
+                "logs".to_owned(),
+                "--tail".to_owned(),
+                EVIDENCE_LOG_TAIL_LINES.to_owned(),
+                "container-under-test".to_owned(),
+            ]);
+            assert_eq!(
+                docker_evidence_retention(&[
+                    "inspect".to_owned(),
+                    "container-under-test".to_owned(),
+                ]),
+                EvidenceRetention::Prefix,
+                "non-log docker evidence keeps the existing prefix retention"
+            );
+
+            let stdout = read_in_memory_evidence(
+                stdout_bytes,
+                EVIDENCE_COMMAND_CHANNEL_MAX_BYTES,
+                retention,
+            )
+            .await;
+            let stderr = read_in_memory_evidence(
+                stderr_bytes,
+                EVIDENCE_COMMAND_CHANNEL_MAX_BYTES,
+                retention,
+            )
+            .await;
+            let command = command_result(
+                "logs --tail 2000 container-under-test",
+                true,
+                "exit status: 0",
+                stdout,
+                stderr,
+            )
+            .expect("successful docker logs retain both evidence channels");
+            let artifact = bounded_evidence_text(&command);
+            assert_eq!(
+                artifact, command,
+                "the final artifact writer preserves the already bounded docker log tail"
+            );
+
+            assert!(
+                artifact.contains("stdout final timeout marker"),
+                "docker log evidence keeps the final stdout line near the timeout"
+            );
+            assert!(
+                artifact.contains("stderr final timeout marker"),
+                "docker log evidence keeps the final stderr line near the timeout"
+            );
+            assert!(
+                !artifact.contains("stdout early marker must be omitted"),
+                "docker log tail omits stale stdout head data"
+            );
+            assert!(
+                !artifact.contains("stderr early marker must be omitted"),
+                "docker log tail omits stale stderr head data"
+            );
+            assert!(
+                artifact.contains("[stdout tail]"),
+                "docker log stdout carries tail provenance"
+            );
+            assert!(
+                artifact.contains("[stderr tail]"),
+                "docker log stderr carries tail provenance"
+            );
+            assert!(
+                artifact.len() <= EVIDENCE_ARTIFACT_MAX_BYTES,
+                "docker log tail stays within the existing artifact cap"
+            );
+        });
+    }
+
+    #[test]
+    fn failure_evidence_keeps_request_chain_and_collects_before_cleanup() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build evidence unit-test runtime");
+        runtime.block_on(async {
+            let root = tempfile::tempdir().expect("create evidence unit-test directory");
+            let error = HarnessError::RequestFailure(RequestFailure {
+                display: "error sending request for url (http://127.0.0.1:7373/collections/perf-hot/index)"
+                    .to_owned(),
+                source_chain: vec![
+                    "error sending request for url (http://127.0.0.1:7373/collections/perf-hot/index)"
+                        .to_owned(),
+                    "connection reset by peer".to_owned(),
+                ],
+                is_timeout: true,
+                is_connect: false,
+                is_request: false,
+                is_body: false,
+                is_decode: false,
+                context: None,
+            });
+            let evidence = FailureEvidenceDirectory::create_in(
+                root.path(),
+                "container-under-test",
+                "volume-under-test",
+                &error,
+            )
+            .expect("create fake evidence directory");
+            let events = Arc::new(StdMutex::new(Vec::new()));
+            let mut runner = FakeEvidenceRunner {
+                results: VecDeque::from([
+                    Ok("last retained log line\n".to_owned()),
+                    Err("inspect endpoint refused connection".to_owned()),
+                ]),
+                events: Arc::clone(&events),
+            };
+            let mut probe = FakeFailureProbe {
+                metrics: Some(Ok("current metric sample\n".to_owned())),
+                hot_stats: Some(Err("hot stats endpoint refused connection".to_owned())),
+                events: Arc::clone(&events),
+            };
+            let mut cleanup_runner = FakeCleanupRunner { events: Arc::clone(&events) };
+
+            finish_failed_docker_run(
+                &evidence,
+                &mut runner,
+                &mut probe,
+                &mut cleanup_runner,
+                "container-under-test",
+                "volume-under-test",
+                "record=0 elapsed_ms=0 endpoint=POST /collections/perf-hot/index identifier=request_id=1 status=none timeout=true connect=false request=false body_err=false decode=false\n",
+            )
+            .await;
+
+            let actual_events = events
+                .lock()
+                .expect("read fake failure order")
+                .clone();
+            assert_eq!(
+                actual_events,
+                vec![
+                    format!(
+                        "docker logs --tail {} container-under-test",
+                        EVIDENCE_LOG_TAIL_LINES
+                    ),
+                    "docker inspect container-under-test".to_owned(),
+                    "GET /metrics".to_owned(),
+                    "GET /collections/perf-hot/stats".to_owned(),
+                    "docker rm -f container-under-test".to_owned(),
+                    "docker volume rm -f volume-under-test".to_owned(),
+                ],
+                "the production failure finalizer must retain every probe before cleanup removes the run-owned resources"
+            );
+            assert_eq!(
+                fs::read_to_string(evidence.path.join("docker-logs.txt"))
+                    .expect("read retained log evidence"),
+                "last retained log line\n"
+            );
+            assert!(
+                fs::read_to_string(evidence.path.join("docker-inspect.json"))
+                    .expect("read retained inspect error")
+                    .contains("ERROR: inspect endpoint refused connection"),
+                "a failed evidence command must be retained instead of replacing the original failure"
+            );
+            assert_eq!(
+                fs::read_to_string(evidence.path.join("metrics.txt"))
+                    .expect("read retained metrics evidence"),
+                "current metric sample\n"
+            );
+            assert!(
+                fs::read_to_string(evidence.path.join("hot-stats.json"))
+                    .expect("read retained hot-stats error")
+                    .contains("ERROR: hot stats endpoint refused connection")
+            );
+            evidence.record_result(
+                "bounded-artifact.txt",
+                Ok("x".repeat(EVIDENCE_ARTIFACT_MAX_BYTES + 1)),
+            );
+            let bounded = fs::read_to_string(evidence.path.join("bounded-artifact.txt"))
+                .expect("read bounded evidence artifact");
+            assert!(bounded.contains("[truncated after"));
+            assert!(
+                bounded.len() < EVIDENCE_ARTIFACT_MAX_BYTES + 128,
+                "an untrusted Docker or HTTP response must not create an unbounded artifact"
+            );
+            let failure = fs::read_to_string(evidence.path.join("failure.txt"))
+                .expect("read retained original failure");
+            assert!(failure.contains("original_error_display=HTTP workload request failed:"));
+            assert!(failure.contains("request_timeout=true"));
+            assert!(failure.contains("request_connect=false"));
+            assert!(failure.contains("connection reset by peer"));
+        });
+    }
+
+    #[cfg(test)]
+    async fn closed_port_base_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a port to synthesize a connect error");
+        let address = listener
+            .local_addr()
+            .expect("read the synthetic closed-port address");
+        // Drop the listener immediately: nothing accepts on `address` from
+        // here on, so a client that dials it observes a real OS-level
+        // connection refusal instead of a fabricated error value.
+        drop(listener);
+        format!("http://{address}")
+    }
+
+    #[cfg(test)]
+    async fn fake_non_success_handler(
+        axum::extract::State(body): axum::extract::State<String>,
+    ) -> (axum::http::StatusCode, String) {
+        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body)
+    }
+
+    #[cfg(test)]
+    async fn fake_non_success_server(body: String) -> (String, tokio::sync::oneshot::Sender<()>) {
+        let app = axum::Router::new()
+            .route(
+                "/collections/perf-hot/index",
+                axum::routing::post(fake_non_success_handler),
+            )
+            .with_state(body);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake non-success server listener");
+        let address = listener
+            .local_addr()
+            .expect("read fake non-success server listener address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve fake non-success server");
+        });
+        (format!("http://{address}"), shutdown_tx)
+    }
+
+    #[test]
+    fn journal_records_a_real_reqwest_connect_error_with_full_chain() {
+        //! # Facets
+        //!
+        //! - Behavior: this test drives a real `reqwest` connect failure
+        //!   through the production `post_json` and `record_request_error`
+        //!   path and asserts the journaled `RequestErrorRecord` carries a
+        //!   multi-level `source_chain` and `is_connect=true`
+        //!   (`apps/lumen/e2e/perf_gate.rs:5535`, `:5539`) — the exact
+        //!   evidence the Goal's two undiagnosed 30-minute cells lacked.
+        //!   Behavior is also carried by
+        //!   `request_error_journal_lands_in_the_failure_evidence_bundle`,
+        //!   which proves the same journal reaches `request-errors.txt`
+        //!   through `finish_failed_docker_run`
+        //!   (`apps/lumen/e2e/perf_gate.rs:1863`) and asserts the on-disk
+        //!   bytes equal the rendered journal and contain the endpoint,
+        //!   identifier, and error text
+        //!   (`apps/lumen/e2e/perf_gate.rs:5608-5611`).
+        //! - Security: the change opens two new boundaries on data a peer
+        //!   (the Lumen container under test) supplies and this harness now
+        //!   persists to disk instead of discarding — a non-2xx response
+        //!   body (`post_json`'s new branch,
+        //!   `apps/lumen/e2e/perf_gate.rs:2552`) and the count of
+        //!   failed-request records (`RequestErrorJournal::push`'s cap
+        //!   check, `apps/lumen/e2e/perf_gate.rs:1742`). Both are closed by
+        //!   a bound:
+        //!   `non_success_status_record_carries_status_and_a_truncated_body`
+        //!   feeds a `REQUEST_ERROR_BODY_MAX_BYTES + 200`-byte untrusted
+        //!   body and asserts the retained record never contains the full
+        //!   body (`apps/lumen/e2e/perf_gate.rs:5672`), only the
+        //!   `truncate_evidence_body`-bounded form
+        //!   (`apps/lumen/e2e/perf_gate.rs:1764`);
+        //!   `request_error_journal_caps_entries_and_counts_the_overflow`
+        //!   feeds `REQUEST_ERROR_JOURNAL_CAP + 5` failures and asserts the
+        //!   journal stops growing at the cap and only counts the rest in
+        //!   `overflow` (`apps/lumen/e2e/perf_gate.rs:5631-5632`).
+        //! - Performance: every request this change touches (`post_json`,
+        //!   `send_index`/`send_replace`/`send_unindex`/`send_query`)
+        //!   already runs under the unchanged `REQUEST_TIMEOUT` budget
+        //!   (`apps/lumen/e2e/perf_gate.rs:821`, `Duration::from_secs(5)`),
+        //!   which the declared gate `cargo test --release --locked -p
+        //!   lumen --test perf_gate -- --ignored --test-threads=1
+        //!   --nocapture` (`apps/lumen/README.md:253`) already measures end
+        //!   to end through
+        //!   `durable_workload::approved_30_minute_durable_workload`. This
+        //!   change adds only O(1) bookkeeping on a request whose outcome
+        //!   is already decided (`record_request_error` runs after
+        //!   `post_json` returns) and preserves the exact single outer
+        //!   `tokio::time::timeout(REQUEST_TIMEOUT, ..)` that already wraps
+        //!   the whole round trip
+        //!   (`apps/lumen/e2e/perf_gate.rs:2544`), so no new user-waited
+        //!   path opens; the existing gate is the account and no new case
+        //!   is added.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build connect-error unit-test runtime");
+        runtime.block_on(async {
+            let base = closed_port_base_url().await;
+            let client = reqwest::Client::builder()
+                .build()
+                .expect("build closed-port client");
+            let request = client
+                .post(format!("{base}/collections/perf-hot/index"))
+                .json(&json!({}));
+            let failure = post_json(request)
+                .await
+                .expect_err("a closed port must classify as a PostJsonFailure");
+            assert!(
+                failure.error.is_connect,
+                "a refused TCP connect must classify as is_connect=true, got {failure:?}"
+            );
+            assert_eq!(failure.outcome, Outcome::Failed);
+
+            let journal = Arc::new(Mutex::new(RequestErrorJournal::default()));
+            let outcome = record_request_error(
+                &journal,
+                Duration::from_millis(1),
+                "POST /collections/perf-hot/index".to_owned(),
+                "request_id=1".to_owned(),
+                failure,
+            )
+            .await;
+            assert_eq!(outcome, Outcome::Failed);
+
+            let guard = journal.lock().await;
+            assert_eq!(guard.records.len(), 1);
+            let record = &guard.records[0];
+            assert!(
+                record.error.source_chain.len() >= 2,
+                "a real reqwest connect error must carry the top display plus at least one nested source, got {:?}",
+                record.error.source_chain
+            );
+            assert!(record.error.is_connect);
+            assert_eq!(record.endpoint, "POST /collections/perf-hot/index");
+            assert_eq!(record.identifier, "request_id=1");
+        });
+    }
+
+    /// Proves the journal reaches disk through the shared
+    /// `finish_failed_docker_run` finish path, following the fake-runner
+    /// pattern in `failure_evidence_keeps_request_chain_and_collects_before_cleanup`.
+    #[test]
+    fn request_error_journal_lands_in_the_failure_evidence_bundle() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build request-error evidence unit-test runtime");
+        runtime.block_on(async {
+            let root = tempfile::tempdir().expect("create request-error unit-test directory");
+            let error = HarnessError::RequestFailure(RequestFailure::synthetic(
+                "error sending request for url (http://127.0.0.1:7373/collections/perf-hot/index)"
+                    .to_owned(),
+                false,
+            ));
+            let evidence = FailureEvidenceDirectory::create_in(
+                root.path(),
+                "container-under-test",
+                "volume-under-test",
+                &error,
+            )
+            .expect("create fake evidence directory");
+            let events = Arc::new(StdMutex::new(Vec::new()));
+            let mut runner = FakeEvidenceRunner {
+                results: VecDeque::from([
+                    Ok("last retained log line\n".to_owned()),
+                    Ok("inspect ok\n".to_owned()),
+                ]),
+                events: Arc::clone(&events),
+            };
+            let mut probe = FakeFailureProbe {
+                metrics: Some(Ok("current metric sample\n".to_owned())),
+                hot_stats: Some(Ok("hot stats ok\n".to_owned())),
+                events: Arc::clone(&events),
+            };
+            let mut cleanup_runner = FakeCleanupRunner {
+                events: Arc::clone(&events),
+            };
+            let mut journal = RequestErrorJournal::default();
+            journal.push(RequestErrorRecord {
+                elapsed_since_clock_start: Duration::from_secs(42),
+                endpoint: "POST /collections/perf-hot/index".to_owned(),
+                identifier: "request_id=7".to_owned(),
+                error: RequestFailure::synthetic("connection reset by peer".to_owned(), false),
+                status: None,
+                body: None,
+            });
+            let request_error_report = render_request_error_journal(&journal);
+
+            finish_failed_docker_run(
+                &evidence,
+                &mut runner,
+                &mut probe,
+                &mut cleanup_runner,
+                "container-under-test",
+                "volume-under-test",
+                &request_error_report,
+            )
+            .await;
+
+            let on_disk = fs::read_to_string(evidence.path.join("request-errors.txt"))
+                .expect("read retained request-error journal");
+            assert_eq!(on_disk, request_error_report);
+            assert!(on_disk.contains("endpoint=POST /collections/perf-hot/index"));
+            assert!(on_disk.contains("identifier=request_id=7"));
+            assert!(on_disk.contains("connection reset by peer"));
+        });
+    }
+
+    /// The bounded journal must stop growing at the cap and only count the
+    /// rest, so a pathological run cannot make the evidence bundle grow
+    /// without limit.
+    #[test]
+    fn request_error_journal_caps_entries_and_counts_the_overflow() {
+        let mut journal = RequestErrorJournal::default();
+        for index in 0..REQUEST_ERROR_JOURNAL_CAP + 5 {
+            journal.push(RequestErrorRecord {
+                elapsed_since_clock_start: Duration::from_millis(index as u64),
+                endpoint: "POST /collections/perf-hot/index".to_owned(),
+                identifier: format!("request_id={index}"),
+                error: RequestFailure::synthetic("connection reset by peer".to_owned(), false),
+                status: None,
+                body: None,
+            });
+        }
+        assert_eq!(journal.records.len(), REQUEST_ERROR_JOURNAL_CAP);
+        assert_eq!(journal.overflow, 5);
+        let rendered = render_request_error_journal(&journal);
+        assert!(rendered.contains("overflow=5"));
+    }
+
+    /// A non-2xx workload response is untrusted peer output; the retained
+    /// record must carry the status and a bounded body, never the whole
+    /// untrusted response.
+    #[test]
+    fn non_success_status_record_carries_status_and_a_truncated_body() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build non-success status unit-test runtime");
+        runtime.block_on(async {
+            let oversized_body = "e".repeat(REQUEST_ERROR_BODY_MAX_BYTES + 200);
+            let (base, shutdown) = fake_non_success_server(oversized_body.clone()).await;
+            let client = reqwest::Client::builder()
+                .build()
+                .expect("build fake non-success client");
+            let request = client
+                .post(format!("{base}/collections/perf-hot/index"))
+                .json(&json!({}));
+            let failure = post_json(request)
+                .await
+                .expect_err("a non-2xx workload response must classify as a PostJsonFailure");
+            let _ = shutdown.send(());
+            assert_eq!(failure.status, Some(500));
+            let body = failure
+                .body
+                .expect("a non-2xx failure must carry a captured response body");
+            assert!(
+                body.len() <= REQUEST_ERROR_BODY_MAX_BYTES + 64,
+                "the retained body must stay bounded, got {} bytes",
+                body.len()
+            );
+            assert!(body.contains(&format!(
+                "[truncated after {REQUEST_ERROR_BODY_MAX_BYTES} bytes]"
+            )));
+            assert!(
+                !body.contains(&oversized_body),
+                "the retained body must never carry the full untrusted response"
+            );
+        });
+    }
+
+    #[test]
+    fn qualifying_matrix_keeps_every_mutation_endpoint_and_backend() {
+        let cases = qualifying_matrix();
+        assert_eq!(cases.len(), 16);
+        assert_eq!(FIELD_COUNT, 14);
+        assert_eq!(INPUT_SECONDS, 30 * 60);
+        assert_eq!(DOCOPS_PER_SECOND, 100);
+        assert_eq!(QUERY_QPS, 10);
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|case| case.primary_endpoint == Endpoint::Index)
+                .count(),
+            6,
+            "three Index batch cells run for both backends"
+        );
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|case| case.primary_endpoint == Endpoint::Replace)
+                .count(),
+            4,
+            "two Replace batch cells run for both backends"
+        );
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|case| case.primary_endpoint == Endpoint::Unindex)
+                .count(),
+            6,
+            "three Unindex batch cells run for both backends"
+        );
+        assert_eq!(INPUT_SECONDS % 3, 0);
+        assert_eq!(
+            INPUT_SECONDS / 3 * DOCOPS_PER_SECOND as u64,
+            60_000,
+            "each qualifying cell has equal 60,000-operation add, update, and delete thirds"
+        );
+    }
+}
+// DURABLE-WORKLOAD-END
 // CODEGEN-END

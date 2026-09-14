@@ -48,16 +48,28 @@ pub mod auth;
 #[cfg(feature = "backup")]
 pub mod backup;
 pub mod backup_sink;
+mod capture_barrier;
+mod change_admission;
+mod change_budget;
+mod change_journal;
+mod change_memory_cost;
+mod change_record_cost;
+mod committed_record_codec;
+mod committed_stage;
+mod composed_segment;
 pub mod config;
 pub mod consumer;
 pub mod coordinator;
 pub mod dx;
+#[cfg(not(feature = "jieba"))]
+mod jieba_fallback_stream;
 /// Write-log entry vocabulary (always compiled; the active write path uses it).
 pub mod log_entry;
 pub mod metrics;
 /// Native length-prefixed CBOR search wire for Rust clients that need the engine
 /// over a lower fixed-cost transport than HTTP/JSON.
 pub mod native_wire;
+mod ngram_stream;
 /// K8s Operator: the `Lumen` CRD plus the reconcile loop that renders + applies
 /// the Lumen serving/data-plane resources. The CRD and reconcile loop are behind
 /// the `operator` feature so the serving binary never pulls in kube-rs; pure
@@ -88,6 +100,8 @@ pub mod routing_remote;
 /// reads. Compiled by default; the disk tier is selected at runtime
 /// (`--persistence=segment`), with the in-RAM CBOR RDB remaining the default.
 mod segment;
+mod segment_capacity;
+pub mod segment_checkpoint;
 /// Segment-checkpoint persistence store (Stage 2 Phase 2f-2): the disk engine
 /// as the running binary's "RDB" — a generation-versioned directory of per-
 /// collection segment checkpoints, written atomically (stage + rename) so a torn
@@ -106,7 +120,8 @@ pub mod tokenize;
 pub mod types;
 pub mod vector_index;
 pub mod wal;
-pub mod wal_nats;
+mod wal_source_stage;
+mod wal_wire_cost;
 
 /// Product-neutral text-index contracts used by Lumen and other products.
 /// Lumen keeps its existing public collection API and storage engine.
