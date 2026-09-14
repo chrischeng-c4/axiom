@@ -63,9 +63,7 @@ PROJECTS: Tuple[Tuple[str, str], ...] = tuple(
 )
 
 CODEX_DEFAULT_MODEL = "gpt-5.6-terra"
-# A generated role remains read-only until the runtime proves an isolated
-# writable environment. Permission profiles are activated outside this renderer.
-CODEX_SANDBOX = "read-only"
+READ_ONLY_ROLES = ("cto", "integration-qa")
 PLACEHOLDER = "{project}"
 
 _FRONTMATTER_LINE = re.compile(r"^(name|description|effort):[ \t]*(.*?)[ \t]*$")
@@ -89,6 +87,10 @@ def claude_agents_dir(root: Path) -> Path:
 
 def codex_agents_dir(root: Path) -> Path:
     return root / ".codex" / "agents"
+
+
+def singleton_templates_dir(root: Path) -> Path:
+    return root / "scripts" / "agents" / "singletons"
 
 
 def project_roles(tier: str, name: str) -> Tuple[str, ...]:
@@ -156,7 +158,7 @@ def toml_projection(markdown: str, source: str) -> str:
         f"description = {json.dumps(fields['description'])}\n"
         f"model = {json.dumps(model)}\n"
         f"model_reasoning_effort = {json.dumps(fields['effort'])}\n"
-        f"sandbox_mode = {json.dumps(CODEX_SANDBOX)}\n"
+        f"sandbox_mode = {json.dumps(codex_sandbox(name))}\n"
         f"nickname_candidates = [{json.dumps(name)}, "
         f"{json.dumps(name.replace('-', '_'))}]\n"
         "\n"
@@ -175,6 +177,17 @@ def codex_model(name: str) -> str:
     if name.endswith("-qa") or name.endswith("-dev"):
         return "gpt-5.6-luna"
     return CODEX_DEFAULT_MODEL
+
+
+def codex_sandbox(name: str) -> str:
+    """Return the active prompt-only fleet's least broad role mode.
+
+    The mode is a desktop sandbox default. It does not enforce the role's
+    assigned project paths; those remain controller and prompt boundaries.
+    """
+    if name in READ_ONLY_ROLES or name.endswith("-pm") or name.endswith("-tl"):
+        return "read-only"
+    return "workspace-write"
 
 
 def expected_files(root: Path) -> Dict[Path, str]:
@@ -198,6 +211,26 @@ def expected_files(root: Path) -> Dict[Path, str]:
             text, f"{agent}.md"
         )
     return expected
+
+
+def expected_codex_files(root: Path) -> Dict[Path, str]:
+    """Return active Codex role files without changing Claude's fleet."""
+    markdown = rendered_agents(root)
+    for path in sorted(claude_agents_dir(root).glob("*.md")):
+        agent = path.stem
+        if agent not in markdown:
+            markdown[agent] = path.read_text(encoding="utf-8")
+    for path in sorted(singleton_templates_dir(root).glob("*.md")):
+        agent = path.stem
+        if agent in markdown:
+            raise RenderError(f"duplicate Codex singleton source: {agent}")
+        markdown[agent] = path.read_text(encoding="utf-8")
+    return {
+        codex_agents_dir(root) / f"{agent}.toml": toml_projection(
+            text, f"{agent}.md"
+        )
+        for agent, text in markdown.items()
+    }
 
 
 def stray_projections(root: Path, expected: Iterable[Path]) -> List[Path]:
@@ -224,6 +257,18 @@ def check(root: Path) -> List[str]:
     return findings
 
 
+def check_codex(root: Path) -> List[str]:
+    """Return Codex-role divergences without treating Claude files as outputs."""
+    findings: List[str] = []
+    for path, content in sorted(expected_codex_files(root).items()):
+        rel = path.relative_to(root)
+        if not path.is_file():
+            findings.append(f"missing: {rel}")
+        elif path.read_text(encoding="utf-8") != content:
+            findings.append(f"differs: {rel}")
+    return findings
+
+
 def write(root: Path) -> List[str]:
     """Make the tree match; return one line per path written or removed."""
     expected = expected_files(root)
@@ -240,6 +285,18 @@ def write(root: Path) -> List[str]:
     return actions
 
 
+def write_codex(root: Path) -> List[str]:
+    """Write active Codex roles only; preserve Claude and extra Codex files."""
+    actions: List[str] = []
+    for path, content in sorted(expected_codex_files(root).items()):
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        actions.append(f"wrote: {path.relative_to(root)}")
+    return actions
+
+
 def main(argv: Iterable[str] = ()) -> int:
     parser = argparse.ArgumentParser(
         description="Render the per-project agent fleet and its Codex projection."
@@ -249,6 +306,10 @@ def main(argv: Iterable[str] = ()) -> int:
                       help="report divergences and exit 1 on any; write nothing")
     mode.add_argument("--write", action="store_true",
                       help="write every owned file and remove stray projections")
+    mode.add_argument("--check-codex", action="store_true",
+                      help="report active Codex role divergences; write nothing")
+    mode.add_argument("--write-codex", action="store_true",
+                      help="write active Codex roles only; preserve Claude files")
     parser.add_argument("--root", type=Path, default=repo_root(),
                         help="repository root (default: this checkout)")
     args = parser.parse_args(list(argv) or None)
@@ -264,6 +325,21 @@ def main(argv: Iterable[str] = ()) -> int:
                       file=sys.stderr)
                 return 1
             print("render_fleet: fleet matches its templates")
+            return 0
+        if args.check_codex:
+            findings = check_codex(root)
+            for line in findings:
+                print(line)
+            if findings:
+                print(f"render_fleet: {len(findings)} Codex divergence(s); "
+                      "run scripts/agents/render_fleet.py --write-codex",
+                      file=sys.stderr)
+                return 1
+            print("render_fleet: Codex fleet matches its templates")
+            return 0
+        if args.write_codex:
+            for line in write_codex(root):
+                print(line)
             return 0
         for line in write(root):
             print(line)

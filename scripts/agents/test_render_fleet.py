@@ -21,7 +21,12 @@ sys.modules[SPEC.name] = render_fleet
 SPEC.loader.exec_module(render_fleet)
 
 REPO = Path(__file__).resolve().parents[2]
-OWNED_DIRS = (".claude/agents", ".codex/agents", "scripts/agents/templates")
+OWNED_DIRS = (
+    ".claude/agents",
+    ".codex/agents",
+    "scripts/agents/templates",
+    "scripts/agents/singletons",
+)
 
 
 def copy_tree() -> Path:
@@ -50,17 +55,15 @@ class RenderFleetTests(unittest.TestCase):
         render_fleet.write(self.tmp)
         self.assertEqual(render_fleet.check(self.tmp), [])
 
-    # -- inactive source and disposable candidate ---------------------------
+    # -- active Codex source and disposable full candidate ------------------
 
-    def test_repo_tree_remains_inactive(self) -> None:
-        findings = render_fleet.check(REPO)
-        self.assertIn("missing: .claude/agents/lumen-tl.md", findings)
-        self.assertIn("differs: .claude/agents/lumen-dev.md", findings)
+    def test_repo_codex_tree_matches_templates(self) -> None:
+        self.assertEqual(render_fleet.check_codex(REPO), [])
 
-    def test_cli_check_reports_inactive_repo(self) -> None:
-        result = run_cli(REPO, "--check")
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("missing: .claude/agents/lumen-tl.md", result.stdout)
+    def test_cli_check_codex_passes_on_repo(self) -> None:
+        result = run_cli(REPO, "--check-codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Codex fleet matches", result.stdout)
 
     def test_disposable_candidate_matches_templates(self) -> None:
         self.render_candidate()
@@ -80,13 +83,24 @@ class RenderFleetTests(unittest.TestCase):
         self.assertIn("build-stamp-pm", rendered)
 
     def test_singletons_are_projected_not_rewritten(self) -> None:
-        expected = render_fleet.expected_files(REPO)
-        agents = render_fleet.claude_agents_dir(REPO)
+        expected = render_fleet.expected_codex_files(REPO)
         codex = render_fleet.codex_agents_dir(REPO)
         for singleton in ("aw-dev", "gke-operator", "agy-operator", "cto",
-                          "project-manager", "tech-design"):
-            self.assertNotIn(agents / f"{singleton}.md", expected)
+                          "project-manager", "tech-design", "integration-qa"):
             self.assertIn(codex / f"{singleton}.toml", expected)
+
+    def test_codex_write_preserves_claude_agents(self) -> None:
+        before = {
+            path.relative_to(self.tmp): path.read_bytes()
+            for path in sorted((self.tmp / ".claude/agents").glob("*.md"))
+        }
+        render_fleet.write_codex(self.tmp)
+        after = {
+            path.relative_to(self.tmp): path.read_bytes()
+            for path in sorted((self.tmp / ".claude/agents").glob("*.md"))
+        }
+        self.assertEqual(after, before)
+        self.assertEqual(render_fleet.check_codex(self.tmp), [])
 
     def test_write_on_a_rendered_candidate_changes_nothing(self) -> None:
         self.render_candidate()
@@ -116,7 +130,7 @@ class RenderFleetTests(unittest.TestCase):
         self.assertIn('description = "Demo \\u2014 with \\"quotes\\""', toml)
         self.assertIn('model_reasoning_effort = "medium"', toml)
         self.assertIn('model = "gpt-5.6-luna"', toml)
-        self.assertIn('sandbox_mode = "read-only"', toml)
+        self.assertIn('sandbox_mode = "workspace-write"', toml)
         self.assertIn('nickname_candidates = ["demo-dev", "demo_dev"]', toml)
         self.assertTrue(toml.endswith("'''\nYou are **demo-dev** — body.\n'''\n"))
 
@@ -131,6 +145,9 @@ class RenderFleetTests(unittest.TestCase):
         self.assertEqual(render_fleet.codex_model("lumen-qa"), "gpt-5.6-luna")
         self.assertEqual(render_fleet.codex_model("lumen-dev"), "gpt-5.6-luna")
         self.assertEqual(render_fleet.codex_model("integration-qa"), "gpt-5.6-terra")
+        self.assertEqual(render_fleet.codex_sandbox("lumen-dev"), "workspace-write")
+        self.assertEqual(render_fleet.codex_sandbox("lumen-pm"), "read-only")
+        self.assertEqual(render_fleet.codex_sandbox("integration-qa"), "read-only")
 
     # -- negative controls: each divergence class is caught ------------------
 
