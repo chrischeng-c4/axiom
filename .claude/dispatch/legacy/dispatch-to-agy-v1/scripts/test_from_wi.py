@@ -16,7 +16,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-import agy_dispatch
+import dispatch_to_agy
 import from_wi
 
 FILL_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -301,9 +301,9 @@ class ProjectionTest(unittest.TestCase):
             from_wi.render_injection(self.fields),
         )
         profile = self.profile()
-        self.assertEqual(agy_dispatch.oracle_findings(profile, oracle), [])
+        self.assertEqual(dispatch_to_agy.oracle_findings(profile, oracle), [])
         self.assertEqual(
-            agy_dispatch.injection_findings(profile, injection, oracle, {}), []
+            dispatch_to_agy.injection_findings(profile, injection, oracle, {}), []
         )
 
 

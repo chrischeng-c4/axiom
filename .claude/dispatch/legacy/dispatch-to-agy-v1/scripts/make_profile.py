@@ -46,7 +46,7 @@ With no `--write`, the profile is `measure-only`. With at least one, it is
 `bounded-write` and at least one `--design-input` is required.
 
 `--root` is the *controller's* checkout. It is written to `controller_root`;
-the round's own `root` is filled in by `agy_dispatch.py worktree`, which cuts a
+the round's own `root` is filled in by `dispatch_to_agy.py worktree`, which cuts a
 branch from the controller's current `HEAD` and points the AGY Project at it.
 Protected paths are therefore emitted repo-relative so the frozen complement
 follows the round rather than the tree it was generated from.
@@ -70,6 +70,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -145,9 +146,9 @@ def dispatcher():
     a refusal the controller cannot read.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import agy_dispatch
+    import dispatch_to_agy
 
-    return agy_dispatch
+    return dispatch_to_agy
 
 
 def project_protective_rules(project_id: str) -> dict[str, list[str]]:
@@ -156,12 +157,12 @@ def project_protective_rules(project_id: str) -> dict[str, list[str]]:
     `grant` refuses a declared surface that drops a guard the recorded baseline
     held, so these have to be read the way `grant` reads them.
     """
-    agy_dispatch = dispatcher()
+    dispatch_to_agy = dispatcher()
     project = json.loads(
-        agy_dispatch.project_path_by_id(project_id).read_text()
+        dispatch_to_agy.project_path_by_id(project_id).read_text()
     )
-    surface = agy_dispatch.project_permission_surface(project)
-    return {kind: list(surface[kind]) for kind in agy_dispatch.PROTECTIVE_KINDS}
+    surface = dispatch_to_agy.project_permission_surface(project)
+    return {kind: list(surface[kind]) for kind in dispatch_to_agy.PROTECTIVE_KINDS}
 
 
 def inherited_global_allow() -> list[str]:
@@ -282,7 +283,7 @@ def main() -> int:
     ap.add_argument(
         "--root",
         help="absolute controller repository root; the round's own worktree is "
-        "derived from it by `agy_dispatch.py worktree`. Defaults to the "
+        "derived from it by `dispatch_to_agy.py worktree`. Defaults to the "
         "repository containing the current directory",
     )
     ap.add_argument(
@@ -510,13 +511,21 @@ def main() -> int:
 
     profile: dict[str, object] = {
         # `controller_root` is authored; `root` is a placeholder that
-        # `agy_dispatch.py worktree` overwrites with the round's derived
+        # `dispatch_to_agy.py worktree` overwrites with the round's derived
         # checkout. Every other verb reads `root`.
         "controller_root": str(root),
         "root": str(root),
         "repo": repo,
         "agy_project_id": project_id,
-        "state_dir": f"/tmp/agy-dispatch/{project_id}",
+        "state_dir": str(
+            Path(
+                os.environ.get(
+                    "DISPATCH_TO_AGY_STATE_ROOT",
+                    "/tmp/dispatch-to-agy",
+                )
+            ).resolve()
+            / project_id
+        ),
         "mode": "bounded-write" if writes else "measure-only",
         "task_contract": contract,
         "model": args.model,
@@ -584,7 +593,7 @@ def main() -> int:
         print("NOTE: --allow-shell left placeholder command entries; fill them in.")
     print(
         "\nnext: derive the round's worktree before anything else --\n"
-        f"  python3 {Path(__file__).resolve().parent / 'agy_dispatch.py'} "
+        f"  python3 {Path(__file__).resolve().parent / 'dispatch_to_agy.py'} "
         f"worktree {out} {task_key}"
     )
     return 0

@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import agy_dispatch  # noqa: E402
+import dispatch_to_agy  # noqa: E402
 
 # The same grammar `.claude/aw/scripts/change.py` validates -- it used to be
 # `apps/agentic-workflow/src/issues/ghan.rs`, which is deleted, and the plugin
@@ -492,7 +492,7 @@ def render_injection(fields: dict) -> str:
         task=imperative(fields["goal"]),
         current=current,
         goal=indented(fields["goal"]),
-        shape_budget=agy_dispatch.SHAPE_LINE_BUDGET,
+        shape_budget=dispatch_to_agy.SHAPE_LINE_BUDGET,
         frozen=indented(fields["frozen"]),
         reference="\n".join(
             f"| `{path}` | {why} |" for path, why in fields["references"]
@@ -595,7 +595,7 @@ def main() -> int:
 
     root = Path(args.root).resolve() if args.root else Path.cwd()
     found = subprocess.run(
-        [*agy_dispatch.GIT, "-C", str(root), "rev-parse", "--show-toplevel"],
+        [*dispatch_to_agy.GIT, "-C", str(root), "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
     )
@@ -669,8 +669,8 @@ def main() -> int:
 
     profile = json.loads(Path(profile_path).read_text())
     for path, text in (
-        (agy_dispatch.oracle_path(profile, args.issue), render_oracle(fields)),
-        (agy_dispatch.injection_path(profile, args.issue), render_injection(fields)),
+        (dispatch_to_agy.oracle_path(profile, args.issue), render_oracle(fields)),
+        (dispatch_to_agy.injection_path(profile, args.issue), render_injection(fields)),
     ):
         if path.exists():
             # The same rule `scaffold` keeps: a projection that overwrote an

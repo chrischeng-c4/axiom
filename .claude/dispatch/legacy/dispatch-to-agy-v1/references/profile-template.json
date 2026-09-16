@@ -3,7 +3,7 @@
   "root": "filled-in-by-the-worktree-verb",
   "repo": "owner/repository",
   "agy_project_id": "the-one-registered-agy-project-id-for-this-work-area",
-  "state_dir": "/tmp/agy-dispatch/registered-agy-project-id",
+  "state_dir": "/tmp/dispatch-to-agy/registered-agy-project-id",
   "mode": "measure-only",
   "task_contract": {
     "kind": "measurement",

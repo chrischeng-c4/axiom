@@ -1,11 +1,11 @@
 # Dispatcher Lifecycle
 
-This document defines the worker-independent lifecycle behind `agy-dispatch`.
+This document defines the worker-independent lifecycle behind `dispatch-to-agy`.
 AGY is the worker adapter shipped today. A future Copilot, Claude, Codex, or
 other worker adapter may replace AGY without changing the controller's task,
 evidence, acceptance, publication, or handoff semantics.
 
-The current `agy_dispatch.py` implementation is AGY-specific; this document is
+The current `dispatch_to_agy.py` implementation is AGY-specific; this document is
 the normative protocol that its behavior implements. A new worker is not
 equivalent merely because it can edit files. Its adapter must produce the same
 normalized state and evidence, or fail closed at the unsupported phase.
@@ -261,7 +261,7 @@ unrelated dirty files.
    worker scope.
 
 For AGY, the isolation scope is an AGY Project, the reserved branch namespace
-is `agy/`, and the shared state directory is `/tmp/agy-dispatch/<project-id>/`.
+is `agy/`, and the shared state directory is `/tmp/dispatch-to-agy/<project-id>/`.
 Codex and Claude reuse the same Project and state directory, and therefore must
 not run rounds against one work area concurrently.
 
@@ -336,8 +336,8 @@ Never invent missing resume state.
 For AGY the sequence is:
 
 ```bash
-python3 agy_dispatch.py doctor PROFILE
-python3 agy_dispatch.py snapshot PROFILE ISSUE
+python3 dispatch_to_agy.py doctor PROFILE
+python3 dispatch_to_agy.py snapshot PROFILE ISSUE
 ```
 
 Always take a fresh snapshot after a contract, oracle, design, permission,
@@ -395,7 +395,7 @@ Run dispatcher verification before semantic review. It must check:
 For AGY:
 
 ```bash
-python3 agy_dispatch.py verify PROFILE ISSUE
+python3 dispatch_to_agy.py verify PROFILE ISSUE
 ```
 
 `ISOLATION_VERIFIED` means only that the worker stayed inside the frozen
@@ -603,20 +603,20 @@ the UI.
 | Core concept | AGY implementation |
 |---|---|
 | Worker scope | One Gemini/AGY Project id per work area |
-| Derive + bind | `agy_dispatch.py worktree` (branch `agy/<task-key>`) |
-| Release | `agy_dispatch.py discard` (`--keep-branch` to retain the candidate) |
+| Derive + bind | `dispatch_to_agy.py worktree` (branch `agy/<task-key>`) |
+| Release | `dispatch_to_agy.py discard` (`--keep-branch` to retain the candidate) |
 | Effective permissions | Project `/permissions` plus checked Global surface |
-| Preflight | `agy_dispatch.py doctor` |
-| Baseline | `agy_dispatch.py snapshot` |
-| Start | `agy_dispatch.py dispatch` |
-| Resume | Ticketed-only `agy_dispatch.py resume` using stored conversation id |
-| Revise | One-shot `agy_dispatch.py revise` — new run id, same checkout and contract |
+| Preflight | `dispatch_to_agy.py doctor` |
+| Baseline | `dispatch_to_agy.py snapshot` |
+| Start | `dispatch_to_agy.py dispatch` |
+| Resume | Ticketed-only `dispatch_to_agy.py resume` using stored conversation id |
+| Revise | One-shot `dispatch_to_agy.py revise` — new run id, same checkout and contract |
 | Progress/terminal | Direct long-lived process and same host session polling |
 | Audit | Conversation database command requests plus filesystem snapshot |
 | Normalize | Raw log and final `## EXEC REPORT` under `state_dir/runs/` |
-| Isolation verdict | `agy_dispatch.py verify` (exit `1` VOID, `2` findings) |
-| Scope adjudication | `agy_dispatch.py review` then `accept` |
-| Ephemeral state | `/tmp/agy-dispatch/<project-id>/` |
+| Isolation verdict | `dispatch_to_agy.py verify` (exit `1` VOID, `2` findings) |
+| Scope adjudication | `dispatch_to_agy.py review` then `accept` |
+| Ephemeral state | `/tmp/dispatch-to-agy/<project-id>/` |
 
 AGY Project permissions are stable worker policy, not a task lease. Codex
 and Claude are interchangeable controllers of the same AGY Project because
