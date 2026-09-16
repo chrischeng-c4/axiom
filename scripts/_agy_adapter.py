@@ -8,34 +8,62 @@ import difflib
 import fcntl
 import hashlib
 import json
+import os
 import re
+import selectors
 import shlex
+import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+import _agy_assignment_guard as assignment_guard
 
 
 HOME = Path.home()
 SETTINGS = HOME / ".gemini" / "antigravity-cli" / "settings.json"
 CONVERSATION_DIR = HOME / ".gemini" / "antigravity-cli" / "conversations"
-STANDING_CONSENT = HOME / ".codex" / "agy-dispatch" / "standing-consent.json"
-TEMP_ROOT = Path("/tmp/agy-dispatch").resolve()
+STANDING_CONSENT = HOME / ".codex" / "execution" / "standing-consent.json"
+TEMP_ROOT = Path("/tmp/execution/agy").resolve()
 PERMISSION_KINDS = ("allow", "deny", "ask")
 TASK_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 EXTERNAL_SERVICE = "agy-headless"
 STANDING_CONSENT_MODE = "standing"
 STANDING_CONSENT_SOURCE = "standing_explicit_user_authorization"
 DEFAULT_STANDING_CONSENT_ID = "all-bounded-work-items-v1"
-REQUIRED_MODEL = "gemini-3.7-flash-high"
-REQUIRED_EFFORT = "high"
+DISPATCH_ROLE_SETTINGS = {
+    "qa": {"model": "gemini-3.8-flash-high", "effort": "high"},
+    "dev": {"model": "gemini-3.8-flash-medium", "effort": "medium"},
+}
 REQUIRED_WORKTREE_LAYOUT = "in-project"
 REQUIRED_LAUNCH_CWD = "task-worktree"
-RUN_EVIDENCE_VERSION = 3
-VERIFIED_MARKER_VERSION = 3
-AUDIT_CONTRACT_VERSION = 1
+RUN_EVIDENCE_VERSION = 6
+VERIFIED_MARKER_VERSION = 6
+AUDIT_CONTRACT_VERSION = 3
+INIT_TIMEOUT_SECONDS = 60
+TERMINATE_GRACE_SECONDS = 5
+AGY_STEP_STATUS_DENIED = 7
+TOOL_PERMISSION_MODES = {
+    "request-review",
+    "proceed-in-sandbox",
+    "strict",
+    "always-proceed",
+}
+GLOBAL_HOOK_PATHS = (
+    HOME / ".gemini" / "config" / "hooks.json",
+    HOME / ".gemini" / "antigravity-cli" / "hooks.json",
+)
+STATIC_GUARD_DIR = HOME / ".codex" / "execution"
+STATIC_GUARD_LOADER = STATIC_GUARD_DIR / "agy-assignment-guard-loader.py"
+STATIC_GUARD_CORE = STATIC_GUARD_DIR / "agy-assignment-guard-core.py"
+STATIC_GUARD_CHAIN = STATIC_GUARD_DIR / "agy-assignment-guard-chain.py"
+GLOBAL_ASSIGNMENT_GUARD_NAME = "execution-assignment-guard"
+ACTIVE_GUARD_REGISTRATION_SCHEMA = "execution-agy-active-guard-v2"
 CANONICAL_GLOBAL_POLICY = {
     "allow": [
         "command(pwd)",
@@ -140,6 +168,23 @@ def task_session_policy(profile: dict) -> str:
             "task_contract.session_policy must be ticketed or one-shot"
         )
     return policy
+
+
+def validate_dispatch_role(profile: dict) -> dict[str, str]:
+    """Reject a profile unless its role, model, and effort are one fixed pair."""
+    role = profile.get("dispatch_role")
+    if role not in DISPATCH_ROLE_SETTINGS:
+        raise SystemExit("dispatch_role must be qa or dev")
+    settings = DISPATCH_ROLE_SETTINGS[role]
+    if profile.get("model") != settings["model"]:
+        raise SystemExit(
+            f"{role} dispatch_role requires model {settings['model']}"
+        )
+    if profile.get("effort") != settings["effort"]:
+        raise SystemExit(
+            f"{role} dispatch_role requires effort {settings['effort']}"
+        )
+    return settings
 
 
 def validate_task_identity(profile: dict) -> str:
@@ -397,7 +442,10 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
         "state_dir",
         "mode",
         "agy_project_id",
+        "backend_resolution",
+        "dispatch_role",
         "model",
+        "effort",
         "worktree_layout",
         "launch_cwd",
         "global_permissions",
@@ -406,6 +454,7 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
         "protected_artifacts",
         "snapshot_paths",
         "allowed_repo_writes",
+        "assignment_digest",
     )
     missing = [key for key in required if key not in profile]
     if missing:
@@ -448,8 +497,7 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
             )
     profile["agy_project_root"] = str(agy_scope_root)
 
-    if profile["model"] != REQUIRED_MODEL:
-        raise SystemExit(f"model must be {REQUIRED_MODEL}")
+    validate_dispatch_role(profile)
     if profile["worktree_layout"] != REQUIRED_WORKTREE_LAYOUT:
         raise SystemExit(
             f"worktree_layout must be {REQUIRED_WORKTREE_LAYOUT}"
@@ -460,7 +508,7 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
     state_dir = Path(profile["state_dir"]).resolve()
     if not state_dir.is_relative_to(TEMP_ROOT):
         raise SystemExit(
-            "state_dir must be under /tmp/agy-dispatch so controller state "
+            "state_dir must be under /tmp/execution/agy so controller state "
             "remains transient and shared by Claude and Codex"
         )
     if state_dir == root or state_dir.is_relative_to(root):
@@ -482,22 +530,24 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
         )
     if state_namespace.parts != (project_namespace, task_namespace):
         raise SystemExit(
-            "state_dir must equal /tmp/agy-dispatch/<agy_project_id>/<task-key>; "
+            "state_dir must equal /tmp/execution/agy/<agy_project_id>/<task-key>; "
             f"expected {TEMP_ROOT / project_namespace / task_namespace}"
         )
     profile["state_dir"] = str(state_dir)
+
+    assignment_digest = profile["assignment_digest"]
+    if not isinstance(assignment_digest, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", assignment_digest
+    ):
+        raise SystemExit("assignment_digest must be a sha256 digest")
 
     if profile["mode"] not in ("measure-only", "bounded-write"):
         raise SystemExit("mode must be measure-only or bounded-write")
     if profile["mode"] == "measure-only" and profile["allowed_repo_writes"]:
         raise SystemExit("measure-only profile cannot grant repository writes")
 
-    # Keep legacy profiles behaviorally stable: sandboxing is opt-in unless a
-    # newly generated profile explicitly selects it.
-    sandbox = profile.get("sandbox", False)
-    if not isinstance(sandbox, bool):
-        raise SystemExit("sandbox must be boolean")
-    profile["sandbox"] = sandbox
+    if profile.get("sandbox") is not True:
+        raise SystemExit("sandbox must be fixed to true")
 
     task = profile.get("task_contract")
     if not isinstance(task, dict):
@@ -540,6 +590,36 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
         raise SystemExit("agy_project_id must name the manually selected persistent AGY Project")
     profile["agy_project_id"] = project_id.strip()
 
+    backend_resolution = profile.get("backend_resolution")
+    required_resolution = {
+        "backend",
+        "persistent_root",
+        "project_id",
+        "project_config_digest",
+        "workspace_cache_observation_digest",
+        "registry_entry_digest",
+        "agy_version",
+    }
+    if not isinstance(backend_resolution, dict) or set(backend_resolution) != required_resolution:
+        raise SystemExit("backend_resolution has an invalid shape")
+    if backend_resolution.get("backend") != "agy-cli":
+        raise SystemExit("backend_resolution.backend must be agy-cli")
+    if backend_resolution.get("project_id") != profile["agy_project_id"]:
+        raise SystemExit("backend_resolution.project_id must match agy_project_id")
+    if Path(str(backend_resolution.get("persistent_root", ""))).resolve() != agy_scope_root:
+        raise SystemExit("backend_resolution persistent_root must match agy_project_root")
+    for field in (
+        "project_config_digest",
+        "workspace_cache_observation_digest",
+        "registry_entry_digest",
+    ):
+        if not isinstance(backend_resolution.get(field), str) or not re.fullmatch(
+            r"[0-9a-f]{64}", backend_resolution[field]
+        ):
+            raise SystemExit(f"backend_resolution.{field} must be a sha256 digest")
+    if not isinstance(backend_resolution.get("agy_version"), str) or not backend_resolution["agy_version"].strip():
+        raise SystemExit("backend_resolution.agy_version must be non-empty")
+
     global_permissions = profile["global_permissions"]
     if not isinstance(global_permissions, dict):
         raise SystemExit("global_permissions must be an object")
@@ -557,45 +637,18 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
             f"project_permissions.{kind}",
         )
 
-    # Project settings are a second durable boundary, separate from tool rules.
-    # The official Project Settings UI calls this Outside of Folder File Access.
-    project_settings = profile.get(
-        "project_settings",
-        {"outside_of_folder_file_access": "always_deny"},
-    )
-    if not isinstance(project_settings, dict):
-        raise SystemExit("project_settings must be an object")
-    if project_settings.get("outside_of_folder_file_access") != "always_deny":
-        raise SystemExit(
-            "project_settings.outside_of_folder_file_access must be "
-            "always_deny for bounded AGY dispatch"
-        )
-    profile["project_settings"] = {"outside_of_folder_file_access": "always_deny"}
-
     observation = profile.get("project_policy_observation")
     if observation is not None:
         if not isinstance(observation, dict):
             raise SystemExit("project_policy_observation must be an object")
-        if observation.get("source") != "official_project_ui_or_permissions":
+        if observation.get("source") != "official_cli_permissions":
             raise SystemExit(
                 "project_policy_observation.source must be "
-                "official_project_ui_or_permissions"
+                "official_cli_permissions"
             )
         if observation.get("project_id") != profile["agy_project_id"]:
             raise SystemExit(
                 "project_policy_observation.project_id must match agy_project_id"
-            )
-        matching_ids = observation.get("matching_project_ids")
-        if not isinstance(matching_ids, list) or any(
-            not isinstance(value, str) or not value.strip() for value in matching_ids
-        ):
-            raise SystemExit(
-                "project_policy_observation.matching_project_ids must be a list of Project ids"
-            )
-        observation["matching_project_ids"] = list(dict.fromkeys(matching_ids))
-        if profile["agy_project_id"] not in observation["matching_project_ids"]:
-            raise SystemExit(
-                "project_policy_observation.matching_project_ids must include agy_project_id"
             )
         observed_root = observation.get("project_root")
         if not isinstance(observed_root, str) or not observed_root.strip():
@@ -611,11 +664,6 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
             observed_permissions[kind] = validate_rule_list(
                 observed_permissions.get(kind, []),
                 f"project_policy_observation.permissions.{kind}",
-            )
-        if observation.get("outside_of_folder_file_access") != "always_deny":
-            raise SystemExit(
-                "project_policy_observation.outside_of_folder_file_access "
-                "must be always_deny"
             )
 
     task_commands = profile["task_commands"]
@@ -633,6 +681,39 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
         raise SystemExit(
             "task_commands cannot both allow and deny: " + ", ".join(overlap)
         )
+    expected_soft_denied = task.get("expected_soft_denied_commands", [])
+    if (
+        not isinstance(expected_soft_denied, list)
+        or any(
+            not isinstance(command, str) or not command
+            for command in expected_soft_denied
+        )
+    ):
+        raise SystemExit(
+            "task_contract.expected_soft_denied_commands must be exact command strings"
+        )
+    expected_soft_denied = list(dict.fromkeys(expected_soft_denied))
+    if expected_soft_denied and profile["mode"] != "measure-only":
+        raise SystemExit(
+            "expected_soft_denied_commands require mode=measure-only"
+        )
+    missing_negative_controls = sorted(
+        set(expected_soft_denied) - set(task_commands["allow"])
+    )
+    if missing_negative_controls:
+        raise SystemExit(
+            "expected_soft_denied_commands must also be in task_commands.allow: "
+            + ", ".join(missing_negative_controls)
+        )
+    unsupported_negative_controls = sorted(
+        set(expected_soft_denied) - {assignment_guard.SAFE_DENIAL_CANARY}
+    )
+    if unsupported_negative_controls:
+        raise SystemExit(
+            "expected_soft_denied_commands must use the fixed safe denial "
+            f"canary: {assignment_guard.SAFE_DENIAL_CANARY}"
+        )
+    task["expected_soft_denied_commands"] = expected_soft_denied
 
     profile["snapshot_paths"] = [
         relative_repo_path(root, value, "snapshot_paths")
@@ -718,6 +799,11 @@ def load_profile(path: str, *, validate_design: bool = True) -> dict:
         if not artifact.is_absolute():
             artifact = root / artifact
             entry["path"] = str(artifact)
+        if artifact.resolve() == SETTINGS.resolve():
+            raise SystemExit(
+                "protected_artifacts must not include the CLI settings file; "
+                "its sparse serialization is bound through permission_state_digest"
+            )
         if validate_design:
             if not artifact.is_file():
                 raise SystemExit(f"protected artifact is missing: {artifact}")
@@ -946,8 +1032,7 @@ def agy_project_id(profile: dict) -> str:
 def project_concurrency_lock(profile: dict, task_key: str, operation: str):
     """Serialize a persistent AGY Project between at most one exclusive
     bounded-write task and any number of concurrent measure-only tasks —
-    the scheduling contract the deleted dispatch-to-agy skill used to
-    enforce; this lock is its surviving mechanism. Nest this outside
+    the scheduling contract for generic executor tasks. Nest this outside
     task_operation_lock at any call site that snapshots or launches AGY."""
     project = agy_project_id(profile)
     lock_path = TEMP_ROOT / project / "project.concurrency.lock"
@@ -1002,6 +1087,193 @@ def global_permission_sources() -> dict[str, dict[str, list[str]]]:
     settings_permissions = settings.get("permissions", {})
     return {
         "agy_cli_global_settings": normalize_permission_surface(settings_permissions),
+    }
+
+
+def allow_non_workspace_access() -> object:
+    """Return the effective CLI value, including its documented safe default."""
+    value = read_json_or_empty(SETTINGS).get("allowNonWorkspaceAccess", False)
+    if not isinstance(value, bool):
+        raise SystemExit("allowNonWorkspaceAccess must be a boolean when present")
+    return value
+
+
+def tool_permission_mode() -> str:
+    """Return the effective CLI tool mode, including sparse-persistence default."""
+    value = read_json_or_empty(SETTINGS).get("toolPermission", "request-review")
+    if value not in TOOL_PERMISSION_MODES:
+        raise SystemExit("toolPermission is missing an official CLI mode")
+    return value
+
+
+def static_guard_sources() -> dict[str, Path]:
+    return {
+        "loader": Path(__file__).resolve().with_name("_agy_global_guard_loader.py"),
+        "core": Path(assignment_guard.__file__).resolve(),
+        "chain": Path(__file__).resolve().with_name("_agy_global_pretool_chain.py"),
+    }
+
+
+def static_guard_installation_state() -> dict[str, object]:
+    """Read the controller-owned fixed loader without modifying user files."""
+    sources = static_guard_sources()
+    targets = {
+        "loader": STATIC_GUARD_LOADER,
+        "core": STATIC_GUARD_CORE,
+        "chain": STATIC_GUARD_CHAIN,
+    }
+    files: dict[str, dict[str, object]] = {}
+    for name, source in sources.items():
+        expected = sha256(source)
+        target = targets[name]
+        installed = (
+            target.is_file()
+            and not target.is_symlink()
+            and target.stat().st_uid == os.getuid()
+            and target.stat().st_mode & 0o077 == 0
+            and sha256(target) == expected
+        )
+        files[name] = {
+            "path": str(target),
+            "source_sha256": expected,
+            "installed": installed,
+        }
+    return {"ready": all(item["installed"] for item in files.values()), "files": files}
+
+
+def global_assignment_guard_hook_config() -> dict[str, object]:
+    """Return the fixed loader hook without an environment-selected program."""
+    return {
+        "PreToolUse": [
+            {
+                "matcher": "*",
+                "hooks": [static_assignment_guard_loader_hook()],
+            }
+        ]
+    }
+
+
+def static_assignment_guard_loader_hook() -> dict[str, object]:
+    """Return the only controller-approved static assignment-guard command."""
+    return {
+        "type": "command",
+        "command": "exec " + shlex.quote(str(STATIC_GUARD_LOADER)),
+        "timeout": 10,
+    }
+
+
+def static_assignment_guard_chain_hook() -> dict[str, object]:
+    """Return the fixed cap-plus-assignment guard hook command."""
+    return {
+        "type": "command",
+        "command": "exec " + shlex.quote(str(STATIC_GUARD_CHAIN)),
+        "timeout": 10,
+    }
+
+
+def cap_agent_guard_covers_run_command(value: dict[str, object]) -> bool:
+    """Require the loader on a more-specific legacy command matcher.
+
+    AGY selects a specific ``run_command`` matcher before a wildcard matcher.
+    A reviewed cap-agent guard therefore has to use the fixed chain wrapper.
+    The wrapper invokes cap first, then the fixed loader after cap allows. A
+    failing cap guard can still short-circuit the fixed negative control;
+    raw-stream verification handles only that case.
+    """
+    cap = value.get("cap-agent-guard")
+    if not isinstance(cap, dict) or cap.get("enabled", True) is False:
+        return True
+    entries = cap.get("PreToolUse")
+    if not isinstance(entries, list):
+        return True
+    required = static_assignment_guard_chain_hook()
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("matcher") != "run_command":
+            continue
+        hooks = entry.get("hooks")
+        if not isinstance(hooks, list) or required not in hooks:
+            return False
+    return True
+
+
+def global_hook_observation() -> list[dict[str, object]]:
+    """Bind the official user-global hook files that can affect this run."""
+    observation: list[dict[str, object]] = []
+    for path in GLOBAL_HOOK_PATHS:
+        if not path.exists():
+            continue
+        try:
+            raw = path.read_bytes()
+            value = json.loads(raw)
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise SystemExit(f"cannot read AGY hooks config {path}: {error}") from error
+        if not isinstance(value, dict):
+            raise SystemExit(f"AGY hooks config must be a JSON object: {path}")
+        active_pretool = sorted(
+            name
+            for name, config in value.items()
+            if isinstance(name, str)
+            and isinstance(config, dict)
+            and config.get("enabled", True) is not False
+            and isinstance(config.get("PreToolUse"), list)
+            and bool(config["PreToolUse"])
+        )
+        unsupported = [
+            name
+            for name in active_pretool
+            if name not in {"cap-agent-guard", GLOBAL_ASSIGNMENT_GUARD_NAME}
+        ]
+        if unsupported:
+            raise SystemExit(
+                "unsupported user-global AGY PreToolUse hooks are active: "
+                + ", ".join(unsupported)
+            )
+        if GLOBAL_ASSIGNMENT_GUARD_NAME in active_pretool and value.get(
+            GLOBAL_ASSIGNMENT_GUARD_NAME
+        ) != global_assignment_guard_hook_config():
+            raise SystemExit(
+                "global execution-assignment-guard hook differs from the "
+                "frozen opt-in loader contract"
+            )
+        observation.append(
+            {
+                "path": str(path.resolve()),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "names": sorted(value),
+                "active_pretool": active_pretool,
+                "cap_agent_guard_covers_run_command": (
+                    cap_agent_guard_covers_run_command(value)
+                ),
+            }
+        )
+    return observation
+
+
+def global_assignment_guard_hook_state() -> dict[str, object]:
+    """Require exactly one active, static global loader before dispatch."""
+    matches = [
+        entry
+        for entry in global_hook_observation()
+        if GLOBAL_ASSIGNMENT_GUARD_NAME in entry["active_pretool"]
+    ]
+    if len(matches) > 1:
+        raise SystemExit(
+            "execution-assignment-guard must be active in exactly one AGY "
+            "global hooks file"
+        )
+    if not matches:
+        return {
+            "installed": False,
+            "path": None,
+            "command_matcher_covered": False,
+        }
+    return {
+        "installed": True,
+        "path": matches[0]["path"],
+        "command_matcher_covered": all(
+            entry["cap_agent_guard_covers_run_command"]
+            for entry in global_hook_observation()
+        ),
     }
 
 
@@ -1119,14 +1391,14 @@ def permission_state(profile: dict) -> dict:
         "project_id": agy_project_id(profile),
         "project_scope_root": str(agy_project_root(profile)),
         "project": observed_permissions,
-        "project_settings": (
-            {"outside_of_folder_file_access": observation["outside_of_folder_file_access"]}
-            if isinstance(observation, dict)
-            else None
-        ),
         "project_observation": observation,
         "global": global_surface,
         "global_sources": global_sources,
+        "allow_non_workspace_access": allow_non_workspace_access(),
+        "tool_permission_mode": tool_permission_mode(),
+        "global_hooks": global_hook_observation(),
+        "assignment_guard_hook": global_assignment_guard_hook_state(),
+        "assignment_guard_loader": static_guard_installation_state(),
     }
 
 
@@ -1137,16 +1409,20 @@ def permission_state_digest(profile: dict) -> str:
             "project_id": state["project_id"],
             "project_scope_root": state["project_scope_root"],
             "project": state["project"],
-            "project_settings": state["project_settings"],
             "project_observation": state["project_observation"],
             "global": state["global"],
             "global_sources": state["global_sources"],
+            "allow_non_workspace_access": state["allow_non_workspace_access"],
+            "tool_permission_mode": state["tool_permission_mode"],
+            "global_hooks": state["global_hooks"],
+            "assignment_guard_hook": state["assignment_guard_hook"],
+            "assignment_guard_loader": state["assignment_guard_loader"],
         }
     )
 
 
 def formal_project_capabilities() -> dict[str, object]:
-    """Report only public, current CLI capabilities; never scrape its registry."""
+    """Report public CLI controls and the read-only Project identity surfaces."""
     result = subprocess.run(
         ["agy", "--help"],
         text=True,
@@ -1166,31 +1442,42 @@ def formal_project_capabilities() -> dict[str, object]:
         "project_enumeration_cli": "projects" in subcommands,
         "machine_readable_project_policy_cli": "permissions" in subcommands,
         "formal_configuration_paths": [str(SETTINGS)],
+        "read_only_project_config_dir": str(
+            HOME / ".gemini" / "config" / "projects"
+        ),
+        "read_only_workspace_cache": str(
+            HOME / ".gemini" / "antigravity-cli" / "cache" / "projects.json"
+        ),
         "official_manual_surfaces": [
             "AGY /permissions scope picker (Global, Project, Shared)",
-            "Antigravity Project Settings gear beside the persistent Project",
+            "agy --new-project and agy --project=<id>",
         ],
     }
 
 
 def project_setup_manual_steps(profile: dict) -> list[str]:
-    """Return the fail-closed remediation without attempting any UI operation."""
+    """Return fail-closed CLI-only controller steps."""
     project_id = agy_project_id(profile)
     project_root = str(agy_project_root(profile))
     return [
-        "Open Antigravity, use Select Project, and locate Projects containing "
-        f"the persistent root {project_root}; do not create a ticket/worktree Project.",
-        "If zero or multiple matching Projects are shown, stop: select or resolve "
-        "the intended persistent Project manually; do not delete or auto-select one.",
-        f"Confirm the selected persistent Project id is {project_id} and add no new "
-        "Project for the linked task worktree.",
-        "Open /permissions, select Global, and install/review the profile's "
+        f"From {project_root}, run `agy --new-project` once and record the Project "
+        "ID shown by the CLI. The optional read-only cache does not need a mapping.",
+        f"Use `agy --project={project_id}` for the persistent Project. Do not create "
+        "a Project for the linked task worktree.",
+        "Confirm ~/.gemini/config/projects/<project-id>.json has that ID and exactly "
+        "one workspace resource for the persistent root.",
+        "In that AGY CLI session, run `/permissions`, select Global, and review the "
         "global_permissions baseline exactly once for all Projects.",
-        "Open the selected Project's gear or /permissions Project scope; retain only "
-        "the profile's project_permissions exceptions and set Outside of Folder File "
-        "Access to Always Deny.",
-        "Record the displayed Project id, persistent root, rules, and Outside of Folder "
-        "File Access value in project_policy_observation, then rerun doctor and snapshot.",
+        "Run `/permissions`, select Project, and review only the profile's "
+        "project_permissions exceptions.",
+        "Keep the effective `allowNonWorkspaceAccess` value false. The CLI may omit this "
+        "key because false is its documented sparse-persistence default. Record the CLI "
+        "Project id, root, and rules in the registry, then rerun doctor and snapshot.",
+        "Before snapshot, install the exact inert-by-default "
+        "execution-assignment-guard loader in one AGY user-global hooks.json file. "
+        "Install its fixed loader and core under ~/.codex/execution. It reads a "
+        "short-lived, worktree-bound registration only for active executor tasks. "
+        "The executor never writes CLI settings, global hooks, or Project files.",
     ]
 
 
@@ -1198,8 +1485,6 @@ def project_policy_report(profile: dict) -> dict:
     state = permission_state(profile)
     expected = expected_project_surface(profile)
     actual = state["project"]
-    actual_settings = state["project_settings"]
-    expected_settings = profile["project_settings"]
     missing = (
         {
             kind: sorted(set(expected[kind]) - set(actual[kind]))
@@ -1228,31 +1513,28 @@ def project_policy_report(profile: dict) -> dict:
     }
     project_policy_incomplete = actual is None or any(
         missing[kind] or extra[kind] for kind in PERMISSION_KINDS
-    ) or actual_settings != expected_settings
+    )
     global_policy_incomplete = any(
         global_missing[kind] or global_extra[kind] for kind in PERMISSION_KINDS
     )
     command_checks = []
     blockers = []
+    expected_soft_denied = set(
+        profile["task_contract"].get("expected_soft_denied_commands", [])
+    )
     scope = worktree_scope_report(profile)
+    guard_hook = state["assignment_guard_hook"]
+    guard_loader = state["assignment_guard_loader"]
     observation = state["project_observation"]
     observed_root_matches = (
         isinstance(observation, dict)
         and Path(observation["project_root"]).resolve() == agy_project_root(profile)
     )
-    observed_matches = (
-        observation["matching_project_ids"]
-        if isinstance(observation, dict)
-        else []
-    )
-    project_discovery_ambiguous = len(observed_matches) != 1
-
     blockers.extend(scope["blockers"])
 
     if actual is None:
         blockers.append(
-            "Project policy has not been observed through the official Project "
-            "Settings UI or /permissions Project scope"
+            "Project policy has not been observed through /permissions Project scope"
         )
     elif any(missing[kind] or extra[kind] for kind in PERMISSION_KINDS):
         blockers.append(
@@ -1262,14 +1544,21 @@ def project_policy_report(profile: dict) -> dict:
         blockers.append(
             "Project policy observation root does not match agy_project_root"
         )
-    if actual is not None and project_discovery_ambiguous:
+    if state["allow_non_workspace_access"] is not False:
+        blockers.append("effective allowNonWorkspaceAccess must be false")
+    if not guard_hook["installed"]:
         blockers.append(
-            "Project discovery observed zero or multiple matching persistent-root Projects: "
-            + ", ".join(observed_matches)
+            "one exact user-global execution-assignment-guard hook must be active"
         )
-    if actual is not None and actual_settings != expected_settings:
+    elif not guard_hook["command_matcher_covered"]:
         blockers.append(
-            "Project Outside of Folder File Access must be Always Deny"
+            "every active cap-agent-guard run_command matcher must use the "
+            "fixed execution-assignment-guard chain"
+        )
+    if not guard_loader["ready"]:
+        blockers.append(
+            "fixed user-local assignment guard loader and core must match the "
+            "controller source"
         )
     if global_policy_incomplete:
         blockers.append(
@@ -1287,23 +1576,55 @@ def project_policy_report(profile: dict) -> dict:
                 decision, rule, source = permission_decision(
                     global_surface, actual, command
                 )
+            is_negative_control = (
+                expected_decision == "allow" and command in expected_soft_denied
+            )
+            decision_matches = (
+                decision == "deny"
+                if is_negative_control
+                else decision == expected_decision
+            )
             command_checks.append(
                 {
                     "command": command,
-                    "expected": expected_decision,
+                    "expected": (
+                        "soft-denied" if is_negative_control else expected_decision
+                    ),
                     "decision": decision,
                     "matched_rule": rule,
                     "source": source,
                 }
             )
-            if decision != expected_decision:
+            if not decision_matches:
                 blockers.append(
-                    f"task command expected {expected_decision} but resolves "
+                    f"task command expected "
+                    f"{'an explicit deny' if is_negative_control else expected_decision} "
+                    "but resolves "
                     f"{decision}: {command}"
                 )
-    if actual is None or project_policy_incomplete or not observed_root_matches or project_discovery_ambiguous:
+    if actual is None or project_policy_incomplete or not observed_root_matches:
         provisioning_status = (
-            "PROJECT_SETUP_REQUIRED: Project policy requires formal UI observation or provisioning"
+            "PROJECT_SETUP_REQUIRED: Project policy requires official CLI observation"
+        )
+    elif state["allow_non_workspace_access"] is not False:
+        provisioning_status = (
+            "GLOBAL_SETUP_REQUIRED: allowNonWorkspaceAccess must be false"
+        )
+    elif not guard_hook["installed"]:
+        provisioning_status = (
+            "GLOBAL_GUARD_SETUP_REQUIRED: install the exact user-global "
+            "execution-assignment-guard loader"
+        )
+    elif not guard_hook["command_matcher_covered"]:
+        provisioning_status = (
+            "GLOBAL_GUARD_SETUP_REQUIRED: use the fixed "
+            "execution-assignment-guard chain for every active "
+            "cap-agent-guard run_command matcher"
+        )
+    elif not guard_loader["ready"]:
+        provisioning_status = (
+            "GLOBAL_GUARD_SETUP_REQUIRED: install the fixed user-local "
+            "assignment guard loader and core"
         )
     elif global_policy_incomplete:
         provisioning_status = (
@@ -1319,8 +1640,9 @@ def project_policy_report(profile: dict) -> dict:
         "project_root": state["project_scope_root"],
         "worktree_root": profile["root"],
         "adapter_settings": {
+            "dispatch_role": profile["dispatch_role"],
             "model": profile["model"],
-            "effort": REQUIRED_EFFORT,
+            "effort": profile["effort"],
             "worktree_layout": profile["worktree_layout"],
             "launch_cwd": profile["launch_cwd"],
         },
@@ -1328,24 +1650,22 @@ def project_policy_report(profile: dict) -> dict:
         "project_permission_digest": json_digest(actual) if actual is not None else None,
         "project_policy_observation": state["project_observation"],
         "project_discovery_status": (
-            "single_manual_match"
-            if actual is not None and not project_discovery_ambiguous
+            "authoritative_project_config_resolved"
+            if actual is not None
             else "PROJECT_SETUP_REQUIRED"
         ),
         "project_policy_observability": (
-            "manual_official_ui_observation"
+            "official_cli_permissions"
             if actual is not None
             else "PROJECT_SETUP_REQUIRED"
         ),
         "formal_project_capabilities": formal_project_capabilities(),
         "manual_setup": project_setup_manual_steps(profile),
-        "project_settings": actual_settings,
-        "expected_project_settings": expected_settings,
-        "project_settings_status": (
-            "ready"
-            if actual_settings == expected_settings
-            else "drift"
-        ),
+        "allow_non_workspace_access": state["allow_non_workspace_access"],
+        "assignment_guard_hook": guard_hook,
+        "assignment_guard_loader": guard_loader,
+        "tool_permission_mode": state["tool_permission_mode"],
+        "global_hooks": state["global_hooks"],
         "permission_layer_diagnostics": {
             "global": {
                 "decision": "ready" if not global_policy_incomplete else "drift",
@@ -1358,7 +1678,7 @@ def project_policy_report(profile: dict) -> dict:
                     "observed" if actual is not None else "PROJECT_SETUP_REQUIRED"
                 ),
                 "source": (
-                    "official_project_ui_or_permissions"
+                    "official_cli_permissions"
                     if actual is not None
                     else "project-unobserved"
                 ),
@@ -1367,15 +1687,28 @@ def project_policy_report(profile: dict) -> dict:
             "file_access_policy": {
                 "decision": (
                     "deny"
-                    if actual_settings == expected_settings
+                    if state["allow_non_workspace_access"] is False
                     else "unknown_or_drift"
                 ),
                 "source": (
-                    "official_project_ui_or_permissions"
+                    "agy_cli_global_settings"
                     if actual is not None
                     else "project-unobserved"
                 ),
-                "matched_rule": "Outside of Folder File Access: Always Deny",
+                "matched_rule": "allowNonWorkspaceAccess: false",
+            },
+            "assignment_guard": {
+                "decision": (
+                    "ready"
+                    if (
+                        guard_hook["installed"]
+                        and guard_hook["command_matcher_covered"]
+                        and guard_loader["ready"]
+                    )
+                    else "blocked"
+                ),
+                "source": "agy_cli_global_hooks",
+                "matched_rule": guard_hook["path"],
             },
             "task_contract": {
                 "decision": "exact_allowlist_required",
@@ -1432,9 +1765,9 @@ def require_project_ready(profile: dict) -> dict:
     if not report["dispatch_ready"]:
         raise SystemExit(
             report["provisioning_status"]
-            + "; rerun `doctor` after configuring through the official AGY "
-            "Settings/Project Settings UI or `/permissions`; do not patch "
-            "registry/cache JSON: "
+            + "; rerun `doctor` after using `agy --new-project`, "
+            "`agy --project=<id>`, and `/permissions`; confirm the read-only "
+            "Project config. The optional projects.json cache is only a cross-check: "
             + "; ".join(report["blockers"])
         )
     return report
@@ -1508,6 +1841,19 @@ def assert_task_state_unchanged(
         raise SystemExit("VOID: frozen task state changed after snapshot")
 
 
+def assignment_guard_contract() -> dict[str, str]:
+    """Bind the local enforcement program into every frozen dispatch contract."""
+    source = Path(assignment_guard.__file__).resolve()
+    if not source.is_file():
+        raise SystemExit("assignment guard source is missing")
+    return {
+        "policy_schema": assignment_guard.POLICY_SCHEMA,
+        "audit_schema": assignment_guard.AUDIT_SCHEMA,
+        "safe_denial_canary": assignment_guard.SAFE_DENIAL_CANARY,
+        "program_sha256": sha256(source),
+    }
+
+
 def dispatch_contract(profile: dict) -> dict:
     # The initial snapshot freezes every execution boundary below.  A
     # controller may nevertheless issue a bounded correction in the same
@@ -1517,10 +1863,14 @@ def dispatch_contract(profile: dict) -> dict:
     contract = {
         key: profile.get(key)
         for key in (
+            "assignment_digest",
+            "backend_resolution",
             "root",
             "repo",
             "mode",
+            "dispatch_role",
             "model",
+            "effort",
             "worktree_layout",
             "launch_cwd",
             "sandbox",
@@ -1528,7 +1878,6 @@ def dispatch_contract(profile: dict) -> dict:
             "agy_project_root",
             "inject_prompt_file",
             "inject_prompt_file_sha256",
-            "project_settings",
             "task_contract",
             "project_permissions",
             "task_commands",
@@ -1539,7 +1888,7 @@ def dispatch_contract(profile: dict) -> dict:
             "external_payload_consent",
         )
     }
-    contract["effort"] = REQUIRED_EFFORT
+    contract["assignment_guard"] = assignment_guard_contract()
     return contract
 
 
@@ -1587,11 +1936,17 @@ def conversation_id_for_task(profile: dict, task_key: str) -> str | None:
     conversation_path = log_dir / f"{task_key}.conversation"
     if conversation_path.is_file() and conversation_path.read_text().strip():
         return conversation_path.read_text().strip()
-    return conversation_id_from_log(log_dir / f"{task_key}.agy.log")
+    return None
 
 
 def conversation_database(conversation_id: str) -> Path:
     return CONVERSATION_DIR / f"{conversation_id}.db"
+
+
+def readonly_conversation_connection(database: Path) -> sqlite3.Connection:
+    """Open a completed AGY conversation without creating SQLite sidecars."""
+    uri = database.resolve().as_uri() + "?mode=ro&immutable=1"
+    return sqlite3.connect(uri, uri=True)
 
 
 def conversation_step_max(conversation_id: str | None) -> int:
@@ -1602,7 +1957,7 @@ def conversation_step_max(conversation_id: str | None) -> int:
         raise SystemExit(
             f"conversation state is missing for {conversation_id}: {database}"
         )
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = readonly_conversation_connection(database)
     try:
         row = connection.execute(
             "select min(idx), max(idx), count(*) from steps"
@@ -1627,7 +1982,7 @@ def conversation_steps_digest(
         raise SystemExit(
             f"conversation state is missing for {conversation_id}: {database}"
         )
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = readonly_conversation_connection(database)
     try:
         schema = connection.execute("pragma table_info(steps)").fetchall()
         column_names = [str(column[1]) for column in schema]
@@ -1820,8 +2175,14 @@ def git_index_entries_digest(root: Path) -> str:
         ["git", "-C", str(root), "ls-files", "--stage", "-v", "-z"],
         text=False,
         capture_output=True,
-        check=True,
+        check=False,
     )
+    if result.returncode:
+        # Git keeps explicitly prunable worktree rows until an owner removes
+        # them. Freeze that unavailable state instead of mutating shared Git
+        # metadata during an executor snapshot. If the row becomes usable
+        # before verify, its real digest differs from this sentinel.
+        return "<unavailable>"
     return hashlib.sha256(result.stdout).hexdigest()
 
 
@@ -1902,8 +2263,14 @@ def git_admin_manifest(
             for item in directory.rglob("*")
             if item.is_file() or item.is_symlink()
         ):
+            relative_to_common = path.relative_to(common).as_posix()
+            if relative_to_common.startswith("refs/codex/turn-diffs/"):
+                # Codex Desktop rotates controller-local turn snapshots while
+                # the executor is running. They are not repository refs and
+                # cannot grant the worker Git authority.
+                continue
             record(
-                f"common:{path.relative_to(common).as_posix()}",
+                f"common:{relative_to_common}",
                 path,
             )
     worktree_admins = common / "worktrees"
@@ -2053,12 +2420,30 @@ def project_scope_baseline(profile: dict) -> dict | None:
     )
 
 
+def stable_git_admin_manifest(manifest: dict) -> dict:
+    """Drop controller-local Codex turn snapshots from baseline comparisons."""
+    return {
+        key: value
+        for key, value in manifest.items()
+        if not key.startswith("common:refs/codex/turn-diffs/")
+    }
+
+
+def stable_worktree_baseline(baseline: dict) -> dict:
+    """Normalize an old or new worktree baseline for stable comparison."""
+    normalized = dict(baseline)
+    admin = normalized.get("git_admin_manifest")
+    if isinstance(admin, dict):
+        normalized["git_admin_manifest"] = stable_git_admin_manifest(admin)
+    return normalized
+
+
 def assert_project_scope_unchanged(profile: dict, snapshot_data: dict) -> None:
     baseline = snapshot_data.get("project_scope_baseline")
     if baseline is None:
         return
     current = project_scope_baseline(profile)
-    if current != baseline:
+    if stable_worktree_baseline(current) != stable_worktree_baseline(baseline):
         raise SystemExit(
             "VOID: persistent AGY Project worktree changed after snapshot; "
             "task worktrees may be added for dispatch but the Project root is read-only"
@@ -2072,7 +2457,15 @@ def assert_sibling_worktrees_unchanged(profile: dict, snapshot_data: dict) -> No
             "VOID: snapshot lacks sibling-worktree baselines; create a fresh snapshot"
         )
     current = sibling_worktree_baselines(profile)
-    if current != baseline:
+    stable_current = {
+        path: stable_worktree_baseline(value)
+        for path, value in current.items()
+    }
+    stable_baseline = {
+        path: stable_worktree_baseline(value)
+        for path, value in baseline.items()
+    }
+    if stable_current != stable_baseline:
         raise SystemExit(
             "VOID: an in-Project sibling worktree or its bytes changed after snapshot"
         )
@@ -2117,20 +2510,65 @@ def assert_task_git_admin_unchanged(profile: dict, snapshot_data: dict) -> None:
     root = Path(profile["root"]).resolve()
     current_admin = git_admin_manifest(root, protect_raw_index=False)
     current_index = git_index_entries_digest(root)
-    if current_admin != expected_admin or current_index != expected_index:
+    if (
+        stable_git_admin_manifest(current_admin)
+        != stable_git_admin_manifest(expected_admin)
+        or current_index != expected_index
+    ):
         raise SystemExit("VOID: task or shared Git administrative state changed")
 
 
-def assert_git_common_objects_unchanged(profile: dict, snapshot_data: dict) -> None:
-    expected = snapshot_data.get("git_common_objects_digest")
-    if not isinstance(expected, str):
+def snapshot_worktree_heads(snapshot_data: dict) -> list[str]:
+    """Return every frozen worktree HEAD that must remain readable."""
+    baselines = [
+        snapshot_data.get("task_worktree_baseline"),
+        snapshot_data.get("project_scope_baseline"),
+        *(
+            snapshot_data.get("sibling_worktree_baselines", {}).values()
+            if isinstance(snapshot_data.get("sibling_worktree_baselines"), dict)
+            else []
+        ),
+    ]
+    heads = sorted(
+        {
+            baseline.get("head")
+            for baseline in baselines
+            if isinstance(baseline, dict) and isinstance(baseline.get("head"), str)
+        }
+    )
+    if not heads or any(
+        re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head) is None
+        for head in heads
+    ):
         raise SystemExit(
-            "VOID: snapshot lacks a Git object-store byte digest; "
-            "create a fresh snapshot"
+            "VOID: snapshot lacks valid frozen worktree HEAD objects"
         )
-    current = git_common_objects_digest(Path(profile["root"]).resolve())
-    if current != expected:
-        raise SystemExit("VOID: shared Git object-store bytes changed")
+    return heads
+
+
+def assert_git_common_objects_intact(profile: dict, snapshot_data: dict) -> None:
+    """Allow append-only shared objects while preserving frozen HEAD graphs."""
+    root = Path(profile["root"]).resolve()
+    heads = snapshot_worktree_heads(snapshot_data)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "fsck",
+            "--connectivity-only",
+            "--no-dangling",
+            "--no-reflogs",
+            *heads,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise SystemExit(
+            "VOID: a frozen worktree HEAD object graph is missing or corrupt"
+        )
 
 
 def assert_registered_worktree_indexes_unchanged(
@@ -2257,10 +2695,10 @@ def snapshot_under_lock(profile: dict, task_key: str) -> Path:
         "protected_contents_base64": protected_contents,
         "writable_contents": writable_contents,
         "dispatch_contract": dispatch_contract(profile),
+        "backend_resolution": profile["backend_resolution"],
         "agy_project_id": agy_project_id(profile),
         "agy_project_root": str(agy_project_root(profile)),
         "worktree_scope": worktree_scope_report(profile),
-        "git_common_objects_digest": git_common_objects_digest(root),
         "registered_worktree_index_digests": (
             registered_worktree_index_digests(root)
         ),
@@ -2324,6 +2762,13 @@ def render_prompt(
     writes = profile["allowed_repo_writes"] or ["none"]
     allowed = profile["task_commands"].get("allow", [])
     denied = profile["task_commands"].get("deny", [])
+    expected_soft_denied = profile["task_contract"].get(
+        "expected_soft_denied_commands", []
+    )
+    negative_control_block = (
+        "\n".join(f"- {command}" for command in expected_soft_denied)
+        or "- none"
+    )
     injections: list[str] = []
     task_instructions = str(
         profile["task_contract"].get("instructions", "")
@@ -2403,6 +2848,13 @@ Exact shell command lines authorized for this task:
 
 Shell command lines explicitly forbidden for this task:
 {chr(10).join(f"- {command}" for command in denied) or "- none"}
+
+Expected soft-deny negative controls:
+{negative_control_block}
+
+Run normal authorized commands first. Then attempt each listed negative-control
+command exactly once. Do not replace or retry a denied command. A denial is the
+expected transport result, not permission to change the command.
 
 Do not change branches, create worktrees, commit, push, mutate a tracker, or
 write any repository path outside the exact allowlist. Read-only git commands
@@ -2560,7 +3012,7 @@ def requested_run_commands(
         raise SystemExit(
             f"conversation state is missing for {conversation_id}: {database}"
         )
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = readonly_conversation_connection(database)
     try:
         schema = connection.execute("pragma table_info(steps)").fetchall()
         column_names = [str(column[1]) for column in schema]
@@ -2774,6 +3226,108 @@ def audit_task_commands(
     return commands
 
 
+def expected_soft_denial_failures(
+    profile: dict,
+    audited_commands: list[dict],
+    *,
+    inspected: dict | None = None,
+    guard_events: list[dict] | None = None,
+) -> list[dict]:
+    """Require each frozen negative control to be denied in raw transport.
+
+    AGY's local conversation database records the command request, but its
+    status value does not reliably distinguish a pre-tool hook denial from an
+    executed command. The stream ERROR and the frozen guard audit are the
+    authoritative execution witnesses when they are available.
+    """
+    failures: list[dict] = []
+    expected = profile["task_contract"].get(
+        "expected_soft_denied_commands",
+        [],
+    )
+    for command in expected:
+        matches = [
+            item for item in audited_commands if item.get("command") == command
+        ]
+        if len(matches) != 1:
+            failures.append(
+                {
+                    "command": command,
+                    "reason": "attempt-count",
+                    "actual_count": len(matches),
+                }
+            )
+            continue
+        if inspected is None or guard_events is None:
+            if matches[0].get("status") == AGY_STEP_STATUS_DENIED:
+                continue
+            failures.append(
+                {
+                    "command": command,
+                    "reason": "executed-instead-of-denied",
+                    "status": matches[0].get("status"),
+                    "step": matches[0].get("step"),
+                }
+            )
+            continue
+        streamed = [
+            call
+            for call in inspected.get("tool_calls", [])
+            if isinstance(call, dict) and call.get("command") == command
+        ]
+        if len(streamed) != 1:
+            failures.append(
+                {
+                    "command": command,
+                    "reason": "raw-stream-attempt-count",
+                    "actual_count": len(streamed),
+                }
+            )
+            continue
+        step = streamed[0].get("step_index")
+        all_calls = inspected.get("tool_calls")
+        all_steps = (
+            [item.get("step_index") for item in all_calls if isinstance(item, dict)]
+            if isinstance(all_calls, list)
+            else []
+        )
+        if not isinstance(step, int) or not all_steps or step != max(all_steps):
+            failures.append(
+                {
+                    "command": command,
+                    "reason": "raw-stream-not-last",
+                    "step": step,
+                }
+            )
+            continue
+        denied_steps = inspected.get("denied_tool_steps", [])
+        if not isinstance(step, int) or step not in denied_steps:
+            failures.append(
+                {
+                    "command": command,
+                    "reason": "raw-stream-not-denied",
+                    "step": step,
+                }
+            )
+            continue
+        matching_denials = [
+            event
+            for event in guard_events
+            if event.get("step_index") == step
+            and event.get("command") == command
+            and event.get("decision") == "deny"
+        ]
+        if not matching_denials:
+            failures.append(
+                {
+                    "command": command,
+                    "reason": "assignment-guard-not-denied",
+                    "step": step,
+                }
+            )
+    return failures
+
+
 def assert_no_sandbox_file_access_denial(profile: dict, task_key: str) -> None:
     """Reject a candidate when AGY's terminal sandbox could not read its task root.
 
@@ -2790,11 +3344,10 @@ def assert_no_sandbox_file_access_denial(profile: dict, task_key: str) -> None:
             and "Operation not permitted" in text
         ):
             raise SystemExit(
-            "VOID: AGY terminal sandbox denied task-root file access; "
-            "keep Project Outside of Folder File Access=Always Deny and "
-                "the reviewed Global baseline, then use a fresh clean-worktree snapshot "
-                "with sandbox:false or first prove a same-Project in-Project-worktree "
-                "read-only sandbox probe"
+                "VOID: AGY terminal sandbox denied task-root file access; "
+                "keep allowNonWorkspaceAccess=false and the reviewed Global "
+                "baseline, then use a fresh clean-worktree snapshot after fixing "
+                "the Project/worktree binding"
             )
 
 
@@ -2803,9 +3356,7 @@ def denied(profile: dict, task_key: str) -> None:
     log_dir = Path(profile["state_dir"]) / "runs"
     conversation_path = log_dir / f"{task_key}.conversation"
     conversation_id = (
-        conversation_path.read_text().strip()
-        if conversation_path.exists()
-        else conversation_id_from_log(log_dir / f"{task_key}.agy.log")
+        conversation_path.read_text().strip() if conversation_path.exists() else None
     )
     if not conversation_id:
         raise SystemExit(
@@ -2814,7 +3365,7 @@ def denied(profile: dict, task_key: str) -> None:
     database = conversation_database(conversation_id)
     if not database.is_file():
         raise SystemExit(f"cannot inspect {task_key}: missing {database}")
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = readonly_conversation_connection(database)
     try:
         rows = connection.execute(
             "select idx, step_payload from steps "
@@ -2950,6 +3501,8 @@ def assert_dispatch_contract_unchanged(
         raise SystemExit("VOID: AGY project changed after snapshot")
     if snapshot_data.get("agy_project_root") != str(agy_project_root(profile)):
         raise SystemExit("VOID: AGY Project scope changed after snapshot")
+    if snapshot_data.get("backend_resolution") != profile["backend_resolution"]:
+        raise SystemExit("VOID: backend resolution changed after snapshot")
     assert_worktree_scope_unchanged(profile, snapshot_data)
 
 
@@ -3008,8 +3561,6 @@ def canonical_attempt_files(
                 and name.endswith(ending)
             )
         )
-        if ending == ".log" and name.endswith(".agy.log"):
-            is_candidate = False
         if not is_candidate:
             continue
         match = pattern.fullmatch(name)
@@ -3036,7 +3587,13 @@ def assert_complete_attempt_lineage(profile: dict, task_key: str) -> list[int]:
         ".prompt.md",
         ".contract.json",
         ".agy.log",
-        ".log",
+        ".stream.jsonl",
+        ".stderr.log",
+        ".response.md",
+        ".guard.py",
+        ".guard-policy.json",
+        ".guard-audit.jsonl",
+        ".hooks.json",
         ".evidence.json",
     )
     inventories = {
@@ -3111,7 +3668,13 @@ def attempt_lineage_digest(
         ".prompt.md",
         ".contract.json",
         ".agy.log",
-        ".log",
+        ".stream.jsonl",
+        ".stderr.log",
+        ".response.md",
+        ".guard.py",
+        ".guard-policy.json",
+        ".guard-audit.jsonl",
+        ".hooks.json",
         ".evidence.json",
         ".report.md",
     )
@@ -3201,22 +3764,538 @@ def assert_executed_round_contract(
         raise SystemExit("VOID: profile changed after the executed round")
 
 
-def classify_delivery_status(
+def permission_denial_text(value: str) -> bool:
+    normalized = value.casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "permission_denied",
+            "permission denied",
+            "denied by policy",
+            "denied by sandbox",
+            "operation not permitted",
+            "sandbox_command_blocked",
+            "soft-deny",
+            "soft denying",
+            "soft-denying",
+            "auto-denied",
+            "denied by hook",
+            "denied by pre-tool hook",
+            "hook denied",
+            "tool use denied",
+        )
+    )
+
+
+def structured_tool_permission_denial(event: dict) -> bool:
+    """Inspect only structured tool error values, never agent response prose."""
+    if event.get("event") not in {
+        "step_update",
+        "tool",
+        "tool_result",
+        "tool_error",
+    }:
+        return False
+
+    errors: list[object] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key.casefold() in {"error", "tool_error", "permission_error"}:
+                    errors.append(child)
+                else:
+                    collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(event)
+    return any(
+        permission_denial_text(
+            json.dumps(error, sort_keys=True)
+            if not isinstance(error, str)
+            else error
+        )
+        for error in errors
+    )
+
+
+def structured_tool_permission_denial_steps(events: list[dict]) -> set[int]:
+    """Return tool steps denied before a later PreToolUse hook can run."""
+    denied: set[int] = set()
+    for event in events:
+        if not structured_tool_permission_denial(event):
+            continue
+        update = event.get("step_update")
+        step = update.get("step_index") if isinstance(update, dict) else None
+        if isinstance(step, int) and step >= 0:
+            denied.add(step)
+    return denied
+
+
+def stream_tool_calls(events: list[dict]) -> tuple[list[dict], str | None]:
+    """Return one canonical tool request per streamed step index."""
+    by_step: dict[int, dict] = {}
+    for event in events:
+        if event.get("event") != "step_update":
+            continue
+        update = event.get("step_update")
+        if not isinstance(update, dict):
+            return [], "step_update payload must be an object"
+        info = update.get("tool_info")
+        info = info if isinstance(info, dict) else {}
+        tool_name = update.get("tool_name") or info.get("name")
+        if update.get("step_type") != "tool" and not isinstance(tool_name, str):
+            continue
+        step = update.get("step_index")
+        if not isinstance(step, int) or step < 0 or not isinstance(tool_name, str):
+            return [], "tool step index or name is invalid"
+        args = info.get("parameters")
+        if not isinstance(args, dict):
+            args = info.get("args")
+        if not isinstance(args, dict):
+            args = update.get("parameters")
+        if not isinstance(args, dict):
+            if step in by_step:
+                continue
+            return [], f"tool step {step} has no request parameters"
+        target = None
+        for field in (
+            *assignment_guard.READ_PATH_FIELDS.values(),
+            *assignment_guard.WRITE_PATH_FIELDS.values(),
+        ):
+            if field in args:
+                target = args[field]
+                break
+        canonical = {
+            "step_index": step,
+            "conversation_id": update.get("conversation_id"),
+            "tool_name": tool_name,
+            "tool_args": args,
+            "tool_args_digest": assignment_guard.canonical_digest(args),
+            "command": args.get("CommandLine"),
+            "cwd": args.get("Cwd"),
+            "target_path": target,
+        }
+        prior = by_step.get(step)
+        if prior is not None and prior != canonical:
+            return [], f"tool step {step} changed identity in the stream"
+        by_step[step] = canonical
+    return [by_step[step] for step in sorted(by_step)], None
+
+
+def bind_implicit_run_command_cwd(tool_calls: list[dict], init_cwd: str) -> None:
+    """Bind an omitted stream command Cwd to the already-verified init Cwd."""
+    for call in tool_calls:
+        if call.get("tool_name") != "run_command":
+            continue
+        args = call.get("tool_args")
+        if not isinstance(args, dict) or "Cwd" in args:
+            continue
+        effective_args = {**args, "Cwd": init_cwd}
+        call["tool_args"] = effective_args
+        call["tool_args_digest"] = assignment_guard.canonical_digest(effective_args)
+        call["cwd"] = init_cwd
+
+
+def inspect_headless_stream(
+    stream_path: Path,
+    stderr_path: Path,
     *,
-    exit_code: int,
-    conversation_id: str | None,
-    raw_report: str,
-) -> str:
-    """Classify transport/report delivery without treating it as acceptance."""
-    if not conversation_id:
-        return "missing-conversation"
-    if exit_code != 0:
-        return "nonzero"
-    if not raw_report.strip():
-        return "empty"
-    if extract_exec_report(raw_report) is None:
-        return "invalid-report"
-    return "reported"
+    expected_cwd: Path,
+    requested_conversation_id: str | None,
+    expected_permission_mode: str | None = None,
+    exit_code: int = 0,
+) -> dict:
+    """Reparse raw headless transport and classify it without trusting evidence."""
+    events: list[dict] = []
+    parse_error = None
+    try:
+        lines = stream_path.read_text(errors="strict").splitlines()
+    except (OSError, UnicodeError) as error:
+        lines = []
+        parse_error = str(error)
+    for number, line in enumerate(lines, start=1):
+        if not line.strip():
+            parse_error = f"blank NDJSON record at line {number}"
+            break
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as error:
+            parse_error = f"invalid NDJSON at line {number}: {error}"
+            break
+        if not isinstance(value, dict) or not isinstance(value.get("event"), str):
+            parse_error = f"invalid event envelope at line {number}"
+            break
+        events.append(value)
+
+    response = ""
+    init_id = None
+    result_id = None
+    result_status = None
+    init_cwd = None
+    init_permission_mode = None
+    tool_calls: list[dict] = []
+    denied_tool_steps: set[int] = set()
+    status = "invalid-stream"
+    if parse_error is None:
+        cwd_mismatch = False
+        permission_mode_mismatch = False
+        if events and events[0].get("event") == "init":
+            first_init = events[0].get("init")
+            init_id = events[0].get("conversation_id")
+            raw_init_cwd = (
+                first_init.get("cwd") if isinstance(first_init, dict) else None
+            )
+            if isinstance(raw_init_cwd, str) and Path(raw_init_cwd).is_absolute():
+                init_cwd = str(Path(raw_init_cwd).resolve())
+                if Path(init_cwd) != expected_cwd.resolve():
+                    cwd_mismatch = True
+            init_permission_mode = (
+                first_init.get("permission_mode")
+                if isinstance(first_init, dict)
+                else None
+            )
+            permission_mode_mismatch = (
+                expected_permission_mode is not None
+                and init_permission_mode != expected_permission_mode
+            )
+        init_positions = [
+            index for index, event in enumerate(events) if event.get("event") == "init"
+        ]
+        result_positions = [
+            index for index, event in enumerate(events) if event.get("event") == "result"
+        ]
+        invalid_shape = (
+            not events
+            or init_positions != [0]
+            or len(result_positions) != 1
+            or result_positions[0] != len(events) - 1
+        )
+        if invalid_shape:
+            if (
+                cwd_mismatch
+                and len(events) == 1
+                and init_positions == [0]
+                and not result_positions
+                and isinstance(init_id, str)
+                and init_id
+            ):
+                status = "cwd-mismatch"
+            elif (
+                permission_mode_mismatch
+                and len(events) == 1
+                and init_positions == [0]
+                and not result_positions
+                and isinstance(init_id, str)
+                and init_id
+            ):
+                status = "permission-mode-mismatch"
+            else:
+                parse_error = "stream must start with one init and end with one result"
+        else:
+            init_event = events[0]
+            result_event = events[-1]
+            init = init_event.get("init")
+            result = result_event.get("result")
+            init_id = init_event.get("conversation_id")
+            if (
+                not isinstance(init, dict)
+                or not isinstance(init_id, str)
+                or not init_id
+                or not isinstance(init.get("cwd"), str)
+                or not Path(init["cwd"]).is_absolute()
+                or not isinstance(result, dict)
+                or not isinstance(result.get("conversation_id"), str)
+                or not isinstance(result.get("status"), str)
+                or not isinstance(result.get("response"), str)
+            ):
+                parse_error = "init or result event has an invalid shape"
+            else:
+                init_cwd = str(Path(init["cwd"]).resolve())
+                init_permission_mode = init.get("permission_mode")
+                result_id = result["conversation_id"]
+                result_status = result["status"]
+                response = result["response"]
+                tool_calls, tool_error = stream_tool_calls(events)
+                denied_tool_steps = structured_tool_permission_denial_steps(events)
+                if tool_error is not None:
+                    parse_error = tool_error
+                    status = "invalid-stream"
+                elif init_cwd is None:
+                    parse_error = "init cwd is unavailable for command binding"
+                    status = "invalid-stream"
+                else:
+                    bind_implicit_run_command_cwd(tool_calls, init_cwd)
+                if tool_error is None and parse_error is None and cwd_mismatch:
+                    status = "cwd-mismatch"
+                elif tool_error is None and parse_error is None and permission_mode_mismatch:
+                    status = "permission-mode-mismatch"
+                elif tool_error is None and parse_error is None and (
+                    result_id != init_id
+                    or (
+                        requested_conversation_id is not None
+                        and (
+                            init_id != requested_conversation_id
+                            or result_id != requested_conversation_id
+                        )
+                    )
+                    or any(
+                        call.get("conversation_id") not in {None, init_id}
+                        for call in tool_calls
+                    )
+                ):
+                    status = "conversation-mismatch"
+                elif tool_error is None and parse_error is None and (
+                    permission_denial_text(
+                        stderr_path.read_text(errors="replace")
+                        if stderr_path.is_file()
+                        else ""
+                    )
+                    or any(
+                        structured_tool_permission_denial(event) for event in events
+                    )
+                ):
+                    status = "soft-denied"
+                elif tool_error is None and parse_error is None and (result_status != "SUCCESS" or exit_code != 0):
+                    status = "result-error"
+                elif tool_error is None and parse_error is None and extract_exec_report(response) is None:
+                    status = "invalid-report"
+                elif tool_error is None and parse_error is None:
+                    status = "reported"
+
+    trusted_conversation_id = init_id
+    if status in {
+        "invalid-stream",
+        "cwd-mismatch",
+        "permission-mode-mismatch",
+        "conversation-mismatch",
+    }:
+        trusted_conversation_id = None
+    return {
+        "delivery_status": status,
+        "conversation_id": trusted_conversation_id,
+        "init_conversation_id": init_id,
+        "result_conversation_id": result_id,
+        "init_cwd": init_cwd,
+        "init_permission_mode": init_permission_mode,
+        "result_status": result_status,
+        "tool_calls": tool_calls,
+        "denied_tool_steps": sorted(denied_tool_steps),
+        "response": response,
+        "exec_report": extract_exec_report(response),
+        "parse_error": parse_error,
+    }
+
+
+def assert_assignment_guard_audit(
+    profile: dict,
+    task_key: str,
+    inspected: dict,
+    guard_paths: dict[str, Path],
+) -> list[dict]:
+    """Verify the hook policy and every streamed tool request from raw files."""
+    try:
+        policy, policy_digest = assignment_guard.load_policy(
+            guard_paths["guard_policy"]
+        )
+    except assignment_guard.PolicyError as error:
+        raise SystemExit(f"VOID: invalid assignment guard policy: {error}") from error
+    if policy != assignment_guard_policy(profile, task_key):
+        raise SystemExit("VOID: assignment guard policy differs from the profile")
+    if sha256(guard_paths["guard_program"]) != assignment_guard_contract()[
+        "program_sha256"
+    ]:
+        raise SystemExit("VOID: assignment guard program differs from frozen source")
+    try:
+        hooks = json.loads(guard_paths["guard_hooks"].read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"VOID: invalid assignment hooks artifact: {error}") from error
+    if hooks != assignment_hooks_config():
+        raise SystemExit("VOID: assignment hooks artifact changed")
+
+    events: list[dict] = []
+    try:
+        lines = guard_paths["guard_audit"].read_text(errors="strict").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise SystemExit(f"VOID: cannot read assignment guard audit: {error}") from error
+    required_keys = {
+        "schema",
+        "at",
+        "assignment_digest",
+        "task_key",
+        "policy_sha256",
+        "conversation_id",
+        "step_index",
+        "workspace_paths",
+        "model_name",
+        "tool_name",
+        "tool_args_digest",
+        "command",
+        "cwd",
+        "target_path",
+        "decision",
+        "reason",
+    }
+    for number, line in enumerate(lines, start=1):
+        if not line.strip():
+            raise SystemExit(
+                f"VOID: blank assignment guard audit record at line {number}"
+            )
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SystemExit(
+                f"VOID: invalid assignment guard audit at line {number}: {error}"
+            ) from error
+        if not isinstance(value, dict) or set(value) != required_keys:
+            raise SystemExit(
+                f"VOID: malformed assignment guard audit record at line {number}"
+            )
+        if (
+            value.get("schema") != assignment_guard.AUDIT_SCHEMA
+            or value.get("assignment_digest") != profile["assignment_digest"]
+            or value.get("task_key") != task_key
+            or value.get("policy_sha256") != policy_digest
+            or value.get("model_name") != profile["model"]
+            or not isinstance(value.get("at"), str)
+            or not value["at"]
+            or not isinstance(value.get("reason"), str)
+            or not value["reason"]
+            or not isinstance(value.get("tool_args_digest"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value["tool_args_digest"])
+        ):
+            raise SystemExit(
+                f"VOID: assignment guard audit identity mismatch at line {number}"
+            )
+        workspace_paths = value.get("workspace_paths")
+        if (
+            not isinstance(workspace_paths, list)
+            or len(workspace_paths) != 1
+            or not isinstance(workspace_paths[0], str)
+            or not Path(workspace_paths[0]).is_absolute()
+            or str(Path(workspace_paths[0]).resolve()) not in policy["workspace_roots"]
+        ):
+            raise SystemExit(
+                f"VOID: assignment guard workspace identity mismatch at line {number}"
+            )
+        events.append(value)
+
+    tool_calls = inspected.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        raise SystemExit("VOID: raw stream has no canonical tool-call inventory")
+    denied_steps = inspected.get("denied_tool_steps")
+    if not isinstance(denied_steps, list) or any(
+        not isinstance(step, int) or step < 0 for step in denied_steps
+    ):
+        raise SystemExit("VOID: raw stream has an invalid denied-tool inventory")
+    stream_steps = {call["step_index"] for call in tool_calls}
+    by_step: dict[int, list[dict]] = {}
+    for event in events:
+        step = event.get("step_index")
+        if not isinstance(step, int) or step < 0 or step not in stream_steps:
+            raise SystemExit("VOID: assignment guard audit step identity is invalid")
+        by_step.setdefault(step, []).append(event)
+
+    root = agy_launch_cwd(profile)
+    conversation_id = inspected.get("init_conversation_id")
+    for call in tool_calls:
+        step = call["step_index"]
+        audited_events = by_step.get(step, [])
+        if not audited_events:
+            if (
+                step in denied_steps
+                and call.get("command") in policy["expected_denied_commands"]
+            ):
+                expected_output, _expected_event = assignment_guard.decide(
+                    policy,
+                    policy_digest,
+                    {
+                        "conversationId": conversation_id,
+                        "stepIdx": step,
+                        "workspacePaths": [str(root)],
+                        "modelName": profile["model"],
+                        "toolCall": {
+                            "name": call["tool_name"],
+                            "args": call["tool_args"],
+                        },
+                    },
+                )
+                if expected_output["decision"] == "deny":
+                    continue
+            raise SystemExit(
+                f"VOID: assignment guard audit is missing streamed tool step {step}"
+            )
+        target = call.get("target_path")
+        expected_target = None
+        if isinstance(target, str) and target:
+            candidate = Path(target)
+            if not candidate.is_absolute():
+                candidate = root / candidate
+            expected_target = str(candidate.resolve())
+        for event in audited_events:
+            expected_output, expected_event = assignment_guard.decide(
+                policy,
+                policy_digest,
+                {
+                    "conversationId": conversation_id,
+                    "stepIdx": step,
+                    "workspacePaths": event["workspace_paths"],
+                    "modelName": profile["model"],
+                    "toolCall": {
+                        "name": call["tool_name"],
+                        "args": call["tool_args"],
+                    },
+                },
+            )
+            if (
+                event.get("conversation_id") != conversation_id
+                or event.get("tool_name") != call.get("tool_name")
+                or (
+                    call.get("tool_name") != "run_command"
+                    and event.get("tool_args_digest") != call.get("tool_args_digest")
+                )
+                or event.get("command") != call.get("command")
+                or event.get("cwd") != call.get("cwd")
+                or event.get("target_path") != expected_target
+            ):
+                raise SystemExit(
+                    f"VOID: assignment guard audit differs from streamed tool step {step}"
+                )
+            if (
+                event.get("decision") != expected_output["decision"]
+                or event.get("reason") != expected_event["reason"]
+            ):
+                raise SystemExit(
+                    "VOID: assignment guard decision differs from the frozen contract "
+                    f"at streamed tool step {step}"
+                )
+            if (
+                expected_output["decision"] != "allow"
+                and call.get("command") not in policy["expected_denied_commands"]
+            ):
+                raise SystemExit(
+                    "VOID: AGY requested a tool outside the frozen assignment at "
+                    f"streamed step {step}"
+                )
+    return events
+
+
+def guarded_delivery_status(inspected: dict, guard_events: list[dict]) -> str:
+    """Treat an audited hook denial as a soft delivery failure."""
+    status = inspected["delivery_status"]
+    protocol_failures = {
+        "invalid-stream",
+        "cwd-mismatch",
+        "permission-mode-mismatch",
+        "conversation-mismatch",
+    }
+    if status not in protocol_failures and any(
+        event.get("decision") == "deny" for event in guard_events
+    ):
+        return "soft-denied"
+    return status
 
 
 def write_run_evidence(
@@ -3228,25 +4307,38 @@ def write_run_evidence(
     prompt_path: Path,
     round_contract_path: Path,
     agy_log_path: Path,
-    raw_report_path: Path,
+    stream_path: Path,
+    stderr_path: Path,
+    response_path: Path,
+    guard_artifacts: dict[str, Path],
     normalized_report_path: Path | None,
     snapshot_id: str,
     exit_code: int,
     delivery_status: str,
+    init_permission_mode: str | None,
 ) -> Path:
     ordinal = attempt_ordinal_from_suffix(suffix)
     expected_names = {
         "prompt": f"{task_key}{suffix}.prompt.md",
         "round_contract": f"{task_key}{suffix}.contract.json",
         "agy_log": f"{task_key}{suffix}.agy.log",
-        "raw_report": f"{task_key}{suffix}.log",
+        "stream": f"{task_key}{suffix}.stream.jsonl",
+        "stderr": f"{task_key}{suffix}.stderr.log",
+        "response": f"{task_key}{suffix}.response.md",
+        "guard_program": f"{task_key}{suffix}.guard.py",
+        "guard_policy": f"{task_key}{suffix}.guard-policy.json",
+        "guard_audit": f"{task_key}{suffix}.guard-audit.jsonl",
+        "guard_hooks": f"{task_key}{suffix}.hooks.json",
         "normalized_report": f"{task_key}{suffix}.report.md",
     }
     files = {
         "prompt": prompt_path,
         "round_contract": round_contract_path,
         "agy_log": agy_log_path,
-        "raw_report": raw_report_path,
+        "stream": stream_path,
+        "stderr": stderr_path,
+        "response": response_path,
+        **guard_artifacts,
     }
     if normalized_report_path is not None:
         files["normalized_report"] = normalized_report_path
@@ -3273,17 +4365,21 @@ def write_run_evidence(
         "attempt_ordinal": ordinal,
         "conversation_id": conversation_id,
         "snapshot_id": snapshot_id,
+        "assignment_digest": profile["assignment_digest"],
+        "backend_resolution": profile["backend_resolution"],
         "exit_code": exit_code,
         "delivery_status": delivery_status,
+        "dispatch_role": profile["dispatch_role"],
         "model": profile["model"],
-        "effort": REQUIRED_EFFORT,
+        "effort": profile["effort"],
         "launch_cwd": str(agy_launch_cwd(profile)),
+        "init_permission_mode": init_permission_mode,
         "files": {
             label: {"name": path.name, "sha256": sha256(path)}
             for label, path in files.items()
         },
     }
-    path = raw_report_path.parent / f"{task_key}{suffix}.evidence.json"
+    path = stream_path.parent / f"{task_key}{suffix}.evidence.json"
     path.write_text(json.dumps(payload, indent=2) + "\n")
     return path
 
@@ -3323,20 +4419,34 @@ def assert_run_evidence(
         raise SystemExit(f"VOID: run evidence ordinal mismatch: {evidence_path}")
     if evidence.get("snapshot_id") != snapshot_data.get("snapshot_id"):
         raise SystemExit("VOID: run evidence belongs to a different snapshot")
+    if evidence.get("assignment_digest") != profile["assignment_digest"]:
+        raise SystemExit("VOID: run evidence assignment digest mismatch")
+    if evidence.get("backend_resolution") != profile["backend_resolution"]:
+        raise SystemExit("VOID: run evidence backend resolution mismatch")
     if evidence.get("model") != profile["model"]:
         raise SystemExit("VOID: run evidence model mismatch")
-    if evidence.get("effort") != REQUIRED_EFFORT:
+    if evidence.get("dispatch_role") != profile["dispatch_role"]:
+        raise SystemExit("VOID: run evidence dispatch role mismatch")
+    if evidence.get("effort") != profile["effort"]:
         raise SystemExit("VOID: run evidence effort mismatch")
     if evidence.get("launch_cwd") != str(agy_launch_cwd(profile)):
         raise SystemExit("VOID: run evidence launch cwd mismatch")
+    if "init_permission_mode" not in evidence or not isinstance(
+        evidence.get("init_permission_mode"),
+        (str, type(None)),
+    ):
+        raise SystemExit("VOID: run evidence permission mode is malformed")
     exit_code = evidence.get("exit_code")
     delivery_status = evidence.get("delivery_status")
     if not isinstance(exit_code, int) or delivery_status not in {
         "reported",
-        "nonzero",
-        "empty",
+        "result-error",
+        "soft-denied",
+        "cwd-mismatch",
+        "permission-mode-mismatch",
+        "conversation-mismatch",
+        "invalid-stream",
         "invalid-report",
-        "missing-conversation",
     }:
         raise SystemExit("VOID: run evidence delivery classification is invalid")
 
@@ -3346,7 +4456,13 @@ def assert_run_evidence(
         "prompt",
         "round_contract",
         "agy_log",
-        "raw_report",
+        "stream",
+        "stderr",
+        "response",
+        "guard_program",
+        "guard_policy",
+        "guard_audit",
+        "guard_hooks",
     }
     if delivery_status == "reported":
         required.add("normalized_report")
@@ -3357,7 +4473,13 @@ def assert_run_evidence(
         "prompt": f"{task_key}{expected_suffix}.prompt.md",
         "round_contract": f"{task_key}{expected_suffix}.contract.json",
         "agy_log": f"{task_key}{expected_suffix}.agy.log",
-        "raw_report": f"{task_key}{expected_suffix}.log",
+        "stream": f"{task_key}{expected_suffix}.stream.jsonl",
+        "stderr": f"{task_key}{expected_suffix}.stderr.log",
+        "response": f"{task_key}{expected_suffix}.response.md",
+        "guard_program": f"{task_key}{expected_suffix}.guard.py",
+        "guard_policy": f"{task_key}{expected_suffix}.guard-policy.json",
+        "guard_audit": f"{task_key}{expected_suffix}.guard-audit.jsonl",
+        "guard_hooks": f"{task_key}{expected_suffix}.hooks.json",
         "normalized_report": f"{task_key}{expected_suffix}.report.md",
     }
     for label in sorted(required):
@@ -3379,39 +4501,37 @@ def assert_run_evidence(
             raise SystemExit(f"VOID: run evidence digest mismatch: {label}")
         resolved[label] = path
 
-    raw = resolved["raw_report"].read_text(errors="replace")
     conversation_id = evidence.get("conversation_id")
-    try:
-        logged_conversation_id = (
-            conversation_id_from_log(resolved["agy_log"])
-            if latest_ordinal == 0
-            else conversation_id_mentioned_in_log(resolved["agy_log"])
-        )
-    except SystemExit as error:
-        raise SystemExit(f"VOID: run evidence AGY log lineage is invalid: {error}")
-    if isinstance(conversation_id, str) and conversation_id:
-        if logged_conversation_id != conversation_id:
-            raise SystemExit(
-                "VOID: AGY log does not bind the recorded conversation id"
-            )
-    elif logged_conversation_id is not None:
-        raise SystemExit(
-            "VOID: AGY log names a conversation absent from run evidence"
-        )
-    recomputed_status = classify_delivery_status(
+    inspected = inspect_headless_stream(
+        resolved["stream"],
+        resolved["stderr"],
+        expected_cwd=agy_launch_cwd(profile),
+        requested_conversation_id=(
+            conversation_id if latest_ordinal > 0 and isinstance(conversation_id, str) else None
+        ),
+        expected_permission_mode=tool_permission_mode(),
         exit_code=exit_code,
-        conversation_id=(conversation_id if isinstance(conversation_id, str) else None),
-        raw_report=raw,
     )
-    if recomputed_status != delivery_status:
+    if inspected["conversation_id"] != conversation_id:
+        raise SystemExit("VOID: stream conversation does not match run evidence")
+    if inspected["init_permission_mode"] != evidence.get("init_permission_mode"):
+        raise SystemExit("VOID: raw stream permission mode differs from run evidence")
+    guard_events = assert_assignment_guard_audit(
+        profile,
+        task_key,
+        inspected,
+        {
+            label: resolved[label]
+            for label in (
+                "guard_program",
+                "guard_policy",
+                "guard_audit",
+                "guard_hooks",
+            )
+        },
+    )
+    if guarded_delivery_status(inspected, guard_events) != delivery_status:
         raise SystemExit("VOID: run evidence delivery classification mismatch")
-    if delivery_status == "reported":
-        normalized = resolved["normalized_report"].read_text(errors="replace")
-        if extract_exec_report(raw) != normalized:
-            raise SystemExit("VOID: normalized EXEC REPORT identity mismatch")
-    latest_contract = latest_round_contract(profile, task_key)
-    if latest_contract is None or latest_contract[0] != resolved["round_contract"]:
-        raise SystemExit("VOID: run evidence does not bind the latest round contract")
     current_conversation_id = conversation_id_for_task(profile, task_key)
     if (
         not isinstance(conversation_id, str)
@@ -3419,7 +4539,73 @@ def assert_run_evidence(
         or conversation_id != current_conversation_id
     ):
         raise SystemExit("VOID: run evidence has no auditable conversation lineage")
+    response = resolved["response"].read_text(errors="replace")
+    if response != inspected["response"]:
+        raise SystemExit("VOID: final response differs from raw stream result")
+    if delivery_status == "reported":
+        normalized = resolved["normalized_report"].read_text(errors="replace")
+        if inspected["exec_report"] != normalized:
+            raise SystemExit("VOID: normalized EXEC REPORT identity mismatch")
+    latest_contract = latest_round_contract(profile, task_key)
+    if latest_contract is None or latest_contract[0] != resolved["round_contract"]:
+        raise SystemExit("VOID: run evidence does not bind the latest round contract")
     return evidence
+
+
+def latest_run_transport(
+    profile: dict,
+    task_key: str,
+    evidence: dict,
+) -> tuple[dict, list[dict]]:
+    """Reparse the latest verified evidence files for isolation controls."""
+    files = evidence.get("files")
+    if not isinstance(files, dict):
+        raise SystemExit("VOID: run evidence cannot locate transport artifacts")
+    required = (
+        "stream",
+        "stderr",
+        "guard_program",
+        "guard_policy",
+        "guard_audit",
+        "guard_hooks",
+    )
+    names: dict[str, str] = {}
+    for label in required:
+        entry = files.get(label)
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or Path(name).name != name:
+            raise SystemExit("VOID: run evidence transport artifact is malformed")
+        names[label] = name
+    log_dir = Path(profile["state_dir"]) / "runs"
+    inspected = inspect_headless_stream(
+        log_dir / names["stream"],
+        log_dir / names["stderr"],
+        expected_cwd=agy_launch_cwd(profile),
+        requested_conversation_id=(
+            evidence.get("conversation_id")
+            if isinstance(evidence.get("conversation_id"), str)
+            and evidence.get("attempt_ordinal", 0) > 0
+            else None
+        ),
+        expected_permission_mode=tool_permission_mode(),
+        exit_code=evidence.get("exit_code", -1),
+    )
+    guard_events = assert_assignment_guard_audit(
+        profile,
+        task_key,
+        inspected,
+        {
+            "guard_program": log_dir / names["guard_program"],
+            "guard_policy": log_dir / names["guard_policy"],
+            "guard_audit": log_dir / names["guard_audit"],
+            "guard_hooks": log_dir / names["guard_hooks"],
+        },
+    )
+    if guarded_delivery_status(inspected, guard_events) != evidence.get(
+        "delivery_status"
+    ):
+        raise SystemExit("VOID: latest transport delivery classification drifted")
+    return inspected, guard_events
 
 
 def verified_marker_path(profile: dict, task_key: str) -> Path:
@@ -3468,6 +4654,8 @@ def write_verified_marker(
         "audit_contract_version": AUDIT_CONTRACT_VERSION,
         "task_key": task_key,
         "snapshot_id": snapshot_data.get("snapshot_id"),
+        "assignment_digest": profile["assignment_digest"],
+        "backend_resolution": profile["backend_resolution"],
         "evidence_name": evidence_path.name,
         "evidence_sha256": sha256(evidence_path),
         "conversation_id": conversation_id,
@@ -3476,6 +4664,10 @@ def write_verified_marker(
         "attempt_ordinal_max": attempt_ordinals[-1],
         "attempt_lineage_digest": attempt_lineage_digest(profile, task_key),
         "delivery_status": evidence.get("delivery_status"),
+        "dispatch_role": evidence.get("dispatch_role"),
+        "model": evidence.get("model"),
+        "effort": evidence.get("effort"),
+        "init_permission_mode": evidence.get("init_permission_mode"),
         "verified_at": datetime.now(timezone.utc).isoformat(),
     }
     path = verified_marker_path(profile, task_key)
@@ -3519,9 +4711,16 @@ def assert_verified_predecessor(
         or marker.get("task_key") != task_key
         or marker.get("conversation_id") != conversation_id
         or marker.get("snapshot_id") != evidence.get("snapshot_id")
+        or marker.get("assignment_digest") != evidence.get("assignment_digest")
+        or marker.get("backend_resolution") != evidence.get("backend_resolution")
         or marker.get("evidence_name") != evidence_path.name
         or marker.get("evidence_sha256") != sha256(evidence_path)
         or marker.get("delivery_status") != evidence.get("delivery_status")
+        or marker.get("dispatch_role") != evidence.get("dispatch_role")
+        or marker.get("model") != evidence.get("model")
+        or marker.get("effort") != evidence.get("effort")
+        or marker.get("init_permission_mode")
+        != evidence.get("init_permission_mode")
         or marker.get("attempt_ordinal_max") != attempt_ordinals[-1]
         or marker.get("attempt_lineage_digest")
         != attempt_lineage_digest(profile, task_key)
@@ -3560,7 +4759,7 @@ def assert_initial_task_worktree_unchanged(
         Path(profile["root"]).resolve(),
         protect_raw_index=False,
     )
-    if current != baseline:
+    if stable_worktree_baseline(current) != stable_worktree_baseline(baseline):
         raise SystemExit(
             "VOID: task worktree changed between snapshot and initial dispatch"
         )
@@ -3602,7 +4801,9 @@ def validate_conversation_action(
                 ".prompt.md",
                 ".contract.json",
                 ".agy.log",
-                ".log",
+                ".stream.jsonl",
+                ".stderr.log",
+                ".response.md",
                 ".evidence.json",
             )
         )
@@ -3621,9 +4822,16 @@ def validate_conversation_action(
 
 def agy_command(profile: dict, conversation_id: str | None) -> list[str]:
     """Build the bounded AGY invocation from the frozen profile."""
-    command = ["agy", "--project", agy_project_id(profile)]
-    if profile.get("sandbox", False):
-        command.append("--sandbox")
+    if profile.get("sandbox") is not True:
+        raise SystemExit("sandbox must remain fixed to true")
+    command = [
+        "agy",
+        "--project",
+        agy_project_id(profile),
+        "--sandbox",
+        "--output-format",
+        "stream-json",
+    ]
     if conversation_id:
         command.extend(["--conversation", conversation_id])
     return command
@@ -3634,6 +4842,239 @@ def agy_launch_cwd(profile: dict) -> Path:
     if profile.get("launch_cwd") != REQUIRED_LAUNCH_CWD:
         raise SystemExit(f"launch_cwd must be {REQUIRED_LAUNCH_CWD}")
     return Path(profile["root"]).resolve()
+
+
+def assignment_guard_policy(profile: dict, task_key: str) -> dict:
+    """Create the exact per-attempt tool policy consumed by the AGY hook."""
+    validate_task_key(profile, task_key)
+    return {
+        "schema": assignment_guard.POLICY_SCHEMA,
+        "assignment_digest": profile["assignment_digest"],
+        "task_key": task_key,
+        "worktree_root": str(agy_launch_cwd(profile)),
+        "workspace_roots": [
+            str(agy_launch_cwd(profile)),
+            str(agy_project_root(profile)),
+        ],
+        "executor_role": profile["dispatch_role"],
+        "model": profile["model"],
+        "task_commands": {
+            "allow": list(profile["task_commands"]["allow"]),
+            "deny": list(profile["task_commands"]["deny"]),
+        },
+        "allowed_repo_writes": list(profile["allowed_repo_writes"]),
+        "expected_denied_commands": list(
+            profile["task_contract"].get("expected_soft_denied_commands", [])
+        ),
+    }
+
+
+def assignment_hooks_config() -> dict[str, object]:
+    """Record the immutable global-hook loader required for this run."""
+    return {GLOBAL_ASSIGNMENT_GUARD_NAME: global_assignment_guard_hook_config()}
+
+
+def materialize_assignment_guard(
+    profile: dict,
+    task_key: str,
+    suffix: str,
+    log_dir: Path,
+) -> dict[str, Path]:
+    """Write immutable run-local hook inputs before AGY starts."""
+    log_dir = log_dir.resolve()
+    paths = {
+        "guard_program": log_dir / f"{task_key}{suffix}.guard.py",
+        "guard_policy": log_dir / f"{task_key}{suffix}.guard-policy.json",
+        "guard_audit": log_dir / f"{task_key}{suffix}.guard-audit.jsonl",
+        "guard_hooks": log_dir / f"{task_key}{suffix}.hooks.json",
+    }
+    for path in paths.values():
+        if path.exists():
+            raise SystemExit(f"refusing to overwrite assignment guard artifact: {path}")
+
+    guard_source = Path(assignment_guard.__file__).resolve()
+    if sha256(guard_source) != assignment_guard_contract()["program_sha256"]:
+        raise SystemExit("assignment guard changed while materializing the run")
+    shutil.copyfile(guard_source, paths["guard_program"])
+    paths["guard_program"].chmod(0o700)
+    paths["guard_policy"].write_text(
+        json.dumps(assignment_guard_policy(profile, task_key), indent=2) + "\n"
+    )
+    paths["guard_policy"].chmod(0o600)
+    try:
+        assignment_guard.load_policy(paths["guard_policy"])
+    except assignment_guard.PolicyError as error:
+        raise SystemExit(f"cannot materialize assignment guard policy: {error}") from error
+    paths["guard_audit"].touch(exist_ok=False)
+    paths["guard_audit"].chmod(0o600)
+    hooks = assignment_hooks_config()
+    paths["guard_hooks"].write_text(json.dumps(hooks, indent=2) + "\n")
+    paths["guard_hooks"].chmod(0o600)
+    return paths
+
+
+@contextmanager
+def installed_active_guard_registration(
+    profile: dict,
+    task_key: str,
+    suffix: str,
+    guard_paths: dict[str, Path],
+) -> object:
+    """Publish one private worktree-bound registration for the fixed loader."""
+    log_dir = guard_paths["guard_policy"].parent.resolve()
+    registration = log_dir / f"{task_key}{suffix}.active-guard.json"
+    if registration.exists() or registration.is_symlink():
+        raise SystemExit(
+            "refusing to overwrite active assignment guard registration: "
+            f"{registration}"
+        )
+    payload = {
+        "schema": ACTIVE_GUARD_REGISTRATION_SCHEMA,
+        "worktree_root": str(agy_launch_cwd(profile)),
+        "workspace_roots": assignment_guard_policy(profile, task_key)[
+            "workspace_roots"
+        ],
+        "policy_path": str(guard_paths["guard_policy"].resolve()),
+        "audit_path": str(guard_paths["guard_audit"].resolve()),
+        "core_sha256": assignment_guard_contract()["program_sha256"],
+    }
+    expected = (json.dumps(payload, sort_keys=True) + "\n").encode()
+    descriptor = os.open(
+        registration,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        os.write(descriptor, expected)
+    finally:
+        os.close(descriptor)
+    drift = None
+    try:
+        yield registration
+    finally:
+        try:
+            detail = registration.lstat()
+            if (
+                not stat.S_ISREG(detail.st_mode)
+                or registration.is_symlink()
+                or detail.st_uid != os.getuid()
+                or detail.st_mode & 0o077
+                or registration.read_bytes() != expected
+            ):
+                drift = "active assignment guard registration changed during AGY execution"
+        except OSError as error:
+            drift = f"cannot re-read active assignment guard registration: {error}"
+        try:
+            if registration.is_symlink() or registration.is_file():
+                registration.unlink()
+            elif registration.exists():
+                drift = drift or "active assignment guard registration became a directory"
+        finally:
+            if drift is not None:
+                raise SystemExit(f"VOID: {drift}")
+
+
+def terminate_headless_process(process: subprocess.Popen) -> None:
+    """Stop a bad headless launch, then escalate only after a short grace."""
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def capture_headless_stream(
+    command: list[str],
+    *,
+    cwd: Path,
+    stream_path: Path,
+    stderr_path: Path,
+    expected_permission_mode: str | None = None,
+    env: dict[str, str] | None = None,
+) -> int:
+    """Capture raw NDJSON and stop before work when init is absent or unsafe."""
+    deadline = time.monotonic() + INIT_TIMEOUT_SECONDS
+    with stream_path.open("wb") as stream, stderr_path.open("wb") as diagnostics:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=diagnostics,
+            env=env,
+        )
+        if process.stdout is None:
+            terminate_headless_process(process)
+            return process.returncode
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        init_seen = False
+        pending = b""
+        try:
+            while True:
+                timeout = 0.25
+                if not init_seen:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        terminate_headless_process(process)
+                        break
+                    timeout = min(timeout, remaining)
+                ready = selector.select(timeout)
+                if not ready:
+                    if process.poll() is not None:
+                        break
+                    continue
+                chunk = os.read(process.stdout.fileno(), 64 * 1024)
+                if not chunk:
+                    break
+                stream.write(chunk)
+                stream.flush()
+                if init_seen:
+                    continue
+                pending += chunk
+                if b"\n" not in pending:
+                    continue
+                line, _ = pending.split(b"\n", 1)
+                try:
+                    event = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    terminate_headless_process(process)
+                    break
+                if not isinstance(event, dict) or event.get("event") != "init":
+                    terminate_headless_process(process)
+                    break
+                init = event.get("init")
+                init_id = event.get("conversation_id")
+                raw_cwd = init.get("cwd") if isinstance(init, dict) else None
+                permission_mode = (
+                    init.get("permission_mode") if isinstance(init, dict) else None
+                )
+                if (
+                    not isinstance(init_id, str)
+                    or not init_id
+                    or not isinstance(raw_cwd, str)
+                    or not Path(raw_cwd).is_absolute()
+                ):
+                    terminate_headless_process(process)
+                    break
+                init_seen = True
+                if (
+                    Path(raw_cwd).resolve() != cwd.resolve()
+                    or (
+                        expected_permission_mode is not None
+                        and permission_mode != expected_permission_mode
+                    )
+                ):
+                    terminate_headless_process(process)
+                    break
+        finally:
+            selector.close()
+            process.stdout.close()
+        if process.poll() is None:
+            process.wait()
+        return process.returncode
 
 
 def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
@@ -3668,7 +5109,7 @@ def run_agent_under_lock(profile: dict, task_key: str, *, resume: bool) -> None:
     assert_ignored_paths_unchanged(Path(profile["root"]), snapshot_data)
     assert_task_ignored_noncache_unchanged(profile, snapshot_data)
     assert_task_git_admin_unchanged(profile, snapshot_data)
-    assert_git_common_objects_unchanged(profile, snapshot_data)
+    assert_git_common_objects_intact(profile, snapshot_data)
     assert_registered_worktree_indexes_unchanged(profile, snapshot_data)
     audited_commands = audit_task_commands(profile, task_key, snapshot_data)
     task_state = frozen_task_state(profile, task_key)
@@ -3714,64 +5155,61 @@ def run_agent_under_lock(profile: dict, task_key: str, *, resume: bool) -> None:
             "--model",
             profile["model"],
             "--effort",
-            REQUIRED_EFFORT,
+            profile["effort"],
             "--print-timeout",
             profile.get("timeout", "30m"),
             "--log-file",
             str(agy_log_path),
         ]
     )
-    report_path = log_dir / f"{task_key}{suffix}.log"
-    with report_path.open("w") as log:
-        completed = subprocess.run(
+    stream_path = log_dir / f"{task_key}{suffix}.stream.jsonl"
+    stderr_path = log_dir / f"{task_key}{suffix}.stderr.log"
+    guard_artifacts = materialize_assignment_guard(
+        profile,
+        task_key,
+        suffix,
+        log_dir,
+    )
+    expected_permission_mode = tool_permission_mode()
+    with installed_active_guard_registration(
+        profile,
+        task_key,
+        suffix,
+        guard_artifacts,
+    ):
+        exit_code = capture_headless_stream(
             command,
             cwd=agy_launch_cwd(profile),
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=False,
+            stream_path=stream_path,
+            stderr_path=stderr_path,
+            expected_permission_mode=expected_permission_mode,
         )
-    conversation_lineage_error = None
-    evidence_conversation_id = conversation_id
-    try:
-        logged_conversation_id = (
-            conversation_id_mentioned_in_log(agy_log_path)
-            if resume
-            else conversation_id_from_log(agy_log_path)
-        )
-    except SystemExit as error:
-        logged_conversation_id = None
-        conversation_lineage_error = str(error)
-    if resume:
-        if logged_conversation_id is None and conversation_lineage_error is None:
-            conversation_lineage_error = (
-                "AGY resume log does not identify the requested conversation"
-            )
-        elif (
-            logged_conversation_id is not None
-            and logged_conversation_id != conversation_id
-        ):
-            conversation_lineage_error = (
-                "AGY resume log names a different conversation: "
-                f"{logged_conversation_id}"
-            )
-    else:
-        evidence_conversation_id = logged_conversation_id
-        if logged_conversation_id:
-            conversation_path.write_text(logged_conversation_id + "\n")
-    if conversation_lineage_error is not None:
-        evidence_conversation_id = None
-    report = report_path.read_text(errors="replace")
-    normalized_report = extract_exec_report(report)
-    delivery_status = classify_delivery_status(
-        exit_code=completed.returncode,
-        conversation_id=evidence_conversation_id,
-        raw_report=report,
+    inspected = inspect_headless_stream(
+        stream_path,
+        stderr_path,
+        expected_cwd=agy_launch_cwd(profile),
+        requested_conversation_id=(conversation_id if resume else None),
+        expected_permission_mode=expected_permission_mode,
+        exit_code=exit_code,
     )
+    guard_events = assert_assignment_guard_audit(
+        profile,
+        task_key,
+        inspected,
+        guard_artifacts,
+    )
+    evidence_conversation_id = inspected["conversation_id"]
+    response_path = log_dir / f"{task_key}{suffix}.response.md"
+    response_path.write_text(inspected["response"])
+    delivery_status = guarded_delivery_status(inspected, guard_events)
     normalized_path = None
     if delivery_status == "reported":
+        normalized_report = inspected["exec_report"]
         assert normalized_report is not None
         normalized_path = log_dir / f"{task_key}{suffix}.report.md"
         normalized_path.write_text(normalized_report)
+    if evidence_conversation_id:
+        conversation_path.write_text(evidence_conversation_id + "\n")
     write_run_evidence(
         profile=profile,
         task_key=task_key,
@@ -3780,43 +5218,24 @@ def run_agent_under_lock(profile: dict, task_key: str, *, resume: bool) -> None:
         prompt_path=prompt_path,
         round_contract_path=round_contract_path,
         agy_log_path=agy_log_path,
-        raw_report_path=report_path,
+        stream_path=stream_path,
+        stderr_path=stderr_path,
+        response_path=response_path,
+        guard_artifacts=guard_artifacts,
         normalized_report_path=normalized_path,
         snapshot_id=snapshot_data["snapshot_id"],
-        exit_code=completed.returncode,
+        exit_code=exit_code,
         delivery_status=delivery_status,
+        init_permission_mode=inspected["init_permission_mode"],
     )
     print(
         f"prompt sha256={sha256(prompt_path)}; "
-        f"oracle sha256={sha256(oracle)}; exit={completed.returncode}"
+        f"oracle sha256={sha256(oracle)}; exit={exit_code}"
     )
-    if delivery_status == "missing-conversation":
-        detail = (
-            f": {conversation_lineage_error}"
-            if conversation_lineage_error is not None
-            else ""
-        )
-        raise SystemExit(
-            f"dispatch failed for {task_key}: AGY conversation id is "
-            "missing or mismatched, so command and session lineage cannot be "
-            f"audited{detail}"
-        )
-    if delivery_status == "nonzero":
+    if delivery_status != "reported":
         raise SystemExit(
             f"{'resume' if resume else 'dispatch'} failed for {task_key}: "
-            f"AGY exited {completed.returncode}; inspect `denied`, verify the "
-            "snapshot, and update the persistent Project policy only when the "
-            "missing command is a reusable project capability"
-        )
-    if delivery_status == "empty":
-        raise SystemExit(
-            f"{'resume' if resume else 'dispatch'} failed for {task_key}: "
-            "empty local report; inspect the AGY log and repository diff"
-        )
-    if delivery_status == "invalid-report":
-        raise SystemExit(
-            f"{'resume' if resume else 'dispatch'} failed for {task_key}: "
-            "local output has no valid terminal `## EXEC REPORT`"
+            f"delivery_status={delivery_status}; inspect the raw stream and stderr"
         )
     assert delivery_status == "reported"
     print(
@@ -3855,8 +5274,12 @@ def park_original(
 
 
 def verify(profile: dict, task_key: str) -> None:
-    with task_operation_lock(profile, task_key, "verify"):
-        verify_under_lock(profile, task_key)
+    # A bounded writer keeps the Project lock until its evidence has been
+    # checked.  This prevents a second task from changing the shared Project
+    # before the first task's verification can prove what happened.
+    with project_concurrency_lock(profile, task_key, "verify"):
+        with task_operation_lock(profile, task_key, "verify"):
+            verify_under_lock(profile, task_key)
 
 
 def verify_under_lock(profile: dict, task_key: str) -> None:
@@ -3874,11 +5297,18 @@ def verify_under_lock(profile: dict, task_key: str) -> None:
     delivery_error = None
     run_evidence = None
     run_evidence_path = None
+    inspected = None
+    guard_events = None
     try:
         run_evidence = assert_run_evidence(profile, task_key, snapshot_data)
         latest_evidence = latest_run_evidence(profile, task_key)
         assert latest_evidence is not None
         run_evidence_path = latest_evidence[0]
+        inspected, guard_events = latest_run_transport(
+            profile,
+            task_key,
+            run_evidence,
+        )
     except SystemExit as error:
         delivery_error = str(error)
     assert_worktree_scope_unchanged(profile, snapshot_data)
@@ -3897,6 +5327,12 @@ def verify_under_lock(profile: dict, task_key: str) -> None:
         else json_digest([])
     )
     audited_commands = audit_task_commands(profile, task_key, snapshot_data)
+    soft_denial_failures = expected_soft_denial_failures(
+        profile,
+        audited_commands,
+        inspected=inspected,
+        guard_events=guard_events,
+    )
     assert_no_sandbox_file_access_denial(profile, task_key)
 
     state = Path(profile["state_dir"])
@@ -3904,7 +5340,7 @@ def verify_under_lock(profile: dict, task_key: str) -> None:
     assert_ignored_paths_unchanged(root, snapshot_data)
     assert_task_ignored_noncache_unchanged(profile, snapshot_data)
     assert_task_git_admin_unchanged(profile, snapshot_data)
-    assert_git_common_objects_unchanged(profile, snapshot_data)
+    assert_git_common_objects_intact(profile, snapshot_data)
     assert_registered_worktree_indexes_unchanged(profile, snapshot_data)
     result = subprocess.run(
         ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
@@ -4003,6 +5439,12 @@ def verify_under_lock(profile: dict, task_key: str) -> None:
             "VOID: repository isolation checks completed, but AGY delivery "
             f"evidence is invalid: {delivery_error}"
         )
+    if soft_denial_failures:
+        raise SystemExit(
+            "ISOLATION_CONTROL_FAILED: repository isolation checks completed, "
+            "but an expected soft-deny command was not denied exactly once: "
+            + json.dumps(soft_denial_failures, sort_keys=True)
+        )
     assert run_evidence is not None and run_evidence_path is not None
     write_verified_marker(
         profile,
@@ -4029,75 +5471,116 @@ def verify_under_lock(profile: dict, task_key: str) -> None:
 
 
 def status(profile: dict) -> None:
+    require_project_ready(profile)
     log_dir = Path(profile["state_dir"]) / "runs"
-    for log in sorted(log_dir.glob("*.log")):
-        if log.name.endswith(".agy.log"):
-            continue
-        text = log.read_text(errors="replace")
-        evidence_path = log.with_name(log.stem + ".evidence.json")
+    for evidence_path in sorted(log_dir.glob("*.evidence.json")):
+        attempt_name = evidence_path.name.removesuffix(".evidence.json")
         verdict = None
-        if evidence_path.is_file():
-            try:
-                evidence = json.loads(evidence_path.read_text())
-            except json.JSONDecodeError:
+        try:
+            evidence = json.loads(evidence_path.read_text())
+        except json.JSONDecodeError:
+            verdict = "INVALID EVIDENCE"
+        else:
+            if (
+                evidence.get("version") != RUN_EVIDENCE_VERSION
+                or evidence.get("audit_contract_version")
+                != AUDIT_CONTRACT_VERSION
+            ):
                 verdict = "INVALID EVIDENCE"
+                delivery_status = None
+                task_key = None
             else:
+                delivery_status = evidence.get("delivery_status")
+                task_key = evidence.get("task_key")
                 if (
-                    evidence.get("version") != RUN_EVIDENCE_VERSION
-                    or evidence.get("audit_contract_version")
-                    != AUDIT_CONTRACT_VERSION
+                    evidence.get("dispatch_role") != profile["dispatch_role"]
+                    or evidence.get("model") != profile["model"]
+                    or evidence.get("effort") != profile["effort"]
+                    or evidence.get("backend_resolution")
+                    != profile["backend_resolution"]
                 ):
                     verdict = "INVALID EVIDENCE"
-                    delivery_status = None
-                    task_key = None
-                else:
-                    delivery_status = evidence.get("delivery_status")
-                    task_key = evidence.get("task_key")
-                marker = None
-                if verdict is None and isinstance(task_key, str):
-                    marker_path = verified_marker_path(profile, task_key)
-                    if marker_path.is_file():
-                        try:
-                            candidate = json.loads(marker_path.read_text())
-                        except json.JSONDecodeError:
-                            candidate = None
-                        if (
-                            isinstance(candidate, dict)
-                            and candidate.get("version")
-                            == VERIFIED_MARKER_VERSION
-                            and candidate.get("audit_contract_version")
-                            == AUDIT_CONTRACT_VERSION
-                            and candidate.get("evidence_name") == evidence_path.name
-                            and candidate.get("evidence_sha256") == sha256(evidence_path)
-                            and candidate.get("delivery_status") == delivery_status
-                        ):
-                            marker = candidate
-                if verdict is None and delivery_status == "reported":
-                    verdict = "ISOLATION VERIFIED" if marker else "REPORTED"
-                elif verdict is None and delivery_status in {
-                    "nonzero",
-                    "empty",
-                    "invalid-report",
-                    "missing-conversation",
-                }:
-                    verdict = (
-                        "DELIVERY_FAILED_ISOLATION_VERIFIED"
-                        if marker
-                        else f"DELIVERY FAILED ({delivery_status})"
+            latest_is_current = False
+            if verdict is None and isinstance(task_key, str):
+                try:
+                    latest = latest_run_evidence(profile, task_key)
+                    latest_is_current = (
+                        latest is not None and latest[0] == evidence_path.resolve()
                     )
-                elif verdict is None:
+                    if latest_is_current:
+                        snapshot_data = load_snapshot(profile, task_key)
+                        assert_run_evidence(profile, task_key, snapshot_data)
+                except (OSError, json.JSONDecodeError, SystemExit):
                     verdict = "INVALID EVIDENCE"
-        if verdict is None:
-            verdict = (
-                "DENIED"
-                if "auto-denied" in text or "soft-denying" in text
-                else "EMPTY"
-                if not text.strip()
-                else "REPORTED"
-                if extract_exec_report(text) is not None
-                else "INVALID REPORT"
-            )
-        print(f"{log.stem}: {verdict}")
+
+            marker = None
+            if verdict is None and isinstance(task_key, str):
+                marker_path = verified_marker_path(profile, task_key)
+                if marker_path.is_file():
+                    try:
+                        candidate = json.loads(marker_path.read_text())
+                    except json.JSONDecodeError:
+                        candidate = None
+                    if (
+                        isinstance(candidate, dict)
+                        and candidate.get("version") == VERIFIED_MARKER_VERSION
+                        and candidate.get("audit_contract_version")
+                        == AUDIT_CONTRACT_VERSION
+                        and candidate.get("evidence_name") == evidence_path.name
+                        and candidate.get("evidence_sha256") == sha256(evidence_path)
+                        and candidate.get("delivery_status") == delivery_status
+                        and candidate.get("backend_resolution")
+                        == evidence.get("backend_resolution")
+                        and candidate.get("assignment_digest")
+                        == evidence.get("assignment_digest")
+                        and candidate.get("dispatch_role")
+                        == evidence.get("dispatch_role")
+                        and candidate.get("model") == evidence.get("model")
+                        and candidate.get("effort") == evidence.get("effort")
+                        and candidate.get("init_permission_mode")
+                        == evidence.get("init_permission_mode")
+                    ):
+                        marker = candidate
+            control_failures = []
+            if (
+                verdict is None
+                and delivery_status == "reported"
+                and isinstance(task_key, str)
+                and latest_is_current
+            ):
+                try:
+                    audited_commands = audit_task_commands(
+                        profile,
+                        task_key,
+                        snapshot_data,
+                    )
+                    control_failures = expected_soft_denial_failures(
+                        profile,
+                        audited_commands,
+                    )
+                except SystemExit:
+                    verdict = "INVALID EVIDENCE"
+            if verdict is None and control_failures:
+                verdict = "ISOLATION CONTROL FAILED"
+            elif verdict is None and delivery_status == "reported":
+                verdict = "ISOLATION VERIFIED" if marker else "REPORTED"
+            elif verdict is None and delivery_status in {
+                "result-error",
+                "soft-denied",
+                "cwd-mismatch",
+                "permission-mode-mismatch",
+                "conversation-mismatch",
+                "invalid-stream",
+                "invalid-report",
+            }:
+                verdict = (
+                    "DELIVERY_FAILED_ISOLATION_VERIFIED"
+                    if marker
+                    else f"DELIVERY FAILED ({delivery_status})"
+                )
+            elif verdict is None:
+                verdict = "INVALID EVIDENCE"
+        print(f"{attempt_name}: {verdict}")
 
 
 def main() -> None:

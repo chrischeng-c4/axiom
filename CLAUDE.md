@@ -107,9 +107,11 @@ The controller stays thin: it does not inspect product code, docs, or raw test
 logs. It reads concise worker evidence and owns final acceptance. It preserves
 unrelated work and runs Git through `git -c core.fsmonitor=false …`.
 
-Use a fresh `agy-operator` only for a user-authorized frozen external payload.
-Use `gke-operator` only for an authorized paid GKE run. The controller owns
-their semantic verification, Git, tracker, publication, and cleanup choices.
+Use a fresh linked-worktree executor task only for a user-authorized frozen
+external payload. It receives an absolute controller assignment and runs the
+generic executor entrypoint. For an authorized paid GKE run, use only the
+controller-named repository script or workflow and monitor it. The controller
+owns semantic verification, Git, tracker, publication, and cleanup choices.
 
 Treat `main`, `app/*`, `lib/*`, `project-mamba`, `project-lumen`, and
 `examples` as persistent refs. Never delete or force-overwrite one without

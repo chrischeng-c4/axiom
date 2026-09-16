@@ -18,12 +18,12 @@ import unittest.mock
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).with_name("agy_dispatch.py")
+SCRIPT = Path(__file__).with_name("dispatch_to_agy.py")
 MAKE_PROFILE = Path(__file__).with_name("make_profile.py")
-SPEC = importlib.util.spec_from_file_location("agy_dispatch", SCRIPT)
+SPEC = importlib.util.spec_from_file_location("dispatch_to_agy", SCRIPT)
 assert SPEC and SPEC.loader
-agy_dispatch = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(agy_dispatch)
+dispatch_to_agy = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(dispatch_to_agy)
 
 
 class DispatchControllerTest(unittest.TestCase):
@@ -63,10 +63,10 @@ class DispatchControllerTest(unittest.TestCase):
         }
         self.write_project("project-a", self.repo_a, self.project_surface)
         self.write_project("project-b", self.repo_b, self.project_surface)
-        agy_dispatch.SETTINGS = self.settings
-        agy_dispatch.GLOBAL = self.global_config
-        agy_dispatch.PROJECT_DIR = self.project_dir
-        agy_dispatch.CONVERSATION_DIR = self.conversation_dir
+        dispatch_to_agy.SETTINGS = self.settings
+        dispatch_to_agy.GLOBAL = self.global_config
+        dispatch_to_agy.PROJECT_DIR = self.project_dir
+        dispatch_to_agy.CONVERSATION_DIR = self.conversation_dir
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -146,26 +146,26 @@ class DispatchControllerTest(unittest.TestCase):
     def test_ticketed_policy_remains_the_default_for_legacy_profiles(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "10")
         del profile["task_contract"]["session_policy"]
-        self.assertEqual(agy_dispatch.task_session_policy(profile), "ticketed")
-        agy_dispatch.validate_task_key(profile, "10")
+        self.assertEqual(dispatch_to_agy.task_session_policy(profile), "ticketed")
+        dispatch_to_agy.validate_task_key(profile, "10")
 
     def test_profile_accepts_one_shot_without_issue(self) -> None:
         profile = self.one_shot_profile(self.repo_a, "project-a")
         profile_path = self.root / "one-shot.json"
         profile_path.write_text(json.dumps(profile))
-        loaded = agy_dispatch.load_profile(str(profile_path))
+        loaded = dispatch_to_agy.load_profile(str(profile_path))
         self.assertEqual(
             loaded["task_contract"]["session_policy"],
             "one-shot",
         )
         self.assertNotIn("issue", loaded["task_contract"])
-        agy_dispatch.validate_task_key(loaded, "adhoc-1")
+        dispatch_to_agy.validate_task_key(loaded, "adhoc-1")
 
     def test_one_shot_rejects_issue_and_unsafe_run_id(self) -> None:
         profile = self.one_shot_profile(self.repo_a, "project-a")
         profile["task_contract"]["issue"] = "10"
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.validate_task_identity(profile)
+            dispatch_to_agy.validate_task_identity(profile)
         self.assertIn("must not set task_contract.issue", str(caught.exception))
 
         profile = self.one_shot_profile(
@@ -174,13 +174,13 @@ class DispatchControllerTest(unittest.TestCase):
             "../escape",
         )
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.validate_task_identity(profile)
+            dispatch_to_agy.validate_task_identity(profile)
         self.assertIn("task identity must match", str(caught.exception))
 
     def test_one_shot_has_frozen_local_state_without_tracker_lookup(self) -> None:
         profile = self.one_shot_profile(self.repo_a, "project-a")
         self.assertEqual(
-            agy_dispatch.frozen_task_state(profile, "adhoc-1"),
+            dispatch_to_agy.frozen_task_state(profile, "adhoc-1"),
             {
                 "run_id": "adhoc-1",
                 "state": "ONE_SHOT",
@@ -192,7 +192,7 @@ class DispatchControllerTest(unittest.TestCase):
     def test_one_shot_resume_is_forbidden(self) -> None:
         profile = self.one_shot_profile(self.repo_a, "project-a")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.validate_conversation_action(
+            dispatch_to_agy.validate_conversation_action(
                 profile,
                 "adhoc-1",
                 resume=True,
@@ -212,7 +212,7 @@ class DispatchControllerTest(unittest.TestCase):
             (runs / f"{task_key}.conversation").write_text("conversation-id\n")
 
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.validate_conversation_action(
+            dispatch_to_agy.validate_conversation_action(
                 ticketed,
                 "11",
                 resume=False,
@@ -220,7 +220,7 @@ class DispatchControllerTest(unittest.TestCase):
         self.assertIn("use resume for ticket #11", str(caught.exception))
 
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.validate_conversation_action(
+            dispatch_to_agy.validate_conversation_action(
                 one_shot,
                 "adhoc-2",
                 resume=False,
@@ -231,7 +231,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile = self.profile(self.repo_a, "project-a", "1")
         project_path = self.project_dir / "project-a.json"
         before = project_path.read_bytes()
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         self.assertTrue(report["dispatch_ready"])
         self.assertEqual(report["project_permissions_status"], "ready")
         self.assertEqual(report["global_permissions_status"], "empty")
@@ -240,7 +240,7 @@ class DispatchControllerTest(unittest.TestCase):
     def test_project_permission_drift_blocks_dispatch(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "1")
         profile["project_permissions"]["allow"].append("command(cargo test)")
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         self.assertFalse(report["dispatch_ready"])
         self.assertEqual(
             report["missing_project_rules"]["allow"],
@@ -255,7 +255,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile = self.profile(self.repo_a, "project-a", "1")
         profile["allowed_repo_writes"] = ["src/a.py"]
         profile["protected_artifacts"] = [{"path": "src/a.py", "sha256": "deadbeef"}]
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         self.assertFalse(report["dispatch_ready"])
         self.assertTrue(
             any("src/a.py" in blocker for blocker in report["blockers"]),
@@ -269,7 +269,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile = self.profile(self.repo_a, "project-a", "1")
         profile["allowed_repo_writes"] = ["src/a.py"]
         profile["protected_artifacts"] = [{"path": "src/b.py", "sha256": "deadbeef"}]
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         self.assertTrue(report["dispatch_ready"], report["blockers"])
 
     def test_loaded_profile_with_repo_relative_protected_write_target_blocks_dispatch(
@@ -289,10 +289,10 @@ class DispatchControllerTest(unittest.TestCase):
         profile["protected_artifacts"] = [{"path": "src/a.py", "sha256": "deadbeef"}]
         profile_path = self.root / "profile-relative.json"
         profile_path.write_text(json.dumps(profile))
-        loaded = agy_dispatch.load_profile(
+        loaded = dispatch_to_agy.load_profile(
             str(profile_path), require_injection=False, validate_design=False
         )
-        report = agy_dispatch.project_policy_report(loaded)
+        report = dispatch_to_agy.project_policy_report(loaded)
         self.assertFalse(report["dispatch_ready"])
         self.assertTrue(
             any("src/a.py" in blocker for blocker in report["blockers"]),
@@ -318,10 +318,10 @@ class DispatchControllerTest(unittest.TestCase):
         ]
         profile_path = self.root / "profile-absolute.json"
         profile_path.write_text(json.dumps(profile))
-        loaded = agy_dispatch.load_profile(
+        loaded = dispatch_to_agy.load_profile(
             str(profile_path), require_injection=False, validate_design=False
         )
-        report = agy_dispatch.project_policy_report(loaded)
+        report = dispatch_to_agy.project_policy_report(loaded)
         self.assertFalse(report["dispatch_ready"])
         self.assertTrue(
             any("src/a.py" in blocker for blocker in report["blockers"]),
@@ -344,10 +344,10 @@ class DispatchControllerTest(unittest.TestCase):
         profile["protected_artifacts"] = [{"path": "src/b.py", "sha256": "deadbeef"}]
         profile_path = self.root / "profile-neg.json"
         profile_path.write_text(json.dumps(profile))
-        loaded = agy_dispatch.load_profile(
+        loaded = dispatch_to_agy.load_profile(
             str(profile_path), require_injection=False, validate_design=False
         )
-        report = agy_dispatch.project_policy_report(loaded)
+        report = dispatch_to_agy.project_policy_report(loaded)
         self.assertTrue(report["dispatch_ready"], report["blockers"])
         self.assertFalse(
             any("src/a.py" in blocker or "src/b.py" in blocker for blocker in report["blockers"]),
@@ -376,10 +376,10 @@ class DispatchControllerTest(unittest.TestCase):
         ]
         profile_path = self.root / "profile-namesake.json"
         profile_path.write_text(json.dumps(profile))
-        loaded = agy_dispatch.load_profile(
+        loaded = dispatch_to_agy.load_profile(
             str(profile_path), require_injection=False, validate_design=False
         )
-        report = agy_dispatch.project_policy_report(loaded)
+        report = dispatch_to_agy.project_policy_report(loaded)
         self.assertTrue(report["dispatch_ready"], report["blockers"])
         self.assertFalse(
             any("a.py" in blocker for blocker in report["blockers"]),
@@ -402,13 +402,13 @@ class DispatchControllerTest(unittest.TestCase):
         profile["protected_artifacts"] = [{"path": "src/a.py", "sha256": "deadbeef"}]
         profile_path = self.root / "profile-doctor.json"
         profile_path.write_text(json.dumps(profile))
-        loaded = agy_dispatch.load_profile(
+        loaded = dispatch_to_agy.load_profile(
             str(profile_path), require_injection=False, validate_design=False
         )
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             with self.assertRaises(SystemExit) as caught:
-                agy_dispatch.doctor(loaded)
+                dispatch_to_agy.doctor(loaded)
         self.assertEqual(caught.exception.code, 2)
         output = buffer.getvalue()
         self.assertIn("src/a.py", output)
@@ -431,7 +431,7 @@ class DispatchControllerTest(unittest.TestCase):
 
     def run_doctor(self, profile: dict) -> dict:
         with contextlib.redirect_stdout(io.StringIO()):
-            return agy_dispatch.doctor(profile)
+            return dispatch_to_agy.doctor(profile)
 
     def test_doctor_does_not_call_a_round_ready_before_its_snapshot_exists(
         self,
@@ -505,7 +505,7 @@ class DispatchControllerTest(unittest.TestCase):
         """
         profile, _, _ = self.authored_round()
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_snapshot(profile, "adhoc-1")
+            dispatch_to_agy.load_snapshot(profile, "adhoc-1")
         message = str(caught.exception)
         self.assertIn("snapshot PROFILE adhoc-1", message)
 
@@ -521,7 +521,7 @@ class DispatchControllerTest(unittest.TestCase):
                 }
             )
         )
-        report = agy_dispatch.project_policy_report(
+        report = dispatch_to_agy.project_policy_report(
             self.profile(self.repo_a, "project-a", "1")
         )
         self.assertFalse(report["dispatch_ready"])
@@ -550,7 +550,7 @@ class DispatchControllerTest(unittest.TestCase):
         )
         profile = self.profile(self.repo_a, "project-a", "1")
         profile["project_permissions"]["require_empty_global"] = False
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         self.assertEqual(report["global_broadening_rules"], [])
         self.assertEqual(
             report["global_permissions_status"], "inherited-narrowing-only"
@@ -573,27 +573,27 @@ class DispatchControllerTest(unittest.TestCase):
         )
         profile = self.profile(self.repo_a, "project-a", "1")
         profile["project_permissions"]["require_empty_global"] = False
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         self.assertFalse(report["dispatch_ready"])
         self.assertEqual(
             report["global_broadening_rules"], ["command(cargo test)"]
         )
 
     def test_command_permission_matching_and_precedence(self) -> None:
-        project = agy_dispatch.normalize_permission_surface(
+        project = dispatch_to_agy.normalize_permission_surface(
             {
                 "allow": ["command(git)", "command(rg)"],
                 "deny": ["command(git push)"],
                 "ask": [],
             }
         )
-        empty = agy_dispatch.normalize_permission_surface({})
+        empty = dispatch_to_agy.normalize_permission_surface({})
         self.assertEqual(
-            agy_dispatch.permission_decision(project, empty, "rg -n TODO src"),
+            dispatch_to_agy.permission_decision(project, empty, "rg -n TODO src"),
             ("allow", "command(rg)"),
         )
         self.assertEqual(
-            agy_dispatch.permission_decision(
+            dispatch_to_agy.permission_decision(
                 project,
                 empty,
                 "git push origin main",
@@ -608,21 +608,21 @@ class DispatchControllerTest(unittest.TestCase):
         agy_log.write_text("startup chatter\n")
         # The local report is what AGY writes when its own deadline fires.
         self.assertTrue(
-            agy_dispatch.timed_out("Error: timeout waiting for response\n", agy_log)
+            dispatch_to_agy.timed_out("Error: timeout waiting for response\n", agy_log)
         )
         # A deadline that killed the process before it wrote a report is only
         # visible in the AGY log.
         agy_log.write_text(
             "chatter\nE0806 printmode.go:499] Print mode: timed out after 13412 polls\n"
         )
-        self.assertTrue(agy_dispatch.timed_out("", agy_log))
+        self.assertTrue(dispatch_to_agy.timed_out("", agy_log))
         # A denial must keep routing the controller to `denied`.
         agy_log.write_text("chatter\npermission denied for command: cargo publish\n")
         self.assertFalse(
-            agy_dispatch.timed_out("Error: command not permitted\n", agy_log)
+            dispatch_to_agy.timed_out("Error: command not permitted\n", agy_log)
         )
         # A missing log is not evidence of a deadline.
-        self.assertFalse(agy_dispatch.timed_out("", log_dir / "absent.agy.log"))
+        self.assertFalse(dispatch_to_agy.timed_out("", log_dir / "absent.agy.log"))
 
     def test_reads_wal_conversation_store_after_agy_removed_sidecars(self) -> None:
         database = Path(tempfile.mkdtemp()) / "conversation.db"
@@ -646,7 +646,7 @@ class DispatchControllerTest(unittest.TestCase):
             plain.execute("select count(*) from steps").fetchone()
         plain.close()
 
-        connection = agy_dispatch.connect_conversation(database)
+        connection = dispatch_to_agy.connect_conversation(database)
         try:
             self.assertEqual(
                 connection.execute("select count(*) from steps").fetchone()[0], 1
@@ -682,7 +682,7 @@ class DispatchControllerTest(unittest.TestCase):
             finally:
                 skipped.close()
 
-            connection = agy_dispatch.connect_conversation(database)
+            connection = dispatch_to_agy.connect_conversation(database)
             try:
                 self.assertEqual(
                     connection.execute("select count(*) from steps").fetchone()[0], 2
@@ -693,7 +693,7 @@ class DispatchControllerTest(unittest.TestCase):
             writer.close()
 
     def test_unsandboxed_rule_without_command_twin_is_inert(self) -> None:
-        surface = agy_dispatch.normalize_permission_surface(
+        surface = dispatch_to_agy.normalize_permission_surface(
             {
                 "allow": [
                     "command(cargo build -p x --lib)",
@@ -705,21 +705,21 @@ class DispatchControllerTest(unittest.TestCase):
             }
         )
         self.assertEqual(
-            agy_dispatch.inert_unsandboxed_rules(surface),
+            dispatch_to_agy.inert_unsandboxed_rules(surface),
             ["unsandboxed(cargo test -p x --lib gate)"],
         )
         # A sandbox escape is consulted only after the command already resolved
         # to allow, so the unpaired rule can never fire on its own.
-        empty = agy_dispatch.normalize_permission_surface({})
+        empty = dispatch_to_agy.normalize_permission_surface({})
         self.assertEqual(
-            agy_dispatch.permission_decision(
+            dispatch_to_agy.permission_decision(
                 surface, empty, "cargo test -p x --lib gate"
             ),
             ("ask", None),
         )
 
     def test_fully_paired_escape_surface_reports_nothing_inert(self) -> None:
-        surface = agy_dispatch.normalize_permission_surface(
+        surface = dispatch_to_agy.normalize_permission_surface(
             {
                 "allow": [
                     "command(rustfmt --edition 2021)",
@@ -730,7 +730,7 @@ class DispatchControllerTest(unittest.TestCase):
                 "ask": [],
             }
         )
-        self.assertEqual(agy_dispatch.inert_unsandboxed_rules(surface), [])
+        self.assertEqual(dispatch_to_agy.inert_unsandboxed_rules(surface), [])
 
     def test_task_command_check_reports_sandbox_escape_per_command(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "1")
@@ -753,12 +753,12 @@ class DispatchControllerTest(unittest.TestCase):
         project_path = self.project_dir / "project-a.json"
         project = json.loads(project_path.read_text())
         project["permissionGrants"]["permissionGrants"] = (
-            agy_dispatch.normalize_permission_surface(
+            dispatch_to_agy.normalize_permission_surface(
                 profile["project_permissions"]
             )
         )
         project_path.write_text(json.dumps(project))
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         escapes = {
             check["command"]: check["unsandboxed"]
             for check in report["task_command_checks"]
@@ -777,7 +777,7 @@ class DispatchControllerTest(unittest.TestCase):
     def test_permission_digest_detects_midrun_project_drift(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "1")
         snapshot = {
-            "permission_state_digest": agy_dispatch.permission_state_digest(
+            "permission_state_digest": dispatch_to_agy.permission_state_digest(
                 profile
             )
         }
@@ -787,13 +787,13 @@ class DispatchControllerTest(unittest.TestCase):
         grants["allow"].append("command(cargo test)")
         project_path.write_text(json.dumps(project))
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.assert_permission_state_unchanged(profile, snapshot)
+            dispatch_to_agy.assert_permission_state_unchanged(profile, snapshot)
         self.assertIn("permission state changed", str(caught.exception))
 
     def test_explicit_project_must_match_profile_root(self) -> None:
         profile = self.profile(self.repo_b, "project-a", "3")
         with self.assertRaises(SystemExit):
-            agy_dispatch.agy_project_id(profile)
+            dispatch_to_agy.agy_project_id(profile)
 
     def test_extracts_last_line_anchored_exec_report_after_chatter(self) -> None:
         raw = (
@@ -803,11 +803,11 @@ class DispatchControllerTest(unittest.TestCase):
             "## EXEC REPORT\nPASS\n"
         )
         self.assertEqual(
-            agy_dispatch.extract_exec_report(raw),
+            dispatch_to_agy.extract_exec_report(raw),
             "## EXEC REPORT\nPASS\n",
         )
         self.assertIsNone(
-            agy_dispatch.extract_exec_report(
+            dispatch_to_agy.extract_exec_report(
                 "prose mentioning ## EXEC REPORT but no heading"
             )
         )
@@ -820,7 +820,7 @@ class DispatchControllerTest(unittest.TestCase):
             b"\x00trailer"
         )
         self.assertEqual(
-            agy_dispatch.extract_run_command_lines(payload),
+            dispatch_to_agy.extract_run_command_lines(payload),
             [r"rg -c NATIVE_FUNC_ADDRS\.with projects/mamba"],
         )
 
@@ -884,7 +884,7 @@ class DispatchControllerTest(unittest.TestCase):
                 (3, "rg -n TODO src"),
             ],
         )
-        audited, findings, _notes, every = agy_dispatch.audit_task_commands(
+        audited, findings, _notes, every = dispatch_to_agy.audit_task_commands(
             profile,
             "7",
             {
@@ -926,7 +926,7 @@ class DispatchControllerTest(unittest.TestCase):
             "conversation-8",
             [(1, "rg -n SECRET unrelated")],
         )
-        audited, findings, notes, _every = agy_dispatch.audit_task_commands(
+        audited, findings, notes, _every = dispatch_to_agy.audit_task_commands(
             profile,
             "8",
             {
@@ -955,7 +955,7 @@ class DispatchControllerTest(unittest.TestCase):
             [(1, "pwd"), (3, "rg -n SECRET unrelated")],
             outcomes=[(2, 3, "pwd"), (4, 7, "rg -n SECRET unrelated")],
         )
-        audited, findings, _notes, _every = agy_dispatch.audit_task_commands(
+        audited, findings, _notes, _every = dispatch_to_agy.audit_task_commands(
             profile,
             "9",
             {"conversation_id": None, "conversation_step_floor": -1},
@@ -974,7 +974,7 @@ class DispatchControllerTest(unittest.TestCase):
         included, which is the verb that reads it. Callers are the whole point
         of the return shape, so the shape is what this asserts."""
         profile = self.profile(self.repo_a, "project-a", "42")
-        result = agy_dispatch.audit_task_commands(
+        result = dispatch_to_agy.audit_task_commands(
             profile,
             "42",
             {"conversation_id": None, "conversation_step_floor": -1},
@@ -1002,7 +1002,7 @@ class DispatchControllerTest(unittest.TestCase):
             outcomes=[(2, 3, "curl https://example.test")],
         )
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.audit_task_commands(
+            dispatch_to_agy.audit_task_commands(
                 profile,
                 "10",
                 {"conversation_id": None, "conversation_step_floor": -1},
@@ -1023,7 +1023,7 @@ class DispatchControllerTest(unittest.TestCase):
             [(1, "curl https://example.test")],
         )
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.audit_task_commands(
+            dispatch_to_agy.audit_task_commands(
                 profile,
                 "11",
                 {"conversation_id": None, "conversation_step_floor": -1},
@@ -1046,7 +1046,7 @@ class DispatchControllerTest(unittest.TestCase):
             outcomes=[(3, 7, "wget https://example.test")],
         )
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.audit_task_commands(
+            dispatch_to_agy.audit_task_commands(
                 profile,
                 "13",
                 {"conversation_id": None, "conversation_step_floor": -1},
@@ -1070,7 +1070,7 @@ class DispatchControllerTest(unittest.TestCase):
             outcomes=[(2, 7, "git push")],
         )
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.audit_task_commands(
+            dispatch_to_agy.audit_task_commands(
                 profile,
                 "12",
                 {"conversation_id": None, "conversation_step_floor": -1},
@@ -1081,7 +1081,7 @@ class DispatchControllerTest(unittest.TestCase):
         self,
     ) -> None:
         profile = self.profile(self.repo_a, "project-a", "4")
-        prompt = agy_dispatch.render_prompt(
+        prompt = dispatch_to_agy.render_prompt(
             profile,
             "4",
             "oracle",
@@ -1101,7 +1101,7 @@ class DispatchControllerTest(unittest.TestCase):
         self,
     ) -> None:
         profile = self.profile(self.repo_a, "project-a", "4")
-        prompt = agy_dispatch.render_prompt(
+        prompt = dispatch_to_agy.render_prompt(
             profile,
             "4",
             "oracle",
@@ -1118,7 +1118,7 @@ class DispatchControllerTest(unittest.TestCase):
             "ask": [],
             "require_empty_global": True,
         }
-        prompt = agy_dispatch.render_prompt(
+        prompt = dispatch_to_agy.render_prompt(
             profile,
             "4",
             "oracle",
@@ -1132,11 +1132,11 @@ class DispatchControllerTest(unittest.TestCase):
 
     def test_one_shot_prompt_has_no_ticket_or_resume_claim(self) -> None:
         profile = self.one_shot_profile(self.repo_a, "project-a")
-        prompt = agy_dispatch.render_prompt(
+        prompt = dispatch_to_agy.render_prompt(
             profile,
             "adhoc-1",
             "oracle",
-            agy_dispatch.frozen_task_state(profile, "adhoc-1"),
+            dispatch_to_agy.frozen_task_state(profile, "adhoc-1"),
         )
         self.assertIn("One-shot run id: adhoc-1", prompt)
         self.assertIn("This session will not be resumed", prompt)
@@ -1146,7 +1146,7 @@ class DispatchControllerTest(unittest.TestCase):
     def test_snapshot_identity_accepts_legacy_ticket_snapshot(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "12")
         del profile["task_contract"]["session_policy"]
-        agy_dispatch.assert_snapshot_identity(
+        dispatch_to_agy.assert_snapshot_identity(
             profile,
             "12",
             {"issue": "12"},
@@ -1172,24 +1172,24 @@ class DispatchControllerTest(unittest.TestCase):
         reads like a freeze and is not one.
         """
         profile, oracle, _ = self.round_documents("40")
-        frozen = {"round_documents": agy_dispatch.round_document_digests(profile, "40")}
+        frozen = {"round_documents": dispatch_to_agy.round_document_digests(profile, "40")}
 
         self.assertTrue(
-            agy_dispatch.assert_round_documents_unchanged(profile, "40", frozen)
+            dispatch_to_agy.assert_round_documents_unchanged(profile, "40", frozen)
         )
 
         oracle.write_text("## Claim\n\nthe judge, softened\n")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.assert_round_documents_unchanged(profile, "40", frozen)
+            dispatch_to_agy.assert_round_documents_unchanged(profile, "40", frozen)
         self.assertIn("oracle changed after snapshot", str(caught.exception))
 
     def test_edited_injection_after_snapshot_is_void(self) -> None:
         profile, _, injection = self.round_documents("41")
-        frozen = {"round_documents": agy_dispatch.round_document_digests(profile, "41")}
+        frozen = {"round_documents": dispatch_to_agy.round_document_digests(profile, "41")}
 
         injection.write_text("## Task\n\na different delta contract\n")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.assert_round_documents_unchanged(profile, "41", frozen)
+            dispatch_to_agy.assert_round_documents_unchanged(profile, "41", frozen)
         self.assertIn("injection changed after snapshot", str(caught.exception))
 
     def test_injection_appearing_after_snapshot_is_void(self) -> None:
@@ -1199,14 +1199,14 @@ class DispatchControllerTest(unittest.TestCase):
         state = Path(profile["state_dir"])
         (state / "oracles").mkdir(parents=True, exist_ok=True)
         (state / "oracles" / "42.md").write_text("## Claim\n\nthe judge\n")
-        frozen = {"round_documents": agy_dispatch.round_document_digests(profile, "42")}
+        frozen = {"round_documents": dispatch_to_agy.round_document_digests(profile, "42")}
         self.assertIsNone(frozen["round_documents"]["injection"])
 
         injection = state / "injections" / "42.md"
         injection.parent.mkdir(parents=True, exist_ok=True)
         injection.write_text("## Task\n\nsmuggled in after the freeze\n")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.assert_round_documents_unchanged(profile, "42", frozen)
+            dispatch_to_agy.assert_round_documents_unchanged(profile, "42", frozen)
         self.assertIn("injection changed after snapshot", str(caught.exception))
 
     def test_pre_freeze_snapshot_reports_that_it_was_not_compared(self) -> None:
@@ -1214,7 +1214,7 @@ class DispatchControllerTest(unittest.TestCase):
         match -- 'unchanged' and 'never compared' are different facts."""
         profile, _, _ = self.round_documents("44")
         self.assertFalse(
-            agy_dispatch.assert_round_documents_unchanged(profile, "44", {})
+            dispatch_to_agy.assert_round_documents_unchanged(profile, "44", {})
         )
 
     def test_profile_rejects_controller_state_inside_repository(self) -> None:
@@ -1223,18 +1223,18 @@ class DispatchControllerTest(unittest.TestCase):
         profile_path = self.root / "profile.json"
         profile_path.write_text(json.dumps(profile))
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(str(profile_path))
+            dispatch_to_agy.load_profile(str(profile_path))
         self.assertIn("state_dir must be outside", str(caught.exception))
 
     def test_profile_rejects_controller_state_outside_tmp(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "9")
         profile["state_dir"] = str(
-            Path.home() / ".agy-dispatch-state-forbidden"
+            Path.home() / ".dispatch-to-agy-state-forbidden"
         )
         profile_path = self.root / "profile-outside-tmp.json"
         profile_path.write_text(json.dumps(profile))
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(str(profile_path))
+            dispatch_to_agy.load_profile(str(profile_path))
         self.assertIn("state_dir must be under /tmp", str(caught.exception))
 
     def test_verify_can_load_after_protected_artifact_was_modified(self) -> None:
@@ -1244,7 +1244,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile["protected_artifacts"] = [
             {
                 "path": str(protected),
-                "sha256": agy_dispatch.sha256(protected),
+                "sha256": dispatch_to_agy.sha256(protected),
             }
         ]
         profile_path = self.root / "profile.json"
@@ -1252,8 +1252,8 @@ class DispatchControllerTest(unittest.TestCase):
         protected.write_text("after\n")
 
         with self.assertRaises(SystemExit):
-            agy_dispatch.load_profile(str(profile_path))
-        loaded = agy_dispatch.load_profile(
+            dispatch_to_agy.load_profile(str(profile_path))
+        loaded = dispatch_to_agy.load_profile(
             str(profile_path),
             validate_design=False,
         )
@@ -1269,7 +1269,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         # A whole fixture AGY installation, in AGY's own layout, reachable by
         # both routes. The globals serve callers in this process; the
         # environment variable serves the ones in a child, which is the only
-        # way `make_profile.py` -- a subprocess that imports agy_dispatch --
+        # way `make_profile.py` -- a subprocess that imports dispatch_to_agy --
         # can be pointed anywhere but the operator's real `~/.gemini` (#3495).
         self.agy_home = self.root / "agy-home"
         self.project_dir = self.agy_home / ".gemini" / "config" / "projects"
@@ -1296,12 +1296,15 @@ class DerivedWorktreeTest(unittest.TestCase):
                 }
             )
         )
-        os.environ["AGY_DISPATCH_HOME"] = str(self.agy_home)
-        self.addCleanup(os.environ.pop, "AGY_DISPATCH_HOME", None)
-        agy_dispatch.PROJECT_DIR = self.project_dir
-        agy_dispatch.CONVERSATION_DIR = self.conversation_dir
-        agy_dispatch.SETTINGS = self.settings
-        agy_dispatch.GLOBAL = self.global_config
+        os.environ["DISPATCH_TO_AGY_HOME"] = str(self.agy_home)
+        self.addCleanup(os.environ.pop, "DISPATCH_TO_AGY_HOME", None)
+        self.generated_state_root = self.root / "dispatch-state"
+        os.environ["DISPATCH_TO_AGY_STATE_ROOT"] = str(self.generated_state_root)
+        self.addCleanup(os.environ.pop, "DISPATCH_TO_AGY_STATE_ROOT", None)
+        dispatch_to_agy.PROJECT_DIR = self.project_dir
+        dispatch_to_agy.CONVERSATION_DIR = self.conversation_dir
+        dispatch_to_agy.SETTINGS = self.settings
+        dispatch_to_agy.GLOBAL = self.global_config
         self.controller = self.root / "controller"
         self.controller.mkdir()
         self.git("init", "-q", "-b", "main")
@@ -1317,7 +1320,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def git(self, *args: str) -> str:
-        return agy_dispatch.git_output(self.controller, *args)
+        return dispatch_to_agy.git_output(self.controller, *args)
 
     def write_project(self, project_id: str, root: Path) -> None:
         (self.project_dir / f"{project_id}.json").write_text(
@@ -1412,12 +1415,12 @@ class DerivedWorktreeTest(unittest.TestCase):
                 }
             )
         )
-        previous = (agy_dispatch.SETTINGS, agy_dispatch.GLOBAL)
-        agy_dispatch.SETTINGS = settings
-        agy_dispatch.GLOBAL = global_config
+        previous = (dispatch_to_agy.SETTINGS, dispatch_to_agy.GLOBAL)
+        dispatch_to_agy.SETTINGS = settings
+        dispatch_to_agy.GLOBAL = global_config
         self.addCleanup(
-            lambda: setattr(agy_dispatch, "SETTINGS", previous[0])
-            or setattr(agy_dispatch, "GLOBAL", previous[1])
+            lambda: setattr(dispatch_to_agy, "SETTINGS", previous[0])
+            or setattr(dispatch_to_agy, "GLOBAL", previous[1])
         )
 
     def snapshotted_round(self) -> tuple[dict, Path, Path]:
@@ -1430,7 +1433,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         injection.parent.mkdir(parents=True, exist_ok=True)
         oracle.write_text("## Claim\n\nthe judge\n")
         injection.write_text("## Task\n\nthe delta contract\n")
-        profile = agy_dispatch.load_profile(
+        profile = dispatch_to_agy.load_profile(
             str(
                 self.profile_path(
                     task_contract=self.contract_with_design_input(),
@@ -1438,7 +1441,7 @@ class DerivedWorktreeTest(unittest.TestCase):
                 )
             )
         )
-        agy_dispatch.snapshot(profile, "round-1")
+        dispatch_to_agy.snapshot(profile, "round-1")
         return profile, oracle, injection
 
     def frozen_write_target_round(self) -> dict:
@@ -1450,12 +1453,12 @@ class DerivedWorktreeTest(unittest.TestCase):
         """
         self.isolate_permission_files()
         readme = self.controller / "README.md"
-        return agy_dispatch.load_profile(
+        return dispatch_to_agy.load_profile(
             str(
                 self.profile_path(
                     task_contract=self.contract_with_design_input(),
                     protected_artifacts=[
-                        {"path": "README.md", "sha256": agy_dispatch.sha256(readme)}
+                        {"path": "README.md", "sha256": dispatch_to_agy.sha256(readme)}
                     ],
                 )
             ),
@@ -1475,7 +1478,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         """
         profile = self.frozen_write_target_round()
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.snapshot(profile, "round-1")
+            dispatch_to_agy.snapshot(profile, "round-1")
         message = str(caught.exception)
         self.assertIn("declared write target(s) are also frozen", message)
         self.assertIn("README.md", message)
@@ -1497,14 +1500,14 @@ class DerivedWorktreeTest(unittest.TestCase):
         def refuse(*args: object, **kwargs: object) -> None:
             raise AssertionError("spawned a worker under a contradictory profile")
 
-        previous = agy_dispatch.subprocess.run
-        agy_dispatch.subprocess.run = refuse
+        previous = dispatch_to_agy.subprocess.run
+        dispatch_to_agy.subprocess.run = refuse
         self.addCleanup(
-            lambda: setattr(agy_dispatch.subprocess, "run", previous)
+            lambda: setattr(dispatch_to_agy.subprocess, "run", previous)
         )
 
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.run_agent(profile, "round-1", resume=False)
+            dispatch_to_agy.run_agent(profile, "round-1", resume=False)
         self.assertIn(
             "declared write target(s) are also frozen", str(caught.exception)
         )
@@ -1519,8 +1522,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         recorded = json.loads(
             (Path(profile["state_dir"]) / "snapshots" / "round-1.json").read_text()
         )["round_documents"]
-        self.assertEqual(recorded["oracle"], agy_dispatch.sha256(oracle))
-        self.assertEqual(recorded["injection"], agy_dispatch.sha256(injection))
+        self.assertEqual(recorded["oracle"], dispatch_to_agy.sha256(oracle))
+        self.assertEqual(recorded["injection"], dispatch_to_agy.sha256(injection))
 
     def test_verify_voids_on_an_oracle_edited_after_snapshot(self) -> None:
         """The freeze has to be reachable from the verb the controller runs.
@@ -1530,11 +1533,11 @@ class DerivedWorktreeTest(unittest.TestCase):
         defect being fixed.
         """
         profile, oracle, _ = self.snapshotted_round()
-        agy_dispatch.verify(profile, "round-1")
+        dispatch_to_agy.verify(profile, "round-1")
 
         oracle.write_text("## Claim\n\nthe judge, softened to fit the answer\n")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.verify(profile, "round-1")
+            dispatch_to_agy.verify(profile, "round-1")
         self.assertIn("VOID: oracle changed after snapshot", str(caught.exception))
 
     def test_dispatch_refuses_to_start_with_a_drifted_oracle(self) -> None:
@@ -1551,21 +1554,21 @@ class DerivedWorktreeTest(unittest.TestCase):
         def refuse(*args: object, **kwargs: object) -> None:
             raise AssertionError("spawned a worker with a drifted oracle")
 
-        previous = agy_dispatch.subprocess.run
-        agy_dispatch.subprocess.run = refuse
+        previous = dispatch_to_agy.subprocess.run
+        dispatch_to_agy.subprocess.run = refuse
         self.addCleanup(
-            lambda: setattr(agy_dispatch.subprocess, "run", previous)
+            lambda: setattr(dispatch_to_agy.subprocess, "run", previous)
         )
 
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.run_agent(profile, "round-1", resume=False)
+            dispatch_to_agy.run_agent(profile, "round-1", resume=False)
         self.assertIn("VOID: oracle changed after snapshot", str(caught.exception))
 
     def test_verify_voids_on_an_injection_edited_after_snapshot(self) -> None:
         profile, _, injection = self.snapshotted_round()
         injection.write_text("## Task\n\na contract the worker never saw\n")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.verify(profile, "round-1")
+            dispatch_to_agy.verify(profile, "round-1")
         self.assertIn("VOID: injection changed after snapshot", str(caught.exception))
 
     def contract_with_design_input(self) -> dict:
@@ -1578,7 +1581,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             "design_inputs": [
                 {
                     "path": "keep.md",
-                    "sha256": agy_dispatch.sha256(self.controller / "keep.md"),
+                    "sha256": dispatch_to_agy.sha256(self.controller / "keep.md"),
                 }
             ],
         }
@@ -1590,17 +1593,17 @@ class DerivedWorktreeTest(unittest.TestCase):
         change reverted, once with it restored."""
         candidate = (worker / "README.md").read_text()
         (worker / "README.md").write_text("base\n")
-        agy_dispatch.prove(profile, task_key, "mutant")
+        dispatch_to_agy.prove(profile, task_key, "mutant")
         (worker / "README.md").write_text(candidate)
-        agy_dispatch.prove(profile, task_key, "candidate")
+        dispatch_to_agy.prove(profile, task_key, "candidate")
 
     def derive(self, path: Path, task_key: str = "round-1") -> dict:
-        agy_dispatch.worktree(str(path), task_key)
+        dispatch_to_agy.worktree(str(path), task_key)
         return json.loads(path.read_text())
 
     def project_binding(self, project_id: str = "project-a") -> Path:
         document = json.loads((self.project_dir / f"{project_id}.json").read_text())
-        return agy_dispatch.project_root(document)
+        return dispatch_to_agy.project_root(document)
 
     def test_worker_gets_its_own_checkout_and_branch(self) -> None:
         profile = self.derive(self.profile_path())
@@ -1610,7 +1613,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertTrue(Path(spec["path"]).is_dir())
         self.assertNotEqual(profile["root"], str(self.controller))
         self.assertEqual(
-            agy_dispatch.git_output(
+            dispatch_to_agy.git_output(
                 Path(spec["path"]), "rev-parse", "--abbrev-ref", "HEAD"
             ).strip(),
             "agy/round-1",
@@ -1618,7 +1621,7 @@ class DerivedWorktreeTest(unittest.TestCase):
 
     def project_grants(self, project_id: str = "project-a") -> dict:
         document = json.loads((self.project_dir / f"{project_id}.json").read_text())
-        return agy_dispatch.project_permission_surface(document)
+        return dispatch_to_agy.project_permission_surface(document)
 
     def widen_grants(self, rule: str, project_id: str = "project-a") -> None:
         path = self.project_dir / f"{project_id}.json"
@@ -1637,12 +1640,12 @@ class DerivedWorktreeTest(unittest.TestCase):
         loaded["project_permissions"]["allow"].append("command(cargo test)")
         path.write_text(json.dumps(loaded))
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         self.assertIn("command(cargo test)", self.project_grants()["allow"])
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.discard(str(path), "round-1")
+            dispatch_to_agy.discard(str(path), "round-1")
         self.assertNotIn("command(cargo test)", self.project_grants()["allow"])
 
     def test_a_missing_injection_still_blocks_dispatch(self) -> None:
@@ -1652,9 +1655,9 @@ class DerivedWorktreeTest(unittest.TestCase):
             task_contract=self.contract_with_design_input(),
             inject_prompt_file=str(self.root / "state" / "never-written.md"),
         )
-        agy_dispatch.load_profile(str(path), validate_design=False)
+        dispatch_to_agy.load_profile(str(path), validate_design=False)
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(str(path))
+            dispatch_to_agy.load_profile(str(path))
         self.assertIn("inject_prompt_file is not a file", str(caught.exception))
 
     def test_grant_refuses_a_gate_the_declared_surface_would_still_ask_for(
@@ -1669,8 +1672,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         loaded["task_commands"]["allow"].append("cargo test --lib this_rounds_gate")
         path.write_text(json.dumps(loaded))
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         self.assertIn("cargo test --lib this_rounds_gate", str(caught.exception))
         self.assertIn("do not cover", str(caught.exception))
@@ -1690,8 +1693,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         path.write_text(json.dumps(loaded))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         self.assertIn(
             "command(cargo test --lib this_rounds_gate)",
@@ -1703,12 +1706,12 @@ class DerivedWorktreeTest(unittest.TestCase):
         round-local grant becomes permanent by accident."""
         path = self.profile_path(task_contract=self.contract_with_design_input())
         profile = self.derive(path)
-        agy_dispatch.grants_baseline_path(
+        dispatch_to_agy.grants_baseline_path(
             Path(profile["state_dir"]), "project-a"
         ).unlink()
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         self.assertIn("no grants baseline", str(caught.exception))
 
@@ -1734,8 +1737,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         path = self.unfilled_surface(project_permissions__allow=[])
         before = self.project_document_text()
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         self.assertIn("authorizes no command at all", str(caught.exception))
         self.assertIn('"no_shell": true', str(caught.exception))
@@ -1757,8 +1760,8 @@ class DerivedWorktreeTest(unittest.TestCase):
             task_commands__allow=[],
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         self.assertEqual(self.project_grants()["allow"], [])
 
@@ -1769,8 +1772,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         path = self.unfilled_surface(task_commands__allow=["pwd"])
         before = self.project_document_text()
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         self.assertIn("cannot run what it is judged by", str(caught.exception))
         self.assertIn("grep -q accepted README.md", str(caught.exception))
@@ -1787,16 +1790,16 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.isolate_permission_files()
         path = self.profile_path(task_contract=self.contract_with_design_input())
         self.derive(path)
-        ready = agy_dispatch.project_policy_report(
-            agy_dispatch.load_profile(str(path), validate_design=False)
+        ready = dispatch_to_agy.project_policy_report(
+            dispatch_to_agy.load_profile(str(path), validate_design=False)
         )
         self.assertTrue(ready["dispatch_ready"], ready["blockers"])
 
         loaded = json.loads(path.read_text())
         loaded["task_commands"]["allow"] = ["pwd"]
         path.write_text(json.dumps(loaded))
-        blocked = agy_dispatch.project_policy_report(
-            agy_dispatch.load_profile(str(path), validate_design=False)
+        blocked = dispatch_to_agy.project_policy_report(
+            dispatch_to_agy.load_profile(str(path), validate_design=False)
         )
         self.assertFalse(blocked["dispatch_ready"], blocked["blockers"])
         self.assertTrue(
@@ -1816,8 +1819,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.widen_grants("command(cargo publish)")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(path), validate_design=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(path), validate_design=False)
             )
         printed = out.getvalue()
         self.assertIn("revocations (1)", printed)
@@ -1918,7 +1921,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
         self.assertEqual(emitted["repo"], "owner/repo")
         self.assertEqual(emitted["agy_project_id"], "project-a")
-        self.assertEqual(emitted["state_dir"], "/tmp/agy-dispatch/project-a")
+        self.assertEqual(
+            emitted["state_dir"],
+            str((self.generated_state_root / "project-a").resolve()),
+        )
 
         flagged = self.make_profile("--gate", "cargo test -p target --lib some_gate")
         self.assertEqual(flagged.returncode, 0, flagged.stderr)
@@ -1934,7 +1940,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         makes a generated profile and a derived one the same kind of file.
         """
         path = (
-            Path("/tmp/agy-dispatch/project-a")
+            self.generated_state_root
+            / "project-a"
             / "rounds"
             / "generated-1.profile.json"
         )
@@ -1974,8 +1981,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         # `scaffold` writes the injection, so `scaffold` is what decides where it
         # lives. Naming the file here instead would make any consistent pair of
         # wrong paths pass.
-        agy_dispatch.scaffold(profile, "generated-1")
-        injection = agy_dispatch.injection_path(profile, "generated-1")
+        dispatch_to_agy.scaffold(profile, "generated-1")
+        injection = dispatch_to_agy.injection_path(profile, "generated-1")
         self.addCleanup(injection.unlink, missing_ok=True)
         self.addCleanup(
             (Path(profile["state_dir"]) / "oracles" / "generated-1.md").unlink,
@@ -1983,7 +1990,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
         injection.write_text("## Task\n\nthe delta contract\n")
 
-        prompt = agy_dispatch.render_prompt(
+        prompt = dispatch_to_agy.render_prompt(
             profile, "generated-1", "oracle", {"number": 0, "state": "OPEN"}
         )
         self.assertIn("the delta contract", prompt)
@@ -2000,7 +2007,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         second = self.make_profile_derived("--run-id", "generated-2")
         self.assertEqual(second.returncode, 0, second.stderr)
 
-        rounds = Path("/tmp/agy-dispatch/project-a") / "rounds"
+        rounds = self.generated_state_root / "project-a" / "rounds"
         paths = []
         for key in ("generated-1", "generated-2"):
             emitted = rounds / f"{key}.profile.json"
@@ -2045,7 +2052,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertIn("command(uv)", allow)
         self.assertIn("command(cargo test -p target --lib some_gate)", allow)
 
-        report = agy_dispatch.project_policy_report(profile)
+        report = dispatch_to_agy.project_policy_report(profile)
         self.assertFalse(
             [b for b in report["blockers"] if "inherited global rules" in b],
             report["blockers"],
@@ -2090,7 +2097,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
         self.assertEqual(derived.returncode, 0, derived.stderr)
         emitted = (
-            Path("/tmp/agy-dispatch/project-a") / "rounds"
+            self.generated_state_root / "project-a" / "rounds"
             / "measure-1.profile.json"
         )
         self.addCleanup(emitted.unlink, missing_ok=True)
@@ -2175,10 +2182,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertIn(gate, profile["task_commands"]["allow"])
         self.assertIn(f"command({gate})", profile["project_permissions"]["allow"])
 
-        agy_dispatch.worktree(str(generated), "generated-1")
+        dispatch_to_agy.worktree(str(generated), "generated-1")
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.grant(
-                agy_dispatch.load_profile(str(generated), require_injection=False)
+            dispatch_to_agy.grant(
+                dispatch_to_agy.load_profile(str(generated), require_injection=False)
             )
         self.assertIn(f"command({gate})", self.project_grants()["allow"])
 
@@ -2199,12 +2206,12 @@ class DerivedWorktreeTest(unittest.TestCase):
             task_contract=self.contract_with_design_input(),
             inject_prompt_file=str(self.root / "not-written-yet.md"),
         )
-        profile = agy_dispatch.load_profile(str(path), require_injection=False)
+        profile = dispatch_to_agy.load_profile(str(path), require_injection=False)
         self.assertEqual(
             profile["inject_prompt_file"], str(self.root / "not-written-yet.md")
         )
         with self.assertRaises(SystemExit):
-            agy_dispatch.load_profile(str(path))
+            dispatch_to_agy.load_profile(str(path))
 
     def test_a_regenerated_profile_still_records_the_controller_as_home(
         self,
@@ -2226,7 +2233,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             self.controller.resolve(),
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.discard(str(regenerated), "round-1")
+            dispatch_to_agy.discard(str(regenerated), "round-1")
         self.assertEqual(self.project_binding(), self.controller.resolve())
 
     def test_a_grafted_home_root_that_is_the_worktree_is_repaired(self) -> None:
@@ -2285,7 +2292,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         path.write_text(json.dumps(profile, indent=2))
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            agy_dispatch.discard(str(path), "round-1")
+            dispatch_to_agy.discard(str(path), "round-1")
         self.assertEqual(self.project_binding(), self.controller.resolve())
         self.assertIn("home root is the worktree itself", buffer.getvalue())
 
@@ -2312,7 +2319,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         path, worker = self.dirty_round()
         with self.assertRaises(SystemExit) as caught:
             with contextlib.redirect_stdout(io.StringIO()):
-                agy_dispatch.discard(str(path), "round-1")
+                dispatch_to_agy.discard(str(path), "round-1")
         message = str(caught.exception)
         self.assertIn("candidate.py", message)
         self.assertIn("--drop-uncommitted", message)
@@ -2367,7 +2374,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             capture_output=True, check=True,
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.discard(str(path), "round-1")
+            dispatch_to_agy.discard(str(path), "round-1")
         self.assertFalse(worker.exists())
         self.assertFalse(self.branch_exists("agy/round-1"))
 
@@ -2382,7 +2389,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         sha = self.commit_candidate(worker)
         with self.assertRaises(SystemExit) as caught:
             with contextlib.redirect_stdout(io.StringIO()):
-                agy_dispatch.discard(str(path), "round-1")
+                dispatch_to_agy.discard(str(path), "round-1")
         message = str(caught.exception)
         self.assertIn(sha, message)
         # And what each one was. A list of hashes alone sends the controller to
@@ -2416,7 +2423,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         ).stdout.strip()
         self.assertNotEqual(landed, sha)
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.discard(str(path), "round-1")
+            dispatch_to_agy.discard(str(path), "round-1")
         self.assertFalse(self.branch_exists("agy/round-1"))
 
     def test_a_commit_another_branch_holds_is_not_stranded(self) -> None:
@@ -2432,7 +2439,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             check=True,
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.discard(str(path), "round-1")
+            dispatch_to_agy.discard(str(path), "round-1")
         self.assertFalse(self.branch_exists("agy/round-1"))
         self.assertTrue(self.branch_exists("parked"))
 
@@ -2463,7 +2470,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.widen_grants("command(cargo test)")
         self.assertIn("command(cargo test)", self.project_grants()["allow"])
 
-        agy_dispatch.discard(str(path), "round-1")
+        dispatch_to_agy.discard(str(path), "round-1")
         self.assertEqual(self.project_grants(), before)
 
     def test_discard_without_a_baseline_leaves_grants_alone(self) -> None:
@@ -2472,10 +2479,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         path = self.profile_path()
         self.derive(path)
         state = Path(json.loads(path.read_text())["state_dir"])
-        agy_dispatch.grants_baseline_path(state, "project-a").unlink()
+        dispatch_to_agy.grants_baseline_path(state, "project-a").unlink()
         self.widen_grants("command(cargo test)")
 
-        agy_dispatch.discard(str(path), "round-1")
+        dispatch_to_agy.discard(str(path), "round-1")
         self.assertIn("command(cargo test)", self.project_grants()["allow"])
 
     def test_a_second_derive_does_not_overwrite_an_open_baseline(self) -> None:
@@ -2487,7 +2494,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.widen_grants("command(cargo test)")
         self.derive(path)
 
-        agy_dispatch.discard(str(path), "round-1")
+        dispatch_to_agy.discard(str(path), "round-1")
         self.assertEqual(self.project_grants(), before)
 
     def test_one_project_moves_to_the_round_and_returns_home(self) -> None:
@@ -2501,7 +2508,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             Path(profile["worktree"]["project_home_root"]).resolve(),
             self.controller.resolve(),
         )
-        agy_dispatch.discard(str(path), "round-1")
+        dispatch_to_agy.discard(str(path), "round-1")
         self.assertEqual(self.project_binding(), self.controller.resolve())
 
     def test_deriving_never_widens_the_reviewed_permission_surface(self) -> None:
@@ -2517,7 +2524,7 @@ class DerivedWorktreeTest(unittest.TestCase):
     def test_worker_branch_must_be_namespaced(self) -> None:
         path = self.profile_path(worktree={"branch": "main"})
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.worktree(str(path), "round-1")
+            dispatch_to_agy.worktree(str(path), "round-1")
         self.assertIn("must start with 'agy/'", str(caught.exception))
 
     def test_worker_checkout_may_not_nest_inside_the_controller(self) -> None:
@@ -2525,7 +2532,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             worktree={"path": str(self.controller / "nested")}
         )
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.worktree(str(path), "round-1")
+            dispatch_to_agy.worktree(str(path), "round-1")
         self.assertIn("outside controller_root", str(caught.exception))
 
     def test_scope_overrun_is_a_finding_not_a_lost_round(self) -> None:
@@ -2536,15 +2543,15 @@ class DerivedWorktreeTest(unittest.TestCase):
         (worker / "README.md").write_text("base\nline a\nline b\nline c\n")
         (worker / "stray.md").write_text("undeclared\n")
 
-        touched = agy_dispatch.worker_touched_paths(profile)
+        touched = dispatch_to_agy.worker_touched_paths(profile)
         self.assertEqual(touched, ["README.md", "stray.md"])
-        findings = agy_dispatch.scope_findings(profile, touched)
+        findings = dispatch_to_agy.scope_findings(profile, touched)
         self.assertTrue(
             any("outside allowed_repo_writes" in item for item in findings)
         )
         self.assertTrue(any("exceeds the 1-line budget" in item for item in findings))
         # The candidate survives: the controller still has a diff to read.
-        self.assertIn("line a", agy_dispatch.git_output(
+        self.assertIn("line a", dispatch_to_agy.git_output(
             worker, "diff", profile["worktree"]["base_sha"]
         ))
 
@@ -2611,21 +2618,21 @@ class DerivedWorktreeTest(unittest.TestCase):
     def test_a_dispatch_that_produced_nothing_releases_its_run_id(self) -> None:
         profile = self.dead_round()
         self.assertEqual(
-            agy_dispatch.conversation_id_for_task(profile, "round-1"),
+            dispatch_to_agy.conversation_id_for_task(profile, "round-1"),
             "conversation-dead",
         )
 
-        agy_dispatch.abandon(profile, "round-1")
+        dispatch_to_agy.abandon(profile, "round-1")
 
         # Both sources of the id are gone: the recorded file and the run log
         # the lookup falls back to.
         self.assertIsNone(
-            agy_dispatch.conversation_id_for_task(profile, "round-1")
+            dispatch_to_agy.conversation_id_for_task(profile, "round-1")
         )
         # The point of the release: the same run id dispatches again, so the
         # linted round documents are not re-authored under a fresh id.
         self.assertIsNone(
-            agy_dispatch.validate_conversation_action(
+            dispatch_to_agy.validate_conversation_action(
                 profile, "round-1", resume=False
             )
         )
@@ -2647,12 +2654,12 @@ class DerivedWorktreeTest(unittest.TestCase):
         (worker / "README.md").write_text("base\nbounded\n")
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.abandon(profile, "round-1")
+            dispatch_to_agy.abandon(profile, "round-1")
 
         self.assertIn("changed 1 path(s) (README.md)", str(error.exception))
         # The dead-run claim was rejected, so the id stays spent.
         self.assertEqual(
-            agy_dispatch.conversation_id_for_task(profile, "round-1"),
+            dispatch_to_agy.conversation_id_for_task(profile, "round-1"),
             "conversation-dead",
         )
 
@@ -2660,7 +2667,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile = self.dead_round(commands=((0, "pwd"),))
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.abandon(profile, "round-1")
+            dispatch_to_agy.abandon(profile, "round-1")
 
         self.assertIn("ran 1 command(s)", str(error.exception))
 
@@ -2673,17 +2680,17 @@ class DerivedWorktreeTest(unittest.TestCase):
             outcomes=((1, 7),),
         )
 
-        agy_dispatch.abandon(profile, "round-1")
+        dispatch_to_agy.abandon(profile, "round-1")
 
         self.assertIsNone(
-            agy_dispatch.conversation_id_for_task(profile, "round-1")
+            dispatch_to_agy.conversation_id_for_task(profile, "round-1")
         )
 
     def test_abandon_refuses_when_the_worker_filed_a_report(self) -> None:
         profile = self.dead_round(report="## EXEC REPORT\nverdict: PASS\n")
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.abandon(profile, "round-1")
+            dispatch_to_agy.abandon(profile, "round-1")
 
         self.assertIn("filed an EXEC REPORT", str(error.exception))
 
@@ -2691,17 +2698,17 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile = self.derive(self.profile_path())
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.abandon(profile, "round-1")
+            dispatch_to_agy.abandon(profile, "round-1")
 
         self.assertIn("no conversation is recorded", str(error.exception))
 
     def test_a_second_dead_attempt_parks_beside_the_first(self) -> None:
         profile = self.dead_round()
-        agy_dispatch.abandon(profile, "round-1")
+        dispatch_to_agy.abandon(profile, "round-1")
         # A re-dispatch opens its own conversation, and that one dies too.
         self.dead_round(conversation_id="conversation-dead-again")
 
-        agy_dispatch.abandon(profile, "round-1")
+        dispatch_to_agy.abandon(profile, "round-1")
 
         abandoned = Path(profile["state_dir"]) / "runs" / "abandoned"
         self.assertEqual(
@@ -2774,7 +2781,7 @@ class DerivedWorktreeTest(unittest.TestCase):
                 "design_inputs": [
                     {
                         "path": "design.md",
-                        "sha256": agy_dispatch.sha256(self.controller / "design.md"),
+                        "sha256": dispatch_to_agy.sha256(self.controller / "design.md"),
                     }
                 ],
                 "gate_command": "grep -q accepted README.md",
@@ -2794,14 +2801,14 @@ class DerivedWorktreeTest(unittest.TestCase):
             if task_key == "3458"
             else self.root / "state" / "rounds" / f"{task_key}.profile.json"
         )
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile,
             str(raw),
             task_key,
             next_key,
             str(self.root / "delta-ticketed.md"),
         )
-        return agy_dispatch.load_profile(
+        return dispatch_to_agy.load_profile(
             str(self.root / "state" / "rounds" / f"{next_key}.profile.json")
         )
 
@@ -2819,7 +2826,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             "## Fabrication tells\n\n- tell\n"
         )
         raw = self.root / "profile.json"
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile,
             str(raw),
             "3458",
@@ -2827,14 +2834,14 @@ class DerivedWorktreeTest(unittest.TestCase):
             str(delta),
         )
         revised_profile_path = self.root / "state" / "rounds" / "3458-r2.profile.json"
-        revised_profile = agy_dispatch.load_profile(str(revised_profile_path))
+        revised_profile = dispatch_to_agy.load_profile(str(revised_profile_path))
         revised_profile["path_change_budgets"] = {"README.md": 100}
         revised_profile_path.write_text(json.dumps(revised_profile, indent=2))
-        loaded = agy_dispatch.load_profile(str(revised_profile_path))
+        loaded = dispatch_to_agy.load_profile(str(revised_profile_path))
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.snapshot(loaded, "3458-r2")
+            dispatch_to_agy.snapshot(loaded, "3458-r2")
             with self.assertRaises(SystemExit) as cm:
-                agy_dispatch.dispatch(loaded, "3458-r2")
+                dispatch_to_agy.dispatch(loaded, "3458-r2")
         msg = str(cm.exception)
         self.assertIn("README.md", msg)
         self.assertIn("40", msg)
@@ -2853,7 +2860,7 @@ class DerivedWorktreeTest(unittest.TestCase):
 
         revised = self.revise_ticket(profile, "3458", "3458-r2")
 
-        agy_dispatch.validate_task_key(revised, "3458-r2")
+        dispatch_to_agy.validate_task_key(revised, "3458-r2")
         contract = revised["task_contract"]
         self.assertEqual(contract["session_policy"], "one-shot")
         self.assertEqual(contract["run_id"], "3458-r2")
@@ -2878,8 +2885,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile, _ = self.revisable_ticketed_round()
         revised = self.revise_ticket(profile, "3458", "3458-r2")
 
-        task_state = agy_dispatch.frozen_task_state(revised, "3458-r2")
-        prompt = agy_dispatch.render_prompt(
+        task_state = dispatch_to_agy.frozen_task_state(revised, "3458-r2")
+        prompt = dispatch_to_agy.render_prompt(
             revised, "3458-r2", "the sealed claim", task_state
         )
 
@@ -2895,7 +2902,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         """
         profile, delta = self.revisable_round()
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
 
@@ -2931,7 +2938,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile["task_contract"]["revision_of"] = "3458"
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.validate_task_identity(profile)
+            dispatch_to_agy.validate_task_identity(profile)
 
         self.assertIn("must not set task_contract.revision_of", str(error.exception))
 
@@ -2948,27 +2955,27 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.validate_task_identity(profile)
+            dispatch_to_agy.validate_task_identity(profile)
 
         self.assertIn("revision_of must be the task identity", str(error.exception))
 
     def test_the_accepted_commit_of_a_revised_ticket_still_refs_it(self) -> None:
         """The trailer is the only place the descent outlives the state dir.
 
-        `/tmp/agy-dispatch` is transient by contract; the commit is not.
+        `/tmp/dispatch-to-agy` is transient by contract; the commit is not.
         """
         self.isolate_permission_files()
         profile, _ = self.revisable_ticketed_round()
         worker = Path(profile["worktree"]["path"])
 
         revised = self.revise_ticket(profile, "3458", "3458-r2")
-        agy_dispatch.snapshot(revised, "3458-r2")
+        dispatch_to_agy.snapshot(revised, "3458-r2")
         self.record_proofs(revised, worker, task_key="3458-r2")
-        agy_dispatch.accept(revised, "3458-r2")
+        dispatch_to_agy.accept(revised, "3458-r2")
 
         self.assertIn(
             "Refs #3458",
-            agy_dispatch.git_output(worker, "log", "-1", "--format=%B"),
+            dispatch_to_agy.git_output(worker, "log", "-1", "--format=%B"),
         )
 
     def test_a_revision_keeps_the_checkout_and_mints_a_new_run_id(self) -> None:
@@ -2980,7 +2987,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile, delta = self.revisable_round()
         worker = Path(profile["worktree"]["path"])
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
 
@@ -3013,7 +3020,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile, delta = self.revisable_round()
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3029,7 +3036,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile, delta = self.revisable_round(candidate=False)
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3048,7 +3055,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile["root"] = str(self.controller)
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3065,7 +3072,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         taken.write_text("{}\n")
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3091,7 +3098,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         taken.write_text("{}\n")
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3107,7 +3114,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         (self.root / "state" / "oracles" / "round-1.md").unlink()
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3121,7 +3128,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile, _ = self.revisable_round()
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3142,20 +3149,20 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile, _ = self.revisable_round()
 
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile, str(self.root / "profile.json"), "round-1", "round-2"
             )
 
         injection = self.root / "state" / "injections" / "round-2.md"
         self.assertEqual(
-            injection.read_text(), agy_dispatch.blank_round_forms(profile)[1]
+            injection.read_text(), dispatch_to_agy.blank_round_forms(profile)[1]
         )
         # A form, not a document: `lint` refuses it while a slot is unfilled, so
         # the round cannot reach a worker on the strength of having been minted.
         self.assertIn("<!-- fill", injection.read_text())
         self.assertEqual(
-            agy_dispatch.missing_or_misordered(
-                injection.read_text(), agy_dispatch.INJECTION_SECTIONS, "injection"
+            dispatch_to_agy.missing_or_misordered(
+                injection.read_text(), dispatch_to_agy.INJECTION_SECTIONS, "injection"
             ),
             [],
         )
@@ -3176,7 +3183,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         delta.write_text("## Task\n\nthe candidate wrote the wrong line\n")
 
         with self.assertRaises(SystemExit) as error:
-            agy_dispatch.revise(
+            dispatch_to_agy.revise(
                 profile,
                 str(self.root / "profile.json"),
                 "round-1",
@@ -3186,7 +3193,7 @@ class DerivedWorktreeTest(unittest.TestCase):
 
         message = str(error.exception)
         self.assertIn("refusing to carry", message)
-        for section in agy_dispatch.INJECTION_SECTIONS[1:]:
+        for section in dispatch_to_agy.INJECTION_SECTIONS[1:]:
             self.assertIn(f"`## {section}` section", message)
         self.assertIn("Omit the argument", message)
         # Refused before the round exists, so there is nothing half-minted to
@@ -3200,9 +3207,9 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile = self.derive(self.profile_path())
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\nbounded\n")
-        touched = agy_dispatch.worker_touched_paths(profile)
+        touched = dispatch_to_agy.worker_touched_paths(profile)
         self.assertEqual(
-            agy_dispatch.scope_findings(profile, touched),
+            dispatch_to_agy.scope_findings(profile, touched),
             [],
         )
 
@@ -3210,9 +3217,9 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile = self.derive(self.profile_path())
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\nbounded\n")
-        agy_dispatch.git_output(worker, "add", "-A")
-        agy_dispatch.git_output(worker, "commit", "-qm", "worker overreach")
-        findings = agy_dispatch.scope_findings(profile, [])
+        dispatch_to_agy.git_output(worker, "add", "-A")
+        dispatch_to_agy.git_output(worker, "commit", "-qm", "worker overreach")
+        findings = dispatch_to_agy.scope_findings(profile, [])
         self.assertTrue(any("HEAD moved" in item for item in findings))
 
     def test_accept_commits_on_the_worker_branch_only(self) -> None:
@@ -3221,10 +3228,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
-        agy_dispatch.accept(profile, "round-1")
+        dispatch_to_agy.accept(profile, "round-1")
 
         self.assertEqual(
-            agy_dispatch.git_output(worker, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+            dispatch_to_agy.git_output(worker, "rev-parse", "--abbrev-ref", "HEAD").strip(),
             "agy/round-1",
         )
         self.assertEqual(self.git("rev-parse", "--abbrev-ref", "HEAD").strip(), "main")
@@ -3253,27 +3260,27 @@ class DerivedWorktreeTest(unittest.TestCase):
         # diff taken against this round's snapshot cannot see it.
         self.assertEqual((worker / "README.md").read_text(), "base\naccepted\n")
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
             (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
         (worker / "HELPER.md").write_text("helper\nsecond revision\n")
         self.record_proofs(revised, worker, task_key="round-2")
 
-        agy_dispatch.accept(revised, "round-2")
+        dispatch_to_agy.accept(revised, "round-2")
 
         self.assertEqual(
             sorted(
-                agy_dispatch.git_output(
+                dispatch_to_agy.git_output(
                     worker, "show", "--name-only", "--format=", "HEAD"
                 ).split()
             ),
             ["HELPER.md", "README.md"],
         )
-        self.assertEqual(agy_dispatch.git_output(worker, "status", "--porcelain"), "")
+        self.assertEqual(dispatch_to_agy.git_output(worker, "status", "--porcelain"), "")
 
     def overrun_round(self) -> tuple[dict, dict, Path]:
         """A round sent back while one of its paths is over budget.
@@ -3289,26 +3296,26 @@ class DerivedWorktreeTest(unittest.TestCase):
         (worker / "README.md").write_text(
             "base\n" + "".join(f"line {n}\n" for n in range(6))
         )
-        first = agy_dispatch.scope_findings(
-            profile, agy_dispatch.worker_touched_paths(profile, "round-1"), "round-1"
+        first = dispatch_to_agy.scope_findings(
+            profile, dispatch_to_agy.worker_touched_paths(profile, "round-1"), "round-1"
         )
         self.assertTrue(
             any("exceeds the 2-line budget" in item for item in first), first
         )
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
             (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
         return profile, revised, worker
 
     def revision_findings(self, revised: dict) -> list[str]:
-        return agy_dispatch.scope_findings(
+        return dispatch_to_agy.scope_findings(
             revised,
-            agy_dispatch.worker_touched_paths(revised, "round-2"),
+            dispatch_to_agy.worker_touched_paths(revised, "round-2"),
             "round-2",
         )
 
@@ -3324,7 +3331,7 @@ class DerivedWorktreeTest(unittest.TestCase):
 
         # This revision wrote nothing at all, which is what makes the finding
         # invisible: its own delta for the path is zero.
-        self.assertEqual(agy_dispatch.worker_touched_paths(revised, "round-2"), [])
+        self.assertEqual(dispatch_to_agy.worker_touched_paths(revised, "round-2"), [])
         findings = self.revision_findings(revised)
         self.assertTrue(
             any("README.md: 6 changed lines exceeds the 2-line budget" in item
@@ -3352,7 +3359,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "HELPER.md").write_text("helper\nfirst revision\n")
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
@@ -3367,13 +3374,13 @@ class DerivedWorktreeTest(unittest.TestCase):
             *revised["task_contract"]["design_inputs"],
             {
                 "path": "HELPER.md",
-                "sha256": agy_dispatch.sha256(worker / "HELPER.md"),
+                "sha256": dispatch_to_agy.sha256(worker / "HELPER.md"),
             },
         ]
         (self.root / "state" / "rounds" / "round-2.profile.json").write_text(
             json.dumps(revised, indent=2) + "\n"
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
 
         findings = self.revision_findings(revised)
         self.assertFalse(
@@ -3408,7 +3415,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "HELPER.md").write_text("helper\nfirst revision\n")
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
@@ -3422,21 +3429,21 @@ class DerivedWorktreeTest(unittest.TestCase):
             *revised["protected_artifacts"],
             {
                 "path": str(worker / "HELPER.md"),
-                "sha256": agy_dispatch.sha256(worker / "HELPER.md"),
+                "sha256": dispatch_to_agy.sha256(worker / "HELPER.md"),
             },
         ]
         (self.root / "state" / "rounds" / "round-2.profile.json").write_text(
             json.dumps(revised, indent=2) + "\n"
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
 
         self.assertNotIn(
-            "HELPER.md", agy_dispatch.worker_touched_paths(revised, "round-2")
+            "HELPER.md", dispatch_to_agy.worker_touched_paths(revised, "round-2")
         )
         # ...and this worker writing it is still this worker's write.
         (worker / "HELPER.md").write_text("helper\nthis round wrote here\n")
         self.assertIn(
-            "HELPER.md", agy_dispatch.worker_touched_paths(revised, "round-2")
+            "HELPER.md", dispatch_to_agy.worker_touched_paths(revised, "round-2")
         )
 
     def test_lines_a_round_removed_count_against_its_budget(self) -> None:
@@ -3461,8 +3468,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "LONG.md").write_text("line 0\n")
 
-        findings = agy_dispatch.scope_findings(
-            profile, agy_dispatch.worker_touched_paths(profile)
+        findings = dispatch_to_agy.scope_findings(
+            profile, dispatch_to_agy.worker_touched_paths(profile)
         )
         self.assertTrue(
             any("LONG.md: 7 changed lines exceeds the 2-line budget" in item
@@ -3489,16 +3496,16 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "NEW.md").write_text("".join(f"line {n}\n" for n in range(5)))
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
             (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
 
         self.assertNotIn(
-            "NEW.md", agy_dispatch.worker_touched_paths(revised, "round-2")
+            "NEW.md", dispatch_to_agy.worker_touched_paths(revised, "round-2")
         )
         findings = self.revision_findings(revised)
         self.assertTrue(
@@ -3534,25 +3541,25 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
         worker = Path(profile["worktree"]["path"])
 
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
             (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
         (worker / "HELPER.md").write_text("helper\nsecond revision\n")
 
         self.assertEqual(
-            agy_dispatch.worker_touched_paths(revised, "round-2"), ["HELPER.md"]
+            dispatch_to_agy.worker_touched_paths(revised, "round-2"), ["HELPER.md"]
         )
         self.assertEqual(
-            agy_dispatch.worker_touched_paths(revised), ["HELPER.md", "README.md"]
+            dispatch_to_agy.worker_touched_paths(revised), ["HELPER.md", "README.md"]
         )
 
         # ...and says so, so the header cannot be read as the whole candidate.
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            agy_dispatch.review(revised, "round-2")
+            dispatch_to_agy.review(revised, "round-2")
         printed = out.getvalue()
         self.assertIn("touched  : 1 path(s) written this revision", printed)
         self.assertIn("carried  : 1 path(s) from an earlier revision", printed)
@@ -3574,17 +3581,17 @@ class DerivedWorktreeTest(unittest.TestCase):
             allowed_repo_writes=["README.md", "HELPER.md"]
         )
         worker = Path(profile["worktree"]["path"])
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
             (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
         (worker / "HELPER.md").write_text("helper\nsecond revision\n")
 
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            agy_dispatch.review(revised, "round-2")
+            dispatch_to_agy.review(revised, "round-2")
         self.assertIn("findings: none", out.getvalue())
 
     def test_a_declared_path_nobody_wrote_is_still_a_finding(self) -> None:
@@ -3598,17 +3605,17 @@ class DerivedWorktreeTest(unittest.TestCase):
         profile, delta = self.revisable_round(
             allowed_repo_writes=["README.md", "HELPER.md"]
         )
-        agy_dispatch.revise(
+        dispatch_to_agy.revise(
             profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
         )
         revised = json.loads(
             (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
         )
-        agy_dispatch.snapshot(revised, "round-2")
+        dispatch_to_agy.snapshot(revised, "round-2")
 
         with contextlib.redirect_stdout(io.StringIO()) as out:
             with self.assertRaises(SystemExit):
-                agy_dispatch.review(revised, "round-2")
+                dispatch_to_agy.review(revised, "round-2")
         self.assertIn(
             "declared but did not write 1 path(s): HELPER.md", out.getvalue()
         )
@@ -3619,8 +3626,8 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\nkept\naccepted\n")
         self.record_proofs(profile, worker)
-        agy_dispatch.accept(profile, "round-1")
-        agy_dispatch.discard(str(path), "round-1", keep_branch=True)
+        dispatch_to_agy.accept(profile, "round-1")
+        dispatch_to_agy.discard(str(path), "round-1", keep_branch=True)
         self.assertIn("agy/round-1", self.git("branch", "--list", "agy/round-1"))
 
     def test_accept_refuses_without_a_proof_pair(self) -> None:
@@ -3628,7 +3635,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.accept(profile, "round-1")
+            dispatch_to_agy.accept(profile, "round-1")
         self.assertIn("not shown to discriminate", str(caught.exception))
 
     def test_accept_refuses_when_the_gate_passes_without_the_change(self) -> None:
@@ -3638,10 +3645,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         # Both proofs over the candidate tree: nothing was reverted.
-        agy_dispatch.prove(profile, "round-1", "mutant")
-        agy_dispatch.prove(profile, "round-1", "candidate")
+        dispatch_to_agy.prove(profile, "round-1", "mutant")
+        dispatch_to_agy.prove(profile, "round-1", "candidate")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.accept(profile, "round-1")
+            dispatch_to_agy.accept(profile, "round-1")
         message = str(caught.exception)
         self.assertIn("passed with the product change reverted", message)
         self.assertIn("identical tree", message)
@@ -3660,9 +3667,9 @@ class DerivedWorktreeTest(unittest.TestCase):
         and the two are not the same evidence."""
         profile = self.derive(self.profile_path(task_contract=self.failing_to_compile_gate()))
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            agy_dispatch.prove(profile, "round-1", "mutant")
+            dispatch_to_agy.prove(profile, "round-1", "mutant")
         record = json.loads(
-            agy_dispatch.proof_path(profile, "round-1", "mutant").read_text()
+            dispatch_to_agy.proof_path(profile, "round-1", "mutant").read_text()
         )
         self.assertNotEqual(record["exit_code"], 0)
         self.assertFalse(record["compiled"])
@@ -3687,9 +3694,9 @@ class DerivedWorktreeTest(unittest.TestCase):
         """
         profile = self.derive(self.profile_path(task_contract=self.compound_gate()))
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.prove(profile, "round-1", "candidate")
+            dispatch_to_agy.prove(profile, "round-1", "candidate")
         record = json.loads(
-            agy_dispatch.proof_path(profile, "round-1", "candidate").read_text()
+            dispatch_to_agy.proof_path(profile, "round-1", "candidate").read_text()
         )
         tail = "\n".join(record["output_tail"])
         self.assertEqual(record["exit_code"], 0)
@@ -3703,12 +3710,12 @@ class DerivedWorktreeTest(unittest.TestCase):
         red carrying it must not be counted as the gate noticing anything.
         """
         contract = self.contract_with_design_input()
-        contract["gate_command"] = "agy-dispatch-gate-that-does-not-exist"
+        contract["gate_command"] = "dispatch-to-agy-gate-that-does-not-exist"
         profile = self.derive(self.profile_path(task_contract=contract))
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            agy_dispatch.prove(profile, "round-1", "mutant")
+            dispatch_to_agy.prove(profile, "round-1", "mutant")
         record = json.loads(
-            agy_dispatch.proof_path(profile, "round-1", "mutant").read_text()
+            dispatch_to_agy.proof_path(profile, "round-1", "mutant").read_text()
         )
         self.assertEqual(record["exit_code"], 127)
         self.assertFalse(record["compiled"])
@@ -3723,10 +3730,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         only known at the command line.
         """
         out = io.StringIO()
-        argv = ("agy_dispatch.py",) + argv
+        argv = ("dispatch_to_agy.py",) + argv
         with contextlib.redirect_stdout(out):
             with unittest.mock.patch.object(sys, "argv", list(argv)):
-                agy_dispatch.main()
+                dispatch_to_agy.main()
         return out.getvalue()
 
     def guarded_round(self) -> tuple[Path, dict, Path]:
@@ -3748,12 +3755,12 @@ class DerivedWorktreeTest(unittest.TestCase):
 
     def test_only_prove_mutant_runs_against_an_unfrozen_tree(self) -> None:
         """The predicate, stated once, because everything else reads it."""
-        self.assertFalse(agy_dispatch.validates_freeze("prove", "mutant"))
-        self.assertTrue(agy_dispatch.validates_freeze("prove", "candidate"))
-        self.assertTrue(agy_dispatch.validates_freeze("accept", None))
-        self.assertTrue(agy_dispatch.validates_freeze("sweep", None))
+        self.assertFalse(dispatch_to_agy.validates_freeze("prove", "mutant"))
+        self.assertTrue(dispatch_to_agy.validates_freeze("prove", "candidate"))
+        self.assertTrue(dispatch_to_agy.validates_freeze("accept", None))
+        self.assertTrue(dispatch_to_agy.validates_freeze("sweep", None))
         # Not a blanket exemption for the verb, and not one for the label.
-        self.assertTrue(agy_dispatch.validates_freeze("snapshot", "mutant"))
+        self.assertTrue(dispatch_to_agy.validates_freeze("snapshot", "mutant"))
 
     def test_prove_mutant_records_a_falsifier_the_round_may_not_write(self) -> None:
         """#3484/#3489: the controller plants the break, after the worker is gone.
@@ -3769,7 +3776,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         out = self.cli("prove", str(path), "round-1", "mutant")
 
         record = json.loads(
-            agy_dispatch.proof_path(profile, "round-1", "mutant").read_text()
+            dispatch_to_agy.proof_path(profile, "round-1", "mutant").read_text()
         )
         self.assertNotEqual(record["exit_code"], 0)
         # R2: the proof names what was perturbed, so a reader can tell a planted
@@ -3798,11 +3805,11 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.cli("prove", str(path), "round-1", "candidate")
 
         mutant, candidate = (
-            json.loads(agy_dispatch.proof_path(profile, "round-1", label).read_text())
+            json.loads(dispatch_to_agy.proof_path(profile, "round-1", label).read_text())
             for label in ("mutant", "candidate")
         )
         self.assertEqual(mutant["tree_digest"], candidate["tree_digest"])
-        findings = agy_dispatch.proof_findings(profile, "round-1")
+        findings = dispatch_to_agy.proof_findings(profile, "round-1")
         self.assertEqual(findings, [], findings)
 
     def test_accept_still_refuses_while_a_frozen_path_is_perturbed(self) -> None:
@@ -3826,13 +3833,13 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
-        path = agy_dispatch.proof_path(profile, "round-1", "mutant")
+        path = dispatch_to_agy.proof_path(profile, "round-1", "mutant")
         record = json.loads(path.read_text())
         record["compiled"] = False
         path.write_text(json.dumps(record))
 
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            agy_dispatch.accept(profile, "round-1")
+            dispatch_to_agy.accept(profile, "round-1")
         self.assertIn("did not compile", out.getvalue())
         self.assertIn("still compile", out.getvalue())
 
@@ -3845,7 +3852,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
-        notes = agy_dispatch.proof_notes(profile, "round-1")
+        notes = dispatch_to_agy.proof_notes(profile, "round-1")
         self.assertEqual([n for n in notes if "did not compile" in n], [])
 
     def test_a_round_without_a_sweep_earns_a_note(self) -> None:
@@ -3856,13 +3863,13 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
-        notes = agy_dispatch.proof_notes(profile, "round-1")
+        notes = dispatch_to_agy.proof_notes(profile, "round-1")
         self.assertEqual(len([n for n in notes if "no mutation sweep" in n]), 1)
 
     def record_sweep(self, profile: dict, **overrides: object) -> Path:
         record = {"restored": True, "exit_code": 0}
         record.update(overrides)
-        path = agy_dispatch.sweep_path(profile, "round-1")
+        path = dispatch_to_agy.sweep_path(profile, "round-1")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record))
         return path
@@ -3887,10 +3894,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
-        before = agy_dispatch.proof_notes(profile, "round-1")
+        before = dispatch_to_agy.proof_notes(profile, "round-1")
         self.assertEqual(len([n for n in before if "no mutation sweep" in n]), 1)
         self.record_sweep(profile)
-        after = agy_dispatch.proof_notes(profile, "round-1")
+        after = dispatch_to_agy.proof_notes(profile, "round-1")
         self.assertEqual([n for n in after if "mutation sweep" in n], [])
         # Required, not merely tolerated. Tolerating it left the note 222f519c9d
         # added with no test at all: a mutation removing it passed the whole
@@ -3916,7 +3923,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
         self.record_sweep(profile, restored=False)
-        notes = agy_dispatch.proof_notes(profile, "round-1")
+        notes = dispatch_to_agy.proof_notes(profile, "round-1")
         self.assertEqual(len([n for n in notes if "did not restore" in n]), 1)
 
     def test_an_unreadable_sweep_record_earns_a_note(self) -> None:
@@ -3927,10 +3934,10 @@ class DerivedWorktreeTest(unittest.TestCase):
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
-        path = agy_dispatch.sweep_path(profile, "round-1")
+        path = dispatch_to_agy.sweep_path(profile, "round-1")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"restored": tru')
-        notes = agy_dispatch.proof_notes(profile, "round-1")
+        notes = dispatch_to_agy.proof_notes(profile, "round-1")
         self.assertEqual(len([n for n in notes if "cannot be read" in n]), 1)
 
     def test_a_sweep_that_exited_non_zero_earns_a_note(self) -> None:
@@ -3941,7 +3948,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
         self.record_sweep(profile, exit_code=2)
-        notes = agy_dispatch.proof_notes(profile, "round-1")
+        notes = dispatch_to_agy.proof_notes(profile, "round-1")
         self.assertEqual(len([n for n in notes if "exited 2" in n]), 1)
 
     def test_sweep_refuses_when_the_script_leaves_the_tree_mutated(self) -> None:
@@ -3957,9 +3964,9 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
         with contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
-                agy_dispatch.sweep(profile, "round-1", str(script))
+                dispatch_to_agy.sweep(profile, "round-1", str(script))
         self.assertIn("did not restore what it mutated", str(caught.exception))
-        self.assertTrue(agy_dispatch.sweep_path(profile, "round-1").exists())
+        self.assertTrue(dispatch_to_agy.sweep_path(profile, "round-1").exists())
 
     def test_sweep_accepts_a_script_that_restores_the_tree(self) -> None:
         profile = self.derive(self.profile_path())
@@ -3974,8 +3981,8 @@ class DerivedWorktreeTest(unittest.TestCase):
             "p.write_text(original)\n"
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.sweep(profile, "round-1", str(script))
-        record = json.loads(agy_dispatch.sweep_path(profile, "round-1").read_text())
+            dispatch_to_agy.sweep(profile, "round-1", str(script))
+        record = json.loads(dispatch_to_agy.sweep_path(profile, "round-1").read_text())
         self.assertTrue(record["restored"])
         self.assertEqual(record["exit_code"], 0)
 
@@ -3986,7 +3993,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.record_proofs(profile, worker)
         (worker / "README.md").write_text("base\naccepted\nand more\n")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.accept(profile, "round-1")
+            dispatch_to_agy.accept(profile, "round-1")
         self.assertIn("changed after the `candidate` proof", str(caught.exception))
 
     def test_bounded_write_requires_a_gate_command(self) -> None:
@@ -3994,13 +4001,13 @@ class DerivedWorktreeTest(unittest.TestCase):
         del contract["gate_command"]
         path = self.profile_path(task_contract=contract)
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(str(path))
+            dispatch_to_agy.load_profile(str(path))
         self.assertIn("task_contract.gate_command", str(caught.exception))
 
     def test_review_requires_a_derived_checkout(self) -> None:
         profile = json.loads(self.profile_path().read_text())
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.worker_touched_paths(profile)
+            dispatch_to_agy.worker_touched_paths(profile)
         self.assertIn("worktree.base_sha", str(caught.exception))
 
     def test_protected_path_from_another_root_is_rejected(self) -> None:
@@ -4012,13 +4019,13 @@ class DerivedWorktreeTest(unittest.TestCase):
             protected_artifacts=[
                 {
                     "path": str(self.controller / "keep.md"),
-                    "sha256": agy_dispatch.sha256(self.controller / "keep.md"),
+                    "sha256": dispatch_to_agy.sha256(self.controller / "keep.md"),
                 }
             ],
         )
         self.derive(path)
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(str(path))
+            dispatch_to_agy.load_profile(str(path))
         self.assertIn("outside the round root", str(caught.exception))
 
     def test_relative_protected_path_follows_the_round(self) -> None:
@@ -4027,12 +4034,12 @@ class DerivedWorktreeTest(unittest.TestCase):
             protected_artifacts=[
                 {
                     "path": "keep.md",
-                    "sha256": agy_dispatch.sha256(self.controller / "keep.md"),
+                    "sha256": dispatch_to_agy.sha256(self.controller / "keep.md"),
                 }
             ],
         )
         profile = self.derive(path)
-        loaded = agy_dispatch.load_profile(str(path))
+        loaded = dispatch_to_agy.load_profile(str(path))
         self.assertEqual(
             Path(loaded["protected_artifacts"][0]["path"]).resolve(),
             (Path(profile["worktree"]["path"]) / "keep.md").resolve(),
@@ -4084,7 +4091,7 @@ class OracleContractTest(unittest.TestCase):
     }
 
     def findings(self, text: str) -> list[str]:
-        return agy_dispatch.oracle_findings(self.PROFILE, text)
+        return dispatch_to_agy.oracle_findings(self.PROFILE, text)
 
     def assert_single_finding(self, text: str, fragment: str) -> None:
         found = self.findings(text)
@@ -4096,7 +4103,7 @@ class OracleContractTest(unittest.TestCase):
 
     def test_oracle_sections_tuple_has_scope_at_index_3(self) -> None:
         self.assertEqual(
-            agy_dispatch.ORACLE_SECTIONS,
+            dispatch_to_agy.ORACLE_SECTIONS,
             ("Claim", "Measurements", "Gate", "Scope", "Fabrication tells"),
         )
 
@@ -4118,7 +4125,7 @@ class OracleContractTest(unittest.TestCase):
             "path_change_budgets": {"src/writable.py": 100},
             "path_line_ranges": {"src/writable.py": "any"},
         }
-        found = agy_dispatch.oracle_findings(profile, text)
+        found = dispatch_to_agy.oracle_findings(profile, text)
         expected = "`## Scope` write scope mismatch for `src/writable.py`: oracle states 50, profile carries 100"
         self.assertEqual(found, [expected])
 
@@ -4133,7 +4140,7 @@ class OracleContractTest(unittest.TestCase):
             "path_change_budgets": {"src/writable.py": 50},
             "path_line_ranges": {"src/writable.py": "1-20"},
         }
-        found = agy_dispatch.oracle_findings(profile, text)
+        found = dispatch_to_agy.oracle_findings(profile, text)
         expected = "`## Scope` write scope mismatch for `src/writable.py`: oracle states 1-10, profile carries 1-20"
         self.assertEqual(found, [expected])
 
@@ -4148,7 +4155,7 @@ class OracleContractTest(unittest.TestCase):
             "path_change_budgets": {"src/writable.py": 100},
             "path_line_ranges": {"src/writable.py": "1-20"},
         }
-        found = agy_dispatch.oracle_findings(profile, text)
+        found = dispatch_to_agy.oracle_findings(profile, text)
         expected = "`## Scope` write scope mismatch for `src/writable.py`: oracle states 50 1-10, profile carries 100 1-20"
         self.assertEqual(found, [expected])
 
@@ -4157,7 +4164,7 @@ class OracleContractTest(unittest.TestCase):
             "| Path | Line budget | Line ranges |\n|---|---|---|",
             "| Path | Line budget | Line ranges |\n|---|---|---|\n| src/only_in_oracle.py | 50 | any |",
         )
-        found = agy_dispatch.oracle_findings(self.PROFILE, text)
+        found = dispatch_to_agy.oracle_findings(self.PROFILE, text)
         expected = "`## Scope` write scope mismatch for `src/only_in_oracle.py`: oracle states 50, profile carries absent"
         self.assertEqual(found, [expected])
 
@@ -4168,7 +4175,7 @@ class OracleContractTest(unittest.TestCase):
             "path_change_budgets": {"src/extra_in_profile.py": 30},
             "path_line_ranges": {"src/extra_in_profile.py": "any"},
         }
-        found = agy_dispatch.oracle_findings(profile, CONFORMANT_ORACLE)
+        found = dispatch_to_agy.oracle_findings(profile, CONFORMANT_ORACLE)
         expected = "`## Scope` write scope mismatch for `src/extra_in_profile.py`: oracle states absent, profile carries 30"
         self.assertEqual(found, [expected])
 
@@ -4265,7 +4272,7 @@ class OracleContractTest(unittest.TestCase):
         would reject every such oracle."""
         profile = {"task_commands": {"allow": []}}
         text = CONFORMANT_ORACLE.replace("some_gate\n```", "controller_gate\n```")
-        self.assertEqual(agy_dispatch.oracle_findings(profile, text), [])
+        self.assertEqual(dispatch_to_agy.oracle_findings(profile, text), [])
 
     def test_a_second_gate_command_prove_never_runs_is_reported(self) -> None:
         """`prove` runs `task_contract.gate_command` and nothing else, so an
@@ -4285,7 +4292,7 @@ class OracleContractTest(unittest.TestCase):
             "cargo test -p target --lib some_gate\n```",
             "cargo build -p target --lib\ncargo test -p target --lib some_gate\n```",
         )
-        found = agy_dispatch.oracle_findings(profile, text)
+        found = dispatch_to_agy.oracle_findings(profile, text)
         self.assertEqual(len(found), 1, f"expected one finding, got {found}")
         self.assertIn("`prove` will never run", found[0])
         self.assertIn("cargo build -p target --lib", found[0])
@@ -4300,7 +4307,7 @@ class OracleContractTest(unittest.TestCase):
             },
         }
         self.assertEqual(
-            agy_dispatch.oracle_findings(profile, CONFORMANT_ORACLE), []
+            dispatch_to_agy.oracle_findings(profile, CONFORMANT_ORACLE), []
         )
 
 
@@ -4374,7 +4381,7 @@ class InjectionContractTest(unittest.TestCase):
         }
 
     def findings(self, text: str) -> list[str]:
-        return agy_dispatch.injection_findings(
+        return dispatch_to_agy.injection_findings(
             self.profile, text, CONFORMANT_ORACLE, self.captures
         )
 
@@ -4778,7 +4785,7 @@ class CaptureTest(unittest.TestCase):
     def capture(self, command: str, cwd: str | None = None) -> str:
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            agy_dispatch.capture(self.profile, "r1", command, cwd)
+            dispatch_to_agy.capture(self.profile, "r1", command, cwd)
         return buffer.getvalue()
 
     def test_capture_records_what_the_command_printed(self) -> None:
@@ -4822,14 +4829,14 @@ class CaptureTest(unittest.TestCase):
     def test_captures_load_keyed_by_command(self) -> None:
         self.capture("echo one")
         self.assertEqual(
-            agy_dispatch.load_captures(self.profile, "r1"),
+            dispatch_to_agy.load_captures(self.profile, "r1"),
             {"echo one": ["one"]},
         )
 
     def test_a_round_that_captured_nothing_loads_an_empty_set(self) -> None:
         """A round whose current behavior is entirely a code quote captures
         nothing, and that is a complete round, not a broken one."""
-        self.assertEqual(agy_dispatch.load_captures(self.profile, "r1"), {})
+        self.assertEqual(dispatch_to_agy.load_captures(self.profile, "r1"), {})
 
     def test_capture_runs_where_it_is_told(self) -> None:
         """The observation usually lives in a fixture outside the round root, and
@@ -4874,21 +4881,21 @@ class ScaffoldTest(unittest.TestCase):
 
     def scaffold(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.scaffold(self.profile, "r1")
+            dispatch_to_agy.scaffold(self.profile, "r1")
 
     def test_scaffold_writes_both_halves_prefilled_with_the_gate(self) -> None:
         self.scaffold()
         oracle = (self.state / "oracles" / "r1.md").read_text()
         injection = (self.state / "injections" / "r1.md").read_text()
         self.assertEqual(
-            agy_dispatch.gate_commands_in(
-                agy_dispatch.oracle_sections(oracle)["Gate"]
+            dispatch_to_agy.gate_commands_in(
+                dispatch_to_agy.oracle_sections(oracle)["Gate"]
             ),
             ["cargo test -p target --lib some_gate"],
         )
         self.assertEqual(
-            agy_dispatch.gate_commands_in(
-                agy_dispatch.oracle_sections(injection)["Definition of done"]
+            dispatch_to_agy.gate_commands_in(
+                dispatch_to_agy.oracle_sections(injection)["Definition of done"]
             ),
             ["cargo test -p target --lib some_gate"],
         )
@@ -4897,7 +4904,7 @@ class ScaffoldTest(unittest.TestCase):
     def test_a_blank_form_cannot_be_dispatched(self) -> None:
         """The point of handing out slots is lost if an unfilled form passes."""
         self.scaffold()
-        findings = agy_dispatch.round_findings(self.profile, "r1")
+        findings = dispatch_to_agy.round_findings(self.profile, "r1")
         self.assertTrue(findings, "a blank scaffold produced no findings")
         self.assertTrue(
             any("unfilled" in item for item in findings),
@@ -4908,7 +4915,7 @@ class ScaffoldTest(unittest.TestCase):
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                agy_dispatch.lint(self.profile, task_key)
+                dispatch_to_agy.lint(self.profile, task_key)
         except SystemExit as exit_code:
             # `lint` exits on findings, which is not what these rows are about.
             if not isinstance(exit_code.code, int):
@@ -4946,7 +4953,7 @@ class ScaffoldTest(unittest.TestCase):
         """
         with self.assertRaises(SystemExit) as caught:
             with contextlib.redirect_stdout(io.StringIO()):
-                agy_dispatch.scaffold(self.profile, "r1-with-a-description")
+                dispatch_to_agy.scaffold(self.profile, "r1-with-a-description")
         self.assertIn("task identity r1 does not match", str(caught.exception))
         self.assertIn(
             "requested key=r1-with-a-description", str(caught.exception)
@@ -4976,7 +4983,7 @@ class ScaffoldTest(unittest.TestCase):
     def test_a_declared_but_missing_injection_blocks_the_round(self) -> None:
         (self.state / "oracles").mkdir(parents=True)
         (self.state / "oracles" / "r1.md").write_text(CONFORMANT_ORACLE)
-        findings = agy_dispatch.round_findings(self.profile, "r1")
+        findings = dispatch_to_agy.round_findings(self.profile, "r1")
         self.assertEqual(len(findings), 1)
         self.assertIn("declared injection is missing", findings[0])
 
@@ -4986,7 +4993,7 @@ class ScaffoldTest(unittest.TestCase):
         profile.pop("inject_prompt_file")
         (self.state / "oracles").mkdir(parents=True)
         (self.state / "oracles" / "r1.md").write_text(CONFORMANT_ORACLE)
-        self.assertEqual(agy_dispatch.round_findings(profile, "r1"), [])
+        self.assertEqual(dispatch_to_agy.round_findings(profile, "r1"), [])
 
 
 class AdjudicateScopeFindingTest(unittest.TestCase):
@@ -5039,11 +5046,11 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
             )
         )
 
-        agy_dispatch.PROJECT_DIR = self.project_dir
-        agy_dispatch.SETTINGS = self.root / "settings.json"
-        agy_dispatch.GLOBAL = self.root / "config.json"
-        agy_dispatch.SETTINGS.write_text(json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}}))
-        agy_dispatch.GLOBAL.write_text(
+        dispatch_to_agy.PROJECT_DIR = self.project_dir
+        dispatch_to_agy.SETTINGS = self.root / "settings.json"
+        dispatch_to_agy.GLOBAL = self.root / "config.json"
+        dispatch_to_agy.SETTINGS.write_text(json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}}))
+        dispatch_to_agy.GLOBAL.write_text(
             json.dumps({"userSettings": {"globalPermissionGrants": {"allow": [], "deny": [], "ask": []}}})
         )
 
@@ -5062,7 +5069,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
                 "run_id": "r1",
                 "intent": "Test adjudication",
                 "gate_command": self.gate_cmd,
-                "design_inputs": [{"path": "design.md", "sha256": agy_dispatch.sha256(self.design_file)}],
+                "design_inputs": [{"path": "design.md", "sha256": dispatch_to_agy.sha256(self.design_file)}],
             },
             "project_permissions": {
                 "allow": ["command(*)"],
@@ -5075,8 +5082,8 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
                 "deny": [],
             },
             "protected_artifacts": [
-                {"path": "src/protected1.py", "sha256": agy_dispatch.sha256(self.protected1)},
-                {"path": "src/protected2.py", "sha256": agy_dispatch.sha256(self.protected2)},
+                {"path": "src/protected1.py", "sha256": dispatch_to_agy.sha256(self.protected1)},
+                {"path": "src/protected2.py", "sha256": dispatch_to_agy.sha256(self.protected2)},
             ],
             "snapshot_paths": ["src"],
             "allowed_repo_writes": ["src/writable.py"],
@@ -5096,8 +5103,8 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         p_path.write_text(json.dumps(p_dict, indent=2))
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.worktree(str(p_path), task_key)
-        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+            dispatch_to_agy.worktree(str(p_path), task_key)
+        profile = dispatch_to_agy.load_profile(str(p_path), validate_design=False)
 
         oracle = Path(profile["state_dir"]) / "oracles" / f"{task_key}.md"
         injection = Path(profile["state_dir"]) / "injections" / f"{task_key}.md"
@@ -5111,10 +5118,10 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         )
         profile["inject_prompt_file"] = str(injection)
         p_path.write_text(json.dumps(profile, indent=2))
-        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+        profile = dispatch_to_agy.load_profile(str(p_path), validate_design=False)
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.snapshot(profile, task_key)
+            dispatch_to_agy.snapshot(profile, task_key)
         return profile, p_path
 
     def run_proofs(self, profile: dict, task_key: str, worker_root: Path) -> None:
@@ -5124,12 +5131,12 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         # Mutant: revert product edit
         (worker_root / "src" / "writable.py").write_text("writable base content\n")
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.prove(profile, task_key, "mutant")
+            dispatch_to_agy.prove(profile, task_key, "mutant")
 
         # Candidate: restore product edit
         (worker_root / "src" / "writable.py").write_text(good_text)
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.prove(profile, task_key, "candidate")
+            dispatch_to_agy.prove(profile, task_key, "candidate")
 
     def test_measurement_1_verify_reports_protected_artifact_finding_and_exits_2(
         self,
@@ -5140,8 +5147,8 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         (worker_root / "src" / "protected1.py").write_text("modified by worker\n")
 
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.verify(profile, "m1")
-        self.assertEqual(caught.exception.code, agy_dispatch.EXIT_FINDINGS)
+            dispatch_to_agy.verify(profile, "m1")
+        self.assertEqual(caught.exception.code, dispatch_to_agy.EXIT_FINDINGS)
 
     def test_measurement_2_and_3_adjudicated_finding_unblocks_accept_prove_sweep(
         self,
@@ -5153,18 +5160,18 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         (worker_root / "src" / "writable.py").write_text("good edit\n")
 
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.verify(profile, "m23")
-        self.assertEqual(caught.exception.code, agy_dispatch.EXIT_FINDINGS)
+            dispatch_to_agy.verify(profile, "m23")
+        self.assertEqual(caught.exception.code, dispatch_to_agy.EXIT_FINDINGS)
 
         # Adjudicate finding
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(
+            dispatch_to_agy.adjudicate(
                 profile, "m23", "admit", "protected artifact changed: src/protected1.py", "reason for admit"
             )
 
         # verify should now pass cleanly
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.verify(profile, "m23")
+            dispatch_to_agy.verify(profile, "m23")
 
         # Prove mutant & candidate
         self.run_proofs(profile, "m23", worker_root)
@@ -5173,13 +5180,13 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         sweep_script = self.root / "sweep.py"
         sweep_script.write_text("import sys\nsys.exit(0)\n")
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.sweep(profile, "m23", str(sweep_script))
+            dispatch_to_agy.sweep(profile, "m23", str(sweep_script))
 
         # accept
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.accept(profile, "m23")
+            dispatch_to_agy.accept(profile, "m23")
 
-        head_commit = agy_dispatch.git_output(worker_root, "log", "-1", "--name-only")
+        head_commit = dispatch_to_agy.git_output(worker_root, "log", "-1", "--name-only")
         self.assertIn("accepted worker candidate", head_commit)
         self.assertIn("src/protected1.py", head_commit)
         self.assertIn("src/writable.py", head_commit)
@@ -5193,11 +5200,11 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
 
         # Adjudicate protected1 only
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m4", "admit", "src/protected1.py", "reason for admit")
+            dispatch_to_agy.adjudicate(profile, "m4", "admit", "src/protected1.py", "reason for admit")
 
         # load_profile with validate_design=True should refuse naming protected2
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(str(p_path), validate_design=True, task_key="m4")
+            dispatch_to_agy.load_profile(str(p_path), validate_design=True, task_key="m4")
         self.assertIn("protected2.py", str(caught.exception))
         self.assertNotIn("protected1.py", str(caught.exception))
 
@@ -5210,13 +5217,13 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
 
         # Adjudicate protected1 only
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(
+            dispatch_to_agy.adjudicate(
                 profile, "m4_byte_identical", "admit", "src/protected1.py", "reason for admit"
             )
 
         # load_profile with validate_design=True should refuse naming protected2
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(
+            dispatch_to_agy.load_profile(
                 str(p_path), validate_design=True, task_key="m4_byte_identical"
             )
         self.assertIn("protected2.py", str(caught.exception))
@@ -5230,20 +5237,20 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
 
         # Adjudicate first edit
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m5", "admit", "src/protected1.py", "reason for admit")
+            dispatch_to_agy.adjudicate(profile, "m5", "admit", "src/protected1.py", "reason for admit")
 
         # Change artifact again
         (worker_root / "src" / "protected1.py").write_text("second edit\n")
 
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.load_profile(str(p_path), validate_design=True, task_key="m5")
+            dispatch_to_agy.load_profile(str(p_path), validate_design=True, task_key="m5")
         self.assertIn("protected1.py", str(caught.exception))
 
     def test_measurement_6_adjudication_on_nonexistent_finding_refused(self) -> None:
         """Row 6: adjudication recorded on round with no such finding is refused."""
         profile, _ = self.setup_round("m6")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.adjudicate(profile, "m6", "admit", "src/protected1.py", "reason for admit")
+            dispatch_to_agy.adjudicate(profile, "m6", "admit", "src/protected1.py", "reason for admit")
         self.assertIn("no such finding exists", str(caught.exception))
 
     def test_measurement_7_rejected_decision_restores_artifact(self) -> None:
@@ -5254,7 +5261,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         (worker_root / "src" / "writable.py").write_text("good edit\n")
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m7", "reject", "src/protected1.py", "reason for reject")
+            dispatch_to_agy.adjudicate(profile, "m7", "reject", "src/protected1.py", "reason for reject")
 
         # Check content is restored
         self.assertEqual(
@@ -5266,9 +5273,9 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         self.run_proofs(profile, "m7", worker_root)
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.accept(profile, "m7")
+            dispatch_to_agy.accept(profile, "m7")
 
-        head_commit = agy_dispatch.git_output(worker_root, "log", "-1", "--name-only")
+        head_commit = dispatch_to_agy.git_output(worker_root, "log", "-1", "--name-only")
         self.assertIn("src/writable.py", head_commit)
         self.assertNotIn("src/protected1.py", head_commit)
 
@@ -5280,14 +5287,14 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         (worker_root / "src" / "writable.py").write_text("good edit\n")
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m8", "admit", "src/protected1.py", "reason for admit")
+            dispatch_to_agy.adjudicate(profile, "m8", "admit", "src/protected1.py", "reason for admit")
 
         self.run_proofs(profile, "m8", worker_root)
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.accept(profile, "m8")
+            dispatch_to_agy.accept(profile, "m8")
 
-        head_commit = agy_dispatch.git_output(worker_root, "log", "-1", "--name-only")
+        head_commit = dispatch_to_agy.git_output(worker_root, "log", "-1", "--name-only")
         self.assertIn("src/protected1.py", head_commit)
 
     def test_measurement_9_verify_rerun_removes_decided_finding(self) -> None:
@@ -5301,20 +5308,20 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             with self.assertRaises(SystemExit):
-                agy_dispatch.verify(profile, "m9")
+                dispatch_to_agy.verify(profile, "m9")
         out1 = buf.getvalue()
         target_line_p1 = [line for line in out1.splitlines() if "protected artifact changed:" in line and "protected1.py" in line][0]
         target_line_p2 = [line for line in out1.splitlines() if "protected artifact changed:" in line and "protected2.py" in line][0]
 
         # Adjudicate protected1
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m9", "admit", "src/protected1.py", "reason for admit")
+            dispatch_to_agy.adjudicate(profile, "m9", "admit", "src/protected1.py", "reason for admit")
 
         # Re-run verify
         buf2 = io.StringIO()
         with contextlib.redirect_stdout(buf2):
             with self.assertRaises(SystemExit):
-                agy_dispatch.verify(profile, "m9")
+                dispatch_to_agy.verify(profile, "m9")
         out2 = buf2.getvalue()
         self.assertNotIn(target_line_p1, out2)
         self.assertIn(target_line_p2, out2)
@@ -5365,11 +5372,11 @@ class SubfileLineRangesTest(unittest.TestCase):
             )
         )
 
-        agy_dispatch.PROJECT_DIR = self.project_dir
-        agy_dispatch.SETTINGS = self.root / "settings.json"
-        agy_dispatch.GLOBAL = self.root / "config.json"
-        agy_dispatch.SETTINGS.write_text(json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}}))
-        agy_dispatch.GLOBAL.write_text(
+        dispatch_to_agy.PROJECT_DIR = self.project_dir
+        dispatch_to_agy.SETTINGS = self.root / "settings.json"
+        dispatch_to_agy.GLOBAL = self.root / "config.json"
+        dispatch_to_agy.SETTINGS.write_text(json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}}))
+        dispatch_to_agy.GLOBAL.write_text(
             json.dumps({"userSettings": {"globalPermissionGrants": {"allow": [], "deny": [], "ask": []}}})
         )
 
@@ -5392,7 +5399,7 @@ class SubfileLineRangesTest(unittest.TestCase):
                 "run_id": task_key,
                 "intent": "Test line ranges",
                 "gate_command": self.gate_cmd,
-                "design_inputs": [{"path": "design.md", "sha256": agy_dispatch.sha256(self.design_file)}],
+                "design_inputs": [{"path": "design.md", "sha256": dispatch_to_agy.sha256(self.design_file)}],
             },
             "project_permissions": {
                 "allow": ["command(*)"],
@@ -5415,8 +5422,8 @@ class SubfileLineRangesTest(unittest.TestCase):
         p_path.write_text(json.dumps(p_dict, indent=2))
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.worktree(str(p_path), task_key)
-        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+            dispatch_to_agy.worktree(str(p_path), task_key)
+        profile = dispatch_to_agy.load_profile(str(p_path), validate_design=False)
 
         oracle = Path(profile["state_dir"]) / "oracles" / f"{task_key}.md"
         injection = Path(profile["state_dir"]) / "injections" / f"{task_key}.md"
@@ -5430,10 +5437,10 @@ class SubfileLineRangesTest(unittest.TestCase):
         )
         profile["inject_prompt_file"] = str(injection)
         p_path.write_text(json.dumps(profile, indent=2))
-        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+        profile = dispatch_to_agy.load_profile(str(p_path), validate_design=False)
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.snapshot(profile, task_key)
+            dispatch_to_agy.snapshot(profile, task_key)
         return profile, p_path
 
     def test_in_range_candidate_yields_no_finding(self) -> None:
@@ -5444,7 +5451,7 @@ class SubfileLineRangesTest(unittest.TestCase):
         lines[0] = "def func_1_edited(): # good edit\n"
         (worker_root / "src" / "writable.py").write_text("".join(lines))
 
-        findings = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_in_range")
+        findings = dispatch_to_agy.scope_findings(profile, ["src/writable.py"], "r_in_range")
         self.assertEqual(findings, [])
 
     def test_extra_hunk_outside_range_yields_finding(self) -> None:
@@ -5456,7 +5463,7 @@ class SubfileLineRangesTest(unittest.TestCase):
         lines[24] = "def func_13_edited():\n"
         (worker_root / "src" / "writable.py").write_text("".join(lines))
 
-        findings = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_extra_hunk")
+        findings = dispatch_to_agy.scope_findings(profile, ["src/writable.py"], "r_extra_hunk")
         expected = "src/writable.py: hunk at baseline lines 25 falls outside declared ranges"
         self.assertEqual(findings, [expected])
 
@@ -5469,7 +5476,7 @@ class SubfileLineRangesTest(unittest.TestCase):
             lines[i] = f"# edit {i}\n"
         (worker_root / "src" / "writable.py").write_text("".join(lines))
 
-        findings = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_past_end")
+        findings = dispatch_to_agy.scope_findings(profile, ["src/writable.py"], "r_past_end")
         expected = "src/writable.py: hunk at baseline lines 5-15 falls outside declared ranges"
         self.assertEqual(findings, [expected])
 
@@ -5482,20 +5489,20 @@ class SubfileLineRangesTest(unittest.TestCase):
         (worker_root / "src" / "writable.py").write_text("".join(lines))
 
         finding1 = "src/writable.py: hunk at baseline lines 15 falls outside declared ranges"
-        findings1 = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_two_hunks")
+        findings1 = dispatch_to_agy.scope_findings(profile, ["src/writable.py"], "r_two_hunks")
         self.assertEqual(findings1, [finding1])
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "r_two_hunks", "admit", finding1, "admitting line 15 edit")
+            dispatch_to_agy.adjudicate(profile, "r_two_hunks", "admit", finding1, "admitting line 15 edit")
 
         lines[24] = "# edit 25\n"
         (worker_root / "src" / "writable.py").write_text("".join(lines))
 
-        findings2 = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_two_hunks")
+        findings2 = dispatch_to_agy.scope_findings(profile, ["src/writable.py"], "r_two_hunks")
         self.assertEqual(len(findings2), 2)
         self.assertIn(finding1, findings2)
 
-        open_, admitted, rejected = agy_dispatch.split_scope_findings(profile, "r_two_hunks", findings2)
+        open_, admitted, rejected = dispatch_to_agy.split_scope_findings(profile, "r_two_hunks", findings2)
         self.assertEqual(admitted, [finding1])
         self.assertEqual(len(open_), 1)
         self.assertNotIn(finding1, open_)
@@ -5510,7 +5517,7 @@ class SubfileLineRangesTest(unittest.TestCase):
 
         finding = "src/writable.py: hunk at baseline lines 21 falls outside declared ranges"
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.adjudicate(profile, "r_empty_reason", "admit", finding, "   ")
+            dispatch_to_agy.adjudicate(profile, "r_empty_reason", "admit", finding, "   ")
         self.assertIn("reason", str(caught.exception))
 
     def test_verify_and_review_print_recorded_reason(self) -> None:
@@ -5526,18 +5533,18 @@ class SubfileLineRangesTest(unittest.TestCase):
         reason_text = "admitting line 21 refactor"
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "r_reason_print", "admit", finding, reason_text)
+            dispatch_to_agy.adjudicate(profile, "r_reason_print", "admit", finding, reason_text)
 
         buf_verify = io.StringIO()
         with contextlib.redirect_stdout(buf_verify):
-            agy_dispatch.verify(profile, "r_reason_print")
+            dispatch_to_agy.verify(profile, "r_reason_print")
         out_verify = buf_verify.getvalue()
         self.assertIn(finding, out_verify)
         self.assertIn(reason_text, out_verify)
 
         buf_review = io.StringIO()
         with contextlib.redirect_stdout(buf_review):
-            agy_dispatch.review(profile, "r_reason_print")
+            dispatch_to_agy.review(profile, "r_reason_print")
         out_review = buf_review.getvalue()
         self.assertIn(finding, out_review)
         self.assertIn(reason_text, out_review)
@@ -5580,7 +5587,7 @@ class CoreExtractionTest(unittest.TestCase):
     )
 
     def test_no_moved_function_defined_in_adapter(self) -> None:
-        adapter_path = Path(agy_dispatch.__file__).resolve()
+        adapter_path = Path(dispatch_to_agy.__file__).resolve()
         tree = ast.parse(adapter_path.read_text())
         top_level_defs = {
             node.name
@@ -5591,11 +5598,11 @@ class CoreExtractionTest(unittest.TestCase):
             self.assertNotIn(
                 name,
                 top_level_defs,
-                f"Moved function {name} is still defined as a top-level FunctionDef in agy_dispatch.py",
+                f"Moved function {name} is still defined as a top-level FunctionDef in dispatch_to_agy.py",
             )
 
     def test_moved_functions_defined_exactly_once_in_core(self) -> None:
-        core_dir = Path(__file__).resolve().parents[3] / "dispatch" / "core"
+        core_dir = Path(__file__).resolve().parents[4] / "dispatch" / "core"
 
         counts: dict[str, int] = {name: 0 for name in self.MOVED_FUNCTIONS}
         for py_file in core_dir.glob("*.py"):
@@ -5619,8 +5626,8 @@ class CoreExtractionTest(unittest.TestCase):
         )
         for name in all_expected:
             self.assertTrue(
-                hasattr(agy_dispatch, name),
-                f"Attribute {name} not found on agy_dispatch module",
+                hasattr(dispatch_to_agy, name),
+                f"Attribute {name} not found on dispatch_to_agy module",
             )
 
     def test_adapter_reexports_are_identical_objects_from_core(self) -> None:
@@ -5638,7 +5645,7 @@ class CoreExtractionTest(unittest.TestCase):
             dispatch.core.scope,
         )
         for name in self.MOVED_FUNCTIONS:
-            adapter_obj = getattr(agy_dispatch, name)
+            adapter_obj = getattr(dispatch_to_agy, name)
             core_obj = None
             for mod in core_modules:
                 if hasattr(mod, name):
@@ -5651,7 +5658,7 @@ class CoreExtractionTest(unittest.TestCase):
             self.assertIs(
                 adapter_obj,
                 core_obj,
-                f"agy_dispatch.{name} is not identical to core attribute",
+                f"dispatch_to_agy.{name} is not identical to core attribute",
             )
 
 

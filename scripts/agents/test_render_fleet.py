@@ -85,9 +85,17 @@ class RenderFleetTests(unittest.TestCase):
     def test_singletons_are_projected_not_rewritten(self) -> None:
         expected = render_fleet.expected_codex_files(REPO)
         codex = render_fleet.codex_agents_dir(REPO)
-        for singleton in ("aw-dev", "gke-operator", "agy-operator", "cto",
-                          "project-manager", "tech-design", "integration-qa"):
+        for singleton in ("aw-dev", "cto", "project-manager", "tech-design",
+                          "integration-qa"):
             self.assertIn(codex / f"{singleton}.toml", expected)
+
+    def test_retired_operator_roles_are_absent(self) -> None:
+        expected = render_fleet.expected_codex_files(REPO)
+        for name in ("agy" + "-operator", "gke" + "-operator"):
+            with self.subTest(name=name):
+                self.assertFalse((REPO / ".claude/agents" / f"{name}.md").exists())
+                self.assertFalse((REPO / ".codex/agents" / f"{name}.toml").exists())
+                self.assertNotIn(REPO / ".codex/agents" / f"{name}.toml", expected)
 
     def test_codex_write_preserves_claude_agents(self) -> None:
         before = {
@@ -149,6 +157,49 @@ class RenderFleetTests(unittest.TestCase):
         self.assertEqual(render_fleet.codex_sandbox("lumen-pm"), "read-only")
         self.assertEqual(render_fleet.codex_sandbox("integration-qa"), "read-only")
 
+    def test_qa_and_dev_are_luna_low_worktree_executors(self) -> None:
+        rendered = render_fleet.rendered_agents(REPO)
+        for role, markdown in rendered.items():
+            if not role.endswith(("-qa", "-dev")):
+                continue
+            with self.subTest(role=role):
+                projection = (REPO / ".codex/agents" / f"{role}.toml").read_text()
+                self.assertEqual(render_fleet.codex_model(role), "gpt-5.6-luna")
+                self.assertIn('model_reasoning_effort = "low"', projection)
+                self.assertIn("worktree executor", markdown)
+                self.assertIn("scripts/execute_assignment.py", markdown)
+                self.assertIn("absolute assignment JSON path", markdown)
+                self.assertNotIn("AGY", markdown)
+                self.assertNotIn("model=", markdown)
+                self.assertNotIn("effort=", markdown)
+                self.assertNotIn("agy" + "-operator", markdown)
+                self.assertNotIn("gke" + "-operator", markdown)
+
+        aw = (REPO / ".claude/agents/aw-dev.md").read_text()
+        aw_projection = (REPO / ".codex/agents/aw-dev.toml").read_text()
+        self.assertIn("worktree executor", aw)
+        self.assertIn("scripts/execute_assignment.py", aw)
+        self.assertNotIn("AGY", aw)
+        self.assertIn('model = "gpt-5.6-luna"', aw_projection)
+        self.assertIn('model_reasoning_effort = "low"', aw_projection)
+
+    def test_codex_fleet_readme_keeps_executor_backend_neutral(self) -> None:
+        readme = (REPO / ".codex/agents/README.md").read_text()
+        self.assertIn("scripts/execute_assignment.py", readme)
+        retired_operator_names = (
+            "agy" + "-operator",
+            "gke" + "-operator",
+        )
+        for forbidden in (
+            "AGY",
+            "Antigravity",
+            "dispatch-to-agy",
+            "gemini-3.8-flash",
+            *retired_operator_names,
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, readme)
+
     # -- negative controls: each divergence class is caught ------------------
 
     def test_template_mutation_is_caught(self) -> None:
@@ -195,13 +246,13 @@ class RenderFleetTests(unittest.TestCase):
 
     def test_singleton_edit_reprojects_only_its_toml(self) -> None:
         self.render_candidate()
-        path = self.tmp / ".claude/agents/gke-operator.md"
+        path = self.tmp / ".claude/agents/tech-design.md"
         path.write_text(path.read_text(encoding="utf-8") + "\n- extra\n",
                         encoding="utf-8")
         self.assertEqual(render_fleet.check(self.tmp),
-                         ["differs: .codex/agents/gke-operator.toml"])
+                         ["differs: .codex/agents/tech-design.toml"])
         self.assertEqual(render_fleet.write(self.tmp),
-                         ["wrote: .codex/agents/gke-operator.toml"])
+                         ["wrote: .codex/agents/tech-design.toml"])
         self.assertTrue(path.read_text(encoding="utf-8").endswith("- extra\n"))
 
 

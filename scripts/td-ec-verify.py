@@ -12,8 +12,7 @@ than merely observed green.
 
 More than one project root verifies each in turn and fails if *any* of them
 fails. That is one command rather than two because a round is gated on exactly
-one: `agy-dispatch`'s `lint` refuses a `## Gate` section naming a second
-command, and `prove` runs `task_contract.gate_command` alone. A round that
+one. The executor runs `task_contract.gate_command` alone. A round that
 lands a decision in a shared crate and the composition that consumes it is
 therefore only honestly gated when both projects are judged by the single
 command the round is proved against -- otherwise the crate half is authorized

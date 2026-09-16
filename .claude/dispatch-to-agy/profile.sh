@@ -1,5 +1,5 @@
-# agy-dispatch project profile — mamba
-# Contract: ~/.claude/skills/agy-dispatch/profiles/README.md
+# dispatch-to-agy project profile — mamba
+# Contract: ~/.claude/skills/dispatch-to-agy/profiles/README.md
 # Sourced by agy-wave.sh. No output, no side effects.
 
 REPO="chrischeng-c4/axiom"

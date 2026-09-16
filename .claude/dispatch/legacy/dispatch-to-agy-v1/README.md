@@ -7,4 +7,4 @@ It contains the retired Claude-specific dispatcher and its old references.
 That code used Gemini 3.6, private `~/.gemini` Project cache files, Project-root
 repointing, and mutable `grant` operations.
 
-Use `.agents/skills/agy-dispatch/` for every active dispatch.
+Use `.agents/skills/dispatch-to-agy/` for every active dispatch.

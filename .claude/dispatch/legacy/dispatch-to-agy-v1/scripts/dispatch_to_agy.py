@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-_CLAUDE_DIR = str(Path(__file__).resolve().parents[3])
+_CLAUDE_DIR = str(Path(__file__).resolve().parents[4])
 if _CLAUDE_DIR not in sys.path:
     sys.path.insert(0, _CLAUDE_DIR)
 
@@ -83,7 +83,7 @@ from dispatch.core.rules import (
 from dispatch.core.scope import parse_line_ranges
 
 
-# Where AGY keeps its installation. `AGY_DISPATCH_HOME` exists so a test can
+# Where AGY keeps its installation. `DISPATCH_TO_AGY_HOME` exists so a test can
 # stand up a whole fixture installation and have every caller find it -- the
 # ones running in this process and the ones running in a child.
 #
@@ -94,7 +94,7 @@ from dispatch.core.scope import parse_line_ranges
 # could only ever exist in the temporary one, and fail on every machine there is
 # (#3495). An environment variable is inherited across that boundary, which is
 # the only property being asked for here.
-HOME = Path(os.environ.get("AGY_DISPATCH_HOME") or Path.home())
+HOME = Path(os.environ.get("DISPATCH_TO_AGY_HOME") or Path.home())
 SETTINGS = HOME / ".gemini" / "antigravity-cli" / "settings.json"
 GLOBAL = HOME / ".gemini" / "config" / "config.json"
 PROJECT_DIR = HOME / ".gemini" / "config" / "projects"
@@ -253,7 +253,7 @@ def load_profile(
     state_dir = Path(profile["state_dir"]).resolve()
     if state_dir != TEMP_ROOT and not state_dir.is_relative_to(TEMP_ROOT):
         raise SystemExit(
-            "state_dir must be under /tmp/agy-dispatch so controller state "
+            "state_dir must be under /tmp/dispatch-to-agy so controller state "
             "remains transient and shared by Claude and Codex"
         )
     if state_dir == root or state_dir.is_relative_to(root):
@@ -769,7 +769,7 @@ def project_policy_report(profile: dict) -> dict:
             # fact an author needs at authoring time: an exact entry states the
             # controller's intent, and the surface will not enforce it. Reported,
             # never blocked, because blocking on it would block every round.
-            probe = f"{command} agy-dispatch-argument-probe"
+            probe = f"{command} dispatch-to-agy-argument-probe"
             check["argument_forms_admitted"] = (
                 permission_decision(actual, global_surface, probe)[0] == "allow"
                 and not task_allowlist_admits(profile, probe)

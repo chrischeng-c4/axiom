@@ -1,4 +1,4 @@
-# agy-dispatch profile — mamba corpus mechanics
+# dispatch-to-agy profile — mamba corpus mechanics
 
 Supervisor-side. The executor never reads this; it exists so a ticket author
 selects on the corpus's own structure instead of inventing a regex.

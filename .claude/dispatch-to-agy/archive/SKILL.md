@@ -41,7 +41,7 @@ Verified on this machine, 2026-07-26. Re-check after any agy upgrade.
 
 ## The ritual
 
-Run from `.claude/skills/agy-dispatch/`.
+Run from `.claude/skills/dispatch-to-agy/`.
 
 **1 — lock.** `./agy-wave.sh lock`
 

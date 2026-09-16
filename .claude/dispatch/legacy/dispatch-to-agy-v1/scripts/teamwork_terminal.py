@@ -97,7 +97,7 @@ def load_profile(path: str) -> dict:
         raise SystemExit(f"root is not a directory: {profile['root']}")
     state_dir = Path(profile["state_dir"]).resolve()
     if state_dir != TEMP_ROOT and not state_dir.is_relative_to(TEMP_ROOT):
-        raise SystemExit("state_dir must be under /tmp/agy-dispatch")
+        raise SystemExit("state_dir must be under /tmp/dispatch-to-agy")
     profile["state_dir"] = str(state_dir)
     return profile
 

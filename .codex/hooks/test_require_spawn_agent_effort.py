@@ -49,28 +49,29 @@ def payload(
 class SpawnAgentEffortHookTests(unittest.TestCase):
     def test_registry_matches_fleet(self) -> None:
         registry = load_registry()
-        self.assertEqual(len(registry), 139)
-        self.assertEqual(registry["tape-dev"], "medium")
-        self.assertEqual(registry["tape-qa"], "max")
+        self.assertEqual(len(registry), 224)
+        self.assertEqual(registry["tape-dev"], "low")
+        self.assertEqual(registry["tape-qa"], "low")
         self.assertEqual(registry["tape-pm"], "high")
         self.assertEqual(registry["aw-pm"], "high")
-        self.assertNotIn("aw-qa", registry)
-        self.assertEqual(registry["agy-operator"], "low")
+        self.assertEqual(registry["aw-qa"], "low")
+        self.assertNotIn("agy" + "-operator", registry)
+        self.assertNotIn("gke" + "-operator", registry)
         self.assertEqual(registry["cto"], "high")
         self.assertEqual(registry["project-manager"], "medium")
         self.assertEqual(registry["tech-design"], "xhigh")
         self.assertLessEqual(set(registry.values()), VALID_EFFORTS)
 
     def test_matching_pinned_effort_is_accepted(self) -> None:
-        validate_spawn_agent_call(payload("medium"))
-        validate_spawn_agent_call(payload("max", agent_type="tape-qa"))
-        validate_spawn_agent_call(payload("low", agent_type="agy-operator"))
+        validate_spawn_agent_call(payload("low"))
+        validate_spawn_agent_call(payload("low", agent_type="tape-qa"))
+        validate_spawn_agent_call(payload("high", agent_type="tape-pm"))
 
     def test_positive_history_bound_is_accepted(self) -> None:
-        validate_spawn_agent_call(payload("medium", fork_turns="3"))
+        validate_spawn_agent_call(payload("low", fork_turns="3"))
 
     def test_agent_matcher_alias_is_accepted(self) -> None:
-        validate_spawn_agent_call(payload("medium", tool_name="Agent"))
+        validate_spawn_agent_call(payload("low", tool_name="Agent"))
 
     def test_missing_effort_is_rejected(self) -> None:
         with self.assertRaisesRegex(DispatchPolicyError, "must be explicit"):
@@ -89,21 +90,21 @@ class SpawnAgentEffortHookTests(unittest.TestCase):
             validate_spawn_agent_call(payload("medium", agent_type="ghost-dev"))
 
     def test_effort_mismatching_pinned_value_is_rejected(self) -> None:
-        for effort in sorted(VALID_EFFORTS - {"medium"}):
+        for effort in sorted(VALID_EFFORTS - {"low"}):
             with self.subTest(effort=effort):
                 with self.assertRaisesRegex(DispatchPolicyError, "pinned"):
                     validate_spawn_agent_call(payload(effort))
 
     def test_empty_registry_is_rejected(self) -> None:
         with self.assertRaisesRegex(DispatchPolicyError, "no agent registry"):
-            validate_spawn_agent_call(payload("medium"), registry={})
+            validate_spawn_agent_call(payload("low"), registry={})
 
     def test_default_or_full_history_is_rejected(self) -> None:
         for fork_turns in (None, "all", "0"):
             with self.subTest(fork_turns=fork_turns):
                 with self.assertRaisesRegex(DispatchPolicyError, "fork_turns"):
                     validate_spawn_agent_call(
-                        payload("medium", fork_turns=fork_turns)
+                        payload("low", fork_turns=fork_turns)
                     )
 
     def test_other_tools_are_ignored(self) -> None:
@@ -112,12 +113,12 @@ class SpawnAgentEffortHookTests(unittest.TestCase):
     def test_registry_dir_is_the_codex_fleet(self) -> None:
         self.assertEqual(AGENTS_DIR, PROJECT_ROOT / ".codex" / "agents")
 
-    def test_fleet_is_rendered(self) -> None:
-        # Every TOML here is a projection of `.claude/agents/<name>.md`; a
-        # hand-edited role or a stale projection makes the registry lie.
+    def test_codex_fleet_is_rendered(self) -> None:
+        # Every TOML here is a Codex projection of the fleet templates. A
+        # hand-edited role or stale projection makes the registry lie.
         result = subprocess.run(
             [sys.executable, str(PROJECT_ROOT / "scripts/agents/render_fleet.py"),
-             "--check"],
+             "--check-codex"],
             text=True,
             capture_output=True,
             check=False,
@@ -161,7 +162,7 @@ class SpawnAgentEffortHookTests(unittest.TestCase):
     def test_command_returns_zero_for_matching_effort(self) -> None:
         result = subprocess.run(
             [sys.executable, str(HOOK)],
-            input=json.dumps(payload("medium")),
+            input=json.dumps(payload("low")),
             text=True,
             capture_output=True,
             check=False,

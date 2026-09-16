@@ -8,8 +8,8 @@ Sources of truth, in this order:
 - ``PROJECTS`` below — the explicit project list. Six projects carry no
   ``aw.toml``, so nothing here discovers projects from it.
 - Hand-written singleton ``.claude/agents/<name>.md`` files (``aw-dev``,
-  ``gke-operator``, ``agy-operator``, …). They are never rewritten; only
-  their Codex projection is rendered.
+  ``cto``, ``project-manager``, …). They are never rewritten; only their Codex
+  projection is rendered.
 
 Outputs:
 

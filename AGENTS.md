@@ -92,16 +92,17 @@ writer policy.
 
 ## Fleet and permission boundary
 
-The Codex 226-role fleet is active. It
-has PM/TL/QA/Dev for 25 apps and 30 libs, custom `aw-dev`, and six further
-singleton roles. Templates under
+The Codex 224-role fleet is active. It has PM/TL/QA/Dev for 25 apps and 30
+libs, with a tailored `aw-dev`, plus `cto`, `project-manager`, `tech-design`,
+and `integration-qa`. Templates under
 `scripts/agents/templates/` render project Markdown and `.codex` projections
 through `scripts/agents/render_fleet.py`; never hand-edit generated files.
 
-The fleet maps PM/TL and Integration QA to Terra and QA/Dev to Luna.
-The future CTO advisor profile uses Sol/xhigh. Its efforts are PM high, TL
-xhigh, QA max, and Dev medium. Only one declared model result was measured:
-`lumen-qa` used Luna at max effort.
+The fleet maps PM/TL and Integration QA to Terra and QA/Dev to Luna. QA/Dev
+are low-effort worktree executors. They run one frozen controller assignment
+from their assigned linked Git worktree. They do not edit product files
+directly. The future CTO advisor profile uses Sol/xhigh. Its efforts are PM
+high, TL xhigh, and QA/Dev low.
 
 This is prompt-only scope control, not permission isolation. The CLI canary
 allowed all six forbidden writes. The native read-only canary also wrote its
@@ -113,9 +114,14 @@ Codex or Claude. Permission testing is separate work.
 
 Run Git as `git -c core.fsmonitor=false …`. Preserve unrelated work. The
 controller alone commits, pushes, changes tracker state, publishes, or closes
-work. Use one fresh `agy-operator` only for a user-authorized frozen payload;
-the controller owns all semantic verification and acceptance. Use
-`gke-operator` only for an authorized paid GKE run.
+work. A `<project>-dev` or `<project>-qa` agent may run exactly one frozen
+executor assignment from its assigned linked worktree. It runs
+`scripts/execute_assignment.py` with an absolute controller-state assignment
+path outside the repository. The controller owns semantic verification and
+acceptance. For an authorized paid GKE run, run only the named repository
+script or workflow and monitor it to a terminal state. Never use manual
+`gcloud`, `kubectl`, or `terraform` commands; a script result is not
+acceptance.
 
 Treat `main`, `app/*`, `lib/*`, `project-mamba`, `project-lumen`, and
 `examples` as persistent refs. Never delete or force-overwrite one without
