@@ -61,10 +61,19 @@ struct PendingApply {
     delivery: WalDelivery,
     admitted_bytes: usize,
     reservation: Option<RecordReservation>,
+    enqueued_at: std::time::Instant,
 }
 
 enum PreparedLocalRecord<'a> {
     Prepared(RecordApplyGuard<'a>),
+    /// The committed source needs a larger exact charge than its publication
+    /// reservation.  Keep both pieces at the ordered head while a dedicated
+    /// blocking apply worker waits for checkpoint relief.
+    CapacityBlocked {
+        entry: RaftLogEntry,
+        reservation: RecordReservation,
+        required: usize,
+    },
     /// A committed record reached no charged apply guard. The coordinator must
     /// retain its reservation and source at the unresolved head.
     Unresolved {
@@ -74,14 +83,15 @@ enum PreparedLocalRecord<'a> {
 }
 
 /// Repricing happens after the WAL record has a sequence, but before its
-/// capture-barrier lease. A larger valid record waits only for the missing
-/// delta, then revalidates. Any failure before a guard keeps the reservation
-/// for the unresolved committed head; it cannot enter generic apply.
+/// capture-barrier lease. A larger valid record may grow only after the
+/// ordered apply worker has retained the source and reservation at its head.
+/// If that growth is full, return a blocked state so the worker can wait for
+/// checkpoint relief without acquiring an apply lease or allowing later
+/// records to pass.
 fn prepare_local_record<'a>(
     engine: &'a Engine,
     mut entry: RaftLogEntry,
     mut reservation: RecordReservation,
-    mut ensure_capacity_owner: impl FnMut() -> Result<()>,
 ) -> Result<PreparedLocalRecord<'a>> {
     loop {
         match engine.begin_admitted_record(entry, reservation) {
@@ -97,29 +107,11 @@ fn prepare_local_record<'a>(
                     reservation = repriced_reservation;
                 }
                 Err(AdmissionError::Full { .. }) => {
-                    // The committed source remains retained while this owner
-                    // publishes only real local work to release capacity.
-                    if let Err(owner_error) = ensure_capacity_owner() {
-                        return Ok(PreparedLocalRecord::Unresolved {
-                            reservation: repriced_reservation,
-                            error: owner_error,
-                        });
-                    }
-                    engine.request_pending_checkpoint();
-                    match repriced_reservation.wait_grow_to(required) {
-                        Ok(()) => {
-                            entry = repriced_entry;
-                            reservation = repriced_reservation;
-                        }
-                        Err(grow_error) => {
-                            return Ok(PreparedLocalRecord::Unresolved {
-                                reservation: repriced_reservation,
-                                error: anyhow::Error::new(RecordAdmissionError::Capacity(
-                                    grow_error,
-                                )),
-                            });
-                        }
-                    }
+                    return Ok(PreparedLocalRecord::CapacityBlocked {
+                        entry: repriced_entry,
+                        reservation: repriced_reservation,
+                        required,
+                    });
                 }
                 Err(grow_error) => {
                     return Ok(PreparedLocalRecord::Unresolved {
@@ -565,6 +557,7 @@ impl WriteCoordinator {
                                 delivery,
                                 admitted_bytes,
                                 reservation,
+                                enqueued_at: std::time::Instant::now(),
                             };
                             if let Some(retention) = pending
                                 .reservation
@@ -614,6 +607,12 @@ impl WriteCoordinator {
                                         return false;
                                     }
                                 };
+                                let apply_kind = crate::metrics::ApplyKind::from_entry(&rec.entry);
+                                eng.metrics().observe_coordinator_stage(
+                                    apply_kind,
+                                    crate::metrics::CoordinatorStage::PublishToApplyStart,
+                                    pending.enqueued_at.elapsed(),
+                                );
                                 let version = rec.version;
                                 let aof_rec;
                                 // A prepared guard owns the apply lease and its retained charge
@@ -626,12 +625,55 @@ impl WriteCoordinator {
                                 // `GET /metrics` — see `Metrics::observe_coordinator_apply`.
                                 let apply_started_at = std::time::Instant::now();
                                 let mut outcome = match pending.reservation {
-                                    Some(reservation) => match prepare_local_record(
-                                        eng.as_ref(),
-                                        rec.entry,
-                                        reservation,
-                                        || applying_coord.ensure_capacity_owner(),
-                                    ) {
+                                    Some(reservation) => {
+                                        // A post-WAL exact reprice may need capacity that was
+                                        // unavailable at publication time.  Keep this ordered
+                                        // head in the existing dedicated blocking worker.  No
+                                        // apply lease is held while the reservation waits, and
+                                        // the subscription cannot advance to a later record.
+                                        let mut entry = rec.entry;
+                                        let mut reservation = reservation;
+                                        let prepared_local = loop {
+                                            match prepare_local_record(
+                                                eng.as_ref(),
+                                                entry,
+                                                reservation,
+                                            ) {
+                                                Ok(PreparedLocalRecord::CapacityBlocked {
+                                                    entry: blocked_entry,
+                                                    reservation: mut blocked_reservation,
+                                                    required,
+                                                }) => {
+                                                    if let Err(error) =
+                                                        applying_coord.ensure_capacity_owner()
+                                                    {
+                                                        break Ok(PreparedLocalRecord::Unresolved {
+                                                            reservation: blocked_reservation,
+                                                            error,
+                                                        });
+                                                    }
+                                                    eng.request_pending_checkpoint();
+                                                    match blocked_reservation.wait_grow_to(required) {
+                                                        Ok(()) => {
+                                                            entry = blocked_entry;
+                                                            reservation = blocked_reservation;
+                                                        }
+                                                        Err(error) => {
+                                                            break Ok(PreparedLocalRecord::Unresolved {
+                                                                reservation: blocked_reservation,
+                                                                error: anyhow::Error::new(
+                                                                    RecordAdmissionError::Capacity(
+                                                                        error,
+                                                                    ),
+                                                                ),
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                                other => break other,
+                                            }
+                                        };
+                                        match prepared_local {
                                         Ok(PreparedLocalRecord::Prepared(mut guard)) => {
                                             // This copy is made only after the full normalized
                                             // and transport reservation became a retained charge.
@@ -672,6 +714,9 @@ impl WriteCoordinator {
                                             );
                                             return false;
                                         }
+                                        Ok(PreparedLocalRecord::CapacityBlocked { .. }) => {
+                                            unreachable!("capacity-blocked local record must wait or resolve")
+                                        }
                                         Err(error) => {
                                             eng.capture_barrier.apply().mark_uncertain();
                                             applying_coord.mutation_gate.require_restart();
@@ -684,7 +729,8 @@ impl WriteCoordinator {
                                             );
                                             return false;
                                         }
-                                    },
+                                        }
+                                    }
                                     None => {
                                         // Admission reaches this branch only when no bounded
                                         // committed representation exists. Do not let it escape
@@ -721,8 +767,9 @@ impl WriteCoordinator {
                                 // can be deleted after a 2xx response while the record still only
                                 // lives in this process's BufWriter. Persist it through the OS
                                 // before publishing `applied` or acknowledging the caller. The
-                                // production writer uses `Always`, so `append` crosses the fsync
-                                // boundary here. A graceful SIGTERM also performs a final sync.
+                                // embedded production writer uses `EverySec`; `maybe_sync` keeps
+                                // the normal durability window bounded. A graceful SIGTERM also
+                                // performs a final sync.
                                 // A committed record can have changed earlier
                                 // items and then return an error.  The AOF is
                                 // therefore keyed to a non-uncertain apply
@@ -735,6 +782,8 @@ impl WriteCoordinator {
                                                 aof.lock().expect("aof writer poisoned");
                                             writer
                                                 .append(seq, &rec)
+                                                // Keep the explicit flush, then apply the
+                                                // EverySec policy before acknowledging the waiter.
                                                 .and_then(|()| writer.flush())
                                                 .and_then(|()| writer.maybe_sync())
                                         };
@@ -793,6 +842,11 @@ impl WriteCoordinator {
                                 apply
                                     .expect("completed committed record has a charged apply guard")
                                     .advance_sequence(seq);
+                                eng.metrics().observe_coordinator_stage(
+                                    apply_kind,
+                                    crate::metrics::CoordinatorStage::ApplyToWaiter,
+                                    apply_started_at.elapsed(),
+                                );
                                 applying_coord.complete(seq, outcome);
                                 true
                             }).await;
@@ -1130,12 +1184,19 @@ impl WriteCoordinator {
         // Full local admission is a retryable refusal before this record can
         // consume a WAL sequence. Oversized and context-dependent records
         // preserve the old path until root wires durable preparation.
+        let kind = crate::metrics::ApplyKind::from_entry(&entry);
+        let admission_started_at = std::time::Instant::now();
         let reservation = self.try_admit_local_record(&entry)?;
         // Keep the shared permit through publish AND local apply. An exclusive
         // restore fence can therefore observe one exact applied/WAL boundary:
         // no earlier submit remains in flight and no later submit has obtained
         // a sequence yet.
         let mutation_permit = self.mutation_gate.shared().await?;
+        self.engine.metrics().observe_coordinator_stage(
+            kind,
+            crate::metrics::CoordinatorStage::AdmissionToMutationGate,
+            admission_started_at.elapsed(),
+        );
         let (published_tx, published_rx) = oneshot::channel();
         let publisher = self
             .self_weak
@@ -1585,9 +1646,7 @@ mod tests {
         let reservation = first.try_reserve_record(&entry, 0).unwrap();
         let bytes = reservation.bytes();
 
-        let result = prepare_local_record(second.as_ref(), entry, reservation, || {
-            panic!("wrong-engine reprice has no capacity wait")
-        })
+        let result = prepare_local_record(second.as_ref(), entry, reservation)
         .expect("wrong-engine reprice must return its original reservation");
         match result {
             PreparedLocalRecord::Prepared(_) => {
@@ -1606,6 +1665,9 @@ mod tests {
                     ),
                     "wrong-engine no-guard failure must keep its typed admission error: {error:#}"
                 );
+            }
+            PreparedLocalRecord::CapacityBlocked { .. } => {
+                panic!("wrong-engine reprice must fail before capacity blocking")
             }
         }
         assert_eq!(
@@ -1630,9 +1692,7 @@ mod tests {
         // Build real stale state. The reservation predates a restore, so the
         // next begin must reprice it; the 1 MiB budget leaves room for growth.
         let initial = active.try_reserve_record(&entry, 0).unwrap();
-        let initial = match prepare_local_record(&active, entry.clone(), initial, || {
-            Err(anyhow::anyhow!("initial fitting reprice must not need an owner"))
-        })
+        let initial = match prepare_local_record(&active, entry.clone(), initial)
         .unwrap() {
             PreparedLocalRecord::Prepared(mut guard) => {
                 active.apply_prepared_raft_entry(&mut guard).unwrap();
@@ -1642,23 +1702,17 @@ mod tests {
             PreparedLocalRecord::Unresolved { .. } => {
                 panic!("initial fitting record must be prepared")
             }
+            PreparedLocalRecord::CapacityBlocked { .. } => {
+                panic!("initial fitting record must not block")
+            }
         };
         let replacement = Engine::with_change_budget(budget.clone());
         replacement.create_collection("u", keyword_schema()).unwrap();
         let reservation = active.try_reserve_record(&entry, 0).unwrap();
         active.restore(replacement.snapshot().unwrap()).unwrap();
         let before = budget.snapshot().total;
-        let owner_called = std::sync::atomic::AtomicBool::new(false);
-
-        let prepared = prepare_local_record(&active, entry, reservation, || {
-            owner_called.store(true, Ordering::Release);
-            Err(anyhow::anyhow!("fitting reprice must not start fallback maintenance"))
-        })
+        let prepared = prepare_local_record(&active, entry, reservation)
         .expect("stale fitting reprice must grow without fallback maintenance");
-        assert!(
-            !owner_called.load(Ordering::Acquire),
-            "fitting reprice must not call the capacity-owner callback"
-        );
         assert!(
             budget.snapshot().total > before,
             "fixture must exercise a real fitting reprice growth"
@@ -1671,7 +1725,137 @@ mod tests {
             PreparedLocalRecord::Unresolved { .. } => {
                 panic!("fitting reprice must not use legacy fallback")
             }
+            PreparedLocalRecord::CapacityBlocked { .. } => {
+                panic!("fitting reprice must not block")
+            }
         }
+        drop(initial);
+    }
+
+    #[test]
+    fn full_published_reprice_returns_capacity_blocked_without_waiting() {
+        let limit = 1024 * 1024;
+        let budget = ChangeBudget::with_hard_limit(limit);
+        let active = Engine::with_change_budget(budget.clone());
+        active.create_collection("u", keyword_schema()).unwrap();
+        let entry = admitted_index_entry();
+
+        let initial = active.try_reserve_record(&entry, 0).unwrap();
+        let initial = match prepare_local_record(&active, entry.clone(), initial).unwrap() {
+            PreparedLocalRecord::Prepared(mut guard) => {
+                active.apply_prepared_raft_entry(&mut guard).unwrap();
+                drop(guard);
+                active.freeze_checkpoint_collections(None).unwrap()
+            }
+            PreparedLocalRecord::Unresolved { .. } => {
+                panic!("initial record must be prepared")
+            }
+            PreparedLocalRecord::CapacityBlocked { .. } => {
+                panic!("initial record must not block")
+            }
+        };
+        let replacement = Engine::with_change_budget(budget.clone());
+        replacement.create_collection("u", keyword_schema()).unwrap();
+        let reservation = active.try_reserve_record(&entry, 0).unwrap();
+        let reserved_bytes = reservation.bytes();
+        active.restore(replacement.snapshot().unwrap()).unwrap();
+
+        let filler_owner = budget.owner();
+        let remaining = limit - budget.snapshot().total;
+        let _filler = filler_owner.try_reserve(remaining).unwrap();
+        let result = prepare_local_record(&active, entry, reservation).unwrap();
+        match result {
+            PreparedLocalRecord::Prepared(_) => {
+                panic!("a full post-WAL reprice must not acquire an apply guard")
+            }
+            PreparedLocalRecord::CapacityBlocked {
+                reservation,
+                required,
+                ..
+            } => {
+                assert_eq!(reservation.bytes(), reserved_bytes);
+                assert!(required > reservation.bytes());
+                assert!(
+                    matches!(
+                        active.try_reserve_record(&admitted_index_entry(), 0),
+                        Err(RecordAdmissionError::Capacity(AdmissionError::Full { .. }))
+                    ),
+                    "a later record must not pass the unresolved retained head"
+                );
+            }
+            PreparedLocalRecord::Unresolved { .. } => {
+                panic!("capacity Full must retain a retryable blocked state")
+            }
+        }
+        drop(initial);
+    }
+
+    #[test]
+    fn full_published_reprice_waits_outside_apply_lease_then_applies_after_relief() {
+        let limit = 1024 * 1024;
+        let budget = ChangeBudget::with_hard_limit(limit);
+        let active = Engine::with_change_budget(budget.clone());
+        active.create_collection("u", keyword_schema()).unwrap();
+        let entry = admitted_index_entry();
+
+        let initial = active.try_reserve_record(&entry, 0).unwrap();
+        let initial = match prepare_local_record(&active, entry.clone(), initial).unwrap() {
+            PreparedLocalRecord::Prepared(mut guard) => {
+                active.apply_prepared_raft_entry(&mut guard).unwrap();
+                drop(guard);
+                active.freeze_checkpoint_collections(None).unwrap()
+            }
+            _ => panic!("initial record must be prepared"),
+        };
+        let replacement = Engine::with_change_budget(budget.clone());
+        replacement.create_collection("u", keyword_schema()).unwrap();
+        let reservation = active.try_reserve_record(&entry, 0).unwrap();
+        active.restore(replacement.snapshot().unwrap()).unwrap();
+        let filler_owner = budget.owner();
+        let filler = filler_owner
+            .try_reserve(limit - budget.snapshot().total)
+            .unwrap();
+        let blocked = prepare_local_record(&active, entry, reservation).unwrap();
+        let PreparedLocalRecord::CapacityBlocked {
+            entry,
+            mut reservation,
+            required,
+        } = blocked
+        else {
+            panic!("full reprice must retain a blocked head")
+        };
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            reservation.wait_grow_to(required).map(|()| (entry, reservation))
+        });
+        started_rx.recv().unwrap();
+        for _ in 0..10_000 {
+            if budget.has_capacity_waiters() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            budget.has_capacity_waiters(),
+            "the blocked committed head must wait on the budget without an apply lease"
+        );
+        assert!(matches!(
+            active.try_reserve_record(&admitted_index_entry(), 0),
+            Err(RecordAdmissionError::Capacity(AdmissionError::Full { .. }))
+        ));
+
+        drop(filler);
+        let (entry, reservation) = waiter.join().unwrap().unwrap();
+        let prepared = prepare_local_record(&active, entry, reservation).unwrap();
+        match prepared {
+            PreparedLocalRecord::Prepared(mut guard) => {
+                active.apply_prepared_raft_entry(&mut guard).unwrap();
+            }
+            _ => panic!("capacity relief must let the retained head acquire its apply guard"),
+        }
+        assert_eq!(active.stats("u").unwrap().documents_indexed, 1);
         drop(initial);
     }
 
@@ -1908,6 +2092,18 @@ mod tests {
             out.contains("lumen_coordinator_apply_items_total{kind=\"index\"} 2"),
             "expected items_total to equal the submitted doc count in:\n{out}"
         );
+        for stage in [
+            "admission_to_mutation_gate",
+            "publish_to_apply_start",
+            "apply_to_waiter",
+        ] {
+            assert!(
+                out.contains(&format!(
+                    "lumen_coordinator_stage_seconds_count{{kind=\"index\",stage=\"{stage}\"}} 1"
+                )),
+                "expected one {stage} observation in:\n{out}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2009,7 +2205,13 @@ mod tests {
     async fn embedded_aof_is_replayable_when_submit_acknowledges_a_write() {
         let dir = tempfile::tempdir().unwrap();
         let aof_path = dir.path().join("aof.log");
-        let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
+        let aof = Arc::new(Mutex::new(
+            crate::aof::AofWriter::open_with_policy(
+                &aof_path,
+                crate::aof::FsyncPolicy::EverySec,
+            )
+            .unwrap(),
+        ));
         let engine = Arc::new(Engine::new());
         let wal = Arc::new(MemWal::new());
         let coord = WriteCoordinator::start_from_with_aof(wal, engine, 0, aof);

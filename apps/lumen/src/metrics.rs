@@ -196,6 +196,34 @@ pub enum ApplyKind {
     DropField,
 }
 
+/// One bounded segment of an admitted coordinator request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoordinatorStage {
+    AdmissionToMutationGate,
+    PublishToApplyStart,
+    ApplyToWaiter,
+}
+
+impl CoordinatorStage {
+    const ALL: [Self; 3] = [
+        Self::AdmissionToMutationGate,
+        Self::PublishToApplyStart,
+        Self::ApplyToWaiter,
+    ];
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::AdmissionToMutationGate => "admission_to_mutation_gate",
+            Self::PublishToApplyStart => "publish_to_apply_start",
+            Self::ApplyToWaiter => "apply_to_waiter",
+        }
+    }
+}
+
 impl ApplyKind {
     /// Every kind, in `RaftLogEntry` declaration order. Rendering iterates
     /// this, so the published row set is fixed and a scrape never silently
@@ -465,6 +493,11 @@ pub struct Metrics {
     /// `coordinator_apply_seconds_count`'s sibling sum for per-item apply
     /// cost.
     pub coordinator_apply_items_total: [Counter; APPLY_KIND_COUNT],
+    /// #4246: bounded request-stage histograms, labelled by operation kind.
+    pub coordinator_stage_seconds_buckets:
+        [[[Counter; APPLY_SECONDS_BUCKET_COUNT]; APPLY_KIND_COUNT]; 3],
+    pub coordinator_stage_seconds_us_sum: [[Counter; APPLY_KIND_COUNT]; 3],
+    pub coordinator_stage_seconds_count: [[Counter; APPLY_KIND_COUNT]; 3],
     /// Linux `/proc/self/status` `VmHWM` in bytes at the latest scrape. This
     /// is meaningful only while `process_rss_high_water_available` is `1`.
     pub process_rss_high_water_bytes: Gauge,
@@ -614,6 +647,26 @@ impl Metrics {
         self.coordinator_apply_seconds_us_sum[idx].add(us);
         self.coordinator_apply_seconds_count[idx].incr();
         self.coordinator_apply_items_total[idx].add(items);
+    }
+
+    /// Record one coordinator stage without changing request scheduling.
+    pub fn observe_coordinator_stage(
+        &self,
+        kind: ApplyKind,
+        stage: CoordinatorStage,
+        elapsed: Duration,
+    ) {
+        let stage_idx = stage.index();
+        let kind_idx = kind.index();
+        let us = duration_to_micros(elapsed);
+        if let Some(bucket_idx) = APPLY_SECONDS_BUCKETS_US
+            .iter()
+            .position(|&(_, bound_us)| us <= bound_us)
+        {
+            self.coordinator_stage_seconds_buckets[stage_idx][kind_idx][bucket_idx].incr();
+        }
+        self.coordinator_stage_seconds_us_sum[stage_idx][kind_idx].add(us);
+        self.coordinator_stage_seconds_count[stage_idx][kind_idx].incr();
     }
 
     /// Set the byte size of the current durable segment files on disk.
@@ -1104,6 +1157,58 @@ impl Metrics {
         );
         out.push_str(&self.render_merge_phase_breakdown());
         out.push_str(&self.render_coordinator_apply_histogram());
+        out.push_str(&self.render_coordinator_stage_histogram());
+        out
+    }
+
+    fn render_coordinator_stage_histogram(&self) -> String {
+        const NAME: &str = "lumen_coordinator_stage_seconds";
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "# HELP {NAME} Time spent in each admitted coordinator request stage, in seconds."
+        );
+        let _ = writeln!(out, "# TYPE {NAME} histogram");
+        for stage in CoordinatorStage::ALL {
+            for kind in ApplyKind::ALL {
+                let stage_idx = stage.index();
+                let kind_idx = kind.index();
+                let mut cumulative = 0u64;
+                for ((le, _), bucket) in APPLY_SECONDS_BUCKETS_US.iter().zip(
+                    self.coordinator_stage_seconds_buckets[stage_idx][kind_idx].iter(),
+                ) {
+                    cumulative += bucket.get();
+                    let _ = writeln!(
+                        out,
+                        "{NAME}_bucket{{le=\"{le}\",kind=\"{}\",stage=\"{}\"}} {cumulative}",
+                        kind.label(),
+                        stage.label()
+                    );
+                }
+                let total = self.coordinator_stage_seconds_count[stage_idx][kind_idx].get();
+                let _ = writeln!(
+                    out,
+                    "{NAME}_bucket{{le=\"+Inf\",kind=\"{}\",stage=\"{}\"}} {total}",
+                    kind.label(),
+                    stage.label()
+                );
+                let sum = self.coordinator_stage_seconds_us_sum[stage_idx][kind_idx].get()
+                    as f64
+                    / 1_000_000.0;
+                let _ = writeln!(
+                    out,
+                    "{NAME}_sum{{kind=\"{}\",stage=\"{}\"}} {sum}",
+                    kind.label(),
+                    stage.label()
+                );
+                let _ = writeln!(
+                    out,
+                    "{NAME}_count{{kind=\"{}\",stage=\"{}\"}} {total}",
+                    kind.label(),
+                    stage.label()
+                );
+            }
+        }
         out
     }
 
@@ -1281,6 +1386,29 @@ fn process_rss_high_water_bytes() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coordinator_stage_histogram_renders_kind_and_stage_labels() {
+        let metrics = Metrics::new();
+        for stage in CoordinatorStage::ALL {
+            metrics.observe_coordinator_stage(
+                ApplyKind::Index,
+                stage,
+                Duration::from_millis(2),
+            );
+        }
+        let out = metrics.render();
+        for stage in CoordinatorStage::ALL {
+            let label = stage.label();
+            assert!(out.contains(&format!(
+                "lumen_coordinator_stage_seconds_count{{kind=\"index\",stage=\"{label}\"}} 1"
+            )));
+            assert!(out.contains(&format!(
+                "lumen_coordinator_stage_seconds_sum{{kind=\"index\",stage=\"{label}\"}} 0.002"
+            )));
+        }
+        assert!(out.contains("# TYPE lumen_coordinator_stage_seconds histogram"));
+    }
 
     #[test]
     fn render_emits_every_metric() {

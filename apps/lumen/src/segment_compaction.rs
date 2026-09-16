@@ -70,9 +70,8 @@ pub(super) fn write_compacted_field(
     }
     let (view, ids) = compose_checkpoint_layers(layers)?;
 
-    let collection_dir = collection_checkpoint_dir_name(&collection.collection_id);
     let sidecar: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(root.join(&collection_dir).join(CHECKPOINT_SCHEMA_FILE))
+        &std::fs::read(collection_schema_path(root, collection))
             .context("read staged checkpoint schema for compaction")?,
     )?;
     if sidecar.get("fields") != Some(&collection.schema) {
@@ -82,20 +81,31 @@ pub(super) fn write_compacted_field(
     let stem = layout.field_stem(field);
     let last = inputs.last().expect("validated non-empty");
     let (segment_rel, rows_rel, kind, ordinal) = if includes_base {
+        let existing = inputs.iter().find(|input| matches!(input.kind, SegmentKind::Base)).map(|input| input.path.clone());
         (
-            format!("{collection_dir}/{stem}.lseg"),
-            format!("{collection_dir}/{stem}.rows.cbor"),
+            existing.unwrap_or_else(|| collection_output_relative(collection, &format!("{stem}.lseg"))),
+            collection_output_relative(collection, &format!("{stem}.rows.cbor")),
             SegmentKind::Base,
             0,
         )
     } else {
-        let prefix = delta_path_prefix(&collection.collection_id, field, last.ordinal);
-        (
-            format!("{prefix}.lseg"),
-            format!("{prefix}.rows.cbor"),
-            SegmentKind::Delta,
-            last.ordinal,
-        )
+        let field_dir = collection_checkpoint_dir_name(field);
+        let (segment_rel, rows_rel) = if flat_layout(collection) {
+            (
+                collection_output_relative(
+                    collection,
+                    &format!("__delta/{field_dir}/{}.lseg", last.ordinal),
+                ),
+                collection_output_relative(
+                    collection,
+                    &format!("__delta/{field_dir}/{}.rows.cbor", last.ordinal),
+                ),
+            )
+        } else {
+            let prefix = delta_path_prefix(&collection.collection_id, field, last.ordinal);
+            (format!("{prefix}.lseg"), format!("{prefix}.rows.cbor"))
+        };
+        (segment_rel, rows_rel, SegmentKind::Delta, last.ordinal)
     };
     let segment_path = confined(root, &segment_rel)?;
     match spec.field_type {
@@ -118,7 +128,7 @@ pub(super) fn write_compacted_field(
     write_sparse_rows_atomic(&confined(root, &rows_rel)?, &ids)?;
 
     let vector_eids = if spec.field_type == FieldType::Vector && includes_base {
-        let rel = format!("{collection_dir}/{stem}.eids.lseg");
+        let rel = collection_output_relative(collection, &format!("{stem}.eids.lseg"));
         let path = confined(root, &rel)?;
         write_eids_atomic(&path, sequence, &ids)?;
         Some(SegmentReference {

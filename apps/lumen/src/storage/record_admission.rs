@@ -257,7 +257,13 @@ impl Engine {
     }
 
     pub(crate) fn request_pending_checkpoint(&self) {
-        self.changes.budget.request_checkpoint();
+        self.changes.owner.request_checkpoint();
+    }
+
+    pub(crate) fn consume_checkpoint_request(&self, revision: u64) {
+        self.changes
+            .owner
+            .consume_checkpoint_request(Some(revision));
     }
 
     /// Fallback checkpoint maintenance selects only this Engine's work, while

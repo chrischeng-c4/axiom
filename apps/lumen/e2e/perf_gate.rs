@@ -793,7 +793,7 @@ mod durable_workload {
     #[cfg(test)]
     use tokio::io::AsyncWriteExt;
     use tokio::sync::Mutex;
-    use tokio::task::JoinSet;
+    use tokio::task::{AbortHandle, JoinSet};
 
     const HOT_COLLECTION: &str = "perf-hot";
     const IDLE_COLLECTIONS: usize = 181;
@@ -820,6 +820,14 @@ mod durable_workload {
     const SNAPSHOT_SECONDS: &str = "15";
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+    const SETUP_TIMEOUT: Duration = Duration::from_secs(INPUT_SECONDS);
+    const DRAIN_TIMEOUT: Duration = Duration::from_millis(perf_cell_receipt::DRAIN_LIMIT_MS);
+    // No separate post-input budget is declared. Derive this guard from the
+    // existing drain, startup, and request bounds so a success-path operation
+    // cannot leave the durable cell running without changing those limits.
+    const POST_INPUT_TIMEOUT: Duration = Duration::from_secs(
+        DRAIN_TIMEOUT.as_secs() + STARTUP_TIMEOUT.as_secs() + REQUEST_TIMEOUT.as_secs(),
+    );
     // Failure collection runs only after a case has already failed. Keep the
     // retained log bounded even when the failed container produced a large log.
     const EVIDENCE_LOG_TAIL_LINES: &str = "2000";
@@ -952,6 +960,17 @@ mod durable_workload {
         Workload(Vec<GateFailure>),
         Task(String),
         DataInvariant(String),
+        SetupTimeout {
+            stage: &'static str,
+        },
+        InputWindowTimeout {
+            stage: &'static str,
+            timeout: Duration,
+        },
+        PostInputTimeout {
+            stage: &'static str,
+            timeout: Duration,
+        },
     }
 
     impl HarnessError {
@@ -1008,6 +1027,17 @@ mod durable_workload {
                 Self::DataInvariant(detail) => {
                     write!(formatter, "workload fixture invariant failed: {detail}")
                 }
+                Self::SetupTimeout { stage } => {
+                    write!(formatter, "setup stage {stage} exceeded its absolute deadline")
+                }
+                Self::InputWindowTimeout { stage, timeout } => write!(
+                    formatter,
+                    "input-window stage {stage} exceeded the {timeout:?} deadline"
+                ),
+                Self::PostInputTimeout { stage, timeout } => write!(
+                    formatter,
+                    "post-input stage {stage} exceeded the {timeout:?} deadline"
+                ),
             }
         }
     }
@@ -1307,8 +1337,13 @@ mod durable_workload {
 
     impl CleanupCommandRunner for DockerCleanupCommandRunner {
         fn run_cleanup(&mut self, args: Vec<String>) {
-            let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
-            let _ = docker(&borrowed);
+            if let Err(error) = run_command_with_timeout_blocking(
+                "docker",
+                args,
+                REQUEST_TIMEOUT,
+            ) {
+                eprintln!("PERF_FAILURE_CLEANUP_ERROR {error}");
+            }
         }
     }
 
@@ -2061,17 +2096,12 @@ mod durable_workload {
         }
 
         async fn metrics(&self) -> Result<String> {
-            let response = self
-                .client
-                .get(format!("{}/metrics", self.base))
-                .send()
-                .await
-                .map_err(|error| HarnessError::request_failure(error))?;
-            let status = response.status();
-            let text = response
-                .text()
-                .await
-                .map_err(|error| HarnessError::request_failure(error))?;
+            let (status, text) = fetch_interval_metrics(
+                &self.client,
+                format!("{}/metrics", self.base),
+                REQUEST_TIMEOUT,
+            )
+            .await?;
             if !status.is_success() {
                 return Err(HarnessError::Http(format!(
                     "GET /metrics returned {status}: {text}"
@@ -2137,9 +2167,8 @@ mod durable_workload {
         async fn restart_and_wait_ready(&self) -> Result<Duration> {
             let started = Instant::now();
             let container = self.container.clone();
-            tokio::task::spawn_blocking(move || docker(&["restart", &container]))
-                .await
-                .map_err(|error| HarnessError::Task(error.to_string()))??;
+            let args = ["restart", container.as_str()];
+            run_command_with_timeout("docker", &args, STARTUP_TIMEOUT).await?;
             self.wait_ready().await?;
             Ok(started.elapsed())
         }
@@ -2172,6 +2201,132 @@ mod durable_workload {
                 detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
             })
         }
+    }
+
+    async fn run_command_with_timeout(
+        program: &'static str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<String> {
+        let args = args
+            .iter()
+            .map(|arg| (*arg).to_owned())
+            .collect::<Vec<_>>();
+        tokio::task::spawn_blocking(move || {
+            run_command_with_timeout_blocking(program, args, timeout)
+        })
+        .await
+        .map_err(|error| HarnessError::Task(format!("{program} timeout worker failed: {error}")))?
+    }
+
+    fn run_command_with_timeout_blocking(
+        program: &'static str,
+        args: Vec<String>,
+        timeout: Duration,
+    ) -> Result<String> {
+        let rendered_args = args.clone();
+        let mut child = Command::new(program)
+            .args(&args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| HarnessError::Command {
+                program,
+                args: rendered_args.clone(),
+                detail: error.to_string(),
+            })?;
+
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() >= deadline => {
+                    let kill = child.kill();
+                    let reap = child.wait();
+                    return Err(HarnessError::Command {
+                        program,
+                        args: rendered_args,
+                        detail: format!(
+                            "timed out after {timeout:?}; kill={}; reap={}",
+                            format_kill_result(kill),
+                            format_reap_result(reap),
+                        ),
+                    });
+                }
+                Ok(None) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    std::thread::sleep(remaining.min(Duration::from_millis(10)));
+                }
+                Err(error) => {
+                    let kill = child.kill();
+                    let reap = child.wait();
+                    return Err(HarnessError::Command {
+                        program,
+                        args: rendered_args,
+                        detail: format!(
+                            "cannot poll child: {error}; kill={}; reap={}",
+                            format_kill_result(kill),
+                            format_reap_result(reap),
+                        ),
+                    });
+                }
+            }
+        };
+        if status.success() {
+            Ok(String::new())
+        } else {
+            Err(HarnessError::Command {
+                program,
+                args: rendered_args,
+                detail: status.to_string(),
+            })
+        }
+    }
+
+    fn format_kill_result(result: std::io::Result<()>) -> String {
+        match result {
+            Ok(()) => "ok".to_owned(),
+            Err(error) => format!("error: {error}"),
+        }
+    }
+
+    fn format_reap_result(result: std::io::Result<std::process::ExitStatus>) -> String {
+        match result {
+            Ok(status) => format!("ok ({status})"),
+            Err(error) => format!("error: {error}"),
+        }
+    }
+
+    #[test]
+    fn restart_command_timeout_kills_and_reaps_a_stuck_child() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build restart-timeout regression runtime");
+        runtime.block_on(async {
+            let started = Instant::now();
+            let error = run_command_with_timeout(
+                "sh",
+                &["-c", "exec sleep 30"],
+                Duration::from_millis(100),
+            )
+            .await
+            .expect_err("a stuck restart command must hit its explicit timeout");
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "the timeout regression must return promptly, elapsed={:?}",
+                started.elapsed()
+            );
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("timed out after 100ms"),
+                "timeout failure must name the exact bound: {rendered}"
+            );
+            assert!(
+                rendered.contains("kill=") && rendered.contains("reap="),
+                "timeout failure must report child kill and reap outcomes: {rendered}"
+            );
+        });
     }
 
     fn is_sha256_identifier(value: &str) -> bool {
@@ -2515,26 +2670,52 @@ mod durable_workload {
             }
         }
 
-        async fn push<F>(&mut self, future: F) -> Result<()>
+        async fn push<F>(
+            &mut self,
+            future: F,
+            input_deadline: tokio::time::Instant,
+            input_timeout: Duration,
+        ) -> Result<()>
         where
             F: Future<Output = ()> + Send + 'static,
         {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             while self.tasks.len() >= self.max_in_flight {
-                self.tasks
-                    .join_next()
+                tokio::time::timeout_at(input_deadline, self.tasks.join_next())
                     .await
+                    .map_err(|_| HarnessError::InputWindowTimeout {
+                        stage: "input_workload",
+                        timeout: input_timeout,
+                    })?
                     .ok_or_else(|| HarnessError::Task("request pump lost a task".to_owned()))?
                     .map_err(|error| HarnessError::Task(error.to_string()))?;
+                check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             }
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             self.tasks.spawn(future);
             Ok(())
         }
 
-        async fn drain(mut self) -> Result<()> {
-            while let Some(result) = self.tasks.join_next().await {
-                result.map_err(|error| HarnessError::Task(error.to_string()))?;
+        async fn drain(mut self, label: &'static str) -> Result<()> {
+            match tokio::time::timeout(DRAIN_TIMEOUT, async {
+                while let Some(result) = self.tasks.join_next().await {
+                    result.map_err(|error| {
+                        HarnessError::Task(format!("{label} task failed: {error}"))
+                    })?;
+                }
+                Ok::<_, HarnessError>(())
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    eprintln!("PERF_STAGE_TIMEOUT {label} workload_drain");
+                    Err(HarnessError::PostInputTimeout {
+                        stage: "workload_drain",
+                        timeout: DRAIN_TIMEOUT,
+                    })
+                }
             }
-            Ok(())
         }
     }
 
@@ -2852,22 +3033,43 @@ mod durable_workload {
         );
     }
 
-    async fn seed(server: &DockerLumen, backend: VectorBackend) -> Result<()> {
-        create_collection(server, HOT_COLLECTION, backend).await?;
-        seed_collection(server, HOT_COLLECTION, HOT_DOCUMENTS, 0, "hot").await?;
-        assert_document_count(server, HOT_COLLECTION, HOT_DOCUMENTS).await?;
+    async fn seed(
+        server: &DockerLumen,
+        backend: VectorBackend,
+        setup_deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        check_setup_deadline(setup_deadline)?;
+        create_collection(server, HOT_COLLECTION, backend, setup_deadline).await?;
+        seed_collection(
+            server,
+            HOT_COLLECTION,
+            HOT_DOCUMENTS,
+            0,
+            "hot",
+            setup_deadline,
+        )
+        .await?;
+        assert_document_count_setup(server, HOT_COLLECTION, HOT_DOCUMENTS, setup_deadline).await?;
         for collection_number in 0..IDLE_COLLECTIONS {
+            check_setup_deadline(setup_deadline)?;
             let collection = idle_collection(collection_number);
-            create_collection(server, &collection, backend).await?;
+            create_collection(server, &collection, backend, setup_deadline).await?;
             seed_collection(
                 server,
                 &collection,
                 IDLE_DOCUMENTS_PER_COLLECTION,
                 collection_number * IDLE_DOCUMENTS_PER_COLLECTION,
                 "idle",
+                setup_deadline,
             )
             .await?;
-            assert_document_count(server, &collection, IDLE_DOCUMENTS_PER_COLLECTION).await?;
+            assert_document_count_setup(
+                server,
+                &collection,
+                IDLE_DOCUMENTS_PER_COLLECTION,
+                setup_deadline,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -2876,14 +3078,18 @@ mod durable_workload {
         server: &DockerLumen,
         collection: &str,
         backend: VectorBackend,
+        setup_deadline: tokio::time::Instant,
     ) -> Result<()> {
-        let response = server
-            .client
-            .put(format!("{}/collections/{collection}", server.base))
-            .json(&schema(backend))
-            .send()
-            .await
-            .map_err(|error| HarnessError::request_failure(error))?;
+        let response = setup_step(setup_deadline, async {
+            server
+                .client
+                .put(format!("{}/collections/{collection}", server.base))
+                .json(&schema(backend))
+                .send()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))
+        })
+        .await?;
         if response.status().is_success() {
             Ok(())
         } else {
@@ -2900,9 +3106,11 @@ mod durable_workload {
         documents: usize,
         start: usize,
         tag: &str,
+        setup_deadline: tokio::time::Instant,
     ) -> Result<()> {
         let mut items = Vec::with_capacity(1_000);
         for number in start..start + documents {
+            check_setup_deadline(setup_deadline)?;
             let external_id = if collection == HOT_COLLECTION {
                 format!("hot-base-{number:06}")
             } else {
@@ -2915,13 +3123,13 @@ mod durable_workload {
                     "value": value,
                 }));
                 if items.len() == 1_000 {
-                    seed_index_batch(server, collection, &items).await?;
+                    seed_index_batch(server, collection, &items, setup_deadline).await?;
                     items.clear();
                 }
             }
         }
         if !items.is_empty() {
-            seed_index_batch(server, collection, &items).await?;
+            seed_index_batch(server, collection, &items, setup_deadline).await?;
         }
         Ok(())
     }
@@ -2930,45 +3138,52 @@ mod durable_workload {
         server: &DockerLumen,
         collection: &str,
         items: &[Value],
+        setup_deadline: tokio::time::Instant,
     ) -> Result<()> {
         let body = json!({ "items": items });
         loop {
+            check_setup_deadline(setup_deadline)?;
             // Only setup may honor an explicit one-second backpressure hint.
             // Measured mutations use `post_json` or `send_unindex` and record
             // every refusal or timeout in the ledger without a retry.
-            let response = tokio::time::timeout(REQUEST_TIMEOUT, async {
-                let response = server
-                    .client
-                    .post(format!("{}/collections/{collection}/index", server.base))
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|error| HarnessError::request_failure(error))?;
-                let status = response.status();
-                let retry_after_one = is_warmup_retry_after_one(
-                    status,
-                    response
-                        .headers()
-                        .get(reqwest::header::RETRY_AFTER)
-                        .and_then(|value| value.to_str().ok()),
-                );
-                if retry_after_one {
-                    return Ok::<_, HarnessError>(None);
-                }
-                let body = response
-                    .json::<Value>()
-                    .await
-                    .map_err(|error| HarnessError::request_failure(error))?;
-                Ok(Some((status, body)))
+            let response = setup_step(setup_deadline, async {
+                tokio::time::timeout(REQUEST_TIMEOUT, async {
+                    let response = server
+                        .client
+                        .post(format!("{}/collections/{collection}/index", server.base))
+                        .json(&body)
+                        .send()
+                        .await
+                        .map_err(|error| HarnessError::request_failure(error))?;
+                    let status = response.status();
+                    let retry_after_one = is_warmup_retry_after_one(
+                        status,
+                        response
+                            .headers()
+                            .get(reqwest::header::RETRY_AFTER)
+                            .and_then(|value| value.to_str().ok()),
+                    );
+                    if retry_after_one {
+                        return Ok::<_, HarnessError>(None);
+                    }
+                    let body = response
+                        .json::<Value>()
+                        .await
+                        .map_err(|error| HarnessError::request_failure(error))?;
+                    Ok(Some((status, body)))
+                })
+                .await
+                .map_err(|_| {
+                    HarnessError::Http(format!(
+                        "seed index {collection} exceeded the five-second request deadline"
+                    ))
+                })?
             })
-            .await
-            .map_err(|_| {
-                HarnessError::Http(format!(
-                    "seed index {collection} exceeded the five-second request deadline"
-                ))
-            })??;
+            .await?;
             let Some((status, response_body)) = response else {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::time::timeout_at(setup_deadline, tokio::time::sleep(Duration::from_secs(1)))
+                    .await
+                    .map_err(|_| setup_timeout())?;
                 continue;
             };
             if status.is_success() && response_body["indexed"].as_u64() == Some(items.len() as u64)
@@ -2981,22 +3196,61 @@ mod durable_workload {
         }
     }
 
+    async fn assert_document_count_setup(
+        server: &DockerLumen,
+        collection: &str,
+        expected: usize,
+        setup_deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        let (status, body) = setup_step(setup_deadline, async {
+            let response = server
+                .client
+                .get(format!("{}/collections/{collection}/stats", server.base))
+                .send()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            let status = response.status();
+            let body = response
+                .json::<Value>()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            Ok::<_, HarnessError>((status, body))
+        })
+        .await?;
+        if status.is_success() && body["documents_indexed"].as_u64() == Some(expected as u64) {
+            Ok(())
+        } else {
+            Err(HarnessError::DataInvariant(format!(
+                "collection {collection} expected {expected} documents, got {body}"
+            )))
+        }
+    }
+
     async fn assert_document_count(
         server: &DockerLumen,
         collection: &str,
         expected: usize,
     ) -> Result<()> {
-        let response = server
-            .client
-            .get(format!("{}/collections/{collection}/stats", server.base))
-            .send()
-            .await
-            .map_err(|error| HarnessError::request_failure(error))?;
-        let status = response.status();
-        let body = response
-            .json::<Value>()
-            .await
-            .map_err(|error| HarnessError::request_failure(error))?;
+        let (status, body) = tokio::time::timeout(REQUEST_TIMEOUT, async {
+            let response = server
+                .client
+                .get(format!("{}/collections/{collection}/stats", server.base))
+                .send()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            let status = response.status();
+            let body = response
+                .json::<Value>()
+                .await
+                .map_err(|error| HarnessError::request_failure(error))?;
+            Ok::<_, HarnessError>((status, body))
+        })
+        .await
+        .map_err(|_| {
+            HarnessError::Http(format!(
+                "document count {collection} exceeded the five-second request deadline"
+            ))
+        })??;
         if status.is_success() && body["documents_indexed"].as_u64() == Some(expected as u64) {
             Ok(())
         } else {
@@ -3662,6 +3916,110 @@ mod durable_workload {
         assert_deleted_document_readback(server, &oracle.deleted, phase).await
     }
 
+    async fn post_input_step<F, T>(
+        deadline: tokio::time::Instant,
+        timeout: Duration,
+        stage: &'static str,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
+        tokio::time::timeout_at(deadline, operation)
+            .await
+            .map_err(|_| HarnessError::PostInputTimeout { stage, timeout })?
+    }
+
+    fn setup_timeout() -> HarnessError {
+        HarnessError::SetupTimeout { stage: "seed" }
+    }
+
+    fn check_setup_deadline(deadline: tokio::time::Instant) -> Result<()> {
+        if tokio::time::Instant::now() >= deadline {
+            Err(setup_timeout())
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn setup_step<F, T>(deadline: tokio::time::Instant, operation: F) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
+        check_setup_deadline(deadline)?;
+        tokio::time::timeout_at(deadline, operation)
+            .await
+            .map_err(|_| setup_timeout())?
+    }
+
+    async fn input_window_step<F, T>(
+        deadline: tokio::time::Instant,
+        timeout: Duration,
+        stage: &'static str,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
+        check_input_deadline(deadline, timeout, stage)?;
+        tokio::time::timeout_at(deadline, operation)
+            .await
+            .map_err(|_| HarnessError::InputWindowTimeout { stage, timeout })?
+    }
+
+    fn check_input_deadline(
+        deadline: tokio::time::Instant,
+        timeout: Duration,
+        stage: &'static str,
+    ) -> Result<()> {
+        if tokio::time::Instant::now() >= deadline {
+            Err(HarnessError::InputWindowTimeout { stage, timeout })
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn input_window_step_with_sampler<F, T>(
+        sampler_abort: &AbortHandle,
+        deadline: tokio::time::Instant,
+        timeout: Duration,
+        stage: &'static str,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
+        let result = input_window_step(deadline, timeout, stage, operation).await;
+        if result.is_err() {
+            sampler_abort.abort();
+        }
+        result
+    }
+
+    fn interval_metrics_timeout(stage: &'static str, timeout: Duration) -> HarnessError {
+        HarnessError::RequestFailure(RequestFailure::synthetic(
+            format!("interval metrics {stage} exceeded the {timeout:?} deadline"),
+            true,
+        ))
+    }
+
+    async fn fetch_interval_metrics(
+        client: &reqwest::Client,
+        url: String,
+        timeout: Duration,
+    ) -> Result<(reqwest::StatusCode, String)> {
+        let response = tokio::time::timeout(timeout, client.get(url).send())
+            .await
+            .map_err(|_| interval_metrics_timeout("request", timeout))?
+            .map_err(HarnessError::request_failure)?;
+        let status = response.status();
+        let body = tokio::time::timeout(timeout, response.text())
+            .await
+            .map_err(|_| interval_metrics_timeout("body", timeout))?
+            .map_err(HarnessError::request_failure)?;
+        Ok((status, body))
+    }
+
     async fn drive_workload(
         server: &DockerLumen,
         config: CaseConfig,
@@ -3672,6 +4030,8 @@ mod durable_workload {
             .await
             .set_input_window(Duration::ZERO, Duration::from_secs(INPUT_SECONDS));
         let clock = Clock::new();
+        let input_window = Duration::from_secs(INPUT_SECONDS);
+        let input_deadline = clock.deadline(input_window);
         // Only samples completed inside the input window may prove that
         // checkpoint and compaction happened under the offered workload.
         let sampler_client = server.client.clone();
@@ -3680,18 +4040,14 @@ mod durable_workload {
         let sampler = tokio::spawn(async move {
             let mut first = None;
             let mut last = None;
-            let input_end = Duration::from_secs(INPUT_SECONDS);
+            let input_end = input_window;
             while sampler_clock.elapsed() < input_end {
-                let response = sampler_client
-                    .get(format!("{sampler_base}/metrics"))
-                    .send()
-                    .await
-                    .map_err(|error| HarnessError::request_failure(error))?;
-                let status = response.status();
-                let metrics = response
-                    .text()
-                    .await
-                    .map_err(|error| HarnessError::request_failure(error))?;
+                let (status, metrics) = fetch_interval_metrics(
+                    &sampler_client,
+                    format!("{sampler_base}/metrics"),
+                    REQUEST_TIMEOUT,
+                )
+                .await?;
                 if !status.is_success() {
                     return Err(HarnessError::Http(format!(
                         "interval metrics returned {status}"
@@ -3714,6 +4070,7 @@ mod durable_workload {
             let last = last.expect("first and last sample are set together");
             last.delta(first)
         });
+        let sampler_abort = sampler.abort_handle();
 
         let mut mutations = RequestPump::new(REQUEST_CONCURRENCY);
         let mut queries = RequestPump::new(QUERY_CONCURRENCY);
@@ -3724,57 +4081,82 @@ mod durable_workload {
         let mut request_id = 1u64;
 
         for second in 0..INPUT_SECONDS {
-            tokio::time::sleep_until(clock.deadline(Duration::from_secs(second))).await;
-            match second % 3 {
-                0 => {
-                    offer_additions(
-                        &ledger,
+            let input_step = input_window_step_with_sampler(
+                &sampler_abort,
+                input_deadline,
+                input_window,
+                "input_workload",
+                async {
+                    tokio::time::sleep_until(clock.deadline(Duration::from_secs(second))).await;
+                    match second % 3 {
+                        0 => {
+                            offer_additions(
+                                &ledger,
+                                &clock,
+                                second,
+                                &mut operation_id,
+                                &mut index_batch,
+                                &mut mutations,
+                                &mut request_id,
+                                server,
+                                input_deadline,
+                                input_window,
+                            )
+                            .await?;
+                        }
+                        1 => {
+                            offer_replacements(
+                                &ledger,
+                                &clock,
+                                second,
+                                &mut operation_id,
+                                &mut replace_batch,
+                                &mut mutations,
+                                &mut request_id,
+                                server,
+                                input_deadline,
+                                input_window,
+                            )
+                            .await?;
+                        }
+                        _ => {
+                            offer_deletions(
+                                &ledger,
+                                &clock,
+                                second,
+                                &mut operation_id,
+                                &mut unindex_batch,
+                                &mut mutations,
+                                &mut request_id,
+                                server,
+                                input_deadline,
+                                input_window,
+                            )
+                            .await?;
+                        }
+                    }
+                    offer_queries(
                         &clock,
-                        second,
-                        &mut operation_id,
-                        &mut index_batch,
-                        &mut mutations,
-                        &mut request_id,
-                        server,
-                    )
-                    .await?;
-                }
-                1 => {
-                    offer_replacements(
                         &ledger,
-                        &clock,
-                        second,
-                        &mut operation_id,
-                        &mut replace_batch,
-                        &mut mutations,
-                        &mut request_id,
+                        &mut queries,
                         server,
-                    )
-                    .await?;
-                }
-                _ => {
-                    offer_deletions(
-                        &ledger,
-                        &clock,
                         second,
-                        &mut operation_id,
-                        &mut unindex_batch,
-                        &mut mutations,
-                        &mut request_id,
-                        server,
+                        input_deadline,
+                        input_window,
                     )
-                    .await?;
-                }
-            }
-            offer_queries(&clock, &ledger, &mut queries, server, second).await?;
+                    .await
+                },
+            )
+            .await;
+            input_step?;
         }
 
         // The receipt records this elapsed duration. The ledger keeps the
         // fixed logical window for per-second classification, while this
         // clock observation proves the driver reached its final input edge.
-        tokio::time::sleep_until(clock.deadline(Duration::from_secs(INPUT_SECONDS))).await;
+        tokio::time::sleep_until(clock.deadline(input_window)).await;
         let observed_input_duration = clock.elapsed();
-        if observed_input_duration < Duration::from_secs(INPUT_SECONDS) {
+        if observed_input_duration < input_window {
             return Err(HarnessError::DataInvariant(format!(
                 "input driver stopped before the approved duration: observed={observed_input_duration:?} required={INPUT_SECONDS}s"
             )));
@@ -3786,27 +4168,54 @@ mod durable_workload {
                     .to_owned(),
             ));
         }
-        let mut deltas = sampler
-            .await
-            .map_err(|error| HarnessError::Task(error.to_string()))??;
-        mutations.drain().await?;
-        queries.drain().await?;
+        let post_input_deadline =
+            tokio::time::Instant::now().checked_add(POST_INPUT_TIMEOUT).ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "post-input deadline overflowed the Tokio instant range".to_owned(),
+                )
+            })?;
+        eprintln!("PERF_STAGE_BEGIN workload_drain");
+        let workload_drain = post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "workload_drain",
+            async move {
+                eprintln!("PERF_STAGE_BEGIN sampler_drain");
+                let mut deltas = match tokio::time::timeout(DRAIN_TIMEOUT, sampler).await {
+                    Ok(result) => result.map_err(|error| HarnessError::Task(error.to_string()))??,
+                    Err(_) => {
+                        return Err(HarnessError::PostInputTimeout {
+                            stage: "workload_drain",
+                            timeout: DRAIN_TIMEOUT,
+                        });
+                    }
+                };
+                eprintln!("PERF_STAGE_END sampler_drain");
+                eprintln!("PERF_STAGE_BEGIN mutation_drain");
+                mutations.drain("mutation requests").await?;
+                eprintln!("PERF_STAGE_END mutation_drain");
+                eprintln!("PERF_STAGE_BEGIN query_drain");
+                queries.drain("query requests").await?;
+                eprintln!("PERF_STAGE_END query_drain");
 
-        let counters_after = RuntimeCounters::parse(&server.metrics().await?)?;
-        // VmHWM remains a peak through the drain, while completion/IO evidence
-        // above remains strictly within measured input.
-        deltas.process_rss_high_water_bytes = counters_after.process_rss_high_water_bytes;
-        deltas.assert_complete_interval_evidence()?;
-        let mut ledger = ledger.lock().await;
-        for _ in 0..deltas.checkpoints {
-            ledger.record_checkpoint_completion();
-        }
-        for _ in 0..deltas.merges {
-            ledger.record_merge_completion();
-        }
-        ledger.observe_peak_rss_bytes(deltas.process_rss_high_water_bytes);
-        let report = ledger.validate().map_err(HarnessError::Workload)?;
-        eprintln!(
+                eprintln!("PERF_STAGE_BEGIN post_drain_metrics");
+                let metrics_after = server.metrics().await?;
+                eprintln!("PERF_STAGE_END post_drain_metrics");
+                let counters_after = RuntimeCounters::parse(&metrics_after)?;
+                // VmHWM remains a peak through the drain, while completion/IO evidence
+                // above remains strictly within measured input.
+                deltas.process_rss_high_water_bytes = counters_after.process_rss_high_water_bytes;
+                deltas.assert_complete_interval_evidence()?;
+                let mut ledger = ledger.lock().await;
+                for _ in 0..deltas.checkpoints {
+                    ledger.record_checkpoint_completion();
+                }
+                for _ in 0..deltas.merges {
+                    ledger.record_merge_completion();
+                }
+                ledger.observe_peak_rss_bytes(deltas.process_rss_high_water_bytes);
+                let report = ledger.validate().map_err(HarnessError::Workload)?;
+                eprintln!(
         "interval durable evidence: checkpoint_duration_s={} capture_lock_s={} checkpoint_bytes={} merge_read_bytes={} merge_write_bytes={} pending_delta_bytes={} pending_delta_layers={} backpressure_events={} disk_bytes={} ledger_docops={}",
         deltas.checkpoint_duration_seconds,
         deltas.capture_lock_duration_seconds,
@@ -3819,6 +4228,18 @@ mod durable_workload {
         deltas.segment_disk_bytes,
         report.docops_completed_in_input,
     );
+                Ok((report, deltas))
+            },
+        )
+        .await;
+        if matches!(
+            &workload_drain,
+            Err(HarnessError::PostInputTimeout { stage: "workload_drain", .. })
+        ) {
+            sampler_abort.abort();
+        }
+        eprintln!("PERF_STAGE_END workload_drain");
+        let (report, deltas) = workload_drain?;
         Ok((report, deltas, observed_input_duration))
     }
 
@@ -3831,9 +4252,12 @@ mod durable_workload {
         pump: &mut RequestPump,
         request_id: &mut u64,
         server: &DockerLumen,
+        input_deadline: tokio::time::Instant,
+        input_timeout: Duration,
     ) -> Result<()> {
         let add_base = second / 3 * DOCOPS_PER_SECOND as u64;
         for offset in 0..DOCOPS_PER_SECOND {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let operation = *operation_id;
             *operation_id += 1;
             let external_id = format!("hot-added-{:06}", add_base + offset as u64);
@@ -3845,6 +4269,7 @@ mod durable_workload {
                 .await
                 .begin_operation(clock.elapsed(), operation_record);
             for (field, value) in fields {
+                check_input_deadline(input_deadline, input_timeout, "input_workload")?;
                 batch.push(IndexedField {
                     operation,
                     field: field.clone(),
@@ -3855,7 +4280,17 @@ mod durable_workload {
                     }),
                 });
             }
-            dispatch_full_index_batches(batch, pump, request_id, ledger, clock, server).await?;
+            dispatch_full_index_batches(
+                batch,
+                pump,
+                request_id,
+                ledger,
+                clock,
+                server,
+                input_deadline,
+                input_timeout,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -3869,9 +4304,12 @@ mod durable_workload {
         pump: &mut RequestPump,
         request_id: &mut u64,
         server: &DockerLumen,
+        input_deadline: tokio::time::Instant,
+        input_timeout: Duration,
     ) -> Result<()> {
         let update_base = second / 3 * DOCOPS_PER_SECOND as u64;
         for offset in 0..DOCOPS_PER_SECOND {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let operation = *operation_id;
             *operation_id += 1;
             let number = 60_000 + update_base as usize + offset;
@@ -3887,7 +4325,17 @@ mod durable_workload {
                     "fields": document_fields(number, "hot-updated"),
                 }),
             });
-            dispatch_full_replace_batches(batch, pump, request_id, ledger, clock, server).await?;
+            dispatch_full_replace_batches(
+                batch,
+                pump,
+                request_id,
+                ledger,
+                clock,
+                server,
+                input_deadline,
+                input_timeout,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -3901,9 +4349,12 @@ mod durable_workload {
         pump: &mut RequestPump,
         request_id: &mut u64,
         server: &DockerLumen,
+        input_deadline: tokio::time::Instant,
+        input_timeout: Duration,
     ) -> Result<()> {
         let delete_base = second / 3 * DOCOPS_PER_SECOND as u64;
         for offset in 0..DOCOPS_PER_SECOND {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let operation = *operation_id;
             *operation_id += 1;
             let external_id = format!("hot-base-{:06}", delete_base + offset as u64);
@@ -3915,7 +4366,17 @@ mod durable_workload {
                 operation,
                 external_id,
             });
-            dispatch_full_unindex_batches(batch, pump, request_id, ledger, clock, server).await?;
+            dispatch_full_unindex_batches(
+                batch,
+                pump,
+                request_id,
+                ledger,
+                clock,
+                server,
+                input_deadline,
+                input_timeout,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -3927,21 +4388,28 @@ mod durable_workload {
         ledger: &Arc<Mutex<WorkloadLedger>>,
         clock: &Clock,
         server: &DockerLumen,
+        input_deadline: tokio::time::Instant,
+        input_timeout: Duration,
     ) -> Result<()> {
         while let Some(entries) = batch.take_full() {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let id = *request_id;
             *request_id += 1;
             let scheduled_at = clock.elapsed();
-            pump.push(send_index(
-                server.client.clone(),
-                server.base.clone(),
-                ledger.clone(),
-                clock.clone(),
-                server.request_error_journal.clone(),
-                id,
-                scheduled_at,
-                entries,
-            ))
+            pump.push(
+                send_index(
+                    server.client.clone(),
+                    server.base.clone(),
+                    ledger.clone(),
+                    clock.clone(),
+                    server.request_error_journal.clone(),
+                    id,
+                    scheduled_at,
+                    entries,
+                ),
+                input_deadline,
+                input_timeout,
+            )
             .await?;
         }
         Ok(())
@@ -3954,21 +4422,28 @@ mod durable_workload {
         ledger: &Arc<Mutex<WorkloadLedger>>,
         clock: &Clock,
         server: &DockerLumen,
+        input_deadline: tokio::time::Instant,
+        input_timeout: Duration,
     ) -> Result<()> {
         while let Some(entries) = batch.take_full() {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let id = *request_id;
             *request_id += 1;
             let scheduled_at = clock.elapsed();
-            pump.push(send_replace(
-                server.client.clone(),
-                server.base.clone(),
-                ledger.clone(),
-                clock.clone(),
-                server.request_error_journal.clone(),
-                id,
-                scheduled_at,
-                entries,
-            ))
+            pump.push(
+                send_replace(
+                    server.client.clone(),
+                    server.base.clone(),
+                    ledger.clone(),
+                    clock.clone(),
+                    server.request_error_journal.clone(),
+                    id,
+                    scheduled_at,
+                    entries,
+                ),
+                input_deadline,
+                input_timeout,
+            )
             .await?;
         }
         Ok(())
@@ -3981,21 +4456,28 @@ mod durable_workload {
         ledger: &Arc<Mutex<WorkloadLedger>>,
         clock: &Clock,
         server: &DockerLumen,
+        input_deadline: tokio::time::Instant,
+        input_timeout: Duration,
     ) -> Result<()> {
         while let Some(entries) = batch.take_full() {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let id = *request_id;
             *request_id += 1;
             let scheduled_at = clock.elapsed();
-            pump.push(send_unindex(
-                server.client.clone(),
-                server.base.clone(),
-                ledger.clone(),
-                clock.clone(),
-                server.request_error_journal.clone(),
-                id,
-                scheduled_at,
-                entries,
-            ))
+            pump.push(
+                send_unindex(
+                    server.client.clone(),
+                    server.base.clone(),
+                    ledger.clone(),
+                    clock.clone(),
+                    server.request_error_journal.clone(),
+                    id,
+                    scheduled_at,
+                    entries,
+                ),
+                input_deadline,
+                input_timeout,
+            )
             .await?;
         }
         Ok(())
@@ -4007,8 +4489,11 @@ mod durable_workload {
         pump: &mut RequestPump,
         server: &DockerLumen,
         second: u64,
+        input_deadline: tokio::time::Instant,
+        input_timeout: Duration,
     ) -> Result<()> {
         for offset in 0..QUERY_QPS {
+            check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let scheduled_at =
                 Duration::from_secs(second) + Duration::from_millis((offset * 100) as u64);
             let (class, collection, body) = query_for(second, offset);
@@ -4017,21 +4502,25 @@ mod durable_workload {
             let ledger = ledger.clone();
             let clock = clock.clone();
             let journal = server.request_error_journal.clone();
-            pump.push(async move {
-                tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
-                send_query(
-                    client,
-                    base,
-                    ledger,
-                    clock,
-                    journal,
-                    scheduled_at,
-                    class,
-                    collection,
-                    body,
-                )
-                .await;
-            })
+            pump.push(
+                async move {
+                    tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
+                    send_query(
+                        client,
+                        base,
+                        ledger,
+                        clock,
+                        journal,
+                        scheduled_at,
+                        class,
+                        collection,
+                        body,
+                    )
+                    .await;
+                },
+                input_deadline,
+                input_timeout,
+            )
             .await?;
         }
         Ok(())
@@ -4450,51 +4939,133 @@ mod durable_workload {
         // fails closed before the costly seed until all runtime seams land.
         RuntimeCounters::parse(&server.metrics().await?)?;
 
-        seed(&server, config.vector_backend).await?;
+        let setup_deadline = tokio::time::Instant::now()
+            .checked_add(SETUP_TIMEOUT)
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "setup deadline overflowed the Tokio instant range".to_owned(),
+                )
+            })?;
+        eprintln!("PERF_STAGE_BEGIN seed");
+        match seed(&server, config.vector_backend, setup_deadline).await {
+            Ok(()) => eprintln!("PERF_STAGE_END seed"),
+            Err(error @ HarnessError::SetupTimeout { .. }) => {
+                eprintln!("PERF_STAGE_TIMEOUT seed");
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
         let (report, counter_delta, observed_input_duration) =
             drive_workload(&server, config).await?;
-        assert_mutation_readback(&server, "live after measured drain").await?;
+        let post_input_deadline =
+            tokio::time::Instant::now().checked_add(POST_INPUT_TIMEOUT).ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "post-input deadline overflowed the Tokio instant range".to_owned(),
+                )
+            })?;
+        eprintln!("PERF_STAGE_BEGIN live_readback");
+        post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "live_readback",
+            assert_mutation_readback(&server, "live after measured drain"),
+        )
+        .await?;
+        eprintln!("PERF_STAGE_END live_readback");
         let live_mutation_readback = true;
-        assert!(
-            counter_delta.checkpoints > 0,
-            "periodic SegmentRdbStore checkpoints must complete during measured input"
-        );
-        assert!(
-            counter_delta.merges > 0,
-            "a real segment merge must complete during measured input"
-        );
-        let restart_elapsed = server.restart_and_wait_ready().await?;
+        post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "checkpoint_merge_assertions",
+            async {
+                assert!(
+                    counter_delta.checkpoints > 0,
+                    "periodic SegmentRdbStore checkpoints must complete during measured input"
+                );
+                assert!(
+                    counter_delta.merges > 0,
+                    "a real segment merge must complete during measured input"
+                );
+                Ok(())
+            },
+        )
+        .await?;
+        eprintln!("PERF_STAGE_BEGIN restart");
+        let restart_elapsed = post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "restart",
+            server.restart_and_wait_ready(),
+        )
+        .await?;
+        eprintln!("PERF_STAGE_END restart");
         // The restart opens the segment payload after the measured checkpoint
         // and merge work. This is the first post-restart data-plane observation:
         // it runs before any cold semantic or kNN readback can change a lazy
         // vector footprint, and no mutation follows the measured drain.
-        assert_post_restart_vector_backends(&server, config.vector_backend).await?;
-        assert_document_count(&server, HOT_COLLECTION, HOT_DOCUMENTS)
-            .await
-            .map_err(|error| {
-                HarnessError::DataInvariant(format!(
-                    "restart must recover the durable hot collection: {error}"
-                ))
-            })?;
-        assert_recovered_text_query(&server)
-            .await
-            .map_err(|error| {
-                HarnessError::DataInvariant(format!(
-                    "restart must recover Text/BM25 query data: {error}"
-                ))
-            })?;
-        assert_mutation_readback(&server, "cold after restart").await?;
+        eprintln!("PERF_STAGE_BEGIN vector_attestation");
+        post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "vector_attestation",
+            assert_post_restart_vector_backends(&server, config.vector_backend),
+        )
+        .await?;
+        eprintln!("PERF_STAGE_END vector_attestation");
+        eprintln!("PERF_STAGE_BEGIN count_query_readback");
+        post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "count_query_readback",
+            async {
+                assert_document_count(&server, HOT_COLLECTION, HOT_DOCUMENTS)
+                    .await
+                    .map_err(|error| {
+                        HarnessError::DataInvariant(format!(
+                            "restart must recover the durable hot collection: {error}"
+                        ))
+                    })?;
+                assert_recovered_text_query(&server)
+                    .await
+                    .map_err(|error| {
+                        HarnessError::DataInvariant(format!(
+                            "restart must recover Text/BM25 query data: {error}"
+                        ))
+                    })?;
+                Ok(())
+            },
+        )
+        .await?;
+        eprintln!("PERF_STAGE_END count_query_readback");
+        eprintln!("PERF_STAGE_BEGIN cold_readback");
+        post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "cold_readback",
+            assert_mutation_readback(&server, "cold after restart"),
+        )
+        .await?;
+        eprintln!("PERF_STAGE_END cold_readback");
         let cold_mutation_readback = true;
-        eprintln!(
-        "approved durable workload endpoint={:?} batch={} backend={} snapshot_secs={} restart_seconds={}",
-        config.primary_endpoint,
-        config.primary_batch_size,
-        config.vector_backend.wire_name(),
-        SNAPSHOT_SECONDS,
-        restart_elapsed.as_secs_f64(),
-    );
-        emit_rate_report(&report, observed_input_duration)?;
-        eprintln!("approved durable workload report: {report:#?}");
+        post_input_step(
+            post_input_deadline,
+            POST_INPUT_TIMEOUT,
+            "reporting",
+            async {
+                eprintln!(
+                    "approved durable workload endpoint={:?} batch={} backend={} snapshot_secs={} restart_seconds={}",
+                    config.primary_endpoint,
+                    config.primary_batch_size,
+                    config.vector_backend.wire_name(),
+                    SNAPSHOT_SECONDS,
+                    restart_elapsed.as_secs_f64(),
+                );
+                emit_rate_report(&report, observed_input_duration)?;
+                eprintln!("approved durable workload report: {report:#?}");
+                Ok(())
+            },
+        )
+        .await?;
         Ok(CompletedCase {
             report,
             counter_delta,
@@ -4954,8 +5525,230 @@ mod durable_workload {
     }
 
     #[test]
+    fn seed_backpressure_retry_honors_absolute_setup_deadline() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build setup deadline unit-test runtime");
+        runtime.block_on(async {
+            let (base, shutdown) = fake_always_backpressure_server().await;
+            let server = DockerLumen {
+                container: "fake-setup-never-dropped".to_owned(),
+                volume: "fake-setup-never-dropped".to_owned(),
+                base,
+                client: reqwest::Client::builder()
+                    .build()
+                    .expect("build fake setup client"),
+                image_reference: "fake-setup".to_owned(),
+                image_id: "fake-setup".to_owned(),
+                cleanup_armed: false,
+                request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+            };
+            let timeout = Duration::from_millis(25);
+            let deadline = tokio::time::Instant::now() + timeout;
+            let started = Instant::now();
+            let result = seed_index_batch(
+                &server,
+                HOT_COLLECTION,
+                &[json!({
+                    "external_id": "setup-timeout",
+                    "field": "tag",
+                    "value": "setup-timeout"
+                })],
+                deadline,
+            )
+            .await;
+            let _ = shutdown.send(());
+
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "setup backpressure must stop promptly, elapsed={:?}",
+                started.elapsed()
+            );
+            match result {
+                Err(HarnessError::SetupTimeout { stage: "seed" }) => {}
+                other => panic!("expected a typed seed setup timeout, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
     fn request_deadline_is_the_approved_five_seconds() {
         assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn post_input_workload_drain_deadline_returns_promptly() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build post-input deadline unit-test runtime");
+        runtime.block_on(async {
+            let started = Instant::now();
+            let timeout = Duration::from_millis(25);
+            let deadline = tokio::time::Instant::now() + timeout;
+            let error = post_input_step(
+                deadline,
+                timeout,
+                "workload_drain",
+                async {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    Ok(())
+                },
+            )
+            .await
+            .expect_err("a pending post-input operation must hit the shared deadline");
+
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "the pending post-input operation must return promptly, elapsed={:?}",
+                started.elapsed()
+            );
+            match error {
+                HarnessError::PostInputTimeout {
+                    stage: "workload_drain",
+                    timeout: observed,
+                } => assert_eq!(observed, timeout),
+                other => panic!("expected a typed workload-drain timeout, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn input_window_deadline_returns_promptly_with_the_timed_out_stage() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build input-window deadline unit-test runtime");
+        runtime.block_on(async {
+            let started = Instant::now();
+            let timeout = Duration::from_millis(25);
+            let deadline = tokio::time::Instant::now() + timeout;
+            let error = input_window_step(
+                deadline,
+                timeout,
+                "input_workload",
+                async {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    Ok(())
+                },
+            )
+            .await
+            .expect_err("a pending input operation must hit the absolute window deadline");
+
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "the pending input operation must return promptly, elapsed={:?}",
+                started.elapsed()
+            );
+            match error {
+                HarnessError::InputWindowTimeout {
+                    stage: "input_workload",
+                    timeout: observed,
+                } => assert_eq!(observed, timeout),
+                other => panic!("expected a typed input-window timeout, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn input_window_timeout_aborts_sampler_before_drive_finalization() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build input-window cancellation unit-test runtime");
+        runtime.block_on(async {
+            let sampler = tokio::spawn(async {
+                loop {
+                    tokio::task::yield_now().await;
+                }
+            });
+            let sampler_abort = sampler.abort_handle();
+            let started = Instant::now();
+            let timeout = Duration::from_millis(25);
+            let deadline = tokio::time::Instant::now() + timeout;
+            let error = input_window_step_with_sampler(
+                &sampler_abort,
+                deadline,
+                timeout,
+                "input_workload",
+                async {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    Ok(())
+                },
+            )
+            .await
+            .expect_err("expired input work must return without entering finalization");
+
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "the expired input path must return promptly, elapsed={:?}",
+                started.elapsed()
+            );
+            assert!(
+                matches!(
+                    &error,
+                    HarnessError::InputWindowTimeout {
+                        stage: "input_workload",
+                        timeout: observed,
+                    } if *observed == timeout
+                ),
+                "expired input must return its typed stage error: {error:?}"
+            );
+            tokio::task::yield_now().await;
+            assert!(
+                sampler.is_finished(),
+                "the sampler must be cancelled before drive_workload returns"
+            );
+            let sampler_error = sampler.await.expect_err("sampler must end by cancellation");
+            assert!(
+                sampler_error.is_cancelled(),
+                "sampler cancellation must be explicit: {sampler_error}"
+            );
+        });
+    }
+
+    #[test]
+    fn request_pump_capacity_wait_honors_input_window_deadline() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build request-pump deadline unit-test runtime");
+        runtime.block_on(async {
+            let mut pump = RequestPump::new(1);
+            let timeout = Duration::from_millis(25);
+            let deadline = tokio::time::Instant::now() + timeout;
+            pump.push(
+                async {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                },
+                deadline,
+                timeout,
+            )
+            .await
+            .expect("the first request fits within the pump capacity");
+
+            let started = Instant::now();
+            let error = pump
+                .push(async {}, deadline, timeout)
+                .await
+                .expect_err("a full request pump must honor the input deadline");
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "a stalled in-flight request must not block past the input deadline, elapsed={:?}",
+                started.elapsed()
+            );
+            assert!(
+                matches!(
+                    error,
+                    HarnessError::InputWindowTimeout {
+                        stage: "input_workload",
+                        timeout: observed,
+                    } if observed == timeout
+                ),
+                "capacity wait must return the typed input-window timeout: {error:?}"
+            );
+        });
     }
 
     #[test]
@@ -5439,6 +6232,41 @@ mod durable_workload {
                 })
                 .await
                 .expect("serve fake non-success server");
+        });
+        (format!("http://{address}"), shutdown_tx)
+    }
+
+    #[cfg(test)]
+    async fn fake_always_backpressure_handler() -> axum::response::Response {
+        let mut response = axum::response::Response::new(axum::body::Body::from("{}"));
+        *response.status_mut() = axum::http::StatusCode::TOO_MANY_REQUESTS;
+        response.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            axum::http::HeaderValue::from_static("1"),
+        );
+        response
+    }
+
+    #[cfg(test)]
+    async fn fake_always_backpressure_server() -> (String, tokio::sync::oneshot::Sender<()>) {
+        let app = axum::Router::new().route(
+            "/collections/perf-hot/index",
+            axum::routing::post(fake_always_backpressure_handler),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake setup backpressure listener");
+        let address = listener
+            .local_addr()
+            .expect("read fake setup backpressure listener address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve fake setup backpressure responder");
         });
         (format!("http://{address}"), shutdown_tx)
     }

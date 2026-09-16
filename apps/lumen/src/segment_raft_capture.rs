@@ -54,7 +54,7 @@ impl SegmentRdbStore {
                 self.verify_predecessor_catalog(record, manifest)?;
                 if self.needs_delta_capacity(&engine, manifest, &record.path)? {
                     drop(permit);
-                    self.request_merge(&engine)?;
+                    self.request_capacity_merge(&engine)?;
                     self.wait_for_merges(std::time::Duration::from_secs(60))?;
                     continue;
                 }

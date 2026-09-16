@@ -1031,6 +1031,26 @@ async fn v2_current_refuses_catalogue_path_escape_without_predecessor_fallback()
     );
 }
 
+#[tokio::test]
+async fn v2_current_refuses_missing_catalogued_segment_without_predecessor_fallback() {
+    let (_dir, root) = stage1_v2_root_with_predecessor().await;
+    let generation = stage1_current_generation_dir(&root);
+    let mut manifest = stage1_read_manifest(&generation);
+    let segment_path = stage1_first_segment_mut(&mut manifest)["path"]
+        .as_str()
+        .expect("catalogued segment path")
+        .to_owned();
+    let segment = generation.join(&segment_path);
+    assert!(segment.is_file(), "catalogued segment must exist before removal");
+    std::fs::remove_file(&segment).expect("remove CURRENT-referenced catalogued segment");
+
+    stage1_assert_current_refuses_catalog_input(
+        &root,
+        "catalogued segment is missing",
+        "a missing catalogued segment",
+    );
+}
+
 const STAGE1_WIDE_CATALOG_COLLECTIONS: usize = 182;
 
 fn stage1_wide_catalog_id(index: usize) -> String {
@@ -1568,6 +1588,67 @@ async fn v2_hardlinks_unchanged_collection_retains_old_generation_and_cold_opens
     stage1_reuse_assert_term_ids(&next_server, STAGE1_REUSE_CHANGED, "changed-v1", &[]).await;
     stage1_reuse_assert_term_ids(
         &next_server,
+        STAGE1_REUSE_CHANGED,
+        "changed-v2",
+        &["changed-1"],
+    )
+    .await;
+}
+
+/// A checkpoint with more than one collection must carry forward an unchanged
+/// collection when a sibling collection changes. The second server uses only
+/// the committed checkpoint selected by `CURRENT`, so the assertions observe
+/// the public search API after a cold restart rather than a live engine or a
+/// physical generation layout.
+#[tokio::test]
+async fn public_checkpoint_cold_restart_retains_unchanged_collection_when_sibling_changes() {
+    let fixture = fixture();
+    for collection in [STAGE1_REUSE_STABLE, STAGE1_REUSE_CHANGED] {
+        stage1_reuse_put_keyword_collection(&fixture.server, collection).await;
+    }
+    stage1_reuse_index(
+        &fixture.server,
+        STAGE1_REUSE_STABLE,
+        "stable-1",
+        "stable-v1",
+    )
+    .await;
+    stage1_reuse_index(
+        &fixture.server,
+        STAGE1_REUSE_CHANGED,
+        "changed-1",
+        "changed-v1",
+    )
+    .await;
+    checkpoint(&fixture.server).await;
+
+    stage1_reuse_index(
+        &fixture.server,
+        STAGE1_REUSE_CHANGED,
+        "changed-1",
+        "changed-v2",
+    )
+    .await;
+    checkpoint(&fixture.server).await;
+
+    let cold = SegmentRdbStore::new(&fixture.checkpoint_root)
+        .expect("open checkpoint root for public cold restart")
+        .load_current_generation()
+        .expect("load CURRENT for public cold restart")
+        .expect("second checkpoint must publish a generation");
+    let cold_server = TestServer::new(router(AppState::open(cold.engine)))
+        .expect("public cold restart HTTP server");
+
+    stage1_reuse_assert_term_ids(
+        &cold_server,
+        STAGE1_REUSE_STABLE,
+        "stable-v1",
+        &["stable-1"],
+    )
+    .await;
+    stage1_reuse_assert_term_ids(&cold_server, STAGE1_REUSE_CHANGED, "changed-v1", &[]).await;
+    stage1_reuse_assert_term_ids(
+        &cold_server,
         STAGE1_REUSE_CHANGED,
         "changed-v2",
         &["changed-1"],
@@ -7775,11 +7856,17 @@ mod full_compaction_contract {
                 .assert_status_ok();
         }
 
+        async fn wait_for_background_idle(store: Arc<SegmentRdbStore>) -> Result<()> {
+            tokio::task::spawn_blocking(move || store.wait_for_merges(Duration::from_secs(30)))
+                .await
+                .map_err(|error| anyhow::anyhow!("background wait task panicked: {error}"))?
+        }
+
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn paused_merge_does_not_block_another_collection_checkpoint() {
+        async fn ordinary_checkpoint_does_not_request_successor_until_next_checkpoint() {
             let fixture = full_compaction_fixture().await;
             let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(1);
-            let (published_tx, published_rx) = std::sync::mpsc::sync_channel(1);
+            let (published_tx, published_rx) = std::sync::mpsc::sync_channel(4);
             let (release_tx, release_rx) = std::sync::mpsc::channel();
             let observer = Arc::new(PauseBeforeEncode {
                 reached: reached_tx,
@@ -7838,17 +7925,6 @@ mod full_compaction_contract {
             // Send before every join. Thus an assertion below cannot leave the
             // real encoding callback or its checkpoint thread blocked.
             let _ = release_tx.send(());
-            let after_publish = if reached.is_ok() {
-                Some(
-                    tokio::task::spawn_blocking(move || {
-                        published_rx.recv_timeout(Duration::from_secs(30))
-                    })
-                    .await
-                    .expect("merge-publication receiver task must not panic"),
-                )
-            } else {
-                None
-            };
             let merge_result = paused_merge.await;
             let later_finished_after_release = match &completed_while_merge_paused {
                 Some(Ok(result)) => {
@@ -7870,16 +7946,24 @@ mod full_compaction_contract {
                 "a fourth real delta checkpoint must select a merge candidate before encoding: {reached:?}"
             );
             assert!(
-                matches!(&after_publish, Some(Ok(()))),
-                "a selected merge must report durable publication after release: {after_publish:?}"
-            );
-            assert!(
                 matches!(&merge_result, Ok(Ok(()))),
                 "paused merge must finish cleanly after release: {merge_result:?}"
             );
             assert!(
                 checkpoint_finished_while_paused && later_finished_after_release == Some(true),
                 "a real checkpoint for another collection must finish while merge encoding is paused: {completed_while_merge_paused:?}; after release joined successfully: {later_finished_after_release:?}"
+            );
+
+            let first_idle = wait_for_background_idle(store.clone()).await;
+            let first_publications = published_rx.try_iter().count();
+            assert!(
+                first_idle.is_ok(),
+                "the released ordinary merge must become idle: {first_idle:?}"
+            );
+            assert_eq!(
+                first_publications,
+                1,
+                "an ordinary checkpoint completed while the merge was running must not queue a successor"
             );
 
             assert_eq!(
@@ -7944,6 +8028,57 @@ mod full_compaction_contract {
                 vec![full_compaction_base_id(0)],
                 "cold CURRENT must retain the fifth Keyword layer appended during merge pause"
             );
+
+            full_compaction_apply_keyword_round(&fixture.server, 6).await;
+            store
+                .save(&fixture.engine, merge_sequence + 2)
+                .expect("the next ordinary checkpoint must request a new merge");
+            let second_idle = wait_for_background_idle(store.clone()).await;
+            let second_publications = published_rx.try_iter().count();
+            assert!(
+                second_idle.is_ok(),
+                "the next checkpoint's successor merge must become idle: {second_idle:?}"
+            );
+            assert_eq!(
+                second_publications,
+                1,
+                "the next checkpoint must trigger exactly one new merge after the prior worker became idle"
+            );
+            assert_eq!(
+                full_compaction_search_ids(
+                    &fixture.server,
+                    full_compaction_keyword_query(&full_compaction_round_keyword(6, 0)),
+                )
+                .await,
+                vec![full_compaction_base_id(0)],
+                "live state must retain the new suffix after the successor merge"
+            );
+            let final_cold = SegmentRdbStore::new(&fixture.root)
+                .expect("reopen successor-merge root")
+                .load_current_generation()
+                .expect("load successor-merge CURRENT")
+                .expect("successor-merge CURRENT generation");
+            assert_eq!(
+                final_cold.sequence,
+                merge_sequence + 2,
+                "cold reopen must retain the successor checkpoint watermark"
+            );
+            let final_cold_server = TestServer::new(router(AppState::open(final_cold.engine)))
+                .expect("cold successor-merge server");
+            assert_eq!(
+                other_term_ids(&final_cold_server, OTHER_NEW_VALUE).await,
+                vec![OTHER_ID.to_owned()],
+                "cold successor CURRENT must retain the ordinary checkpoint's other collection"
+            );
+            assert_eq!(
+                full_compaction_search_ids(
+                    &final_cold_server,
+                    full_compaction_keyword_query(&full_compaction_round_keyword(6, 0)),
+                )
+                .await,
+                vec![full_compaction_base_id(0)],
+                "cold successor CURRENT must retain the new suffix"
+            );
         }
     }
     mod background_merge_cap_restore_prune_contract {
@@ -7988,6 +8123,7 @@ mod full_compaction_contract {
         struct PauseOneMergePhase {
             phase: lumen::segment_rdb::MergePhase,
             reached: std::sync::mpsc::SyncSender<()>,
+            published: Option<std::sync::mpsc::Sender<()>>,
             release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
             paused: std::sync::atomic::AtomicBool,
         }
@@ -8021,6 +8157,16 @@ mod full_compaction_contract {
 
         impl lumen::segment_rdb::MergeObserver for PauseOneMergePhase {
             fn observe(&self, phase: lumen::segment_rdb::MergePhase) -> std::io::Result<()> {
+                if phase == lumen::segment_rdb::MergePhase::AfterPublish {
+                    if let Some(published) = &self.published {
+                        published.send(()).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::BrokenPipe,
+                                "background merge publication receiver dropped",
+                            )
+                        })?;
+                    }
+                }
                 if phase != self.phase
                     || self.paused.swap(true, std::sync::atomic::Ordering::SeqCst)
                 {
@@ -8138,11 +8284,13 @@ mod full_compaction_contract {
             let fixture = full_compaction_fixture().await;
             let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(1);
             let mut reached_rx = Some(reached_rx);
+            let (published_tx, published_rx) = std::sync::mpsc::channel();
             let (release_tx, release_rx) = std::sync::mpsc::channel();
             let mut release = MergeRelease::new(release_tx);
             let observer = Arc::new(PauseOneMergePhase {
                 phase: lumen::segment_rdb::MergePhase::BeforeEncode,
                 reached: reached_tx,
+                published: Some(published_tx),
                 release: Mutex::new(Some(release_rx)),
                 paused: std::sync::atomic::AtomicBool::new(false),
             });
@@ -8291,6 +8439,7 @@ mod full_compaction_contract {
                 None => false,
             };
             let drained = wait_for_background_idle(store.clone()).await;
+            let published_merges = published_rx.try_iter().count();
 
             assert!(
                 first_merge_ready.is_ok(),
@@ -8313,6 +8462,11 @@ mod full_compaction_contract {
             assert!(
                 capped_waited,
                 "the seventeenth dirty Keyword checkpoint must wait for the selected merge instead of publishing layer 17: {capped_observation:?}",
+            );
+            assert_eq!(
+                published_merges,
+                2,
+                "a running capacity request must queue exactly one successor publication"
             );
             assert_eq!(
                 current_while_capped,
@@ -8387,6 +8541,7 @@ mod full_compaction_contract {
             let observer = Arc::new(PauseOneMergePhase {
                 phase: lumen::segment_rdb::MergePhase::BeforePublish,
                 reached: reached_tx,
+                published: None,
                 release: Mutex::new(Some(release_rx)),
                 paused: std::sync::atomic::AtomicBool::new(false),
             });
@@ -8505,6 +8660,7 @@ mod full_compaction_contract {
             let observer = Arc::new(PauseOneMergePhase {
                 phase: lumen::segment_rdb::MergePhase::BeforeEncode,
                 reached: reached_tx,
+                published: None,
                 release: Mutex::new(Some(release_rx)),
                 paused: std::sync::atomic::AtomicBool::new(false),
             });
@@ -8757,6 +8913,7 @@ mod full_compaction_contract {
                 let observer = Arc::new(PauseOneMergePhase {
                     phase: lumen::segment_rdb::MergePhase::BeforePublish,
                     reached: reached_tx,
+                    published: None,
                     release: Mutex::new(Some(release_rx)),
                     paused: std::sync::atomic::AtomicBool::new(false),
                 });
@@ -8935,6 +9092,7 @@ mod full_compaction_contract {
                 let observer = Arc::new(PauseOneMergePhase {
                     phase: lumen::segment_rdb::MergePhase::BeforeEncode,
                     reached: reached_tx,
+                    published: None,
                     release: Mutex::new(Some(release_rx)),
                     paused: AtomicBool::new(false),
                 });
@@ -9064,6 +9222,1022 @@ mod full_compaction_contract {
                     "the later fresh checkpoint must retain the sixth mutation after fifth retry",
                 );
             }
+        }
+    }
+
+    mod merge_scheduler_priority_contract {
+        //! This is a narrow scheduler oracle. It does not accept equivalent
+        //! search results as proof: the published catalog must show that the
+        //! deepest field won first, and that its smallest adjacent byte pair
+        //! was the only pair replaced.
+
+        use super::*;
+        use lumen::segment_rdb::{MergeObserver, MergePhase};
+        use std::collections::BTreeSet;
+        use std::io;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::mpsc;
+
+        const SCHEDULER_SEQUENCE: u64 = 13_900;
+        const SCHEDULER_EXTRA_BASE_ROWS: usize = 1_024;
+
+        struct FailThenPauseMergeObserver {
+            attempts: AtomicUsize,
+            failures_before_pause: usize,
+            reached: mpsc::SyncSender<usize>,
+            release: Mutex<Option<mpsc::Receiver<()>>>,
+        }
+
+        impl MergeObserver for FailThenPauseMergeObserver {
+            fn observe(&self, phase: MergePhase) -> io::Result<()> {
+                if phase != MergePhase::BeforeEncode {
+                    return Ok(());
+                }
+                let attempt = self.attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                self.reached.send(attempt).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "merge scheduler observer receiver dropped",
+                    )
+                })?;
+                if attempt <= self.failures_before_pause {
+                    return Err(io::Error::other(format!(
+                        "merge scheduler setup failure {attempt}"
+                    )));
+                }
+                if attempt == self.failures_before_pause + 1 {
+                    self.release
+                        .lock()
+                        .expect("merge scheduler release mutex")
+                        .take()
+                        .expect("merge scheduler releases the selected merge once")
+                        .recv()
+                        .map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::BrokenPipe,
+                                "merge scheduler release sender dropped",
+                            )
+                        })?;
+                }
+                Ok(())
+            }
+        }
+
+        struct MergeSchedulerRelease(Option<mpsc::Sender<()>>);
+
+        impl MergeSchedulerRelease {
+            fn release(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        impl Drop for MergeSchedulerRelease {
+            fn drop(&mut self) {
+                self.release();
+            }
+        }
+
+        fn scheduler_body_value(round: usize) -> String {
+            let words = match round {
+                // Keep the seven layers physically different while keeping
+                // their total below the body base. This fixture must exercise
+                // the partial-pair path, not base compaction.
+                1 => 1,
+                2 => 2,
+                3 => 4,
+                4 => 8,
+                5 => 16,
+                6 => 32,
+                7 => 64,
+                _ => panic!("scheduler contract needs seven body rounds"),
+            };
+            full_compaction_entropy_term(900_000 + round as u64, words)
+        }
+
+        fn scheduler_keyword_value(round: usize) -> String {
+            let words = match round {
+                1 => 1,
+                2 => 2,
+                3 => 4,
+                4 => 8,
+                5 => 16,
+                6 => 32,
+                7 => 64,
+                _ => panic!("scheduler contract needs seven keyword rounds"),
+            };
+            full_compaction_entropy_term(910_000 + round as u64, words)
+        }
+
+        async fn scheduler_fixture() -> FullCompactionFixture {
+            let dir = tempfile::tempdir().expect("scheduler fixture root");
+            let root = dir.path().join("segments");
+            let store = SegmentRdbStore::new(&root).expect("create scheduler store");
+            let engine = Arc::new(Engine::new());
+            let server = TestServer::new(router(AppState::open(engine.clone())))
+                .expect("scheduler HTTP server");
+            full_compaction_create_collection(&server).await;
+
+            let mut items = full_compaction_base_items();
+            for index in 0..SCHEDULER_EXTRA_BASE_ROWS {
+                items.push(json!({
+                    "external_id": format!("scheduler-base-body-{index:04}"),
+                    "field": FULL_TEXT,
+                    "value": full_compaction_entropy_term(2_000_000 + index as u64, 16),
+                }));
+            }
+            full_compaction_post_items(&server, items).await;
+            stage1_restore_legacy_base(&engine, "merge scheduler base");
+            store
+                .save(&engine, FULL_COMPACTION_BASE_SEQUENCE)
+                .expect("publish merge scheduler base");
+            FullCompactionFixture {
+                _dir: dir,
+                root: root.clone(),
+                store,
+                engine,
+                server,
+                base_name: stage1_reuse_current_name(&root),
+            }
+        }
+
+        async fn scheduler_update(server: &TestServer, field: &str, round: usize) {
+            let (external_id, value) = match field {
+                FULL_TEXT => (
+                    full_compaction_base_id(round - 1),
+                    json!(scheduler_body_value(round)),
+                ),
+                FULL_KEYWORD => (
+                    full_compaction_base_id(32 + round),
+                    json!(scheduler_keyword_value(round)),
+                ),
+                FULL_HASH => (
+                    full_compaction_base_id(64 + round),
+                    json!(format!("{:016x}", 0x9000_u64 + round as u64)),
+                ),
+                FULL_NUMBER => (
+                    full_compaction_base_id(96 + round),
+                    json!(90_000.0 + round as f64),
+                ),
+                _ => panic!("scheduler contract does not support field {field}"),
+            };
+            full_compaction_post_items(
+                server,
+                vec![json!({
+                    "external_id": external_id,
+                    "field": field,
+                    "value": value,
+                })],
+            )
+            .await;
+        }
+
+        fn scheduler_reference_bytes(generation: &Path, reference: &Value) -> u64 {
+            let payload = std::fs::metadata(
+                generation.join(reference["path"].as_str().expect("scheduler segment path")),
+            )
+            .expect("inspect scheduler delta payload")
+            .len();
+            let rows = reference
+                .get("local_rows")
+                .and_then(Value::as_object)
+                .map(|rows| {
+                    std::fs::metadata(
+                        generation.join(rows["path"].as_str().expect("scheduler local row path")),
+                    )
+                    .expect("inspect scheduler local row map")
+                    .len()
+                })
+                .unwrap_or(0);
+            payload
+                .checked_add(rows)
+                .expect("scheduler delta byte count does not overflow")
+        }
+
+        fn scheduler_delta_bytes(generation: &Path, reference: &Value) -> u64 {
+            scheduler_reference_bytes(generation, reference)
+        }
+
+        fn scheduler_base_bytes(
+            generation: &Path,
+            manifest: &Value,
+            field: &str,
+        ) -> u64 {
+            scheduler_reference_bytes(
+                generation,
+                full_compaction_base_ref(manifest, field, "field"),
+            )
+        }
+
+        fn scheduler_smallest_adjacent_pair(
+            generation: &Path,
+            references: &[&Value],
+        ) -> (u64, u64) {
+            let pairs: Vec<_> = references
+                .windows(2)
+                .map(|pair| {
+                    (
+                        scheduler_delta_bytes(generation, pair[0])
+                            .checked_add(scheduler_delta_bytes(generation, pair[1]))
+                            .expect("scheduler adjacent pair byte count does not overflow"),
+                        pair[0]["ordinal"]
+                            .as_u64()
+                            .expect("scheduler first pair ordinal"),
+                        pair[1]["ordinal"]
+                            .as_u64()
+                            .expect("scheduler second pair ordinal"),
+                    )
+                })
+                .collect();
+            let minimum = pairs
+                .iter()
+                .map(|(bytes, _, _)| *bytes)
+                .min()
+                .expect("five scheduler deltas produce adjacent pairs");
+            let minima: Vec<_> = pairs
+                .iter()
+                .filter(|(bytes, _, _)| *bytes == minimum)
+                .collect();
+            assert_eq!(
+                minima.len(),
+                1,
+                "scheduler fixture must have one smallest adjacent pair, got {minima:?}"
+            );
+            (minima[0].1, minima[0].2)
+        }
+
+        fn scheduler_rows(generation: &Path, reference: &Value) -> BTreeSet<String> {
+            stage1_keyword_delta_read_rows(generation, reference)
+                .into_iter()
+                .collect()
+        }
+
+        fn scheduler_reference_by_ordinal<'a>(
+            references: &'a [&Value],
+            ordinal: u64,
+        ) -> &'a Value {
+            references
+                .iter()
+                .copied()
+                .find(|reference| reference["ordinal"].as_u64() == Some(ordinal))
+                .unwrap_or_else(|| panic!("scheduler catalog needs delta ordinal {ordinal}"))
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn merge_scheduler_compacts_only_deepest_tied_fields_before_external_checkpoint() {
+            let fixture = scheduler_fixture().await;
+            let (reached_tx, reached_rx) = mpsc::sync_channel(32);
+            let (release_tx, release_rx) = mpsc::channel();
+            let mut release = MergeSchedulerRelease(Some(release_tx));
+            let observer = Arc::new(FailThenPauseMergeObserver {
+                attempts: AtomicUsize::new(0),
+                failures_before_pause: 10,
+                reached: reached_tx,
+                release: Mutex::new(Some(release_rx)),
+            });
+            let store = SegmentRdbStore::with_merge_observer(&fixture.root, observer)
+                .expect("open observed merge scheduler store");
+
+            // Keep a 3-layer shallow field and a 6-layer middle field ready
+            // before the two tied 7-layer fields. The first ten attempts are
+            // deliberate failures, so the paused eleventh attempt observes
+            // the complete 7/7/6/3 catalog in one immutable source.
+            let mut sequence = SCHEDULER_SEQUENCE;
+            for round in 1..=3 {
+                scheduler_update(&fixture.server, FULL_NUMBER, round).await;
+                sequence += 1;
+                store.save(&fixture.engine, sequence).expect("publish shallow scheduler delta");
+            }
+            for round in 1..=6 {
+                scheduler_update(&fixture.server, FULL_HASH, round).await;
+                sequence += 1;
+                store.save(&fixture.engine, sequence).expect("publish middle scheduler delta");
+            }
+            for round in 1..=7 {
+                scheduler_update(&fixture.server, FULL_TEXT, round).await;
+                sequence += 1;
+                store.save(&fixture.engine, sequence).expect("publish first deep scheduler delta");
+            }
+            for round in 1..=7 {
+                scheduler_update(&fixture.server, FULL_KEYWORD, round).await;
+                sequence += 1;
+                store.save(&fixture.engine, sequence).expect("publish tied deep scheduler delta");
+            }
+            assert_eq!(sequence, SCHEDULER_SEQUENCE + 23);
+            let attempts: Vec<_> = reached_rx.try_iter().collect();
+            assert_eq!(
+                attempts,
+                (1..=11).collect::<Vec<_>>(),
+                "the observed source must be reached only after the ten setup failures"
+            );
+
+            let before_generation = stage1_current_generation_dir(&fixture.root);
+            let before_manifest = stage1_read_manifest(&before_generation);
+            assert_eq!(
+                before_manifest["checkpoint_sequence"],
+                json!(sequence),
+                "the observed merge must read the complete scheduler fixture"
+            );
+            let before_tied_a = full_compaction_field_refs(&before_manifest, FULL_TEXT, "delta");
+            let before_tied_b = full_compaction_field_refs(&before_manifest, FULL_KEYWORD, "delta");
+            let before_middle = full_compaction_field_refs(&before_manifest, FULL_HASH, "delta");
+            let before_shallow = full_compaction_field_refs(&before_manifest, FULL_NUMBER, "delta");
+            assert_eq!(before_tied_a.len(), 7, "first deepest field must have seven deltas");
+            assert_eq!(before_tied_b.len(), 7, "tied deepest field must have seven deltas");
+            assert_eq!(before_middle.len(), 6, "middle field must have six deltas");
+            assert_eq!(before_shallow.len(), 3, "shallow field must have three deltas");
+            let body_base_bytes =
+                scheduler_base_bytes(&before_generation, &before_manifest, FULL_TEXT);
+            let body_delta_bytes = before_tied_a.iter().fold(0u64, |total, reference| {
+                total
+                    .checked_add(scheduler_delta_bytes(&before_generation, reference))
+                    .expect("scheduler body delta byte count does not overflow")
+            });
+            assert!(
+                body_delta_bytes < body_base_bytes,
+                "scheduler fixture must exercise pair compaction: body delta bytes {body_delta_bytes} must stay below body base bytes {body_base_bytes}",
+            );
+            let mut expected_pairs = Vec::new();
+            for (field, references) in [
+                (FULL_TEXT, &before_tied_a),
+                (FULL_KEYWORD, &before_tied_b),
+            ] {
+                let (first_ordinal, second_ordinal) =
+                    scheduler_smallest_adjacent_pair(&before_generation, references);
+                let first_before = scheduler_reference_by_ordinal(references, first_ordinal);
+                let second_before = scheduler_reference_by_ordinal(references, second_ordinal);
+                let expected_rows = scheduler_rows(&before_generation, first_before)
+                    .into_iter()
+                    .chain(scheduler_rows(&before_generation, second_before))
+                    .collect::<BTreeSet<_>>();
+                expected_pairs.push((field, first_ordinal, second_ordinal, expected_rows));
+            }
+
+            // Always release before an assertion can unwind. The guard keeps
+            // the process-wide merge worker from remaining blocked.
+            release.release();
+            store
+                .wait_for_merges(Duration::from_secs(30))
+                .expect("selected merge and its follow-up worker must finish");
+
+            let after_generation = stage1_current_generation_dir(&fixture.root);
+            let after_manifest = stage1_read_manifest(&after_generation);
+            let after_tied_a = full_compaction_field_refs(&after_manifest, FULL_TEXT, "delta");
+            let after_tied_b = full_compaction_field_refs(&after_manifest, FULL_KEYWORD, "delta");
+            let after_middle = full_compaction_field_refs(&after_manifest, FULL_HASH, "delta");
+            let after_shallow = full_compaction_field_refs(&after_manifest, FULL_NUMBER, "delta");
+            assert_eq!(after_tied_a.len(), 6, "the first deepest field must lose one pair layer");
+            assert_eq!(after_tied_b.len(), 6, "the tied deepest field must lose one pair layer");
+            assert_eq!(after_middle.len(), 6, "the six-layer field must remain untouched");
+            assert_eq!(after_shallow.len(), 3, "the three-layer field must remain untouched");
+            for (field, first_ordinal, second_ordinal, expected_rows) in expected_pairs {
+                let before = if field == FULL_TEXT { &before_tied_a } else { &before_tied_b };
+                let after = if field == FULL_TEXT { &after_tied_a } else { &after_tied_b };
+                assert!(
+                    !after
+                        .iter()
+                        .any(|reference| reference["ordinal"].as_u64() == Some(first_ordinal)),
+                    "the first member of the {field} smallest pair must be removed"
+                );
+                let compacted = scheduler_reference_by_ordinal(after, second_ordinal);
+                assert_eq!(
+                    scheduler_rows(&after_generation, compacted),
+                    expected_rows,
+                    "the {field} replacement must contain exactly the selected pair rows"
+                );
+                assert_eq!(
+                    compacted["applied_seq"],
+                    json!(sequence),
+                    "the {field} replacement must be newly written at the observed cut"
+                );
+                for reference in before {
+                    let ordinal = reference["ordinal"].as_u64().expect("deep delta ordinal");
+                    if ordinal == first_ordinal || ordinal == second_ordinal {
+                        continue;
+                    }
+                    let retained = scheduler_reference_by_ordinal(after, ordinal);
+                    assert_eq!(
+                        retained["payload_sha256"],
+                        reference["payload_sha256"],
+                        "unselected {field} ordinal {ordinal} must retain its original payload"
+                    );
+                }
+            }
+            for (field, before, after) in [
+                (FULL_HASH, &before_middle, &after_middle),
+                (FULL_NUMBER, &before_shallow, &after_shallow),
+            ] {
+                for reference in before {
+                    let ordinal = reference["ordinal"].as_u64().expect("retained delta ordinal");
+                    let retained = scheduler_reference_by_ordinal(after, ordinal);
+                    assert_eq!(
+                        retained["payload_sha256"],
+                        reference["payload_sha256"],
+                        "the {field} ordinal {ordinal} must retain its identity until a later checkpoint"
+                    );
+                }
+            }
+
+            let live_keyword = full_compaction_search_ids(
+                &fixture.server,
+                full_compaction_keyword_query(&scheduler_keyword_value(7)),
+            )
+            .await;
+            let live_text = full_compaction_text_search(&fixture.server, &scheduler_body_value(7)).await;
+            let (cold_engine, cold_sequence) = stage1_reuse_cold_load_current(&fixture.root);
+            assert_eq!(cold_sequence, sequence, "cold open must select the first publication");
+            let cold_server = TestServer::new(router(AppState::open(cold_engine)))
+                .expect("scheduler cold server");
+            assert_eq!(
+                full_compaction_search_ids(
+                    &cold_server,
+                    full_compaction_keyword_query(&scheduler_keyword_value(7)),
+                )
+                .await,
+                live_keyword,
+                "live and cold Keyword searches must agree after the tied deepest publication"
+            );
+            assert_eq!(
+                full_compaction_text_search(&cold_server, &scheduler_body_value(7)).await,
+                live_text,
+                "live and cold Text searches must agree after the tied deepest publication"
+            );
+
+            // A later external checkpoint is the first point at which the
+            // retained six-layer fields may be selected. Add one shallow
+            // suffix so the checkpoint is a real durable change, then verify
+            // the old three-layer identities remain alongside it.
+            scheduler_update(&fixture.server, FULL_NUMBER, 4).await;
+            sequence += 1;
+            store
+                .save(&fixture.engine, sequence)
+                .expect("publish later external scheduler checkpoint");
+            store
+                .wait_for_merges(Duration::from_secs(30))
+                .expect("later external scheduler checkpoint must drain its merge");
+            let later_generation = stage1_current_generation_dir(&fixture.root);
+            let later_manifest = stage1_read_manifest(&later_generation);
+            assert_eq!(
+                later_manifest["checkpoint_sequence"],
+                json!(sequence),
+                "the later external checkpoint must publish its own watermark"
+            );
+            assert_eq!(
+                full_compaction_field_refs(&later_manifest, FULL_TEXT, "delta").len(),
+                5,
+                "the first tied deepest field may advance only after the external checkpoint"
+            );
+            assert_eq!(
+                full_compaction_field_refs(&later_manifest, FULL_KEYWORD, "delta").len(),
+                5,
+                "the second tied deepest field may advance only after the external checkpoint"
+            );
+            assert_eq!(
+                full_compaction_field_refs(&later_manifest, FULL_HASH, "delta").len(),
+                5,
+                "the retained six-layer field may advance only after the external checkpoint"
+            );
+            let later_shallow = full_compaction_field_refs(&later_manifest, FULL_NUMBER, "delta");
+            assert_eq!(later_shallow.len(), 4, "the external checkpoint must retain the new shallow suffix");
+            for reference in &before_shallow {
+                let ordinal = reference["ordinal"].as_u64().expect("original shallow ordinal");
+                let retained = scheduler_reference_by_ordinal(&later_shallow, ordinal);
+                assert_eq!(
+                    retained["payload_sha256"],
+                    reference["payload_sha256"],
+                    "the original three-layer shallow ordinal {ordinal} must remain retained"
+                );
+            }
+        }
+    }
+
+    mod collection_batch_contract {
+        //! A merge job is collection-scoped. When several fields in the
+        //! selected collection are eligible at the same durable cut, one
+        //! publication must compact each of those fields. A collection with
+        //! fewer than four delta layers must remain untouched, and the
+        //! resulting catalog must still serve the same public values after a
+        //! cold open.
+
+        use super::*;
+        use lumen::segment_rdb::{MergeObserver, MergePhase};
+        use std::io;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+
+        const HOT_COLLECTION: &str = "merge-batch-hot";
+        const IDLE_COLLECTION: &str = "merge-batch-idle";
+        const HOT_FIELDS: [&str; 14] = [
+            "h00", "h01", "h02", "h03", "h04", "h05", "h06", "h07", "h08", "h09",
+            "h10", "h11", "h12", "h13",
+        ];
+        const IDLE_FIELD: &str = "idle";
+        const BASE_ROWS: usize = 512;
+        const BASE_SEQUENCE: u64 = 15_200;
+
+        struct PauseFirstMergeObserver {
+            before_publish: mpsc::SyncSender<()>,
+            before_release: Mutex<Option<mpsc::Receiver<()>>>,
+            after_publish: mpsc::SyncSender<()>,
+            after_release: Mutex<Option<mpsc::Receiver<()>>>,
+            before_paused: AtomicBool,
+            after_paused: AtomicBool,
+        }
+
+        impl MergeObserver for PauseFirstMergeObserver {
+            fn observe(&self, phase: MergePhase) -> io::Result<()> {
+                let (reached, release, paused) = match phase {
+                    MergePhase::BeforePublish => (
+                        &self.before_publish,
+                        &self.before_release,
+                        &self.before_paused,
+                    ),
+                    MergePhase::AfterPublish => (
+                        &self.after_publish,
+                        &self.after_release,
+                        &self.after_paused,
+                    ),
+                    MergePhase::BeforeEncode => return Ok(()),
+                };
+                if paused
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    return Ok(());
+                }
+                reached.send(()).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "collection batch observer receiver dropped",
+                    )
+                })?;
+                release
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                    .expect("collection batch merge release receiver")
+                    .recv()
+                    .map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "collection batch merge release sender dropped",
+                        )
+                    })?;
+                Ok(())
+            }
+        }
+
+        struct MergeRelease {
+            before: Option<mpsc::Sender<()>>,
+            after: Option<mpsc::Sender<()>>,
+        }
+
+        impl MergeRelease {
+            fn release_before(&mut self) {
+                if let Some(sender) = self.before.take() {
+                    let _ = sender.send(());
+                }
+            }
+
+            fn release_after(&mut self) {
+                if let Some(sender) = self.after.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        impl Drop for MergeRelease {
+            fn drop(&mut self) {
+                self.release_before();
+                self.release_after();
+            }
+        }
+
+        async fn create_keyword_collection(
+            server: &TestServer,
+            collection: &str,
+            fields: &[&str],
+        ) {
+            let mut schema = Map::new();
+            for field in fields {
+                schema.insert((*field).to_owned(), json!({ "type": "keyword" }));
+            }
+            server
+                .put(&format!("/collections/{collection}"))
+                .json(&json!({ "fields": schema }))
+                .await
+                .assert_status_ok();
+        }
+
+        async fn index_keyword(
+            server: &TestServer,
+            collection: &str,
+            external_id: &str,
+            field: &str,
+            value: &str,
+        ) {
+            index_keywords(
+                server,
+                collection,
+                vec![json!({
+                    "external_id": external_id,
+                    "field": field,
+                    "value": value,
+                })],
+            )
+            .await;
+        }
+
+        async fn index_keywords(server: &TestServer, collection: &str, items: Vec<Value>) {
+            for chunk in items.chunks(1_000) {
+                server
+                    .post(&format!("/collections/{collection}/index"))
+                    .json(&json!({ "items": chunk }))
+                    .await
+                    .assert_status_ok();
+            }
+        }
+
+        fn keyword_item(external_id: String, field: &str, value: String) -> Value {
+            json!({
+                "external_id": external_id,
+                "field": field,
+                "value": value,
+            })
+        }
+
+        async fn index_base_field(
+            server: &TestServer,
+            collection: &str,
+            field: &str,
+            field_index: usize,
+        ) {
+            let mut items = Vec::with_capacity(BASE_ROWS + 1);
+            items.push(keyword_item(
+                format!("hot-{field}-mutable"),
+                field,
+                format!("{field}-base"),
+            ));
+            for row in 0..BASE_ROWS {
+                items.push(keyword_item(
+                    format!("hot-{field}-base-{row:03}"),
+                    field,
+                    full_compaction_entropy_term(
+                        2_500_000 + (field_index * BASE_ROWS + row) as u64,
+                        8,
+                    ),
+                ));
+            }
+            index_keywords(server, collection, items).await;
+        }
+
+        async fn index_idle_base(server: &TestServer) {
+            let mut items = Vec::with_capacity(BASE_ROWS + 1);
+            items.push(keyword_item(
+                "idle-mutable".to_owned(),
+                IDLE_FIELD,
+                "idle-base".to_owned(),
+            ));
+            for row in 0..BASE_ROWS {
+                items.push(keyword_item(
+                    format!("idle-base-{row:03}"),
+                    IDLE_FIELD,
+                    full_compaction_entropy_term(2_600_000 + row as u64, 8),
+                ));
+            }
+            index_keywords(server, IDLE_COLLECTION, items).await;
+        }
+
+        async fn batch_fixture() -> (tempfile::TempDir, PathBuf, Arc<Engine>, TestServer) {
+            let dir = tempfile::tempdir().expect("collection batch fixture root");
+            let root = dir.path().join("segments");
+            let initial_store = SegmentRdbStore::new(&root).expect("create collection batch store");
+            let engine = Arc::new(Engine::new());
+            let server = TestServer::new(router(AppState::open(engine.clone())))
+                .expect("collection batch HTTP server");
+            create_keyword_collection(&server, HOT_COLLECTION, &HOT_FIELDS).await;
+            create_keyword_collection(&server, IDLE_COLLECTION, &[IDLE_FIELD]).await;
+
+            for (field_index, field) in HOT_FIELDS.iter().enumerate() {
+                index_base_field(&server, HOT_COLLECTION, field, field_index).await;
+            }
+            index_idle_base(&server).await;
+
+            stage1_restore_legacy_base(&engine, "collection batch base");
+            initial_store
+                .save(&engine, BASE_SEQUENCE)
+                .expect("publish collection batch base");
+            drop(initial_store);
+            (dir, root, engine, server)
+        }
+
+        fn batch_collection<'a>(manifest: &'a Value, collection: &str) -> &'a Value {
+            manifest["collections"]
+                .as_array()
+                .expect("collection batch catalog collections")
+                .iter()
+                .find(|entry| entry["collection_id"] == json!(collection))
+                .unwrap_or_else(|| panic!("collection batch catalog needs {collection}"))
+        }
+
+        fn batch_delta_refs<'a>(
+            manifest: &'a Value,
+            collection: &str,
+            field: &str,
+        ) -> Vec<&'a Value> {
+            let mut refs: Vec<_> = batch_collection(manifest, collection)["segments"]
+                .as_array()
+                .expect("collection batch catalog segments")
+                .iter()
+                .filter(|segment| {
+                    segment["role"] == json!("field")
+                        && segment["kind"] == json!("delta")
+                        && segment["field"] == json!(field)
+                })
+                .collect();
+            refs.sort_by_key(|segment| segment["ordinal"].as_u64().expect("delta ordinal"));
+            refs
+        }
+
+        fn batch_segment_bytes(generation: &Path, segment: &Value) -> u64 {
+            let payload = std::fs::metadata(
+                generation.join(segment["path"].as_str().expect("batch segment path")),
+            )
+            .expect("inspect batch segment")
+            .len();
+            let rows = segment
+                .get("local_rows")
+                .and_then(Value::as_object)
+                .map(|local| {
+                    std::fs::metadata(
+                        generation.join(local["path"].as_str().expect("batch local rows path")),
+                    )
+                    .expect("inspect batch local rows")
+                    .len()
+                })
+                .unwrap_or(0);
+            payload
+                .checked_add(rows)
+                .expect("collection batch segment byte count does not overflow")
+        }
+
+        fn batch_base_bytes(generation: &Path, manifest: &Value, collection: &str, field: &str) -> u64 {
+            let base = batch_collection(manifest, collection)["segments"]
+                .as_array()
+                .expect("collection batch catalog segments")
+                .iter()
+                .find(|segment| {
+                    segment["role"] == json!("field")
+                        && segment["kind"] == json!("base")
+                        && segment["field"] == json!(field)
+                        && segment["ordinal"] == json!(0)
+                })
+                .unwrap_or_else(|| panic!("collection batch base missing for {collection}/{field}"));
+            batch_segment_bytes(generation, base)
+        }
+
+        fn batch_payload_bytes(
+            generation: &Path,
+            manifest: &Value,
+            collection: &str,
+            field: &str,
+        ) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
+            batch_delta_refs(manifest, collection, field)
+                .into_iter()
+                .map(|segment| {
+                    let payload = std::fs::read(
+                        generation.join(segment["path"].as_str().expect("batch payload path")),
+                    )
+                    .expect("read batch payload");
+                    let local_rows = segment
+                        .get("local_rows")
+                        .and_then(Value::as_object)
+                        .map(|local| {
+                            std::fs::read(
+                                generation.join(
+                                    local["path"].as_str().expect("batch local rows path"),
+                                ),
+                            )
+                            .expect("read batch local rows")
+                        });
+                    (payload, local_rows)
+                })
+                .collect()
+        }
+
+        async fn term_ids(
+            server: &TestServer,
+            collection: &str,
+            field: &str,
+            value: &str,
+        ) -> Vec<String> {
+            let response = server
+                .post(&format!("/collections/{collection}/search"))
+                .json(&json!({
+                    "query": { "term": { "field": field, "value": value } },
+                    "limit": 128,
+                }))
+                .await;
+            response.assert_status_ok();
+            let body: Value = response.json();
+            let mut actual: Vec<_> = body["hits"]
+                .as_array()
+                .expect("collection batch search hits")
+                .iter()
+                .map(|hit| {
+                    hit["external_id"]
+                        .as_str()
+                        .expect("collection batch hit ID")
+                        .to_owned()
+                })
+                .collect();
+            actual.sort_unstable();
+            actual
+        }
+
+        async fn assert_live_and_cold_term_ids(
+            live: &TestServer,
+            cold: &TestServer,
+            collection: &str,
+            field: &str,
+            value: &str,
+            expected: &[&str],
+        ) {
+            let live_ids = term_ids(live, collection, field, value).await;
+            let cold_ids = term_ids(cold, collection, field, value).await;
+            assert_eq!(
+                &live_ids, &cold_ids,
+                "live and cold public query results for {collection}/{field}/{value}"
+            );
+            let mut expected = expected.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+            expected.sort_unstable();
+            assert_eq!(live_ids, expected, "public query for {collection}/{field}/{value}");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn one_collection_merge_publication_compacts_all_eligible_fields() {
+            let (_dir, root, engine, server) = batch_fixture().await;
+            let (before_publish_tx, before_publish_rx) = mpsc::sync_channel(1);
+            let (before_release_tx, before_release_rx) = mpsc::channel();
+            let (after_publish_tx, after_publish_rx) = mpsc::sync_channel(1);
+            let (after_release_tx, after_release_rx) = mpsc::channel();
+            let mut release = MergeRelease {
+                before: Some(before_release_tx),
+                after: Some(after_release_tx),
+            };
+            let observer = Arc::new(PauseFirstMergeObserver {
+                before_publish: before_publish_tx,
+                before_release: Mutex::new(Some(before_release_rx)),
+                after_publish: after_publish_tx,
+                after_release: Mutex::new(Some(after_release_rx)),
+                before_paused: AtomicBool::new(false),
+                after_paused: AtomicBool::new(false),
+            });
+            let store = SegmentRdbStore::with_merge_observer(&root, observer)
+                .expect("open observed collection batch store");
+
+            // The first three cuts make the idle collection shallower. The
+            // fourth cut crosses the merge threshold for every hot field in
+            // the same immutable source generation.
+            for round in 1..=4u64 {
+                for field in HOT_FIELDS {
+                    index_keyword(
+                        &server,
+                        HOT_COLLECTION,
+                        &format!("hot-{field}-mutable"),
+                        field,
+                        &format!("{field}-v{round}"),
+                    )
+                    .await;
+                }
+                if round <= 3 {
+                    index_keyword(
+                        &server,
+                        IDLE_COLLECTION,
+                        "idle-mutable",
+                        IDLE_FIELD,
+                        &format!("idle-v{round}"),
+                    )
+                    .await;
+                }
+                store
+                    .save(&engine, BASE_SEQUENCE + round)
+                    .expect("publish collection batch delta cut");
+            }
+
+            assert_eq!(
+                before_publish_rx.recv_timeout(Duration::from_secs(30)),
+                Ok(()),
+                "merge worker must finish encoding before the first publication"
+            );
+            let before_generation = stage1_current_generation_dir(&root);
+            let before_manifest = stage1_read_manifest(&before_generation);
+            assert_eq!(
+                before_manifest["checkpoint_sequence"],
+                json!(BASE_SEQUENCE + 4),
+                "merge must observe the complete multi-field cut"
+            );
+            for field in HOT_FIELDS {
+                let refs = batch_delta_refs(&before_manifest, HOT_COLLECTION, field);
+                assert_eq!(refs.len(), 4, "hot field {field} must have four deltas");
+                let delta_bytes: u64 = refs
+                    .iter()
+                    .map(|segment| batch_segment_bytes(&before_generation, segment))
+                    .sum();
+                let base_bytes =
+                    batch_base_bytes(&before_generation, &before_manifest, HOT_COLLECTION, field);
+                assert!(
+                    delta_bytes < base_bytes,
+                    "hot field {field} must exercise pair compaction below base size: delta={delta_bytes}, base={base_bytes}"
+                );
+            }
+            let idle_before = batch_delta_refs(&before_manifest, IDLE_COLLECTION, IDLE_FIELD);
+            assert_eq!(idle_before.len(), 3, "idle collection must remain below threshold");
+            let idle_payloads =
+                batch_payload_bytes(&before_generation, &before_manifest, IDLE_COLLECTION, IDLE_FIELD);
+            let before_revision = before_manifest["revision"]
+                .as_u64()
+                .expect("collection batch revision");
+
+            release.release_before();
+            assert_eq!(
+                after_publish_rx.recv_timeout(Duration::from_secs(30)),
+                Ok(()),
+                "the first merge publication must be observable before a follow-up job"
+            );
+            store
+                .wait_for_merges(Duration::from_secs(1))
+                .expect_err("the observer must hold the first published merge");
+            let after_generation = stage1_current_generation_dir(&root);
+            let after_manifest = stage1_read_manifest(&after_generation);
+            assert_eq!(
+                after_manifest["revision"],
+                json!(before_revision + 1),
+                "all eligible fields must be published in one generation"
+            );
+            for field in HOT_FIELDS {
+                assert_eq!(
+                    batch_delta_refs(&after_manifest, HOT_COLLECTION, field).len(),
+                    1,
+                    "one publication must drain every hot field to one delta: {field}"
+                );
+            }
+            assert_eq!(
+                batch_payload_bytes(&after_generation, &after_manifest, IDLE_COLLECTION, IDLE_FIELD),
+                idle_payloads,
+                "the shallower idle collection must remain unchanged"
+            );
+
+            let cold = store
+                .load_current_generation()
+                .expect("load collection batch CURRENT")
+                .expect("collection batch CURRENT generation");
+            let cold_server = TestServer::new(router(AppState::open(cold.engine)))
+                .expect("collection batch cold HTTP server");
+            for field in HOT_FIELDS {
+                assert_live_and_cold_term_ids(
+                    &server,
+                    &cold_server,
+                    HOT_COLLECTION,
+                    field,
+                    &format!("{field}-v4"),
+                    &[&format!("hot-{field}-mutable")],
+                )
+                .await;
+                assert_live_and_cold_term_ids(
+                    &server,
+                    &cold_server,
+                    HOT_COLLECTION,
+                    field,
+                    &format!("{field}-v3"),
+                    &[],
+                )
+                .await;
+            }
+            assert_live_and_cold_term_ids(
+                &server,
+                &cold_server,
+                IDLE_COLLECTION,
+                IDLE_FIELD,
+                "idle-v3",
+                &["idle-mutable"],
+            )
+            .await;
+            assert_live_and_cold_term_ids(
+                &server,
+                &cold_server,
+                IDLE_COLLECTION,
+                IDLE_FIELD,
+                "idle-v2",
+                &[],
+            )
+            .await;
+
+            release.release_after();
+            store
+                .wait_for_merges(Duration::from_secs(30))
+                .expect("collection batch follow-up work must finish after inspection");
         }
     }
 

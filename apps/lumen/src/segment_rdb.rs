@@ -54,7 +54,9 @@ use save_gate::SaveGate;
 use telemetry::MeasuredCapture;
 
 const GENERATION_MANIFEST_FILE: &str = "_generation.json";
-const GENERATION_MANIFEST_SCHEMA_VERSION: u32 = 2;
+const GENERATION_MANIFEST_SCHEMA_VERSION: u32 = 3;
+const GENERATION_MANIFEST_V2: u32 = 2;
+const FLAT_PAYLOAD_DIR: &str = "payload";
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
 const CURRENT_FILE: &str = "CURRENT";
 const CURRENT_TEMP_FILE: &str = "CURRENT.tmp";
@@ -339,6 +341,7 @@ enum SaveAttempt {
 enum StagingSelection {
     Generic,
     CurrentIfDurable,
+    BackgroundScratch,
 }
 
 enum GenerationStaging {
@@ -462,7 +465,8 @@ impl SegmentRdbStore {
     }
 
     pub(crate) fn request_capacity_merge(&self, engine: &Arc<Engine>) -> Result<()> {
-        self.request_merge(engine)
+        self.request_merge_for_capacity_retry(engine, None, None)
+            .map(|_| ())
     }
 
     pub(crate) fn has_current_generation(&self) -> Result<bool> {
@@ -785,7 +789,23 @@ impl SegmentRdbStore {
         let (revision, mut staged) =
             self.begin_next_generation_selected(up_to_seq, staging_selection)?;
         let staging_path = staged.path().to_path_buf();
-        let mut capture = match pending.pending().frozen.write(&staging_path, up_to_seq) {
+        // The storage capture writer still consumes its checkpoint lineage as
+        // collection directories. v3 keeps only flat payloads, so materialize
+        // short-lived hard-link aliases while the writer copies inherited
+        // files. They are removed before validation and publication.
+        let compatibility_tree = current
+            .as_ref()
+            .zip(prior_manifest.as_ref())
+            .filter(|(_, manifest)| manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION)
+            .map(|(record, manifest)| materialize_flat_reopen_tree(&record.path, manifest))
+            .transpose()?;
+        let frozen_result = pending.pending().frozen.write(&staging_path, up_to_seq);
+        if let Some(tree) = compatibility_tree {
+            for path in tree {
+                let _ = std::fs::remove_dir_all(path);
+            }
+        }
+        let mut capture = match frozen_result {
             Ok(capture) => capture,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&staging_path);
@@ -852,6 +872,7 @@ impl SegmentRdbStore {
         // staged files are still private. CURRENT must never expose a catalog
         // whose live view has not retained its post-capture private suffix.
         engine.prepare_scalar_checkpoint_publications(&mut capture)?;
+        flatten_checkpoint_payload(&staging_path, &mut collections)?;
         let checkpoint_payload_bytes = telemetry::new_file_bytes(
             &staging_path,
             current.as_ref().map(|record| record.path.as_path()),
@@ -1524,19 +1545,37 @@ impl SegmentRdbStore {
         }
     }
 
+    pub(super) fn begin_background_merge_stage(&self, sequence: u64) -> Result<StagedGeneration> {
+        let (_, staged) =
+            self.begin_next_generation_selected(sequence, StagingSelection::BackgroundScratch)?;
+        match staged {
+            GenerationStaging::Generic(staged) => Ok(staged),
+            GenerationStaging::Current(_) => {
+                unreachable!("background scratch selection returned current-derived stage")
+            }
+        }
+    }
+
     pub(super) fn begin_next_generation_selected(
         &self,
         sequence: u64,
         selection: StagingSelection,
     ) -> Result<(u64, GenerationStaging)> {
-        let mut revision = self
-            .generation_entries()?
-            .into_iter()
-            .filter_map(|(name, _)| parse_revision_name(&name).map(|(_, revision)| revision))
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or_else(|| anyhow!("segment generation revision exhausted"))?;
+        let mut revision = match selection {
+            // A background merge scratch tree is private and never becomes a
+            // published generation. Keep it outside the published revision
+            // sequence so the later atomic publication can use the next
+            // revision without colliding with its own scratch directory.
+            StagingSelection::BackgroundScratch => 0,
+            StagingSelection::Generic | StagingSelection::CurrentIfDurable => self
+                .generation_entries()?
+                .into_iter()
+                .filter_map(|(name, _)| parse_revision_name(&name).map(|(_, revision)| revision))
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("segment generation revision exhausted"))?,
+        };
 
         loop {
             let name = GenerationName::parse(format!("gen-{sequence}-rev-{revision}"))
@@ -1555,6 +1594,11 @@ impl SegmentRdbStore {
                     }
                     #[cfg(not(unix))]
                     { self.generations.begin(name.clone()).map(GenerationStaging::Generic) }
+                }
+                StagingSelection::BackgroundScratch => {
+                    self.generations
+                        .begin(name.clone())
+                        .map(GenerationStaging::Generic)
                 }
             };
             match staged {
@@ -1601,7 +1645,7 @@ impl SegmentRdbStore {
             .ok_or_else(|| anyhow!("CURRENT names an unsupported generation `{name}`"))?;
         let manifest = read_generation_manifest(&path)?;
         if manifest.schema_version != 1
-            && manifest.schema_version != GENERATION_MANIFEST_SCHEMA_VERSION
+            && !matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION)
         {
             bail!(
                 "generation {} has unsupported manifest schema {}",
@@ -1774,10 +1818,21 @@ impl SegmentRdbStore {
                 }
             }
         }
+        let compatibility_tree = manifest
+            .as_ref()
+            .filter(|manifest| manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION)
+            .map(|manifest| materialize_flat_reopen_tree(&record.path, manifest))
+            .transpose()?;
         let reopened = engine
             .reopen_from_segment_dir_with_base_rows(&record.path, defer_hnsw, &mapped_bases)
-            .with_context(|| format!("reopen checkpoint {}", record.path.display()))?;
-        if let Some(manifest) = manifest.as_ref().filter(|m| m.schema_version == 2) {
+            .with_context(|| format!("reopen checkpoint {}", record.path.display()));
+        if let Some(tree) = compatibility_tree {
+            for path in tree {
+                let _ = std::fs::remove_dir_all(path);
+            }
+        }
+        let reopened = reopened?;
+        if let Some(manifest) = manifest.as_ref().filter(|m| matches!(m.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION)) {
             let capture = crate::storage::CheckpointCapture {
                 prepared: BTreeMap::new(),
                 prepared_deltas: BTreeMap::new(),
@@ -2175,6 +2230,9 @@ fn validate_catalog_references_with_prior(
     manifest: &SegmentGenerationManifest,
     prior: PriorCatalog<'_>,
 ) -> Result<()> {
+    if manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION {
+        return validate_flat_catalog_references(root, manifest, prior);
+    }
     let mut paths = BTreeSet::new();
     let mut catalog_ids = BTreeSet::new();
     let mut generations = BTreeSet::new();
@@ -2388,6 +2446,78 @@ fn validate_catalog_references_with_prior(
     Ok(())
 }
 
+fn validate_flat_catalog_references(
+    root: &Path,
+    manifest: &SegmentGenerationManifest,
+    prior: PriorCatalog<'_>,
+) -> Result<()> {
+    let mut paths = BTreeSet::new();
+    let mut generations = BTreeSet::new();
+    for collection in &manifest.collections {
+        if collection.collection_generation == 0 || !generations.insert(collection.collection_generation) {
+            bail!("invalid or duplicate collection generation");
+        }
+        let schema = serde_json::from_slice::<serde_json::Value>(&std::fs::read(collection_schema_path(root, collection))?)?;
+        if schema.get("fields") != Some(&collection.schema) {
+            bail!("flat catalog schema does not match checkpoint schema");
+        }
+        let mut delta_counts = BTreeMap::<String, usize>::new();
+        for segment in &collection.segments {
+            if matches!(segment.kind, SegmentKind::Delta) {
+                let field = segment
+                    .field
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("delta must name a field"))?;
+                let count = delta_counts.entry(field.clone()).or_default();
+                *count += 1;
+                if *count > 16 {
+                    bail!("field exceeds sixteen delta segments");
+                }
+            }
+            if Path::new(&segment.path).is_absolute() || segment.path.split('/').any(|part| matches!(part, "" | "." | "..")) {
+                bail!("flat segment path escapes generation");
+            }
+            if !paths.insert(segment.path.clone()) {
+                bail!("duplicate flat segment reference: {}", segment.path);
+            }
+            let target = root.join(&segment.path);
+            let metadata = std::fs::symlink_metadata(&target).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    anyhow!("catalogued segment is missing: {}", target.display())
+                } else {
+                    anyhow::Error::new(error)
+                        .context(format!("inspect flat segment {}", target.display()))
+                }
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                bail!("flat segment is not a regular file: {}", target.display());
+            }
+            if let Some(local) = &segment.local_rows {
+                if !paths.insert(local.path.clone()) {
+                    bail!("duplicate flat row reference: {}", local.path);
+                }
+                let rows = root.join(&local.path);
+                if !std::fs::symlink_metadata(&rows)
+                    .with_context(|| format!("inspect flat row map {}", rows.display()))?
+                    .is_file()
+                {
+                    bail!("flat row map is not a regular file");
+                }
+                if !is_inherited_delta(root, collection, segment, prior)?
+                    && delta_payload_sha256(&target, &rows)? != segment.payload_sha256.as_deref().unwrap_or_default()
+                {
+                    bail!("flat payload checksum does not match catalog");
+                }
+            } else if !is_inherited_delta(root, collection, segment, prior)?
+                && base_payload_sha256(&target)? != segment.payload_sha256.as_deref().unwrap_or_default()
+            {
+                bail!("flat base checksum does not match catalog");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn prepare_live_delta_readers(
     root: &Path,
     collections: &[CollectionCatalog],
@@ -2564,9 +2694,26 @@ fn write_field_deltas(
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| anyhow!("segment ordinal exhausted"))?;
-        let prefix = delta_path_prefix(&collection.collection_id, field, ordinal);
-        let segment_path = format!("{prefix}.lseg");
-        let rows_path = format!("{prefix}.rows.cbor");
+        // A v3 collection already has a flat payload catalog.  Write its new
+        // delta directly into that catalog instead of first creating a
+        // collection subtree and then moving the file during flattening.  A
+        // second checkpoint otherwise has two path authorities for the new
+        // delta: the catalog is made flat while the writer still owns the old
+        // collection-directory path.
+        // Every new manifest this writer publishes is v3.  The catalog built
+        // from the frozen capture can still contain legacy collection paths,
+        // even when its predecessor was v3, so its current paths cannot
+        // choose the output layout.  New deltas must therefore use their v3
+        // destination from the first write.
+        let field_dir = collection_checkpoint_dir_name(field);
+        let segment_path = flat_payload_name(
+            &collection.collection_id,
+            Path::new(&format!("__delta/{field_dir}/{ordinal}.lseg")),
+        );
+        let rows_path = flat_payload_name(
+            &collection.collection_id,
+            Path::new(&format!("__delta/{field_dir}/{ordinal}.rows.cbor")),
+        );
         std::fs::create_dir_all(root.join(&segment_path).parent().unwrap())?;
         let ids: Vec<_> = rows.iter().map(|(id, _)| id.clone()).collect();
         use crate::storage::CheckpointValue;
@@ -2749,26 +2896,23 @@ pub(super) struct StagedMergeCandidate {
     includes_base: bool,
 }
 
-/// Select every eligible field of the deepest eligible collection in
-/// `collections`, reading segment sizes from `root`.
+/// Select one field-level merge from `collections`, reading segment sizes from
+/// `root`.
 ///
-/// A job publishes every eligible field of one collection: the collection
-/// holding the deepest delta stack is the one blocking checkpoint delta
-/// capacity, and draining it in full — rather than one field at a time —
-/// removes the per-field save_gate round-trip that dominates a job's wall
-/// time. A collection whose deepest field ties another's keeps catalog order
-/// — the earlier collection wins — so the selection is deterministic. Within
-/// the selected collection, candidates are ordered deepest-first, then by
-/// field name for ties. A field whose deltas have reached the complete base
-/// size includes the base and all captured deltas instead. Any other
-/// collection's eligible fields are left for the jobs that follow.
+/// The scheduler first chooses the collection with the deepest eligible delta
+/// stack. Ties are deterministic: catalog order wins. Every field tied at
+/// that collection depth is then returned in field-name order. Shallower
+/// eligible fields remain for a later scheduling pass. Unless a selected
+/// field's complete delta stack has reached the base size, that field
+/// contributes exactly the adjacent pair with the smallest combined on-disk
+/// size.
+/// Once the delta stack reaches the base size, the base and all captured
+/// deltas are folded together so the base can be replaced.
 pub(super) fn select_staged_delta_window(
     root: &Path,
     collections: &[CollectionCatalog],
 ) -> Result<Vec<StagedMergeCandidate>> {
-    let mut best_collection: Option<(usize, usize)> = None;
-    let mut per_collection_deltas: Vec<BTreeMap<String, Vec<&SegmentReference>>> =
-        Vec::with_capacity(collections.len());
+    let mut selected_collection: Option<(usize, usize)> = None;
     for (collection_index, collection) in collections.iter().enumerate() {
         let mut by_field = BTreeMap::<String, Vec<&SegmentReference>>::new();
         for segment in &collection.segments {
@@ -2783,24 +2927,36 @@ pub(super) fn select_staged_delta_window(
         }
         let deepest = by_field
             .values()
+            .filter(|deltas| deltas.len() >= 4)
             .map(Vec::len)
-            .filter(|len| *len >= 4)
-            .max();
-        if let Some(depth) = deepest {
-            if best_collection.is_none_or(|(_, best_depth)| depth > best_depth) {
-                best_collection = Some((collection_index, depth));
-            }
+            .max()
+            .unwrap_or(0);
+        if deepest > 0
+            && selected_collection
+                .as_ref()
+                .is_none_or(|(_, selected_depth)| deepest > *selected_depth)
+        {
+            selected_collection = Some((collection_index, deepest));
         }
-        per_collection_deltas.push(by_field);
     }
-    let Some((collection_index, _)) = best_collection else {
+    let Some((collection_index, selected_depth)) = selected_collection else {
         return Ok(Vec::new());
     };
     let collection = &collections[collection_index];
-    let by_field = std::mem::take(&mut per_collection_deltas[collection_index]);
     let mut candidates = Vec::new();
+    let mut by_field = BTreeMap::<String, Vec<&SegmentReference>>::new();
+    for segment in &collection.segments {
+        if matches!(segment.role, SegmentRole::Field)
+            && matches!(segment.kind, SegmentKind::Delta)
+        {
+            by_field
+                .entry(segment.field.clone().expect("field delta has field"))
+                .or_default()
+                .push(segment);
+        }
+    }
     for (field, deltas) in by_field {
-        if deltas.len() < 4 {
+        if deltas.len() < 4 || deltas.len() != selected_depth {
             continue;
         }
         let delta_bytes = deltas.iter().try_fold(0u64, |total, segment| {
@@ -2825,25 +2981,109 @@ pub(super) fn select_staged_delta_window(
                 .checked_add(segment_reference_bytes(root, sidecar)?)
                 .ok_or_else(|| anyhow!("base byte count overflow"))?;
         }
-        candidates.push((
-            deltas.len(),
-            StagedMergeCandidate {
-                collection_index,
-                collection_id: collection.collection_id.clone(),
-                field,
-                inputs: deltas.into_iter().cloned().collect::<Vec<_>>(),
-                base: base.clone(),
-                includes_base: delta_bytes >= base_bytes,
-            },
-        ));
+        let includes_base = delta_bytes >= base_bytes;
+        let inputs = if includes_base {
+            deltas.iter().map(|segment| (*segment).clone()).collect()
+        } else {
+            let mut smallest: Option<(u64, usize)> = None;
+            for (index, pair) in deltas.windows(2).enumerate() {
+                let pair_bytes = segment_reference_bytes(root, pair[0])?
+                    .checked_add(segment_reference_bytes(root, pair[1])?)
+                    .ok_or_else(|| anyhow!("adjacent delta byte count overflow"))?;
+                if smallest.is_none_or(|(best_bytes, _)| pair_bytes < best_bytes) {
+                    smallest = Some((pair_bytes, index));
+                }
+            }
+            let (_, index) =
+                smallest.ok_or_else(|| anyhow!("delta field has no adjacent pair"))?;
+            deltas[index..index + 2]
+                .iter()
+                .map(|segment| (*segment).clone())
+                .collect()
+        };
+        candidates.push(StagedMergeCandidate {
+            collection_index,
+            collection_id: collection.collection_id.clone(),
+            field,
+            inputs,
+            base: base.clone(),
+            includes_base,
+        });
     }
-    // `by_field` iterated in field-name order, so a stable sort on depth alone
-    // keeps ties in field-name order.
-    candidates.sort_by(|(depth_a, _), (depth_b, _)| depth_b.cmp(depth_a));
-    Ok(candidates
-        .into_iter()
-        .map(|(_, candidate)| candidate)
-        .collect())
+    Ok(candidates)
+}
+
+/// Select the next bounded window for a field already admitted to one merge
+/// job. Unlike the initial scheduler selector, this helper also accepts two
+/// or three remaining deltas so one scratch job can drain its chosen fields
+/// without widening collection priority.
+pub(super) fn select_staged_field_window(
+    root: &Path,
+    collection: &CollectionCatalog,
+    collection_index: usize,
+    field: &str,
+) -> Result<Option<StagedMergeCandidate>> {
+    let deltas: Vec<&SegmentReference> = collection
+        .segments
+        .iter()
+        .filter(|segment| {
+            segment.role == SegmentRole::Field
+                && segment.kind == SegmentKind::Delta
+                && segment.field.as_deref() == Some(field)
+        })
+        .collect();
+    if deltas.len() < 2 {
+        return Ok(None);
+    }
+    let base = collection
+        .segments
+        .iter()
+        .find(|segment| {
+            segment.role == SegmentRole::Field
+                && segment.kind == SegmentKind::Base
+                && segment.field.as_deref() == Some(field)
+        })
+        .ok_or_else(|| anyhow!("delta field has no base segment"))?;
+    let delta_bytes = deltas.iter().try_fold(0u64, |total, segment| {
+        total
+            .checked_add(segment_reference_bytes(root, segment)? )
+            .ok_or_else(|| anyhow!("delta byte count overflow"))
+    })?;
+    let mut base_bytes = segment_reference_bytes(root, base)?;
+    if let Some(sidecar) = collection.segments.iter().find(|segment| {
+        segment.role == SegmentRole::VectorEids && segment.field == base.field
+    }) {
+        base_bytes = base_bytes
+            .checked_add(segment_reference_bytes(root, sidecar)?)
+            .ok_or_else(|| anyhow!("base byte count overflow"))?;
+    }
+    let includes_base = delta_bytes >= base_bytes;
+    let inputs = if includes_base {
+        deltas.iter().map(|segment| (*segment).clone()).collect()
+    } else {
+        let mut smallest: Option<(u64, usize)> = None;
+        for (index, pair) in deltas.windows(2).enumerate() {
+            let pair_bytes = segment_reference_bytes(root, pair[0])?
+                .checked_add(segment_reference_bytes(root, pair[1])?)
+                .ok_or_else(|| anyhow!("adjacent delta byte count overflow"))?;
+            if smallest.is_none_or(|(best_bytes, _)| pair_bytes < best_bytes) {
+                smallest = Some((pair_bytes, index));
+            }
+        }
+        let (_, index) = smallest.ok_or_else(|| anyhow!("delta field has no adjacent pair"))?;
+        deltas[index..index + 2]
+            .iter()
+            .map(|segment| (*segment).clone())
+            .collect()
+    };
+    Ok(Some(StagedMergeCandidate {
+        collection_index,
+        collection_id: collection.collection_id.clone(),
+        field: field.to_owned(),
+        inputs,
+        base: base.clone(),
+        includes_base,
+    }))
 }
 
 /// Fold every selected candidate's layers into one compacted output each,
@@ -2857,11 +3097,27 @@ fn compact_staged_delta_windows(
     sequence: u64,
     collections: &mut [CollectionCatalog],
     capture: &mut crate::storage::CheckpointCapture,
+    scratch_delta_readers: &mut BTreeMap<String, Vec<Arc<crate::segment::SegmentReader>>>,
     observer: &dyn MergeObserver,
     candidates: Vec<StagedMergeCandidate>,
 ) -> Result<Vec<compaction::CompactedField>> {
-    let mut outputs = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
+    encode_staged_candidates_in_order(candidates, observer, |candidate| {
+        let collection = collections[candidate.collection_index].clone();
+        let selected = if candidate.includes_base {
+            let mut selected = vec![candidate.base.clone()];
+            selected.extend(candidate.inputs.iter().cloned());
+            selected
+        } else {
+            candidate.inputs.clone()
+        };
+        let output = compaction::write_compacted_field(
+            root,
+            sequence,
+            &collection,
+            &candidate.field,
+            &selected,
+            candidate.includes_base,
+        )?;
         let StagedMergeCandidate {
             collection_index,
             collection_id: _,
@@ -2870,36 +3126,49 @@ fn compact_staged_delta_windows(
             base,
             includes_base,
         } = candidate;
-        outputs.push(compact_one_staged_field(
+        finish_compacted_field(
             root,
-            sequence,
             &mut collections[collection_index],
             field,
             inputs,
             base,
             includes_base,
             capture,
-            observer,
-        )?);
+            scratch_delta_readers,
+            output,
+        )
+    })
+}
+
+/// Notify and encode one candidate before moving to the next one. The merge
+/// worker is already serialized, so this deliberately has no nested pool.
+fn encode_staged_candidates_in_order<T, F>(
+    candidates: Vec<StagedMergeCandidate>,
+    observer: &dyn MergeObserver,
+    mut encode: F,
+) -> Result<Vec<T>>
+where
+    F: FnMut(StagedMergeCandidate) -> Result<T>,
+{
+    let mut outputs = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        observer.observe(MergePhase::BeforeEncode)?;
+        outputs.push(encode(candidate)?);
     }
     Ok(outputs)
 }
 
-/// Fold one field's selected layers into a single compacted output inside the
-/// staged generation already prepared for this job. Every path it reads or
-/// writes lives under that field's own collection directory, which is why the
-/// job's scratch stage needs no other collection linked into it.
 #[allow(clippy::too_many_arguments)]
-fn compact_one_staged_field(
+fn finish_compacted_field(
     root: &Path,
-    sequence: u64,
     collection: &mut CollectionCatalog,
     field: String,
     inputs: Vec<SegmentReference>,
     base: SegmentReference,
     includes_base: bool,
     capture: &mut crate::storage::CheckpointCapture,
-    observer: &dyn MergeObserver,
+    scratch_delta_readers: &mut BTreeMap<String, Vec<Arc<crate::segment::SegmentReader>>>,
+    output: compaction::CompactedField,
 ) -> Result<compaction::CompactedField> {
     let selected = if includes_base {
         let mut selected = vec![base];
@@ -2918,16 +3187,36 @@ fn compact_one_staged_field(
     let live_inputs = if is_hnsw {
         Vec::new()
     } else {
-        let readers = capture
-            .live_delta_inputs
-            .get(&collection.collection_id)
-            .and_then(|fields| fields.get(&field))
+        let readers = scratch_delta_readers
+            .get(&field)
             .cloned()
             .ok_or_else(|| anyhow!("compaction has no captured live input identity"))?;
-        if readers.len() != inputs.len() {
+        let catalog_deltas: Vec<_> = collection
+            .segments
+            .iter()
+            .filter(|segment| {
+                matches!(segment.role, SegmentRole::Field)
+                    && matches!(segment.kind, SegmentKind::Delta)
+                    && segment.field.as_deref() == Some(field.as_str())
+            })
+            .collect();
+        if readers.len() != catalog_deltas.len() {
             bail!("compaction catalog differs from captured live layer count");
         }
-        readers
+        let mut selected_readers = Vec::with_capacity(inputs.len());
+        for input in &inputs {
+            let position = catalog_deltas
+                .iter()
+                .position(|segment| *segment == input)
+                .ok_or_else(|| anyhow!("compaction input is absent from captured catalog"))?;
+            selected_readers.push(
+                readers
+                    .get(position)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("compaction input has no captured reader"))?,
+            );
+        }
+        selected_readers
     };
     let live_base = if includes_base && !is_hnsw {
         Some(
@@ -2941,15 +3230,6 @@ fn compact_one_staged_field(
     } else {
         None
     };
-    observer.observe(MergePhase::BeforeEncode)?;
-    let output = compaction::write_compacted_field(
-        root,
-        sequence,
-        collection,
-        &field,
-        &selected,
-        includes_base,
-    )?;
     if !is_hnsw {
         let local = output
             .output
@@ -2967,10 +3247,8 @@ fn compact_one_staged_field(
         let reader = std::sync::Arc::new(crate::segment::SegmentReader::open(
             &root.join(&output.output.path),
         )?);
-        let staged_inputs = capture
-            .live_delta_inputs
-            .get_mut(&collection.collection_id)
-            .and_then(|fields| fields.get_mut(&field))
+        let staged_inputs = scratch_delta_readers
+            .get_mut(&field)
             .expect("staged live input identity validated");
         if includes_base {
             staged_inputs.clear();
@@ -2991,6 +3269,11 @@ fn compact_one_staged_field(
                 .ok_or_else(|| anyhow!("staged compaction input identity changed"))?;
             staged_inputs.splice(start..start + live_inputs.len(), [reader.clone()]);
         }
+        capture
+            .live_delta_inputs
+            .entry(collection.collection_id.clone())
+            .or_default()
+            .insert(field.clone(), staged_inputs.clone());
         capture
             .prepared_compactions
             .entry(collection.collection_id.clone())
@@ -3107,9 +3390,24 @@ fn validate_field_delta(
         .local_rows
         .as_ref()
         .ok_or_else(|| anyhow!("delta must include local rows"))?;
-    let prefix = delta_path_prefix(&collection.collection_id, field, segment.ordinal);
-    if segment.path != format!("{prefix}.lseg")
-        || local.path != format!("{prefix}.rows.cbor")
+    let (expected_segment_path, expected_rows_path) = if flat_layout(collection) {
+        let field_dir = collection_checkpoint_dir_name(field);
+        (
+            flat_payload_name(
+                &collection.collection_id,
+                Path::new(&format!("__delta/{field_dir}/{}.lseg", segment.ordinal)),
+            ),
+            flat_payload_name(
+                &collection.collection_id,
+                Path::new(&format!("__delta/{field_dir}/{}.rows.cbor", segment.ordinal)),
+            ),
+        )
+    } else {
+        let prefix = delta_path_prefix(&collection.collection_id, field, segment.ordinal);
+        (format!("{prefix}.lseg"), format!("{prefix}.rows.cbor"))
+    };
+    if segment.path != expected_segment_path
+        || local.path != expected_rows_path
         || local.format != "lumen-local-eids-cbor-v1"
         || local.count == 0
     {
@@ -3274,6 +3572,128 @@ fn collection_checkpoint_dir_name(name: &str) -> String {
     name.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn flat_payload_name(collection: &str, relative: &Path) -> String {
+    let mut value = collection
+        .bytes()
+        .chain(std::iter::once(b'_'))
+        .collect::<Vec<_>>();
+    for byte in relative.to_string_lossy().bytes() {
+        value.extend(format!("{byte:02x}").bytes());
+    }
+    format!("{}/{}", FLAT_PAYLOAD_DIR, String::from_utf8(value).expect("ascii"))
+}
+
+pub(super) fn flat_layout(collection: &CollectionCatalog) -> bool {
+    collection.segments.iter().any(|segment| segment.path.starts_with("payload/"))
+}
+
+pub(super) fn collection_schema_path(root: &Path, collection: &CollectionCatalog) -> PathBuf {
+    if flat_layout(collection) {
+        root.join(flat_payload_name(&collection.collection_id, Path::new(CHECKPOINT_SCHEMA_FILE)))
+    } else {
+        root.join(collection_checkpoint_dir_name(&collection.collection_id)).join(CHECKPOINT_SCHEMA_FILE)
+    }
+}
+
+pub(super) fn collection_output_path(root: &Path, collection: &CollectionCatalog, relative: &str) -> PathBuf {
+    if flat_layout(collection) {
+        root.join(flat_payload_name(&collection.collection_id, Path::new(relative)))
+    } else {
+        root.join(relative)
+    }
+}
+
+pub(super) fn collection_output_relative(collection: &CollectionCatalog, relative: &str) -> String {
+    if flat_layout(collection) {
+        flat_payload_name(&collection.collection_id, Path::new(relative))
+    } else {
+        relative.to_owned()
+    }
+}
+
+fn materialize_flat_reopen_tree(root: &Path, manifest: &SegmentGenerationManifest) -> Result<Vec<PathBuf>> {
+    let mut created = Vec::new();
+    for collection in &manifest.collections {
+        let dir = root.join(collection_checkpoint_dir_name(&collection.collection_id));
+        std::fs::create_dir_all(&dir)?;
+        created.push(dir.clone());
+        let schema = collection_schema_path(root, collection);
+        std::fs::hard_link(schema, dir.join(CHECKPOINT_SCHEMA_FILE))?;
+        let sidecar: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(CHECKPOINT_SCHEMA_FILE))?)?;
+        let layout = crate::storage::CheckpointLayout::from_sidecar(&sidecar)?;
+        for segment in &collection.segments {
+            let relative = if matches!(segment.kind, SegmentKind::Delta) {
+                let field = segment.field.as_deref().ok_or_else(|| anyhow!("flat delta has no field"))?;
+                format!("{}/__delta/{}/{}.lseg", collection_checkpoint_dir_name(&collection.collection_id), collection_checkpoint_dir_name(field), segment.ordinal)
+            } else {
+                match segment.role {
+                    SegmentRole::CollectionEids => format!("{}/_collection.lmeta.lseg", collection_checkpoint_dir_name(&collection.collection_id)),
+                    SegmentRole::Field => format!("{}/{}.lseg", collection_checkpoint_dir_name(&collection.collection_id), layout.field_stem(segment.field.as_deref().ok_or_else(|| anyhow!("flat field has no name"))?)),
+                    SegmentRole::VectorEids => format!("{}/{}.eids.lseg", collection_checkpoint_dir_name(&collection.collection_id), layout.field_stem(segment.field.as_deref().ok_or_else(|| anyhow!("flat vector field has no name"))?)),
+                }
+            };
+            let destination = root.join(&relative);
+            std::fs::create_dir_all(destination.parent().unwrap())?;
+            std::fs::hard_link(root.join(&segment.path), &destination)?;
+            if let Some(rows) = &segment.local_rows {
+                let row_relative = format!("{}.rows.cbor", relative.strip_suffix(".lseg").unwrap_or(&relative));
+                let row_destination = root.join(row_relative);
+                std::fs::hard_link(root.join(&rows.path), row_destination)?;
+            }
+        }
+    }
+    Ok(created)
+}
+
+fn flatten_checkpoint_payload(root: &Path, collections: &mut [CollectionCatalog]) -> Result<()> {
+    let payload = root.join(FLAT_PAYLOAD_DIR);
+    std::fs::create_dir_all(&payload)?;
+    for collection in collections {
+        let source = root.join(collection_checkpoint_dir_name(&collection.collection_id));
+        let mut files = Vec::new();
+        let mut pending = vec![source.clone()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let metadata = std::fs::symlink_metadata(&path)?;
+                if metadata.is_dir() {
+                    pending.push(path);
+                } else if metadata.is_file() {
+                    files.push(path);
+                } else {
+                    bail!("checkpoint contains unsupported payload entry: {}", path.display());
+                }
+            }
+        }
+        let mut moved = BTreeMap::new();
+        for file in files {
+            let relative = file.strip_prefix(&source)?;
+            let old = format!("{}/{}", collection_checkpoint_dir_name(&collection.collection_id), relative.to_string_lossy());
+            let target_rel = flat_payload_name(&collection.collection_id, relative);
+            let target = root.join(&target_rel);
+            std::fs::rename(&file, &target)?;
+            moved.insert(old, target_rel);
+        }
+        for segment in &mut collection.segments {
+            if let Some(path) = moved.get(&segment.path) {
+                segment.path = path.clone();
+            }
+            if let Some(rows) = &mut segment.local_rows {
+                if let Some(path) = moved.get(&rows.path) {
+                    rows.path = path.clone();
+                }
+            }
+        }
+        let old_schema = format!("{}/{}", collection_checkpoint_dir_name(&collection.collection_id), CHECKPOINT_SCHEMA_FILE);
+        if !moved.contains_key(&old_schema) {
+            bail!("collection schema was not staged");
+        }
+        std::fs::remove_dir_all(source)?;
+    }
+    Ok(())
+}
+
 fn write_generation_manifest(path: &Path, manifest: &SegmentGenerationManifest) -> Result<()> {
     let file = std::fs::File::create(path.join(GENERATION_MANIFEST_FILE))
         .with_context(|| format!("create generation manifest under {}", path.display()))?;
@@ -3344,6 +3764,14 @@ fn read_generation_manifest(path: &Path) -> Result<SegmentGenerationManifest> {
             }
             Ok(manifest)
         }
+        Some(3) => {
+            let manifest: SegmentGenerationManifest = serde_json::from_reader(reader)
+                .with_context(|| format!("decode v3 generation manifest {}", manifest_path.display()))?;
+            if manifest.schema_version != 3 {
+                bail!("unknown generation layout for schema version 3");
+            }
+            Ok(manifest)
+        }
         Some(version) => bail!("unknown manifest schema version {version}"),
         None => bail!("generation manifest has no schema_version"),
     }
@@ -3382,7 +3810,7 @@ fn register_checkpoint_inherited_files(
                 && old.schema == collection.schema
         }));
         if same_collection && capture.reused.contains(&collection.collection_id) {
-            staged.inherit_current_file(format!("{}/{}", collection_checkpoint_dir_name(&collection.collection_id), CHECKPOINT_SCHEMA_FILE))?;
+            staged.inherit_current_file(collection_output_relative(collection, CHECKPOINT_SCHEMA_FILE))?;
         }
         for segment in &collection.segments {
             if exact_prior_segment_reference(collection, segment, prior) {
@@ -3463,6 +3891,7 @@ fn validate_generation_entry(
     record: &GenerationRecord,
     references: &BTreeMap<&str, &SegmentReference>,
     v2: bool,
+    flat: bool,
 ) -> Result<bool> {
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() {
@@ -3478,6 +3907,9 @@ fn validate_generation_entry(
         bail!("unexpected generation entry: {}", path.display());
     }
     validate_real_tree(path)?;
+    if flat && path.file_name().and_then(|name| name.to_str()) == Some(FLAT_PAYLOAD_DIR) {
+        return Ok(false);
+    }
 
     let schema_path = path.join(CHECKPOINT_SCHEMA_FILE);
     let schema_metadata = std::fs::symlink_metadata(&schema_path)
@@ -3568,7 +4000,8 @@ fn validate_generation_layout_with_prior(
     };
     let v2 = manifest
         .as_ref()
-        .is_some_and(|manifest| manifest.schema_version == 2);
+        .is_some_and(|manifest| matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION));
+    let flat = manifest.as_ref().is_some_and(|manifest| manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION);
     // Validate names before using the catalog to resolve a physical base.
     // A malformed reference must not be mistaken for an omitted base.
     if v2 {
@@ -3613,7 +4046,7 @@ fn validate_generation_layout_with_prior(
     }
     let mut collections = 0usize;
     for outcome in map_generation_pass(&entries, GENERATION_VALIDATE_WORKERS, |path| {
-        validate_generation_entry(path, record, &references, v2)
+        validate_generation_entry(path, record, &references, v2, flat)
     }) {
         if outcome? {
             collections += 1;
@@ -3633,7 +4066,7 @@ fn validate_generation_layout_with_prior(
         let manifest = read_generation_manifest(&record.path)?;
         let expected_previous = record.previous.as_ref().map(GenerationName::as_str);
         if (manifest.schema_version != 1
-            && manifest.schema_version != GENERATION_MANIFEST_SCHEMA_VERSION)
+            && !matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION))
             || manifest.checkpoint_sequence != record.sequence
             || manifest.revision != record.revision
             || manifest.previous.as_deref() != expected_previous
@@ -3643,7 +4076,7 @@ fn validate_generation_layout_with_prior(
                 record.name
             );
         }
-        if manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION {
+        if matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION) {
             validate_catalog_references_with_prior(&record.path, &manifest, prior)?;
         }
     }
@@ -3728,6 +4161,84 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    struct BlockingBeforeEncode {
+        state: Mutex<(usize, bool)>,
+        wake: std::sync::Condvar,
+    }
+
+    impl MergeObserver for BlockingBeforeEncode {
+        fn observe(&self, phase: MergePhase) -> std::io::Result<()> {
+            assert_eq!(phase, MergePhase::BeforeEncode);
+            let mut state = self.state.lock().unwrap();
+            state.0 += 1;
+            self.wake.notify_all();
+            if state.0 == 1 {
+                while !state.1 {
+                    state = self.wake.wait(state).unwrap();
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn test_merge_candidate(field: &str) -> StagedMergeCandidate {
+        let segment = SegmentReference {
+            role: SegmentRole::Field,
+            field: Some(field.to_owned()),
+            ordinal: 1,
+            kind: SegmentKind::Delta,
+            format: SegmentFormat::LsegV1,
+            path: format!("{field}.delta.lseg"),
+            local_rows: None,
+            applied_seq: Some(1),
+            payload_sha256: None,
+        };
+        StagedMergeCandidate {
+            collection_index: 0,
+            collection_id: "test".to_owned(),
+            field: field.to_owned(),
+            inputs: vec![segment.clone()],
+            base: SegmentReference {
+                kind: SegmentKind::Base,
+                path: format!("{field}.base.lseg"),
+                ..segment
+            },
+            includes_base: false,
+        }
+    }
+
+    #[test]
+    fn sequential_candidate_encoding_waits_before_starting_the_next_candidate() {
+        let observer = Arc::new(BlockingBeforeEncode {
+            state: Mutex::new((0, false)),
+            wake: std::sync::Condvar::new(),
+        });
+        let encoded = Arc::new(Mutex::new(Vec::new()));
+        let candidates = vec![test_merge_candidate("alpha"), test_merge_candidate("beta")];
+        let worker_observer = Arc::clone(&observer);
+        let worker_encoded = Arc::clone(&encoded);
+        let worker = std::thread::spawn(move || {
+            encode_staged_candidates_in_order(candidates, worker_observer.as_ref(), |candidate| {
+                let field = candidate.field;
+                worker_encoded.lock().unwrap().push(field.clone());
+                Ok(field)
+            })
+        });
+
+        let mut state = observer.state.lock().unwrap();
+        while state.0 == 0 {
+            state = observer.wake.wait(state).unwrap();
+        }
+        assert_eq!(state.0, 1);
+        assert!(encoded.lock().unwrap().is_empty());
+        state.1 = true;
+        observer.wake.notify_all();
+        drop(state);
+
+        assert_eq!(worker.join().unwrap().unwrap(), vec!["alpha", "beta"]);
+        assert_eq!(encoded.lock().unwrap().as_slice(), ["alpha", "beta"]);
+    }
+
     #[test]
     fn first_ordinary_save_publishes_from_an_empty_current() {
         let dir = tempfile::tempdir().unwrap();
@@ -3739,6 +4250,94 @@ mod tests {
         store.save(&engine, 1).unwrap();
 
         assert!(matches!(store.generations.read_current().unwrap(), CurrentTarget::Generation(_)));
+    }
+
+    #[test]
+    fn flat_layout_writes_and_reopens_multiple_collections() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        engine.create_collection("v", kw_schema()).unwrap();
+        index_kw_in(&engine, "u", "u1", "one");
+        index_kw_in(&engine, "v", "v1", "two");
+        store.save(&engine, 1).unwrap();
+        let (cold, _) = store.load_latest().unwrap().unwrap();
+        assert_eq!(cold.list_collections().unwrap(), vec!["u", "v"]);
+    }
+
+    #[test]
+    fn flat_layout_second_checkpoint_and_cold_restart_completes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        engine.create_collection("v", kw_schema()).unwrap();
+        index_kw_in(&engine, "u", "u1", "one");
+        index_kw_in(&engine, "v", "v1", "two");
+        store.save(&engine, 1).unwrap();
+        index_kw_in(&engine, "u", "u2", "three");
+        store.save(&engine, 2).unwrap();
+        let (cold, sequence) = store.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 2);
+        assert_eq!(cold.list_collections().unwrap(), vec!["u", "v"]);
+    }
+
+    #[test]
+    fn flat_layout_rejects_more_than_sixteen_deltas_per_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw_in(&engine, "u", "u1", "one");
+        store.save(&engine, 1).unwrap();
+        index_kw_in(&engine, "u", "u2", "two");
+        store.save(&engine, 2).unwrap();
+
+        let generation = current_generation(&store);
+        let generation_path = dir.path().join(generation.as_str());
+        let mut manifest = read_generation_manifest(&generation_path).unwrap();
+        let collection = manifest
+            .collections
+            .iter_mut()
+            .find(|collection| collection.collection_id == "u")
+            .unwrap();
+        let template = collection
+            .segments
+            .iter()
+            .find(|segment| matches!(segment.kind, SegmentKind::Delta))
+            .cloned()
+            .expect("second save must retain a delta for the cap fixture");
+        let template_rows = template.local_rows.clone().unwrap();
+        collection
+            .segments
+            .retain(|segment| !matches!(segment.kind, SegmentKind::Delta));
+        for ordinal in 1..=17_u32 {
+            let mut delta = template.clone();
+            delta.ordinal = ordinal;
+            delta.path = format!("payload/cap-delta-{ordinal}.lseg");
+            let mut rows = template_rows.clone();
+            rows.path = format!("payload/cap-delta-{ordinal}.rows.cbor");
+            delta.local_rows = Some(rows.clone());
+            std::fs::hard_link(
+                generation_path.join(&template.path),
+                generation_path.join(&delta.path),
+            )
+            .unwrap();
+            std::fs::hard_link(
+                generation_path.join(&template_rows.path),
+                generation_path.join(&rows.path),
+            )
+            .unwrap();
+            collection.segments.push(delta);
+        }
+        let error = validate_catalog_references(&generation_path, &manifest).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("field exceeds sixteen delta segments"),
+            "unexpected v3 delta-cap error: {error:#}"
+        );
     }
 
     struct FailInheritedPayload {
@@ -4165,6 +4764,26 @@ mod tests {
     }
 
     #[test]
+    fn background_scratch_does_not_consume_published_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "one", "base");
+        store.save(&engine, 1).unwrap();
+
+        let scratch = store.begin_background_merge_stage(1).unwrap();
+        assert_eq!(scratch.generation().as_str(), "gen-1-rev-0");
+        let (revision, publication) = store
+            .begin_next_generation_selected(1, StagingSelection::CurrentIfDurable)
+            .unwrap();
+        assert_eq!(revision, 2);
+
+        drop(publication);
+        drop(scratch);
+    }
+
+    #[test]
     fn background_worker_drains_compaction_requests_for_every_ready_field() {
         let dir = tempfile::tempdir().unwrap();
         let store = SegmentRdbStore::new(dir.path()).unwrap();
@@ -4209,7 +4828,7 @@ mod tests {
         write_generation_manifest(
             &staging_path,
             &SegmentGenerationManifest {
-                schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
+            schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
                 checkpoint_sequence: sequence,
                 revision,
                 previous: previous.map(|name| name.as_str().to_owned()),
@@ -6035,6 +6654,48 @@ mod tests {
         assert!(
             during_sync.is_ok(),
             "apply blocked by checkpoint file fsync"
+        );
+    }
+
+    #[test]
+    fn flat_checkpoint_syncs_payload_and_generation_root_for_one_changed_collection() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountDirectorySync(Arc<AtomicUsize>);
+        impl FailureInjector for CountDirectorySync {
+            fn check(&self, point: &storage_durable::FailurePoint) -> std::io::Result<()> {
+                if point.step == storage_durable::CommitStep::SyncDirectory {
+                    self.0.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let syncs = Arc::new(AtomicUsize::new(0));
+        let store = SegmentRdbStore::new_with_failure_injector(
+            dir.path(),
+            Arc::new(CountDirectorySync(syncs.clone())),
+        )
+        .unwrap();
+        let engine = Arc::new(Engine::new());
+        for collection in ["c0", "c1", "c2", "c3", "c4"] {
+            engine.create_collection(collection, kw_schema()).unwrap();
+        }
+        index_kw_in(&engine, "c0", "c0", "first");
+        store.save(&engine, 1).unwrap();
+        syncs.store(0, Ordering::Relaxed);
+
+        index_kw_in(&engine, "c0", "c0", "second");
+        store.save(&engine, 2).unwrap();
+
+        // v3 stores all durable payload files under one flat directory. The
+        // commit still syncs that directory and the generation root, but it
+        // no longer creates or syncs one directory per unchanged collection.
+        assert_eq!(
+            syncs.load(Ordering::Relaxed),
+            2,
+            "expected the flat payload directory and generation root to be synced"
         );
     }
 

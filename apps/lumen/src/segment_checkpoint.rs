@@ -94,40 +94,105 @@ impl SegmentCheckpointDriver {
     }
 }
 
-/// A completed attempt suppresses only the work revision it sampled. A later
-/// direct Engine mutation rearms even when the writer WAL sequence is unchanged.
+/// One high-water crossing schedules one immediate checkpoint. Further work
+/// above the threshold waits for the normal post-completion period, until the
+/// pending total drains below the re-arm threshold and crosses it again. A
+/// capacity request can join the one immediate attempt for the current
+/// pressure epoch. Further request revisions stay coalesced until that
+/// pressure drains.
 struct CheckpointSchedule {
     period: Duration,
     next_deadline: Instant,
-    last_completed_work_revision: Option<u64>,
+    early_attempted: bool,
+    immediate_successor: Option<u64>,
 }
+
+// Do not re-arm on a brief dip below the 128 MiB trigger. A real drain must
+// leave enough headroom before the next crossing can schedule an immediate
+// checkpoint; explicit capacity requests share that same pressure epoch.
+const CHECKPOINT_REARM_THRESHOLD: usize = crate::change_budget::CHECKPOINT_TRIGGER / 2;
 
 impl CheckpointSchedule {
     fn new(period: Duration, now: Instant) -> Self {
         Self {
             period,
             next_deadline: now + period,
-            last_completed_work_revision: None,
+            early_attempted: false,
+            immediate_successor: None,
         }
     }
 
-    fn should_attempt(&self, now: Instant, pending: Snapshot, work_revision: u64) -> bool {
-        now >= self.next_deadline
-            || (pending.checkpoint_needed()
-                && self
-                    .last_completed_work_revision
-                    .is_none_or(|completed| work_revision > completed))
-            || (pending
-                .checkpoint_request_revision
-                .is_some_and(|requested| requested <= work_revision)
-                && self
-                    .last_completed_work_revision
-                    .is_none_or(|completed| work_revision > completed))
+    fn should_attempt(&mut self, now: Instant, pending: Snapshot, _work_revision: u64) -> bool {
+        if pending.total < CHECKPOINT_REARM_THRESHOLD {
+            self.early_attempted = false;
+        }
+        let periodic_due = now >= self.next_deadline;
+        if periodic_due {
+            // A periodic attempt does not reset the pressure epoch. If it
+            // runs while charge is still present, later request revisions
+            // stay coalesced until the real drain below the threshold.
+            if pending.total >= CHECKPOINT_REARM_THRESHOLD {
+                self.early_attempted = true;
+            }
+            return true;
+        }
+        let early = !self.early_attempted && pending.checkpoint_needed();
+        if early {
+            self.early_attempted = true;
+        }
+        early
     }
 
-    fn completed(&mut self, now: Instant, work_revision: u64) {
-        self.last_completed_work_revision = Some(work_revision);
+    fn completed(&mut self, now: Instant, pending: Snapshot) {
+        if pending.total >= CHECKPOINT_REARM_THRESHOLD {
+            self.early_attempted = true;
+        }
         self.next_deadline = now + self.period;
+    }
+
+    fn take_successor(
+        &mut self,
+        owner: Option<crate::change_budget::OwnerCapacityState>,
+    ) -> bool {
+        let Some(armed_revision) = self.immediate_successor.take() else {
+            return false;
+        };
+        owner.is_some_and(|owner| {
+            owner.active >= crate::change_budget::CHECKPOINT_TRIGGER
+                && owner.work_revision >= armed_revision
+        })
+    }
+
+    fn completed_success(
+        &mut self,
+        now: Instant,
+        after: Snapshot,
+        owner_before: Option<crate::change_budget::OwnerCapacityState>,
+        owner_after: Option<crate::change_budget::OwnerCapacityState>,
+        successor_attempt: bool,
+    ) {
+        self.next_deadline = now + self.period;
+        self.early_attempted = after.total >= CHECKPOINT_REARM_THRESHOLD;
+        self.immediate_successor = if !successor_attempt {
+            match (owner_before, owner_after) {
+                (Some(before), Some(after))
+                    if after.active > 0
+                        && after.work_revision > before.work_revision
+                        && (after.active >= crate::change_budget::CHECKPOINT_TRIGGER
+                            || after
+                                .checkpoint_request_revision
+                                .is_some_and(|revision| revision > before.work_revision)) =>
+                {
+                    Some(after.work_revision)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if after.total < crate::change_budget::CHECKPOINT_TRIGGER {
+            self.early_attempted = false;
+        }
     }
 }
 
@@ -255,18 +320,38 @@ impl SegmentCheckpointSink {
                 let now = Instant::now();
                 let pending = budget.snapshot();
                 let work_revision = pending.work_revision;
-                if schedule.should_attempt(now, pending, work_revision) {
-                    if let Err(error) = self.checkpoint_with_fence(periodic_fence.clone()).await {
-                        if crate::coordinator::is_storage_full(&error) {
-                            self.engine.metrics().mark_storage_degraded();
+                let owner_before = self.engine.capacity_owner_state();
+                let successor_attempt = schedule.take_successor(owner_before);
+                let ordinary_attempt = schedule.should_attempt(now, pending, work_revision);
+                if successor_attempt || ordinary_attempt {
+                    match self.checkpoint_with_fence(periodic_fence.clone()).await {
+                        Ok(_) => {
+                            let after = budget.snapshot();
+                            let owner_after = self.engine.capacity_owner_state();
+                            if let Some(request_revision) =
+                                owner_after.and_then(|owner| owner.checkpoint_request_revision)
+                            {
+                                self.engine
+                                    .consume_checkpoint_request(request_revision);
+                            }
+                            schedule.completed_success(
+                                Instant::now(),
+                                after,
+                                owner_before,
+                                owner_after,
+                                successor_attempt,
+                            );
                         }
-                        tracing::warn!(error = %format!("{error:#}"), "periodic segment checkpoint failed");
+                        Err(error) => {
+                            if crate::coordinator::is_storage_full(&error) {
+                                self.engine.metrics().mark_storage_degraded();
+                            }
+                            tracing::warn!(error = %format!("{error:#}"), "periodic segment checkpoint failed");
+                            // Failed checkpoints retain the normal period
+                            // backoff and consume the pre-attempt request.
+                            schedule.completed(Instant::now(), pending);
+                        }
                     }
-                    // Reset on both success and failure. New work that was
-                    // applied during the attempt has a greater revision and
-                    // gets an immediate next-loop attempt; unchanged high
-                    // work waits one full period.
-                    schedule.completed(Instant::now(), work_revision);
                     while notices_rx.try_recv().is_ok() {}
                     continue;
                 }
@@ -991,7 +1076,7 @@ mod tests {
     #[test]
     fn initial_high_work_runs_before_the_first_deadline() {
         let now = Instant::now();
-        let schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
         assert!(schedule.should_attempt(
             now,
             snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 1, None),
@@ -1000,17 +1085,161 @@ mod tests {
     }
 
     #[test]
-    fn same_wal_sequence_direct_change_rearms_after_an_attempt() {
+    fn high_work_does_not_recheckpoint_for_every_new_revision() {
         let now = Instant::now();
         let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
         let high = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 1, None);
         assert!(schedule.should_attempt(now, high, 1));
-        schedule.completed(now + Duration::from_secs(2), 1);
-        // Fixture WAL sequence stays 7. The direct change has work revision 2.
-        assert!(schedule.should_attempt(
+        schedule.completed(now + Duration::from_secs(2), high);
+        // New work remains covered by the completed high-water checkpoint.
+        assert!(!schedule.should_attempt(
             now + Duration::from_secs(2),
             snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 2, None),
             2,
+        ));
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(2),
+            snapshot(0, 2, None),
+            2,
+        ));
+        assert!(schedule.should_attempt(
+            now + Duration::from_secs(2),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 3, None),
+            3,
+        ));
+    }
+
+    #[test]
+    fn transient_dip_below_trigger_does_not_rearm_high_work() {
+        let now = Instant::now();
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
+        let high = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 1, None);
+        assert!(schedule.should_attempt(now, high, 1));
+        schedule.completed(now + Duration::from_secs(1), high);
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(1),
+            snapshot(CHECKPOINT_REARM_THRESHOLD + 1, 2, None),
+            2,
+        ));
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(1),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 3, None),
+            3,
+        ));
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(1),
+            snapshot(CHECKPOINT_REARM_THRESHOLD - 1, 4, None),
+            4,
+        ));
+        assert!(schedule.should_attempt(
+            now + Duration::from_secs(1),
+            high,
+            5,
+        ));
+    }
+
+    #[test]
+    fn request_revisions_do_not_bypass_high_water_or_period() {
+        let now = Instant::now();
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
+        let first = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 10, Some(10));
+        assert!(schedule.should_attempt(now, first, 10));
+        schedule.completed(now + Duration::from_secs(1), first);
+
+        // Request revisions are wake hints only after the completed attempt.
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(1),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 11, Some(11)),
+            11,
+        ));
+        assert!(schedule.should_attempt(
+            now + Duration::from_secs(31),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 12, Some(12)),
+            12,
+        ));
+        schedule.completed(
+            now + Duration::from_secs(32),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 12, Some(12)),
+        );
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(32),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 13, Some(13)),
+            13,
+        ));
+
+        // A real drain re-arms immediate capacity relief for the next crossing.
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(2),
+            snapshot(CHECKPOINT_REARM_THRESHOLD - 1, 13, None),
+            13,
+        ));
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(2),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 14, Some(14)),
+            14,
+        ));
+    }
+
+    #[test]
+    fn successful_high_checkpoint_immediately_retries_new_publishable_work() {
+        let now = Instant::now();
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(3600), now);
+        let before = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 10, Some(10));
+        assert!(schedule.should_attempt(now, before, 10));
+        schedule.completed_success(
+            now + Duration::from_secs(1),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER + 1, 11, Some(11)),
+            Some(crate::change_budget::OwnerCapacityState {
+                active: 0,
+                frozen: 0,
+                work_revision: 10,
+                checkpoint_request_revision: None,
+            }),
+            Some(crate::change_budget::OwnerCapacityState {
+                active: crate::change_budget::CHECKPOINT_TRIGGER + 1,
+                frozen: 0,
+                work_revision: 11,
+                checkpoint_request_revision: Some(11),
+            }),
+            false,
+        );
+        let successor_owner = Some(crate::change_budget::OwnerCapacityState {
+            active: crate::change_budget::CHECKPOINT_TRIGGER + 1,
+            frozen: 0,
+            work_revision: 11,
+            checkpoint_request_revision: Some(11),
+        });
+        assert!(schedule.take_successor(successor_owner));
+        assert!(!schedule.take_successor(successor_owner));
+    }
+
+    #[test]
+    fn successful_checkpoint_below_trigger_rearms_next_crossing() {
+        let now = Instant::now();
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(3600), now);
+        let before = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 10, Some(10));
+        assert!(schedule.should_attempt(now, before, 10));
+        schedule.completed_success(
+            now + Duration::from_secs(1),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER - 1, 10, Some(10)),
+            Some(crate::change_budget::OwnerCapacityState {
+                active: 0,
+                frozen: 0,
+                work_revision: 10,
+                checkpoint_request_revision: None,
+            }),
+            Some(crate::change_budget::OwnerCapacityState {
+                active: 0,
+                frozen: 0,
+                work_revision: 10,
+                checkpoint_request_revision: Some(10),
+            }),
+            false,
+        );
+        assert!(schedule.should_attempt(
+            now + Duration::from_secs(1),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 11, Some(11)),
+            11,
         ));
     }
 
@@ -1019,20 +1248,20 @@ mod tests {
         let now = Instant::now();
         let mut schedule = CheckpointSchedule::new(Duration::from_secs(10), now);
         let high = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 1, None);
-        schedule.completed(now + Duration::from_secs(3), 1);
+        schedule.completed(now + Duration::from_secs(3), high);
         assert!(!schedule.should_attempt(now + Duration::from_secs(12), high, 1));
         assert!(schedule.should_attempt(now + Duration::from_secs(13), high, 1));
     }
 
     #[test]
-    fn blocked_admission_request_runs_below_soft_limit_once_per_work_revision() {
+    fn blocked_admission_request_is_consumed_once() {
         let now = Instant::now();
         let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
         let requested = snapshot(100 * 1024 * 1024, 7, Some(7));
-        assert!(schedule.should_attempt(now, requested, 7));
-        schedule.completed(now + Duration::from_secs(1), 7);
+        assert!(!schedule.should_attempt(now, requested, 7));
+        schedule.completed(now + Duration::from_secs(1), requested);
         assert!(!schedule.should_attempt(now + Duration::from_secs(1), requested, 7));
-        assert!(schedule.should_attempt(
+        assert!(!schedule.should_attempt(
             now + Duration::from_secs(1),
             snapshot(100 * 1024 * 1024, 8, Some(7)),
             8,
@@ -1042,7 +1271,7 @@ mod tests {
     #[test]
     fn no_work_has_no_checkpoint_request_attempt() {
         let now = Instant::now();
-        let schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
         assert!(!schedule.should_attempt(now, snapshot(0, 0, None), 0));
     }
 
@@ -1057,7 +1286,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn budget_wake_runs_real_checkpoint_again_with_unchanged_wal_sequence() {
+    async fn budget_wake_does_not_repeat_high_checkpoint_for_each_small_change() {
         let root = tempfile::tempdir().unwrap();
         let engine = Arc::new(Engine::new());
         let store = Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap());
@@ -1090,7 +1319,12 @@ mod tests {
             "unchanged high work must not spin checkpoints"
         );
         owner.try_reserve(1).unwrap().commit().unwrap();
-        wait_for_checkpoint_count(&engine, 2).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(
+            engine.metrics().segment_checkpoint_completed_total.get(),
+            1,
+            "small work under the same high-water window must not recheckpoint"
+        );
         assert_eq!(writer.applied_seq(), 7);
         assert_eq!(
             store.load_current_generation().unwrap().unwrap().sequence,

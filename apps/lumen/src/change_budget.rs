@@ -73,6 +73,7 @@ struct OwnerState {
     resident: BTreeMap<u64, usize>,
     current_capture_epoch: u64,
     work_revision: u64,
+    checkpoint_request_revision: Option<u64>,
     retired: bool,
 }
 
@@ -173,6 +174,7 @@ pub(crate) struct OwnerCapacityState {
     pub(crate) active: usize,
     pub(crate) frozen: usize,
     pub(crate) work_revision: u64,
+    pub(crate) checkpoint_request_revision: Option<u64>,
 }
 
 /// One engine or restore candidate's accounting namespace. Retire only after
@@ -481,6 +483,41 @@ impl Default for ChangeBudget {
 }
 
 impl Owner {
+    pub(crate) fn request_checkpoint(&self) -> bool {
+        let mut state = self
+            .budget
+            .0
+            .state
+            .lock()
+            .expect("change budget lock poisoned");
+        let Some(owner) = state.owners.get_mut(&self.id) else {
+            return false;
+        };
+        if owner.active == 0 && owner.frozen.is_empty() {
+            return false;
+        }
+        owner.checkpoint_request_revision = Some(owner.work_revision);
+        self.budget.0.wake.signal();
+        true
+    }
+
+    pub(crate) fn consume_checkpoint_request(&self, revision: Option<u64>) {
+        let Some(revision) = revision else {
+            return;
+        };
+        let mut state = self
+            .budget
+            .0
+            .state
+            .lock()
+            .expect("change budget lock poisoned");
+        if let Some(owner) = state.owners.get_mut(&self.id) {
+            if owner.checkpoint_request_revision == Some(revision) {
+                owner.checkpoint_request_revision = None;
+            }
+        }
+    }
+
     pub fn try_reserve(&self, bytes: usize) -> Result<Reservation, AdmissionError> {
         self.budget.reserve(&self.lifetime, bytes, false)
     }
@@ -542,6 +579,7 @@ impl Owner {
                 .expect("active overflow"),
             frozen,
             work_revision: owner.work_revision,
+            checkpoint_request_revision: owner.checkpoint_request_revision,
         })
     }
 
@@ -1958,6 +1996,7 @@ mod tests {
                 active: 0,
                 frozen: 0,
                 work_revision: 0,
+                checkpoint_request_revision: None,
             },
             "another Engine's active work and local reservations are not publishable here"
         );
@@ -1968,6 +2007,7 @@ mod tests {
                 active: 0,
                 frozen: 9,
                 work_revision: 1,
+                checkpoint_request_revision: None,
             }
         );
         drop(b_reservation);

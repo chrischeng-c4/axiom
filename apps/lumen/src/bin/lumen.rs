@@ -3641,7 +3641,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 );
                 start_seq = recovered_head;
                 // Open the same AOF for continued appends (truncates any torn tail).
-                let w = lumen::aof::AofWriter::open(&aof_path).context("open AOF")?;
+                let w = lumen::aof::AofWriter::open_with_policy(
+                    &aof_path,
+                    lumen::aof::FsyncPolicy::EverySec,
+                )
+                .context("open AOF")?;
                 Some(std::sync::Arc::new(std::sync::Mutex::new(w)))
             }
             None => None,
