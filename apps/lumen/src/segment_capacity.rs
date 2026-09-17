@@ -5,7 +5,7 @@
 use crate::segment_checkpoint::SegmentCheckpointSink;
 use crate::segment_rdb::SegmentRdbStore;
 use crate::storage::Engine;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
@@ -362,7 +362,7 @@ fn run_budget_relay(
     stop: Arc<AtomicBool>,
 ) {
     let mut observed = wake.epoch();
-    let mut last_requested_work_revision = None;
+    let mut last_requested_revision = None;
     loop {
         if stop.load(Ordering::Acquire) || endpoint.is_stopped() {
             return;
@@ -373,11 +373,14 @@ fn run_budget_relay(
         let Some(state) = engine.capacity_owner_state() else {
             return;
         };
-        if engine.has_capacity_waiters()
+        let demand_revision = state
+            .checkpoint_request_revision
+            .or_else(|| engine.has_capacity_waiters().then_some(state.work_revision));
+        if demand_revision.is_some()
             && (state.active != 0 || state.frozen != 0)
-            && last_requested_work_revision != Some(state.work_revision)
+            && last_requested_revision != demand_revision
         {
-            last_requested_work_revision = Some(state.work_revision);
+            last_requested_revision = demand_revision;
             // `wait_for` blocks this independent native thread until the one
             // existing owner completes, retries, or is superseded. No Engine,
             // accounting, or apply lock is held here.
@@ -526,11 +529,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(engine.layer_maintenance.append_limit(), 16);
-        assert!(store
-            .save(&engine, 1)
-            .unwrap_err()
-            .to_string()
-            .contains("activate segment generation"));
+        assert!(
+            store
+                .save(&engine, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("activate segment generation")
+        );
         assert_eq!(
             engine.layer_maintenance.append_limit(),
             15,
