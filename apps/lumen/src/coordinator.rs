@@ -885,13 +885,15 @@ impl WriteCoordinator {
                                     crate::metrics::CoordinatorStage::ApplyToWaiter,
                                     apply_started_at.elapsed(),
                                 );
-                                applying_coord.complete(seq, outcome);
-                                // The apply charge may become checkpointable only after the
-                                // watermark and waiter result are visible. The transient half
-                                // is last: it protected AOF/encode ownership until completion.
+                                // Release both halves before publishing the applied watermark.
+                                // A cancelled local submit has no waiter to observe completion,
+                                // so `applied_seq` is its only completion signal. Publishing it
+                                // first would let callers observe an applied record while its
+                                // reservation is still charged on the budget.
                                 drop(apply);
                                 drop(prepared.take());
                                 drop(transient.take());
+                                applying_coord.complete(seq, outcome);
                                 true
                                 }));
                                 (result, transient)
