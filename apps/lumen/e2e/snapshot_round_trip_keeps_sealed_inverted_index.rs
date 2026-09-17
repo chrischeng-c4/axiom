@@ -382,8 +382,16 @@ async fn a_doc_deleted_after_the_seal_stays_deleted_across_the_round_trip() {
 
     const LIVE: u64 = TOTAL_DOCS as u64 - 1;
     let expectations = [
-        (json!({ "term": { "field": "kw", "value": "v2" } }), 0, "kw v2"),
-        (json!({ "term": { "field": "tags", "value": "t2" } }), 0, "tags t2"),
+        (
+            json!({ "term": { "field": "kw", "value": "v2" } }),
+            0,
+            "kw v2",
+        ),
+        (
+            json!({ "term": { "field": "tags", "value": "t2" } }),
+            0,
+            "tags t2",
+        ),
         (
             json!({ "term": { "field": "tags", "value": "shared" } }),
             LIVE,
@@ -395,7 +403,11 @@ async fn a_doc_deleted_after_the_seal_stays_deleted_across_the_round_trip() {
             "grp sealed",
         ),
         (json!({ "exists": { "field": "kw" } }), LIVE, "exists kw"),
-        (json!({ "exists": { "field": "tags" } }), LIVE, "exists tags"),
+        (
+            json!({ "exists": { "field": "tags" } }),
+            LIVE,
+            "exists tags",
+        ),
     ];
 
     // Every expectation is first asserted on the LIVE sealed engine, so a

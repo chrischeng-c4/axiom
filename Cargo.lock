@@ -7218,8 +7218,6 @@ dependencies = [
 [[package]]
 name = "jieba-rs"
 version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5dd552bbb95d578520ee68403bf8aaf0dbbb2ce55b0854d019f9350ad61040a"
 dependencies = [
  "cedarwood",
  "fxhash",
@@ -8094,10 +8092,9 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
- "async-nats",
  "async-trait",
  "axum 0.8.9",
  "axum-test",
@@ -8151,6 +8148,7 @@ dependencies = [
  "service-http",
  "service-k8s",
  "service-observability",
+ "sha2 0.10.9",
  "smallvec",
  "storage-durable",
  "tempfile",
@@ -11811,6 +11809,7 @@ dependencies = [
  "axum 0.8.9",
  "cli-std",
  "crc32fast",
+ "memmap2 0.9.10",
  "peer-tls",
  "raft-core",
  "rcgen",
@@ -14520,6 +14519,7 @@ dependencies = [
  "anyhow",
  "crc32fast",
  "fs2",
+ "memmap2 0.9.10",
  "serde",
  "serde_json",
  "tempfile",

@@ -19,6 +19,33 @@
 //! re-indexing the same `(eid, field)` cleanly evicts the old postings
 //! before appending the new ones.
 
+mod committed_index_apply;
+mod committed_index_plan;
+mod committed_replace_apply;
+mod committed_replace_plan;
+mod committed_replace_view;
+mod committed_scalar_files;
+mod committed_text_apply;
+#[cfg(feature = "jieba")]
+mod jieba_disk_route;
+mod large_text_row;
+mod record_admission;
+mod record_apply;
+mod record_charges;
+mod record_ram;
+mod scalar_projection;
+mod staged_text_row;
+mod staged_vector_row;
+mod text_preparation;
+mod text_projection;
+mod unicode_lower_stream;
+pub(crate) use record_admission::{
+    RecordAdmissionError, RecordApplyGuard, RecordReservation, RecordTransientReservation,
+    RepriceRecord,
+};
+pub(crate) use scalar_projection::write_checkpoint_rows as write_scalar_checkpoint_rows;
+pub(crate) use text_projection::write_checkpoint_rows as write_text_checkpoint_rows;
+
 #[cfg(test)]
 use std::cell::Cell;
 use std::cmp::Ordering as CmpOrdering;
@@ -34,8 +61,10 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use thiserror::Error;
 
+use crate::composed_segment::TextPostingAt;
 use crate::metrics::Metrics;
 use crate::routing::VirtualBucketShardMap;
+use crate::segment::SortedIdCursor;
 use crate::tokenize;
 use crate::types::{
     validate_batch_unindex_docs_request, Analyzer, BatchUnindexDocsRequest, CacheStats,
@@ -67,9 +96,49 @@ thread_local! {
     // cannot perturb the counter that one test resets and asserts.
     static MATERIALIZED_SORT_COMPARISONS: Cell<u64> = const { Cell::new(0) };
     static MATERIALIZED_SORT_RETAINED_HIGH_WATER: Cell<u64> = const { Cell::new(0) };
+    // #4246 cost oracle: how many (term, staged row) pairs a read path
+    // inspected. `/stats` must stay O(live terms + staged tokens); the
+    // per-term staged scan it replaced was O(terms x staged_rows).
+    static STAGED_TERM_PROBES: Cell<u64> = const { Cell::new(0) };
 }
+
+// #4246: the thread `Engine::stats` last ran on. The HTTP handler must hand
+// that read to the blocking executor, never the reactor worker, so this is
+// process-wide: the observing test thread is not the thread being recorded.
+#[cfg(test)]
+static STATS_THREAD: Mutex<Option<std::thread::ThreadId>> = Mutex::new(None);
 #[cfg(test)]
 static RETIREMENT_FAILSAFE_RETAINS: AtomicU64 = AtomicU64::new(0);
+
+/// Count one inspection of a staged Text row on behalf of one term. Compiled
+/// out entirely outside `cfg(test)`.
+#[inline]
+fn note_staged_term_probes(_probes: u64) {
+    #[cfg(test)]
+    STAGED_TERM_PROBES.with(|probes| probes.set(probes.get().saturating_add(_probes)));
+}
+
+#[cfg(test)]
+fn reset_staged_term_probes() {
+    STAGED_TERM_PROBES.with(|probes| probes.set(0));
+}
+
+#[cfg(test)]
+fn staged_term_probes() -> u64 {
+    STAGED_TERM_PROBES.with(Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_stats_thread() {
+    *STATS_THREAD.lock().expect("stats thread record") = None;
+}
+
+/// The thread the most recent `Engine::stats` call ran on, or `None` when no
+/// call has been recorded since the last reset.
+#[cfg(test)]
+pub(crate) fn last_stats_thread() -> Option<std::thread::ThreadId> {
+    *STATS_THREAD.lock().expect("stats thread record")
+}
 
 /// Maximum items in a single `POST /index` request (README §1 v1 limit).
 pub const MAX_INDEX_ITEMS: usize = 10_000;
@@ -452,7 +521,7 @@ impl Postings {
     /// Insert/overwrite `id`'s tf, keeping `docids` sorted. For the monotonic
     /// bulk-index path the insertion point is the tail (O(1) amortized); a reused
     /// id (interner reuses ids; an overwrite drops first) lands in sorted order.
-    fn upsert(&mut self, id: u32, tf: u32) {
+    pub(crate) fn upsert(&mut self, id: u32, tf: u32) {
         match self.docids.last().copied() {
             None => {
                 self.docids.push(id);
@@ -532,8 +601,25 @@ impl Postings {
 /// block (owned `Vec`s; text tf is STORED — Phase 2e-B). Both variants expose
 /// the identical `(docids, tfs)` u32 streams in the SAME ascending-docid order,
 /// so the BM25 score expression is fed bit-identical inputs on both paths.
+/// A token's active posting resolved for a SMALL candidate set only (#4246):
+/// the exact composed `df` plus the `(docid, tf)` pairs of those candidates the
+/// token covers, ascending. Built by [`TextIndex::tok_postings_at`] without
+/// decoding, caching or merging the token's full posting, so a 1-candidate
+/// `and[filter, match]` over a 500k-doc stop token costs one streamed pass per
+/// distinct token instead of a 4 MiB materialization per token occurrence.
+struct SparsePosting {
+    df: usize,
+    docids: Vec<u32>,
+    tfs: Vec<u32>,
+}
+
 enum TokPostings<'a> {
     Live(&'a Postings),
+    /// The candidate-only projection of the active posting (#4246). `df()` is
+    /// the exact composed df, NOT the projection's length; `docids()`/`tfs()`
+    /// and `tf(id)` are exact for every id the projection was built for and
+    /// silent for every other id, which the callers never ask about.
+    Sparse(std::sync::Arc<SparsePosting>),
     /// The cache-resident segment posting, shared by `Arc` (Phase 2m). The hot
     /// no-tombstone path holds the BOUNDED Text posting cache's `Arc` DIRECTLY —
     /// a per-candidate `match_doc_score` probe is then a `.tf(id)` binary-search
@@ -554,6 +640,7 @@ impl<'a> TokPostings<'a> {
     fn docids(&self) -> &[u32] {
         match self {
             TokPostings::Live(p) => &p.docids,
+            TokPostings::Sparse(p) => &p.docids,
             TokPostings::Segment(p) => &p.0,
             TokPostings::Combined { docids, .. } => docids,
         }
@@ -562,13 +649,17 @@ impl<'a> TokPostings<'a> {
     fn tfs(&self) -> &[u32] {
         match self {
             TokPostings::Live(p) => &p.tfs,
+            TokPostings::Sparse(p) => &p.tfs,
             TokPostings::Segment(p) => &p.1,
             TokPostings::Combined { tfs, .. } => tfs,
         }
     }
     #[inline]
     fn df(&self) -> usize {
-        self.docids().len()
+        match self {
+            TokPostings::Sparse(p) => p.df,
+            _ => self.docids().len(),
+        }
     }
     /// tf of `id` via binary-search (docids ascending), or `None` — the same
     /// random-access probe `Postings::tf` does, on either source.
@@ -576,6 +667,7 @@ impl<'a> TokPostings<'a> {
     fn tf(&self, id: u32) -> Option<u32> {
         match self {
             TokPostings::Live(p) => p.tf(id),
+            TokPostings::Sparse(p) => p.docids.binary_search(&id).ok().map(|pos| p.tfs[pos]),
             TokPostings::Segment(p) => p.0.binary_search(&id).ok().map(|pos| p.1[pos]),
             TokPostings::Combined { docids, tfs } => {
                 docids.binary_search(&id).ok().map(|pos| tfs[pos])
@@ -584,10 +676,255 @@ impl<'a> TokPostings<'a> {
     }
 }
 
+/// A LAZY view of a token's active postings for the `And`-intersection
+/// streaming path (see `TextIndex::tok_probe`). Holds only borrowed slices /
+/// a shared `Arc` plus a small staged-row `Vec` — NEVER a merged copy of the
+/// segment or live postings. `tf(id)` is a set of binary searches (same cost
+/// class as `TokPostings::tf`, no allocation); `iter_active()` streams the
+/// merged, tombstone-filtered, precedence-resolved `(docid, tf)` pairs in
+/// ascending order for the DRIVING (rarest) token only, so an N-token AND
+/// never materializes more than one token's postings.
+struct TokProbe<'a> {
+    seg: Option<std::sync::Arc<(Vec<u32>, Vec<u32>)>>,
+    live: Option<&'a Postings>,
+    /// `(docid, tf)` pairs, ascending by docid — one entry per staged row that
+    /// carries this token (bounded by `staged_rows.len()`, not corpus size).
+    staged: Vec<(u32, u32)>,
+    tombstones: &'a RoaringBitmap,
+}
+
+impl<'a> TokProbe<'a> {
+    /// Cheap short-circuit for a token with NO source at all (mirrors
+    /// `tok_postings` returning `None` for an unknown token). Does NOT detect
+    /// the rare fully-tombstoned-segment-with-no-live/staged case — that
+    /// still resolves correctly (just without the early return) because an
+    /// empty active posting naturally yields zero matches either as the
+    /// driving token (empty `iter_active`) or as a probe (every `tf` misses).
+    #[inline]
+    fn definitely_absent(&self) -> bool {
+        self.seg.is_none() && self.live.is_none() && self.staged.is_empty()
+    }
+
+    /// A cheap UPPER BOUND on this token's active postings count, used only to
+    /// pick which token drives the intersection (a heuristic, not the exact
+    /// `df` — the exact `df` for `idf` comes from `iter_active().count()`).
+    #[inline]
+    fn upper_bound_len(&self) -> usize {
+        self.staged.len()
+            + self.live.map_or(0, |p| p.docids.len())
+            + self.seg.as_ref().map_or(0, |s| s.0.len())
+    }
+
+    /// The EXACT active postings count — `|staged ∪ live ∪ (segment −
+    /// tombstones)|`, identical to `iter_active().count()` — without walking
+    /// the segment lane row by row. The segment lane is the long one at scale
+    /// (a stop-token in a 500k corpus has df≈500k), so the count is derived
+    /// as `|overlay| + |segment| − |segment ∩ (tombstones ∪ overlay)|` where
+    /// `overlay = staged ∪ live`: the subtraction term is found by galloping
+    /// through the segment ids for each id of the (sparse) excluded set, so
+    /// the cost is bounded by the overlay and tombstone sizes, not by the
+    /// segment length. A probe with no segment lane falls back to the
+    /// streaming count, which is then bounded by the overlay itself.
+    fn active_len(&self) -> usize {
+        let seg_ids: &[u32] = match &self.seg {
+            Some(seg) => &seg.0[..],
+            None => return self.iter_active().count(),
+        };
+        let live_ids: &[u32] = self.live.map(|p| &p.docids[..]).unwrap_or(&[]);
+        let staged = &self.staged[..];
+        // |staged ∪ live| by a two-pointer merge count.
+        let mut overlay = 0usize;
+        let (mut si, mut li) = (0usize, 0usize);
+        while si < staged.len() || li < live_ids.len() {
+            let sid = staged.get(si).map(|&(id, _)| id);
+            let lid = live_ids.get(li).copied();
+            let id = match (sid, lid) {
+                (Some(a), Some(b)) => a.min(b),
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                (None, None) => break,
+            };
+            if sid == Some(id) {
+                si += 1;
+            }
+            if lid == Some(id) {
+                li += 1;
+            }
+            overlay += 1;
+        }
+        // |segment ∩ (tombstones ∪ live ∪ staged)| by one ascending pass over
+        // the three excluded sources, galloping through the segment ids.
+        let mut excluded = 0usize;
+        let mut pos = 0usize;
+        let mut tomb = self.tombstones.iter().peekable();
+        let (mut si, mut li) = (0usize, 0usize);
+        loop {
+            if pos >= seg_ids.len() {
+                break;
+            }
+            let tid = tomb.peek().copied();
+            let sid = staged.get(si).map(|&(id, _)| id);
+            let lid = live_ids.get(li).copied();
+            let id = match [tid, sid, lid].into_iter().flatten().min() {
+                Some(id) => id,
+                None => break,
+            };
+            if tid == Some(id) {
+                tomb.next();
+            }
+            if sid == Some(id) {
+                si += 1;
+            }
+            if lid == Some(id) {
+                li += 1;
+            }
+            if gallop_to(seg_ids, &mut pos, id) {
+                excluded += 1;
+            }
+        }
+        overlay + seg_ids.len() - excluded
+    }
+
+    /// Random-access tf lookup with precedence staged > live > segment (the
+    /// same precedence `tok_postings`/`unstaged_tok_postings` compose): a
+    /// staged row always wins; a live posting overrides a reused base id even
+    /// when that base id is ALSO tombstoned; a pure-segment id is dropped when
+    /// tombstoned. No allocation.
+    #[inline]
+    fn tf(&self, id: u32) -> Option<u32> {
+        if let Ok(pos) = self.staged.binary_search_by_key(&id, |&(i, _)| i) {
+            return Some(self.staged[pos].1);
+        }
+        if let Some(live) = self.live {
+            if let Some(tf) = live.tf(id) {
+                return Some(tf);
+            }
+        }
+        if let Some(seg) = &self.seg {
+            if let Ok(pos) = seg.0.binary_search(&id) {
+                if !self.tombstones.contains(id) {
+                    return Some(seg.1[pos]);
+                }
+            }
+        }
+        None
+    }
+
+    /// Streams the merged, precedence-resolved, tombstone-filtered `(docid,
+    /// tf)` pairs in ascending docid order — a three-way zipper over the
+    /// segment/live/staged sorted sources, with NO intermediate `Vec`. Used
+    /// for the driving token's candidate walk and for an exact `df` count
+    /// (`iter_active().count()`), both bounded by this token's OWN active
+    /// postings length, never by the corpus.
+    fn iter_active(&self) -> TokProbeIter<'_> {
+        TokProbeIter {
+            seg_ids: self.seg.as_ref().map(|s| &s.0[..]).unwrap_or(&[]),
+            seg_tfs: self.seg.as_ref().map(|s| &s.1[..]).unwrap_or(&[]),
+            seg_pos: 0,
+            live_ids: self.live.map(|p| &p.docids[..]).unwrap_or(&[]),
+            live_tfs: self.live.map(|p| &p.tfs[..]).unwrap_or(&[]),
+            live_pos: 0,
+            staged: &self.staged[..],
+            staged_pos: 0,
+            tombstones: self.tombstones,
+        }
+    }
+}
+
+/// Advances `*pos` through the sorted `ids` to the first index whose id is
+/// `>= target`, galloping (exponential probe then binary search) from the
+/// current position so a sequence of ascending targets costs
+/// `O(Σ log gap)` instead of `O(Σ log n)`. Returns whether `ids[*pos]` is
+/// exactly `target`.
+fn gallop_to(ids: &[u32], pos: &mut usize, target: u32) -> bool {
+    let n = ids.len();
+    if *pos >= n || ids[*pos] >= target {
+        return *pos < n && ids[*pos] == target;
+    }
+    let mut lo = *pos;
+    let mut step = 1usize;
+    let mut hi = lo + step;
+    while hi < n && ids[hi] < target {
+        lo = hi;
+        step <<= 1;
+        hi = lo + step;
+    }
+    let end = hi.min(n);
+    *pos = match ids[lo + 1..end].binary_search(&target) {
+        Ok(i) | Err(i) => lo + 1 + i,
+    };
+    *pos < n && ids[*pos] == target
+}
+
+struct TokProbeIter<'a> {
+    seg_ids: &'a [u32],
+    seg_tfs: &'a [u32],
+    seg_pos: usize,
+    live_ids: &'a [u32],
+    live_tfs: &'a [u32],
+    live_pos: usize,
+    staged: &'a [(u32, u32)],
+    staged_pos: usize,
+    tombstones: &'a RoaringBitmap,
+}
+
+impl<'a> Iterator for TokProbeIter<'a> {
+    type Item = (u32, u32);
+    fn next(&mut self) -> Option<(u32, u32)> {
+        loop {
+            let seg_id = self.seg_ids.get(self.seg_pos).copied();
+            let live_id = self.live_ids.get(self.live_pos).copied();
+            let staged_id = self.staged.get(self.staged_pos).map(|&(id, _)| id);
+            let id = match [seg_id, live_id, staged_id].into_iter().flatten().min() {
+                Some(id) => id,
+                None => return None,
+            };
+            let mut tf = None;
+            if staged_id == Some(id) {
+                tf = Some(self.staged[self.staged_pos].1);
+                self.staged_pos += 1;
+            }
+            if live_id == Some(id) {
+                if tf.is_none() {
+                    tf = Some(self.live_tfs[self.live_pos]);
+                }
+                self.live_pos += 1;
+            }
+            if seg_id == Some(id) {
+                if tf.is_none() && !self.tombstones.contains(id) {
+                    tf = Some(self.seg_tfs[self.seg_pos]);
+                }
+                self.seg_pos += 1;
+            }
+            if let Some(tf) = tf {
+                return Some((id, tf));
+            }
+            // Pure-segment id, tombstoned, no live/staged override: skip and
+            // continue the merge (matches `unstaged_tok_postings`'s subtraction).
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct TextIndex {
+    /// Prepared rows are immutable disk payloads. Their local row is always 0.
+    /// They remain live overlays until the matching checkpoint is published.
+    ///
+    /// DRAIN RULE (#4246). The only production drain is checkpoint
+    /// publication: a published generation's `attach_live_checkpoint_delta`
+    /// calls `retire_live_delta_overlay`, which removes every docid the
+    /// capture absorbed, and a full-base `prepared` install replaces the index
+    /// outright. Nothing else clears this map — `seal_to_segment` is a
+    /// test/manual path — so the set is bounded by the writes admitted since
+    /// the last publication (one `LUMEN_SNAPSHOT_SECS` interval), NOT by the
+    /// corpus. Rows written WHILE a checkpoint runs are outside its barrier
+    /// and belong to the next generation, so a single quiescent interval
+    /// always returns this map to empty. Every read that folds these rows must
+    /// therefore cost at most O(staged tokens) per call and never
+    /// O(corpus terms x staged rows).
+    staged_rows: BTreeMap<u32, Arc<staged_text_row::StagedTextRow>>,
     /// token → flat docid-sorted postings (docid + tf).
-    tokens: FastHashMap<String, Postings>,
+    tokens: BTreeMap<String, Postings>,
     /// Dense doc-len indexed by doc-id (zero may be an explicit empty value).
     /// Replaces a per-doc `forward` HashMap probe with a sequential Vec read on
     /// the hot loop.
@@ -595,6 +932,8 @@ struct TextIndex {
     /// dense doc-id → distinct tokens emitted. Used ONLY by `drop_eid` /
     /// snapshots / coverage, so new writes avoid a per-doc HashMap insert.
     distinct: Vec<Option<TokenSet>>,
+    // Cold delta rows keep their stable runtime IDs without allocating a dense prefix.
+    delta_docs: FastHashMap<u32, (u32, TokenSet)>,
     doc_count: u64,
     total_doc_len: u64,
     bytes: u64,
@@ -608,11 +947,13 @@ struct TextIndex {
     /// retains explicit live overlays and is otherwise dropped with the sealed
     /// base. DEFAULTS to `None`; while it is `None` (nothing sealed) every read
     /// path is byte-for-byte the in-RAM path. Purely additive.
-    segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
-    /// Hot BM25 rankings, sorted by score desc then external_id asc. Used for
-    /// unique-doc match shapes (single token, multi-token AND) and cleared on any
-    /// text mutation/seal so cached scores never cross corpus states.
-    match_rank_cache: RwLock<FastHashMap<String, std::sync::Arc<Vec<(u32, f32)>>>>,
+    segment: Option<std::sync::Arc<crate::composed_segment::ComposedSegmentReader>>,
+    /// Hot BM25 rankings for unique-doc match shapes (single token, multi-token
+    /// AND), cleared on any text mutation/seal so cached scores never cross
+    /// corpus states. Each entry is lazily sorted only as far as the largest
+    /// page requested so far — see `MatchRankCache`, the cold-500k-AND perf
+    /// fix that replaces an eager full sort of every match on every cold query.
+    match_rank_cache: RwLock<FastHashMap<String, std::sync::Arc<Mutex<MatchRankCache>>>>,
     /// QUERY-TIME TOMBSTONE (Phase 2h-4): base docids `[0..seg.n_docs)` deleted
     /// SINCE the last seal. The inverted `tokens` postings AND the corpus-deriving
     /// `distinct` map were DROPPED to disk at seal, so `drop_eid` can no longer
@@ -629,6 +970,25 @@ struct TextIndex {
     /// segment is attached (the in-RAM `tokens` path needs no tombstone — a delete
     /// mutates `tokens` directly). Mirrors 2h-1/2h-2/2h-3's four touch-points.
     tombstones: RoaringBitmap,
+    /// Memoized composed live-term count (#4246). Only consulted when the
+    /// composed reader cannot answer in O(1) — i.e. when there are pending
+    /// deletes, or a compaction left the additive invariant behind. Keyed by
+    /// the exact reader identity AND the exact tombstone set, so it is
+    /// impossible for it to serve a stale number.
+    live_term_cache: Mutex<Option<LiveTermCache>>,
+}
+
+/// Memoized composed live-term count for one `(reader, tombstone set)` pair.
+///
+/// The reader is held by `Weak` so the entry can never alias a later reader at
+/// a reused address, and the tombstone set is stored by value so a delete and
+/// an un-delete between two reads can never look unchanged. Both are bounded by
+/// the deletes taken since the last seal, never by the corpus.
+#[derive(Debug)]
+struct LiveTermCache {
+    reader: std::sync::Weak<crate::composed_segment::ComposedSegmentReader>,
+    tombstones: RoaringBitmap,
+    value: u64,
 }
 
 impl TextIndex {
@@ -639,10 +999,16 @@ impl TextIndex {
     }
 
     fn doc_len(&self, id: u32) -> u32 {
+        if let Some(row) = self.staged_rows.get(&id) {
+            return row.doc_len();
+        }
+        if let Some((len, _)) = self.delta_docs.get(&id) {
+            return *len;
+        }
         // `distinct` is also the presence marker for a live overlay.  Check it
         // before the sealed base so a replacement of a base id uses its new
         // length, including an explicit empty value (Some(empty)).
-        if self.distinct.get(id as usize).is_some_and(Option::is_some) {
+        if self.distinct_at(id).is_some() {
             return self.lens.get(id as usize).copied().unwrap_or(0);
         }
         if let Some(seg) = &self.segment {
@@ -653,22 +1019,17 @@ impl TextIndex {
         }
         self.lens.get(id as usize).copied().unwrap_or(0)
     }
-    fn set_doc_len(&mut self, id: u32, len: u32) {
-        if self.lens.len() <= id as usize {
-            self.lens.resize(id as usize + 1, 0);
-        }
-        self.lens[id as usize] = len;
-    }
-
-    fn set_distinct(&mut self, id: u32, tokens: TokenSet) {
-        let ix = id as usize;
-        if self.distinct.len() <= ix {
-            self.distinct.resize_with(ix + 1, || None);
-        }
-        self.distinct[ix] = Some(tokens);
+    fn distinct_at(&self, id: u32) -> Option<&TokenSet> {
+        self.delta_docs
+            .get(&id)
+            .map(|(_, tokens)| tokens)
+            .or_else(|| self.distinct.get(id as usize).and_then(Option::as_ref))
     }
 
     fn take_distinct(&mut self, id: u32) -> Option<TokenSet> {
+        if let Some((_, tokens)) = self.delta_docs.remove(&id) {
+            return Some(tokens);
+        }
         self.distinct
             .get_mut(id as usize)
             .and_then(|tokens| tokens.take())
@@ -678,13 +1039,15 @@ impl TextIndex {
     /// `Some(TokenSet)` entry, so an explicit empty text value is removed here
     /// too. This must run before sealed-base tombstone handling for reused ids.
     fn drop_live_overlay(&mut self, id: u32, eid: &str) -> Option<u64> {
-        let overlay_len = self
-            .distinct
-            .get(id as usize)
-            .and_then(|tokens| tokens.as_ref())
-            .map(|_| self.lens.get(id as usize).copied().unwrap_or(0));
+        if let Some(row) = self.staged_rows.remove(&id) {
+            let freed = row.indexed_bytes(eid);
+            self.doc_count = self.doc_count.saturating_sub(1);
+            self.total_doc_len = self.total_doc_len.saturating_sub(u64::from(row.doc_len()));
+            self.bytes = self.bytes.saturating_sub(freed);
+            return Some(freed);
+        }
+        let doc_len = self.doc_len(id);
         let tokens = self.take_distinct(id)?;
-        let doc_len = overlay_len.unwrap_or_else(|| self.doc_len(id));
         let mut freed = 0u64;
         for tok in tokens.iter() {
             if let Some(p) = self.tokens.get_mut(tok) {
@@ -696,7 +1059,9 @@ impl TextIndex {
                 }
             }
         }
-        self.set_doc_len(id, 0);
+        if let Some(len) = self.lens.get_mut(id as usize) {
+            *len = 0;
+        }
         self.doc_count = self.doc_count.saturating_sub(1);
         self.total_doc_len = self.total_doc_len.saturating_sub(doc_len as u64);
         self.bytes = self.bytes.saturating_sub(freed);
@@ -705,7 +1070,7 @@ impl TextIndex {
 
     #[cfg(test)]
     fn distinct_is_empty(&self) -> bool {
-        self.distinct.iter().all(Option::is_none)
+        self.delta_docs.is_empty() && self.distinct.iter().all(Option::is_none)
     }
 
     fn distinct_iter(&self) -> impl Iterator<Item = (u32, &TokenSet)> {
@@ -713,6 +1078,11 @@ impl TextIndex {
             .iter()
             .enumerate()
             .filter_map(|(id, tokens)| tokens.as_ref().map(|tokens| (id as u32, tokens)))
+            .chain(
+                self.delta_docs
+                    .iter()
+                    .map(|(&id, (_, tokens))| (id, tokens)),
+            )
     }
 
     fn distinct_ids(&self) -> impl Iterator<Item = u32> + '_ {
@@ -759,6 +1129,147 @@ impl TextIndex {
     /// only ever hold base ids (`< seg.n_docs`), so this never touches a tail id.
     #[inline]
     fn tok_postings(&self, tok: &str) -> Option<TokPostings<'_>> {
+        if self.staged_rows.is_empty() {
+            return self.unstaged_tok_postings(tok);
+        }
+        note_staged_term_probes(self.staged_rows.len() as u64);
+        let mut incoming = Vec::new();
+        for (&id, row) in &self.staged_rows {
+            if let Some(posting) = row.reader().text_postings_arc(tok) {
+                incoming.push((id, posting.1[0]));
+            }
+        }
+        let older = self.unstaged_tok_postings(tok);
+        if incoming.is_empty() {
+            return older;
+        }
+        let old_ids = older.as_ref().map_or(&[][..], |p| p.docids());
+        let old_tfs = older.as_ref().map_or(&[][..], |p| p.tfs());
+        let mut docids = Vec::with_capacity(old_ids.len() + incoming.len());
+        let mut tfs = Vec::with_capacity(old_ids.len() + incoming.len());
+        let mut prior = old_ids
+            .iter()
+            .copied()
+            .zip(old_tfs.iter().copied())
+            .peekable();
+        for (id, tf) in incoming {
+            while prior.peek().is_some_and(|(older, _)| *older < id) {
+                let (id, tf) = prior.next().unwrap();
+                docids.push(id);
+                tfs.push(tf);
+            }
+            if prior.peek().is_some_and(|(older, _)| *older == id) {
+                prior.next();
+            }
+            docids.push(id);
+            tfs.push(tf);
+        }
+        for (id, tf) in prior {
+            docids.push(id);
+            tfs.push(tf);
+        }
+        Some(TokPostings::Combined { docids, tfs })
+    }
+
+    /// [`Self::tok_postings`] for a SMALL ascending candidate set (#4246). With
+    /// a segment attached the sealed posting is never materialized for the
+    /// call: a cold posting is streamed once for its df and the candidates'
+    /// tfs (`ComposedSegmentReader::text_posting_at`), a resident one is
+    /// probed by binary search, and the overlays are folded in with the same
+    /// precedence as `tok_postings` — staged > live > (segment − tombstones),
+    /// a live row overriding a tombstoned base id. `df` and every candidate's
+    /// tf are therefore identical to `tok_postings` by construction, so BM25
+    /// stays byte-identical; only ids outside `candidates` are absent from
+    /// the returned streams. Falls back to `tok_postings` when the sparse
+    /// route is not cheaper or not exact (no segment, torn map, dense base
+    /// lacking the token).
+    fn tok_postings_at(&self, tok: &str, candidates: &[u32]) -> Option<TokPostings<'_>> {
+        let Some(seg) = &self.segment else {
+            return self.tok_postings(tok);
+        };
+        debug_assert!(candidates.windows(2).all(|w| w[0] < w[1]));
+        let mut staged: Vec<(u32, u32)> = Vec::new();
+        if !self.staged_rows.is_empty() {
+            note_staged_term_probes(self.staged_rows.len() as u64);
+            for (&id, row) in &self.staged_rows {
+                if let Some(posting) = row.reader().text_postings_arc(tok) {
+                    staged.push((id, posting.1[0]));
+                }
+            }
+        }
+        let staged_ids: Vec<u32> = staged.iter().map(|&(id, _)| id).collect();
+        let live = self.tokens.get(tok);
+        let live_ids = live.map_or(&[][..], |p| &p.docids[..]);
+        let staged_has = |id: u32| staged_ids.binary_search(&id).is_ok();
+        let live_has = |id: u32| live.is_some_and(|p| p.tf(id).is_some());
+        let (seg_df, seg_hits): (usize, Vec<(u32, u32)>) = {
+            let mut staged_cur = SortedIdCursor::new(&staged_ids);
+            let mut live_cur = SortedIdCursor::new(live_ids);
+            let tombstones = &self.tombstones;
+            match seg.text_posting_at(tok, candidates, |id| {
+                tombstones.contains(id) || staged_cur.contains(id) || live_cur.contains(id)
+            }) {
+                Some(TextPostingAt::Sparse { df, hits }) => (df, hits),
+                Some(TextPostingAt::Cached(resident)) => {
+                    // Resident: count the overlay ids the posting also carries
+                    // (each overlay is bounded by one checkpoint interval, the
+                    // posting is not) and probe the candidates directly.
+                    let (ids, tfs) = resident.as_ref();
+                    let seg_has = |id: u32| ids.binary_search(&id).is_ok();
+                    let mut hidden = staged_ids.iter().filter(|&&id| seg_has(id)).count();
+                    hidden += live_ids
+                        .iter()
+                        .filter(|&&id| !staged_has(id) && seg_has(id))
+                        .count();
+                    hidden += tombstones
+                        .iter()
+                        .filter(|&id| !staged_has(id) && !live_has(id) && seg_has(id))
+                        .count();
+                    let hits = candidates
+                        .iter()
+                        .filter(|&&id| !tombstones.contains(id) || live_has(id) || staged_has(id))
+                        .filter_map(|&id| ids.binary_search(&id).ok().map(|pos| (id, tfs[pos])))
+                        .collect();
+                    (ids.len() - hidden, hits)
+                }
+                None => return self.tok_postings(tok),
+            }
+        };
+        let df =
+            staged.len() + (live_ids.len() - count_common_sorted(live_ids, &staged_ids)) + seg_df;
+        if df == 0 {
+            return None;
+        }
+        let mut docids = Vec::with_capacity(candidates.len());
+        let mut tfs = Vec::with_capacity(candidates.len());
+        let mut seg_hits = seg_hits.into_iter().peekable();
+        for &id in candidates {
+            let tf = match staged.binary_search_by_key(&id, |&(id, _)| id) {
+                Ok(pos) => Some(staged[pos].1),
+                Err(_) => live.and_then(|p| p.tf(id)),
+            }
+            .or_else(|| {
+                while seg_hits.peek().is_some_and(|&(hit, _)| hit < id) {
+                    seg_hits.next();
+                }
+                match seg_hits.peek() {
+                    Some(&(hit, tf)) if hit == id => Some(tf),
+                    _ => None,
+                }
+            });
+            if let Some(tf) = tf {
+                docids.push(id);
+                tfs.push(tf);
+            }
+        }
+        Some(TokPostings::Sparse(std::sync::Arc::new(SparsePosting {
+            df,
+            docids,
+            tfs,
+        })))
+    }
+
+    fn unstaged_tok_postings(&self, tok: &str) -> Option<TokPostings<'_>> {
         if let Some(seg) = &self.segment {
             // Phase 2m: hold the cache-resident `Arc` directly. With NO pending
             // delete (the common warm path) this is a refcount bump — the
@@ -828,6 +1339,40 @@ impl TextIndex {
             return Some(TokPostings::Combined { docids, tfs });
         }
         self.tokens.get(tok).map(TokPostings::Live)
+    }
+
+    /// A LAZY, non-materializing view of a token's active postings (perf fix:
+    /// the 500k-hot-doc cold `match … op: "and"` regression). Unlike
+    /// `tok_postings`/`unstaged_tok_postings`, this never allocates a merged
+    /// `Vec<u32>` — it composes the segment's cached `Arc` (zero-copy), the
+    /// live `Postings` (borrowed), and the staged-row overrides (a small
+    /// `Vec` bounded by `staged_rows.len()`, NOT by corpus size) behind
+    /// random-access `tf(id)` and a streaming `iter_active()`, with the exact
+    /// same precedence `tok_postings` uses: staged > live > (segment minus
+    /// tombstones). `eval_match`'s `And` branch uses this so an N-token
+    /// intersection probes N-1 tokens with zero-allocation binary searches and
+    /// streams only the DRIVING (rarest) token's postings.
+    fn tok_probe(&self, tok: &str) -> TokProbe<'_> {
+        let seg = self
+            .segment
+            .as_ref()
+            .and_then(|seg| seg.text_postings_arc(tok));
+        let live = self.tokens.get(tok);
+        let mut staged = Vec::new();
+        if !self.staged_rows.is_empty() {
+            note_staged_term_probes(self.staged_rows.len() as u64);
+            for (&id, row) in &self.staged_rows {
+                if let Some(posting) = row.reader().text_postings_arc(tok) {
+                    staged.push((id, posting.1[0]));
+                }
+            }
+        }
+        TokProbe {
+            seg,
+            live,
+            staged,
+            tombstones: &self.tombstones,
+        }
     }
 
     /// The FULL token → postings map to seal, gathered from the ACTIVE source
@@ -922,40 +1467,9 @@ impl TextIndex {
     /// consistent with `tokens_for_seal` (postings GC'd) and `corpus_for_seal`
     /// (scalars decremented).
     fn lens_for_seal(&self, n_docs: u32, live: &dyn Fn(u32) -> bool) -> Vec<u32> {
-        match &self.segment {
-            Some(seg) => (0..n_docs)
-                .map(|id| {
-                    if self
-                        .distinct
-                        .get(id as usize)
-                        .is_some_and(|tokens| tokens.is_some())
-                    {
-                        self.lens.get(id as usize).copied().unwrap_or(0)
-                    } else if !live(id) {
-                        0
-                    } else if id < seg.n_docs() {
-                        seg.text_doc_len(id)
-                    } else {
-                        self.lens.get(id as usize).copied().unwrap_or(0)
-                    }
-                })
-                .collect(),
-            None => (0..n_docs)
-                .map(|id| {
-                    if self
-                        .distinct
-                        .get(id as usize)
-                        .is_some_and(|tokens| tokens.is_some())
-                    {
-                        self.lens.get(id as usize).copied().unwrap_or(0)
-                    } else if live(id) {
-                        self.lens.get(id as usize).copied().unwrap_or(0)
-                    } else {
-                        0
-                    }
-                })
-                .collect(),
-        }
+        (0..n_docs)
+            .map(|id| if live(id) { self.doc_len(id) } else { 0 })
+            .collect()
     }
 
     /// The explicit text-field presence bits to seal. Presence is separate from
@@ -966,7 +1480,7 @@ impl TextIndex {
                 if !live(id) {
                     return false;
                 }
-                if self.distinct.get(id as usize).is_some_and(Option::is_some) {
+                if self.staged_rows.contains_key(&id) || self.distinct_at(id).is_some() {
                     return true;
                 }
                 self.segment
@@ -991,6 +1505,9 @@ impl TextIndex {
     /// keeping `df` live avoids a stale over-count after a delete-after-seal.)
     #[inline]
     fn tok_df(&self, tok: &str) -> Option<usize> {
+        if !self.staged_rows.is_empty() {
+            return self.tok_postings(tok).map(|posting| posting.df());
+        }
         if let Some(seg) = &self.segment {
             if self.tombstones.is_empty() {
                 // With no tombstones, live writes are post-seal tail ids and
@@ -1020,36 +1537,130 @@ impl TextIndex {
     ///   + the disjoint tail — the same distinct-token count an un-dropped `tokens`
     ///   map would hold. A FULLY-deleted token drops out, matching the in-RAM
     ///   semantics where `drop_eid` removes an emptied token.
+    ///
+    /// STAGED ROWS AND COST (#4246). The count is
+    ///
+    ///   `|live composed terms| + |(staged tokens U tail tokens) \ live composed terms|`
+    ///
+    /// and NEITHER half walks the composed dictionary. The first half is
+    /// [`crate::composed_segment::ComposedSegmentReader::known_distinct_terms`],
+    /// an O(1) number maintained at publication (see its own doc block) and
+    /// exact whenever there are no pending deletes; the second folds one
+    /// dictionary binary search per staged/tail token, and both of those sets
+    /// are bounded by one checkpoint interval of writes. So `/stats` costs
+    /// O(staged tokens + tail tokens), never O(dictionary) and never
+    /// O(terms x staged rows) — the per-term `tok_postings` walk cost 2.83 s at
+    /// 100k documents and the per-term posting decode that replaced it cost
+    /// 4.81 s, both past the perf cell's 5 s deadline at 500k.
+    ///
+    /// EXACTNESS is not traded away for that. A fully-deleted token still drops
+    /// out: pending deletes, or a composition step that could hide an older row,
+    /// take the walking fallback below, memoized per `(reader, tombstone set)`
+    /// in `live_term_cache` so repeated reads of an unchanged index pay for it
+    /// once. The membership test used for the fold follows the same split — a
+    /// dictionary lookup on the O(1) path, a composed posting decode with the
+    /// tombstone filter otherwise. A TORN staged dictionary falls back to the
+    /// composing `text_projection::live_term_count` walk, and a torn segment
+    /// dictionary reports the staged-plus-tail fold alone, both fail-closed the
+    /// same way the torn-segment branch below is.
     fn live_unique_tokens(&self) -> u64 {
-        let Some(seg) = &self.segment else {
-            return self.tokens.len() as u64;
-        };
-        let Some(entries) = seg.text_tokens_all() else {
-            // Torn segment: fall back to the live tail count (never panic in a
-            // read-only stats accessor).
-            return self.tokens.len() as u64;
-        };
-        let mut count = 0u64;
-        for (tok, docids, _tfs) in &entries {
-            let any_live = if self.tombstones.is_empty() {
-                !docids.is_empty()
-            } else {
-                docids.iter().any(|id| !self.tombstones.contains(*id))
+        let composed = self.composed_live_term_count();
+        // Tokens carried ONLY by staged rows or the live tail. Bounded by one
+        // checkpoint interval of writes, so this set never grows with the
+        // corpus. Every staged row repeats the corpus-wide tokens (an n-gram
+        // field carries the same ~1.4k terms in each row), so the candidates
+        // are deduplicated BEFORE the composed probe: one probe per distinct
+        // token, never one per (row, token) pair.
+        let mut candidates: FastHashSet<std::borrow::Cow<'_, str>> = FastHashSet::default();
+        for row in self.staged_rows.values() {
+            let reader = row.reader();
+            let Some(count) = reader.keyword_ordinal_count() else {
+                return text_projection::live_term_count(self).unwrap_or(0);
             };
-            // A token present in BOTH the dict and the live tail is one distinct
-            // token — count it once (here), and skip it in the tail fold below.
-            if any_live || self.tokens.contains_key(tok) {
-                count += 1;
+            note_staged_term_probes(u64::from(count));
+            for ordinal in 0..count {
+                let Some(term) = reader.keyword_term_at_ordinal_cow(ordinal) else {
+                    return text_projection::live_term_count(self).unwrap_or(0);
+                };
+                candidates.insert(term);
             }
         }
-        // Fold tail-only tokens (indexed after the seal, absent from the dict).
-        let dict_tokens: std::collections::HashSet<&String> =
-            entries.iter().map(|(t, _, _)| t).collect();
-        for tok in self.tokens.keys() {
-            if !dict_tokens.contains(tok) {
-                count += 1;
+        for token in self.tokens.keys() {
+            candidates.insert(std::borrow::Cow::Borrowed(token.as_str()));
+        }
+        let extra = candidates
+            .iter()
+            .filter(|token| !self.composed_has_live_term(token))
+            .count() as u64;
+        composed + extra
+    }
+
+    /// Whether the sealed composition still holds `token` with at least one
+    /// live (non-tombstoned) document.
+    ///
+    /// With no pending deletes and an additive composition, dictionary
+    /// membership IS liveness — every dictionary entry was written with a
+    /// non-empty posting and nothing has hidden one since — so this is a
+    /// binary search per layer with no posting decode. Otherwise it probes the
+    /// newest layer holding the token first, decoding each posting only as far
+    /// as its first live docid, and materializes nothing. A torn block keeps
+    /// the token as pending — the same fail-closed answer a torn dictionary
+    /// gets.
+    fn composed_has_live_term(&self, token: &str) -> bool {
+        let Some(seg) = &self.segment else {
+            return false;
+        };
+        if self.tombstones.is_empty() && seg.known_distinct_terms().is_some() {
+            return seg.has_dictionary_term(token);
+        }
+        seg.text_term_has_live_doc(token, &self.tombstones)
+            .unwrap_or(false)
+    }
+
+    /// Distinct terms the sealed composition still holds with a live document.
+    fn composed_live_term_count(&self) -> u64 {
+        let Some(seg) = &self.segment else {
+            return 0;
+        };
+        if self.tombstones.is_empty() {
+            if let Some(known) = seg.known_distinct_terms() {
+                return known;
             }
         }
+        self.walked_composed_live_term_count(seg)
+    }
+
+    /// The fallback: ONE streaming dictionary walk, memoized against the exact
+    /// reader and tombstone set it was measured on. A poisoned cache lock is
+    /// recovered rather than propagated — this is a read-only stats accessor.
+    fn walked_composed_live_term_count(
+        &self,
+        seg: &std::sync::Arc<crate::composed_segment::ComposedSegmentReader>,
+    ) -> u64 {
+        let mut cache = self
+            .live_term_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(entry) = cache.as_ref() {
+            if entry
+                .reader
+                .upgrade()
+                .is_some_and(|reader| std::sync::Arc::ptr_eq(&reader, seg))
+                && entry.tombstones == self.tombstones
+            {
+                return entry.value;
+            }
+        }
+        let Some(count) = seg.live_text_term_count(&self.tombstones) else {
+            // Torn dictionary or posting block: discard the walk and report only
+            // what the staged rows and the live tail can prove (never panic here).
+            return 0;
+        };
+        *cache = Some(LiveTermCache {
+            reader: std::sync::Arc::downgrade(seg),
+            tombstones: self.tombstones.clone(),
+            value: count,
+        });
         count
     }
 }
@@ -1079,7 +1690,7 @@ struct KeywordIndex {
     /// state so OR/AND posting walks are untouched. DEFAULTS to `None`; while it
     /// is `None` (nothing sealed) every read path is byte-for-byte the
     /// in-RAM path. Purely additive.
-    segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
+    segment: Option<std::sync::Arc<crate::composed_segment::ComposedSegmentReader>>,
     /// QUERY-TIME TOMBSTONE (Phase 2h-1 FIX): base docids `[0..seg.n_docs)`
     /// deleted SINCE the last seal. The inverted `terms` index was DROPPED to
     /// disk at seal, so `drop_eid` can no longer remove a sealed base id from
@@ -1124,17 +1735,21 @@ impl KeywordIndex {
     /// while a true delete has no live forward entry and remains absent.
     #[inline]
     fn keyword_at(&self, id: u32) -> Option<String> {
-        if let Some(seg) = &self.segment {
-            if id < seg.n_docs() {
-                if !self.tombstones.contains(id) {
-                    return seg.keyword_at(id);
-                }
-            }
-        }
         if let Some(value) = self.dense_forward.get(id as usize).and_then(|v| v.as_ref()) {
             return Some(value.clone());
         }
-        self.forward.get(&id).cloned()
+        if let Some(value) = self.forward.get(&id) {
+            return Some(value.clone());
+        }
+        if self.tombstones.contains(id) {
+            return None;
+        }
+        if let Some(seg) = &self.segment {
+            if id < seg.n_docs() {
+                return seg.keyword_at(id);
+            }
+        }
+        None
     }
 
     #[inline]
@@ -1295,80 +1910,85 @@ impl KeywordIndex {
         F: FnMut(&RoaringBitmap) -> Result<bool>,
     {
         if let Some(segment) = &self.segment {
-            let Some(count) = segment.keyword_ordinal_count() else {
-                return Ok(KeywordBucketWalk::Unavailable);
+            let mut cursor = match segment.string_terms(descending) {
+                Ok(cursor) => cursor,
+                Err(_) => return Ok(KeywordBucketWalk::Unavailable),
+            };
+            let mut disk = match cursor.next() {
+                Ok(term) => term,
+                Err(_) => return Ok(KeywordBucketWalk::Unavailable),
             };
             if descending {
                 let mut tail = self.terms.iter().rev().peekable();
-                for ordinal in (0..count).rev() {
-                    let Some(term) = segment.keyword_term_at_ordinal(ordinal) else {
-                        return Ok(KeywordBucketWalk::Unavailable);
-                    };
-                    while tail
-                        .peek()
-                        .is_some_and(|(tail_term, _)| tail_term.as_str() > term.as_str())
-                    {
-                        let (_, tail_posting) = tail.next().expect("peeked tail entry");
-                        if !tail_posting.is_empty() && !visit(tail_posting)? {
-                            return Ok(KeywordBucketWalk::Stopped);
+                loop {
+                    let (term, take_disk, take_tail) = match (disk.as_ref(), tail.peek()) {
+                        (None, None) => break,
+                        (Some(term), None) => (term.clone(), true, false),
+                        (None, Some((term, _))) => ((*term).clone(), false, true),
+                        (Some(disk_term), Some((tail_term, _))) => {
+                            match disk_term.cmp(*tail_term) {
+                                std::cmp::Ordering::Greater => (disk_term.clone(), true, false),
+                                std::cmp::Ordering::Equal => (disk_term.clone(), true, true),
+                                std::cmp::Ordering::Less => ((*tail_term).clone(), false, true),
+                            }
                         }
-                    }
-                    let Some(mut posting) = segment.keyword_postings_at_ordinal(ordinal) else {
-                        return Ok(KeywordBucketWalk::Unavailable);
                     };
-                    if !self.tombstones.is_empty() {
+                    let mut posting = if take_disk {
+                        segment.keyword_postings(&term).unwrap_or_default()
+                    } else {
+                        RoaringBitmap::new()
+                    };
+                    if take_disk && !self.tombstones.is_empty() {
                         posting -= &self.tombstones;
                     }
-                    if tail
-                        .peek()
-                        .is_some_and(|(tail_term, _)| tail_term.as_str() == term.as_str())
-                    {
-                        let (_, tail_posting) = tail.next().expect("peeked equal tail entry");
+                    if take_tail {
+                        let (_, tail_posting) = tail.next().expect("peeked tail entry");
                         posting |= tail_posting;
                     }
-                    if !posting.is_empty() && !visit(&posting)? {
-                        return Ok(KeywordBucketWalk::Stopped);
+                    if take_disk {
+                        disk = match cursor.next() {
+                            Ok(term) => term,
+                            Err(_) => return Ok(KeywordBucketWalk::Unavailable),
+                        };
                     }
-                }
-                for (_, tail_posting) in tail {
-                    if !tail_posting.is_empty() && !visit(tail_posting)? {
+                    if !posting.is_empty() && !visit(&posting)? {
                         return Ok(KeywordBucketWalk::Stopped);
                     }
                 }
             } else {
                 let mut tail = self.terms.iter().peekable();
-                for ordinal in 0..count {
-                    let Some(term) = segment.keyword_term_at_ordinal(ordinal) else {
-                        return Ok(KeywordBucketWalk::Unavailable);
-                    };
-                    while tail
-                        .peek()
-                        .is_some_and(|(tail_term, _)| tail_term.as_str() < term.as_str())
-                    {
-                        let (_, tail_posting) = tail.next().expect("peeked tail entry");
-                        if !tail_posting.is_empty() && !visit(tail_posting)? {
-                            return Ok(KeywordBucketWalk::Stopped);
+                loop {
+                    let (term, take_disk, take_tail) = match (disk.as_ref(), tail.peek()) {
+                        (None, None) => break,
+                        (Some(term), None) => (term.clone(), true, false),
+                        (None, Some((term, _))) => ((*term).clone(), false, true),
+                        (Some(disk_term), Some((tail_term, _))) => {
+                            match disk_term.cmp(*tail_term) {
+                                std::cmp::Ordering::Less => (disk_term.clone(), true, false),
+                                std::cmp::Ordering::Equal => (disk_term.clone(), true, true),
+                                std::cmp::Ordering::Greater => ((*tail_term).clone(), false, true),
+                            }
                         }
-                    }
-                    let Some(mut posting) = segment.keyword_postings_at_ordinal(ordinal) else {
-                        return Ok(KeywordBucketWalk::Unavailable);
                     };
-                    if !self.tombstones.is_empty() {
+                    let mut posting = if take_disk {
+                        segment.keyword_postings(&term).unwrap_or_default()
+                    } else {
+                        RoaringBitmap::new()
+                    };
+                    if take_disk && !self.tombstones.is_empty() {
                         posting -= &self.tombstones;
                     }
-                    if tail
-                        .peek()
-                        .is_some_and(|(tail_term, _)| tail_term.as_str() == term.as_str())
-                    {
-                        let (_, tail_posting) = tail.next().expect("peeked equal tail entry");
+                    if take_tail {
+                        let (_, tail_posting) = tail.next().expect("peeked tail entry");
                         posting |= tail_posting;
                     }
-                    if !posting.is_empty() && !visit(&posting)? {
-                        return Ok(KeywordBucketWalk::Stopped);
+                    if take_disk {
+                        disk = match cursor.next() {
+                            Ok(term) => term,
+                            Err(_) => return Ok(KeywordBucketWalk::Unavailable),
+                        };
                     }
-                }
-                for (_, tail_posting) in tail {
-                    if !tail_posting.is_empty() && !visit(tail_posting)? {
+                    if !posting.is_empty() && !visit(&posting)? {
                         return Ok(KeywordBucketWalk::Stopped);
                     }
                 }
@@ -1505,7 +2125,7 @@ struct NumberIndex {
     /// boolean queries drive from the mmap (`value_postings` / `range_postings`)
     /// and the in-RAM `values` BTreeMap is DROPPED at seal (RAM after reopen is
     /// O(live tail), not O(distinct numeric values)).
-    segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
+    segment: Option<std::sync::Arc<crate::composed_segment::ComposedSegmentReader>>,
     /// QUERY-TIME TOMBSTONE (Phase 2h-3): base docids `[0..seg.n_docs)` deleted
     /// SINCE the last seal. The inverted/range `values` index was DROPPED to disk
     /// at seal, so `drop_eid` can no longer remove a sealed base id from the
@@ -1543,30 +2163,29 @@ impl NumberIndex {
 
     #[inline]
     fn live_number_at(&self, id: u32) -> Option<SortableF64> {
-        if let Some(seg) = &self.segment {
-            if id < seg.n_docs() && self.tombstones.contains(id) {
-                return None;
-            }
-        }
         self.number_at(id)
     }
 
     #[inline]
     fn number_bits_at(&self, id: u32) -> Option<u64> {
-        if let Some(seg) = &self.segment {
-            if id < seg.n_docs() {
-                return seg
-                    .number_at(id)
-                    .and_then(|x| SortableF64::new(x).ok())
-                    .map(|s| s.bits());
-            }
-        }
         if let Some(bits) = self.dense_forward.get(id as usize).copied() {
             if bits != MISSING_SORTABLE_F64_BITS {
                 return Some(bits);
             }
         }
-        self.forward.get(&id).map(|s| s.bits())
+        if let Some(value) = self.forward.get(&id) {
+            return Some(value.bits());
+        }
+        if self.tombstones.contains(id) {
+            return None;
+        }
+        self.segment.as_ref().and_then(|seg| {
+            (id < seg.n_docs())
+                .then(|| seg.number_at(id))
+                .flatten()
+                .and_then(|x| SortableF64::new(x).ok())
+                .map(|s| s.bits())
+        })
     }
 
     #[inline]
@@ -1751,7 +2370,9 @@ impl NumberIndex {
     /// (`try_plan`) uses to drive `sorted_walk_segment` (Phase 2m). `None` when no
     /// segment is attached (the in-RAM `values` BTreeMap is the sort driver).
     #[inline]
-    fn segment_ref(&self) -> Option<&std::sync::Arc<crate::segment::SegmentReader>> {
+    fn segment_ref(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::composed_segment::ComposedSegmentReader>> {
         self.segment.as_ref()
     }
 
@@ -1993,7 +2614,7 @@ impl NumberIndex {
     /// both cursors on a key tie), matching the in-RAM single-entry-per-value map.
     fn sorted_walk_segment<F>(
         &self,
-        seg: &crate::segment::SegmentReader,
+        seg: &crate::composed_segment::ComposedSegmentReader,
         descending: bool,
         after: Option<u64>,
         mut visit: F,
@@ -2001,201 +2622,76 @@ impl NumberIndex {
     where
         F: FnMut(f64, u32) -> Result<bool>,
     {
-        let distinct = seg.number_distinct_count();
-        // Tail keys ascending (BTreeMap order). We walk the segment index and the
-        // tail in lockstep, emitting the smaller (asc) / larger (desc) key first so
-        // the merged order is monotone and each value is visited once.
-        let tail_keys: Vec<SortableF64> = self.values.keys().copied().collect();
-
-        // Keyset seek (Phase 2p): start both cursors AT the cursor key (the
-        // caller's visitor still drops the equal-key docids at or before the
-        // cursor docid). Binary search over the index-addressable sorted
-        // column — O(log distinct) probes, no posting decode.
-        let seek_seg = |want_bits: u64| -> u64 {
-            let (mut lo, mut hi) = (0u64, distinct);
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                match seg.number_sorted_bits_at(mid as u32) {
-                    Some(bits) if bits < want_bits => lo = mid + 1,
-                    _ => hi = mid,
-                }
-            }
-            lo
-        };
-
-        // One unit of work for a single distinct VALUE: compose its segment posting
-        // (minus tombstones) with the live-tail posting, then emit each docid in
-        // ascending order. Returns Ok(false) to stop the whole walk early.
-        let mut emit_value = |value_bits: u64,
-                              seg_posting: Option<std::sync::Arc<RoaringBitmap>>,
-                              tail_posting: Option<&RoaringBitmap>|
-         -> Result<bool> {
-            let value = SortableF64::from_bits(value_bits).to_f64();
-            // Build the RAW union exactly as the in-RAM merged bitmap held it:
-            // segment base MINUS tombstones, OR the live tail. Cheap when there is
-            // no segment posting (tail-only value) or no tombstone (the common
-            // case clones nothing for the tail-only branch).
-            match (seg_posting, tail_posting) {
-                (Some(base), tail) => {
-                    let mut set = (*base).clone();
-                    if !self.tombstones.is_empty() {
-                        set -= &self.tombstones;
-                    }
-                    if let Some(t) = tail {
-                        set |= t;
-                    }
-                    for id in &set {
-                        if !visit(value, id)? {
-                            return Ok(false);
-                        }
-                    }
-                }
-                (None, Some(tail)) => {
-                    // Tail-only value: tail ids are never tombstoned (a live-path
-                    // delete mutates the tail bitmap in place), so emit directly.
-                    for id in tail {
-                        if !visit(value, id)? {
-                            return Ok(false);
-                        }
-                    }
-                }
-                (None, None) => {}
-            }
-            Ok(true)
-        };
-
-        if !descending {
-            // ----- ASCENDING: two ascending cursors (segment index 0.., tail 0..).
-            let mut si: u64 = 0;
-            let mut ti: usize = 0;
-            if let Some(bits) = after {
-                si = seek_seg(bits);
-                ti = tail_keys.partition_point(|k| k.bits() < bits);
-            }
-            loop {
-                let seg_bits = if si < distinct {
-                    seg.number_sorted_bits_at(si as u32)
-                } else {
-                    None
-                };
-                let tail_key = tail_keys.get(ti).copied();
-                match (seg_bits, tail_key) {
-                    (None, None) => break,
-                    (Some(sb), None) => {
-                        let p = seg.number_sorted_postings_at(si as u32);
-                        if !emit_value(sb, p, None)? {
-                            return Ok(());
-                        }
-                        si += 1;
-                    }
-                    (None, Some(tk)) => {
-                        let t = self.values.get(&tk);
-                        if !emit_value(tk.bits(), None, t)? {
-                            return Ok(());
-                        }
-                        ti += 1;
-                    }
-                    (Some(sb), Some(tk)) => {
-                        let tb = tk.bits();
-                        if sb < tb {
-                            let p = seg.number_sorted_postings_at(si as u32);
-                            if !emit_value(sb, p, None)? {
-                                return Ok(());
-                            }
-                            si += 1;
-                        } else if sb > tb {
-                            let t = self.values.get(&tk);
-                            if !emit_value(tb, None, t)? {
-                                return Ok(());
-                            }
-                            ti += 1;
-                        } else {
-                            // Same value in both sources → visit once, unioned.
-                            let p = seg.number_sorted_postings_at(si as u32);
-                            let t = self.values.get(&tk);
-                            if !emit_value(sb, p, t)? {
-                                return Ok(());
-                            }
-                            si += 1;
-                            ti += 1;
-                        }
-                    }
-                }
-            }
+        let mut cursor = seg.number_keys(
+            (!descending)
+                .then_some(after)
+                .flatten()
+                .map(|bits| (bits, true)),
+            descending
+                .then_some(after)
+                .flatten()
+                .map(|bits| (bits, true)),
+            descending,
+        )?;
+        let mut disk = cursor.next()?;
+        let tail_keys: Vec<SortableF64> = if descending {
+            self.values
+                .keys()
+                .rev()
+                .copied()
+                .filter(|key| after.is_none_or(|bits| key.bits() <= bits))
+                .collect()
         } else {
-            // ----- DESCENDING: two descending cursors (segment index high..0, tail
-            // high..0). Within-value docid order stays ASCENDING (matches the in-RAM
-            // `values.iter().rev()` then ascending-bitmap iteration).
-            let mut si: i64 = distinct as i64 - 1;
-            let mut ti: i64 = tail_keys.len() as i64 - 1;
-            if let Some(bits) = after {
-                // Last index with bits <= cursor (first strictly-greater minus 1).
-                let (mut lo, mut hi) = (0u64, distinct);
-                while lo < hi {
-                    let mid = (lo + hi) / 2;
-                    match seg.number_sorted_bits_at(mid as u32) {
-                        Some(b) if b <= bits => lo = mid + 1,
-                        _ => hi = mid,
+            self.values
+                .keys()
+                .copied()
+                .filter(|key| after.is_none_or(|bits| key.bits() >= bits))
+                .collect()
+        };
+        let mut tail = tail_keys.into_iter();
+        let mut tail_key = tail.next();
+        loop {
+            let (bits, take_disk, take_tail) = match (disk, tail_key) {
+                (None, None) => break,
+                (Some(bits), None) => (bits, true, false),
+                (None, Some(key)) => (key.bits(), false, true),
+                (Some(disk_bits), Some(key)) => {
+                    let tail_bits = key.bits();
+                    if disk_bits == tail_bits {
+                        (disk_bits, true, true)
+                    } else if (disk_bits < tail_bits) != descending {
+                        (disk_bits, true, false)
+                    } else {
+                        (tail_bits, false, true)
                     }
                 }
-                si = lo as i64 - 1;
-                ti = tail_keys.partition_point(|k| k.bits() <= bits) as i64 - 1;
+            };
+            let mut posting = if take_disk {
+                seg.number_value_postings(bits).unwrap_or_default()
+            } else {
+                RoaringBitmap::new()
+            };
+            if take_disk && !self.tombstones.is_empty() {
+                posting -= &self.tombstones;
             }
-            loop {
-                let seg_bits = if si >= 0 {
-                    seg.number_sorted_bits_at(si as u32)
-                } else {
-                    None
-                };
-                let tail_key = if ti >= 0 {
-                    tail_keys.get(ti as usize).copied()
-                } else {
-                    None
-                };
-                match (seg_bits, tail_key) {
-                    (None, None) => break,
-                    (Some(sb), None) => {
-                        let p = seg.number_sorted_postings_at(si as u32);
-                        if !emit_value(sb, p, None)? {
-                            return Ok(());
-                        }
-                        si -= 1;
-                    }
-                    (None, Some(tk)) => {
-                        let t = self.values.get(&tk);
-                        if !emit_value(tk.bits(), None, t)? {
-                            return Ok(());
-                        }
-                        ti -= 1;
-                    }
-                    (Some(sb), Some(tk)) => {
-                        let tb = tk.bits();
-                        if sb > tb {
-                            let p = seg.number_sorted_postings_at(si as u32);
-                            if !emit_value(sb, p, None)? {
-                                return Ok(());
-                            }
-                            si -= 1;
-                        } else if sb < tb {
-                            let t = self.values.get(&tk);
-                            if !emit_value(tb, None, t)? {
-                                return Ok(());
-                            }
-                            ti -= 1;
-                        } else {
-                            let p = seg.number_sorted_postings_at(si as u32);
-                            let t = self.values.get(&tk);
-                            if !emit_value(sb, p, t)? {
-                                return Ok(());
-                            }
-                            si -= 1;
-                            ti -= 1;
-                        }
-                    }
+            if take_tail {
+                posting |= self
+                    .values
+                    .get(&SortableF64::from_bits(bits))
+                    .expect("tail key came from values");
+                tail_key = tail.next();
+            }
+            if take_disk {
+                disk = cursor.next()?;
+            }
+            let value = SortableF64::from_bits(bits).to_f64();
+            for id in posting {
+                if !visit(value, id)? {
+                    return Ok(());
                 }
             }
         }
-        Ok(())
+        return Ok(());
     }
 
     /// SEGMENT-ON standalone range page. Unlike `sorted_values()`, this streams only
@@ -2205,7 +2701,7 @@ impl NumberIndex {
     /// live count for a base posting.
     fn range_page_segment(
         &self,
-        seg: &crate::segment::SegmentReader,
+        seg: &crate::composed_segment::ComposedSegmentReader,
         low: std::ops::Bound<SortableF64>,
         high: std::ops::Bound<SortableF64>,
         want: usize,
@@ -2213,117 +2709,49 @@ impl NumberIndex {
     ) -> Result<(Vec<(u32, f32)>, u64)> {
         let mut page = Vec::with_capacity(want.min(1024));
         let mut total = 0u64;
-        let Some((i_lo, i_hi)) =
-            seg.number_range_index_window(bound_to_bits(low), bound_to_bits(high))
-        else {
-            return Ok((page, total));
-        };
-        let tail_keys: Vec<SortableF64> = self.values.range((low, high)).map(|(k, _)| *k).collect();
-        let mut si = i_lo;
-        let mut ti = 0usize;
-
-        let mut emit_value = |_value_bits: u64,
-                              seg_posting: Option<std::sync::Arc<RoaringBitmap>>,
-                              tail_posting: Option<&RoaringBitmap>|
-         -> Result<bool> {
-            if let Some(base) = seg_posting {
-                if self.tombstones.is_empty() {
-                    total += base.len();
-                    if page.len() < want {
-                        for id in base.iter() {
-                            page.push((id, 1.0));
-                            if page.len() >= want {
-                                break;
-                            }
-                        }
-                    } else if !track_total {
-                        return Ok(false);
-                    }
-                } else {
-                    for id in base.iter() {
-                        if self.tombstones.contains(id) {
-                            continue;
-                        }
-                        total += 1;
-                        if page.len() < want {
-                            page.push((id, 1.0));
-                        } else if !track_total {
-                            return Ok(false);
-                        }
-                    }
-                }
-            }
-            if let Some(tail) = tail_posting {
-                total += tail.len();
-                for id in tail {
-                    if page.len() < want {
-                        page.push((id, 1.0));
-                    } else if !track_total {
-                        return Ok(false);
-                    }
-                }
-            }
-            Ok(true)
-        };
-
+        let mut cursor = seg.number_keys(bound_to_bits(low), bound_to_bits(high), false)?;
+        let mut disk = cursor.next()?;
+        let mut tail = self.values.range((low, high)).peekable();
         loop {
-            let seg_bits = if si < i_hi {
-                seg.number_sorted_bits_at(si)
-            } else {
-                None
-            };
-            let tail_key = tail_keys.get(ti).copied();
-            match (seg_bits, tail_key) {
+            let (bits, take_disk, take_tail) = match (disk, tail.peek()) {
                 (None, None) => break,
-                (Some(sb), None) => {
-                    let p = seg.number_sorted_postings_at(si);
-                    if !emit_value(sb, p, None)? {
-                        total = total.max(page.len() as u64);
-                        return Ok((page, total));
-                    }
-                    si += 1;
-                }
-                (None, Some(tk)) => {
-                    let t = self.values.get(&tk);
-                    if !emit_value(tk.bits(), None, t)? {
-                        total = total.max(page.len() as u64);
-                        return Ok((page, total));
-                    }
-                    ti += 1;
-                }
-                (Some(sb), Some(tk)) => {
-                    let tb = tk.bits();
-                    if sb < tb {
-                        let p = seg.number_sorted_postings_at(si);
-                        if !emit_value(sb, p, None)? {
-                            total = total.max(page.len() as u64);
-                            return Ok((page, total));
-                        }
-                        si += 1;
-                    } else if sb > tb {
-                        let t = self.values.get(&tk);
-                        if !emit_value(tb, None, t)? {
-                            total = total.max(page.len() as u64);
-                            return Ok((page, total));
-                        }
-                        ti += 1;
-                    } else {
-                        let p = seg.number_sorted_postings_at(si);
-                        let t = self.values.get(&tk);
-                        if !emit_value(sb, p, t)? {
-                            total = total.max(page.len() as u64);
-                            return Ok((page, total));
-                        }
-                        si += 1;
-                        ti += 1;
-                    }
+                (Some(bits), None) => (bits, true, false),
+                (None, Some((key, _))) => (key.bits(), false, true),
+                (Some(disk_bits), Some((key, _))) => match disk_bits.cmp(&key.bits()) {
+                    std::cmp::Ordering::Less => (disk_bits, true, false),
+                    std::cmp::Ordering::Equal => (disk_bits, true, true),
+                    std::cmp::Ordering::Greater => (key.bits(), false, true),
+                },
+            };
+            let mut posting = if take_disk {
+                seg.number_value_postings(bits).unwrap_or_default()
+            } else {
+                RoaringBitmap::new()
+            };
+            if take_disk && !self.tombstones.is_empty() {
+                posting -= &self.tombstones;
+            }
+            if take_tail {
+                let (_, tail_posting) = tail.next().expect("peeked tail entry");
+                posting |= tail_posting;
+            }
+            if take_disk {
+                disk = cursor.next()?;
+            }
+            total += posting.len();
+            for id in posting {
+                if page.len() < want {
+                    page.push((id, 1.0));
+                } else if !track_total {
+                    total = total.max(page.len() as u64);
+                    return Ok((page, total));
                 }
             }
         }
         if !track_total {
             total = total.max(page.len() as u64);
         }
-        Ok((page, total))
+        return Ok((page, total));
     }
 }
 
@@ -2348,7 +2776,7 @@ struct SetIndex {
     /// O(live tail), not O(distinct set elements). DEFAULTS to `None`; while it
     /// is `None` (nothing sealed) every read path is byte-for-byte the
     /// in-RAM path. Purely additive.
-    segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
+    segment: Option<std::sync::Arc<crate::composed_segment::ComposedSegmentReader>>,
     /// QUERY-TIME TOMBSTONE (Phase 2h-2): base docids `[0..seg.n_docs)` deleted
     /// SINCE the last seal. The inverted `elements` index was DROPPED to disk at
     /// seal, so `drop_eid` can no longer remove a sealed base id from the
@@ -2374,6 +2802,12 @@ impl SetIndex {
     /// exact member strings, so membership matches the live `forward` entry.
     #[inline]
     fn set_contains(&self, id: u32, el: &str) -> bool {
+        if let Some(set) = self.forward.get(&id) {
+            return set.contains(el);
+        }
+        if self.tombstones.contains(id) {
+            return false;
+        }
         if let Some(seg) = &self.segment {
             if id < seg.n_docs() {
                 return seg
@@ -2382,10 +2816,7 @@ impl SetIndex {
                     .unwrap_or(false);
             }
         }
-        self.forward
-            .get(&id)
-            .map(|s| s.contains(el))
-            .unwrap_or(false)
+        false
     }
 
     /// Does doc `id`'s set contain ANY of `values`'s string members? The
@@ -2393,6 +2824,14 @@ impl SetIndex {
     /// candidate value) when sealed, falling back to the live `forward` set.
     #[inline]
     fn set_contains_any(&self, id: u32, values: &[FieldValue]) -> bool {
+        if let Some(set) = self.forward.get(&id) {
+            return values
+                .iter()
+                .any(|val| matches!(val, FieldValue::String(el) if set.contains(el)));
+        }
+        if self.tombstones.contains(id) {
+            return false;
+        }
         if let Some(seg) = &self.segment {
             if id < seg.n_docs() {
                 let Some(members) = seg.set_at(id) else {
@@ -2403,11 +2842,7 @@ impl SetIndex {
                 );
             }
         }
-        self.forward.get(&id).is_some_and(|set| {
-            values
-                .iter()
-                .any(|val| matches!(val, FieldValue::String(el) if set.contains(el)))
-        })
+        false
     }
 
     /// Doc `id`'s full member set, routed through the segment for sealed ids
@@ -2416,12 +2851,18 @@ impl SetIndex {
     /// disk, so the inverted `elements` postings are still removed on delete.
     #[inline]
     fn set_members(&self, id: u32) -> Option<BTreeSet<String>> {
+        if let Some(set) = self.forward.get(&id) {
+            return Some(set.clone());
+        }
+        if self.tombstones.contains(id) {
+            return None;
+        }
         if let Some(seg) = &self.segment {
             if id < seg.n_docs() {
                 return seg.set_at(id).map(|m| m.into_iter().collect());
             }
         }
-        self.forward.get(&id).cloned()
+        None
     }
 
     /// `set_members` MINUS the query-time tombstones — doc `id`'s member set as
@@ -2440,9 +2881,6 @@ impl SetIndex {
     /// rebuilds the inverted index from exactly that column.
     #[inline]
     fn live_set_members(&self, id: u32) -> Option<BTreeSet<String>> {
-        if self.tombstones.contains(id) {
-            return None;
-        }
         self.set_members(id)
     }
 
@@ -2588,13 +3026,14 @@ enum FieldIndex {
 struct HashIndex {
     forward: FastHashMap<u32, u64>,
     bytes: u64,
+    tombstones: RoaringBitmap,
     /// Stage 2 disk-tier (Phase 2d): a sealed columnar mmap segment covering
     /// doc ids `[0..n_docs)`. When present, the per-doc hash read in the Hamming
     /// scan (`hash_at`) reads the segment for sealed ids and the in-RAM
     /// `forward` tail for ids `>= n_docs`. DEFAULTS to `None`; while it is
     /// `None` (nothing sealed) the read
     /// path is byte-for-byte the in-RAM path. Purely additive.
-    segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
+    segment: Option<std::sync::Arc<crate::composed_segment::ComposedSegmentReader>>,
 }
 
 impl HashIndex {
@@ -2605,12 +3044,18 @@ impl HashIndex {
     /// raw `u64`, so a hit is bit-equal to the live entry.
     #[inline]
     fn hash_at(&self, id: u32) -> Option<u64> {
+        if let Some(value) = self.forward.get(&id) {
+            return Some(*value);
+        }
+        if self.tombstones.contains(id) {
+            return None;
+        }
         if let Some(seg) = &self.segment {
             if id < seg.n_docs() {
                 return seg.hash_at(id);
             }
         }
-        self.forward.get(&id).copied()
+        None
     }
 
     /// `true` once the sealed forward payload has been dropped to disk
@@ -2644,13 +3089,19 @@ impl std::fmt::Debug for FieldIndex {
 
 /// Parse a `hash` field value: a 64-bit hex string, optionally `0x`-prefixed.
 fn parse_hash(s: &str) -> Result<u64> {
+    parse_hash_number(s)
+        .map_err(|e| anyhow!("hash field expects a 64-bit hex string (got `{s}`): {e}"))
+}
+
+/// Allocation-free numeric parse for retained WAL values. The ordinary error
+/// response keeps its existing diagnostic through `parse_hash` above.
+fn parse_hash_number(s: &str) -> std::result::Result<u64, std::num::ParseIntError> {
     let t = s.trim();
     let hex = t
         .strip_prefix("0x")
         .or_else(|| t.strip_prefix("0X"))
         .unwrap_or(t);
     u64::from_str_radix(hex, 16)
-        .map_err(|e| anyhow!("hash field expects a 64-bit hex string (got `{s}`): {e}"))
 }
 
 impl FieldIndex {
@@ -2823,7 +3274,7 @@ impl FieldIndex {
                     if id < seg.n_docs() {
                         // Tombstone and decrement the immutable base once. A
                         // current live overlay already returned above.
-                        if !idx.tombstones.contains(id) {
+                        if !idx.tombstones.contains(id) && seg.text_is_present(id) {
                             let doc_len = seg.text_doc_len(id);
                             idx.tombstones.insert(id);
                             idx.doc_count = idx.doc_count.saturating_sub(1);
@@ -2839,157 +3290,74 @@ impl FieldIndex {
                 0
             }
             FieldIndex::Keyword(k) => {
-                // After a seal-and-drop the forward payload lives on the
-                // segment, not in `forward`. Resolve the doc's keyword through
-                // `keyword_at` (segment for sealed ids, else the live tail) so a
-                // delete still finds the term to remove from the inverted index.
-                let value = if k.forward_dropped() {
-                    let value = match k.keyword_at(id) {
-                        Some(v) => v,
-                        None => return 0,
-                    };
-                    if k.segment.as_ref().is_some_and(|seg| id >= seg.n_docs()) {
-                        k.remove_keyword(id);
-                    }
-                    value
-                } else {
-                    match k.remove_keyword(id) {
-                        Some(v) => v,
-                        None => return 0,
-                    }
-                };
-                let mut freed = 0u64;
-                // QUERY-TIME TOMBSTONE (Phase 2h-1 FIX): when the field is SEALED
-                // and `id` is a base docid `< seg.n_docs`, its posting lives on the
-                // IMMUTABLE on-disk column — `terms.get_mut` can't reach it (the
-                // RAM `terms` index was dropped at seal). Record the id in
-                // `tombstones` so every segment-ON accessor subtracts it; the
-                // re-seal bakes it in and clears the set. Live-tail ids
-                // (`>= seg.n_docs`) fall through to the in-RAM `terms` path below.
-                if let Some(seg) = &k.segment {
-                    if id < seg.n_docs() {
-                        k.tombstones.insert(id);
-                        // The on-disk posting bytes don't shrink; report the same
-                        // per-term byte estimate the in-RAM removal would free so
-                        // `bytes` stays consistent with the live-path accounting.
-                        freed = (value.len() + eid.len()) as u64;
-                        k.bytes = k.bytes.saturating_sub(freed);
-                        return freed;
-                    }
+                // A sealed ID can have a newer sparse or dense overlay. Remove
+                // that overlay and its posting before masking the immutable base.
+                let value = k.remove_keyword(id).or_else(|| {
+                    k.segment
+                        .as_ref()
+                        .filter(|seg| id < seg.n_docs() && !k.tombstones.contains(id))
+                        .and_then(|seg| seg.keyword_at(id))
+                });
+                if k.segment.as_ref().is_some_and(|seg| id < seg.n_docs()) {
+                    k.tombstones.insert(id);
                 }
-                if let Some(set) = k.terms.get_mut(&value) {
-                    if set.remove(id) {
-                        freed = (value.len() + eid.len()) as u64;
-                    }
-                    if set.len() < 2 {
+                let Some(value) = value else {
+                    return 0;
+                };
+                if let Some(posting) = k.terms.get_mut(&value) {
+                    posting.remove(id);
+                    if posting.len() < 2 {
                         k.dup_values.remove(&value);
                     }
-                    if set.is_empty() {
+                    if posting.is_empty() {
                         k.terms.remove(&value);
                     }
                 }
+                let freed = (value.len() + eid.len()) as u64;
                 k.bytes = k.bytes.saturating_sub(freed);
                 freed
             }
             FieldIndex::Number(n) => {
-                // Sealed-and-dropped: resolve the key through `number_at`
-                // (segment for sealed ids) so the inverted `values` entry is
-                // still removed on delete.
-                let key = if n.forward_dropped() {
-                    match n.number_at(id) {
-                        Some(k) => k,
-                        None => return 0,
-                    }
-                } else {
-                    match n.remove_number(id) {
-                        Some(k) => k,
-                        None => return 0,
-                    }
+                let key = n.remove_number(id).or_else(|| n.number_at(id));
+                if n.segment.as_ref().is_some_and(|seg| id < seg.n_docs()) {
+                    n.tombstones.insert(id);
+                }
+                let Some(key) = key else {
+                    return 0;
                 };
-                let mut freed = 0u64;
-                // QUERY-TIME TOMBSTONE (Phase 2h-3): when the field is SEALED and
-                // `id` is a base docid `< seg.n_docs`, its posting lives on the
-                // IMMUTABLE on-disk sorted-value index — `values.get_mut` can't
-                // reach it (the RAM `values` index was dropped at seal). Record the
-                // id in `tombstones` so every segment-ON accessor subtracts it; the
-                // re-seal bakes it in and clears the set. Live-tail ids
-                // (`>= seg.n_docs`) fall through to the in-RAM `values` path below.
-                if let Some(seg) = &n.segment {
-                    if id < seg.n_docs() {
-                        n.tombstones.insert(id);
-                        // The on-disk posting bytes don't shrink; report the same
-                        // byte estimate the in-RAM removal would free so `bytes`
-                        // stays consistent with the live-path accounting.
-                        freed = (8 + eid.len()) as u64;
-                        n.bytes = n.bytes.saturating_sub(freed);
-                        return freed;
-                    }
-                }
-                if n.forward_dropped() {
-                    n.remove_number(id);
-                }
-                if let Some(set) = n.values.get_mut(&key) {
-                    if set.remove(id) {
-                        freed = (8 + eid.len()) as u64;
-                    }
-                    if set.len() < 2 {
+                if let Some(posting) = n.values.get_mut(&key) {
+                    posting.remove(id);
+                    if posting.len() < 2 {
                         n.dup_values.remove(&key);
                     }
-                    if set.is_empty() {
+                    if posting.is_empty() {
                         n.values.remove(&key);
                     }
                 }
+                let freed = (8 + eid.len()) as u64;
                 n.bytes = n.bytes.saturating_sub(freed);
                 freed
             }
             FieldIndex::Set(s) => {
-                // Sealed-and-dropped: read the member set through `set_members`
-                // (segment for sealed ids) so the inverted `elements` postings
-                // are still removed on delete.
-                let elems = if s.forward_dropped() {
-                    match s.set_members(id) {
-                        Some(e) => e,
-                        None => return 0,
-                    }
-                } else {
-                    match s.forward.remove(&id) {
-                        Some(e) => e,
-                        None => return 0,
-                    }
-                };
-                let mut freed = 0u64;
-                // QUERY-TIME TOMBSTONE (Phase 2h-2): when the field is SEALED and
-                // `id` is a base docid `< seg.n_docs`, EVERY element's posting
-                // lives on the IMMUTABLE on-disk column — `elements.get_mut` can't
-                // reach them (the RAM `elements` index was dropped at seal). Record
-                // the id ONCE in `tombstones` so every segment-ON accessor subtracts
-                // it; the re-seal bakes it in and clears the set. Live-tail ids
-                // (`>= seg.n_docs`) fall through to the in-RAM `elements` path below.
-                if let Some(seg) = &s.segment {
-                    if id < seg.n_docs() {
-                        s.tombstones.insert(id);
-                        // The on-disk posting bytes don't shrink; report the same
-                        // per-element byte estimate the in-RAM removal would free so
-                        // `bytes` stays consistent with the live-path accounting.
-                        for el in &elems {
-                            freed += (el.len() + eid.len()) as u64;
-                        }
-                        s.bytes = s.bytes.saturating_sub(freed);
-                        return freed;
-                    }
+                let members = s.forward.remove(&id).or_else(|| s.set_members(id));
+                if s.segment.as_ref().is_some_and(|seg| id < seg.n_docs()) {
+                    s.tombstones.insert(id);
                 }
-                for el in &elems {
-                    if let Some(set) = s.elements.get_mut(el) {
-                        if set.remove(id) {
-                            freed += (el.len() + eid.len()) as u64;
+                let Some(members) = members else {
+                    return 0;
+                };
+                let mut freed = 0;
+                for member in members {
+                    if let Some(posting) = s.elements.get_mut(&member) {
+                        posting.remove(id);
+                        if posting.len() < 2 {
+                            s.dup_values.remove(&member);
                         }
-                        if set.len() < 2 {
-                            s.dup_values.remove(el);
-                        }
-                        if set.is_empty() {
-                            s.elements.remove(el);
+                        if posting.is_empty() {
+                            s.elements.remove(&member);
                         }
                     }
+                    freed += (member.len() + eid.len()) as u64;
                 }
                 s.bytes = s.bytes.saturating_sub(freed);
                 freed
@@ -3009,25 +3377,13 @@ impl FieldIndex {
                 }
             }
             FieldIndex::Hash(h) => {
-                // Sealed-and-dropped: a Hash field has no inverted index, so the
-                // only state to clear is the forward entry — already gone from
-                // RAM. Confirm the doc existed (via the segment) so `drop_eid`
-                // still reports the freed bytes; the segment row itself stays
-                // (it is immutable, and the Hamming scan gates on the live
-                // present set / eid_fields).
-                if h.forward_dropped() {
-                    return if h.hash_at(id).is_some() {
-                        let freed = 12u64;
-                        h.bytes = h.bytes.saturating_sub(freed);
-                        freed
-                    } else {
-                        0
-                    };
+                let previous = h.forward.remove(&id).or_else(|| h.hash_at(id));
+                if h.segment.as_ref().is_some_and(|seg| id < seg.n_docs()) {
+                    h.tombstones.insert(id);
                 }
-                if h.forward.remove(&id).is_some() {
-                    let freed = 12u64;
-                    h.bytes = h.bytes.saturating_sub(freed);
-                    freed
+                if previous.is_some() {
+                    h.bytes = h.bytes.saturating_sub(12);
+                    12
                 } else {
                     0
                 }
@@ -3090,28 +3446,102 @@ impl FieldCoverage {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct TokenSet {
-    tokens: SmallVec<[String; 8]>,
+/// Small rows avoid a hash allocation. Large rows own each distinct token in
+/// a hash set, so normalization does not scan all preceding terms per token.
+#[derive(Debug, Clone)]
+enum TokenSet {
+    Inline(SmallVec<[String; 8]>),
+    Indexed(FastHashSet<String>),
+}
+
+impl Default for TokenSet {
+    fn default() -> Self {
+        Self::Inline(SmallVec::new())
+    }
 }
 
 impl TokenSet {
     fn insert_str(&mut self, token: &str) -> bool {
-        if self.tokens.iter().any(|seen| seen == token) {
-            return false;
+        match self {
+            Self::Inline(tokens) => {
+                if tokens.iter().any(|seen| seen == token) {
+                    return false;
+                }
+                if tokens.len() < 8 {
+                    tokens.push(token.to_owned());
+                } else {
+                    // Move each String into its bucket. Keep no second token
+                    // list and do not clone payloads during this transition.
+                    let mut indexed: FastHashSet<String> = tokens.drain(..).collect();
+                    indexed.insert(token.to_owned());
+                    *self = Self::Indexed(indexed);
+                }
+                true
+            }
+            Self::Indexed(tokens) => {
+                if tokens.contains(token) {
+                    false
+                } else {
+                    tokens.insert(token.to_owned());
+                    true
+                }
+            }
         }
-        self.tokens.push(token.to_string());
-        true
     }
 
     fn iter(&self) -> impl Iterator<Item = &String> {
-        self.tokens.iter()
+        let (inline, indexed) = match self {
+            Self::Inline(tokens) => (Some(tokens), None),
+            Self::Indexed(tokens) => (None, Some(tokens)),
+        };
+        inline
+            .into_iter()
+            .flatten()
+            .chain(indexed.into_iter().flatten())
     }
 
     fn from_btree_set(set: BTreeSet<String>) -> Self {
-        Self {
-            tokens: set.into_iter().collect(),
+        if set.len() <= 8 {
+            Self::Inline(set.into_iter().collect())
+        } else {
+            Self::Indexed(set.into_iter().collect())
         }
+    }
+}
+
+#[cfg(test)]
+mod token_set_tests {
+    use super::TokenSet;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn promotion_and_repeated_tokens_keep_one_owned_entry_per_distinct_term() {
+        let mut tokens = TokenSet::default();
+        for i in 0..8 {
+            assert!(tokens.insert_str(&format!("term-{i:04}")));
+        }
+        assert!(matches!(&tokens, TokenSet::Inline(_)));
+        let original = tokens.iter().next().unwrap().as_ptr();
+        for i in 8..1000 {
+            assert!(tokens.insert_str(&format!("term-{i:04}")));
+        }
+        assert!(matches!(&tokens, TokenSet::Indexed(_)));
+        assert_eq!(
+            tokens
+                .iter()
+                .find(|s| s.as_str() == "term-0000")
+                .unwrap()
+                .as_ptr(),
+            original,
+            "promotion must move existing token allocations"
+        );
+        for i in 0..1000 {
+            assert!(!tokens.insert_str(&format!("term-{i:04}")));
+        }
+        let expected: BTreeSet<_> = (0..1000).map(|i| format!("term-{i:04}")).collect();
+        assert_eq!(tokens.iter().cloned().collect::<BTreeSet<_>>(), expected);
+        let rebuilt = TokenSet::from_btree_set(expected.clone());
+        assert_eq!(rebuilt.iter().cloned().collect::<BTreeSet<_>>(), expected);
     }
 }
 
@@ -3138,8 +3568,37 @@ fn flush_group_coverage(
     eid_fields.insert(id, std::mem::take(fields));
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CHECKPOINT_COLLECTION_OPENS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static CHECKPOINT_WRITE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+fn checkpoint_write_boundary() {
+    #[cfg(test)]
+    CHECKPOINT_WRITE_HOOK.with(|hook| {
+        let hook = hook.borrow_mut().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    });
+}
+
 #[derive(Debug)]
 struct Collection {
+    collection_generation: u64,
+    data_version: u64,
+    checkpoint_origin: Option<std::path::PathBuf>,
+    checkpoint_lineage: Option<std::path::PathBuf>,
+    checkpoint_lineage_schema: Option<u32>,
+    field_dirty: BTreeMap<String, BTreeMap<String, u64>>,
+    next_field_dirty_revision: u64,
+    change_journal: crate::change_journal::ChangeJournal<CheckpointValue>,
+    requires_full_checkpoint: bool,
+    /// True only while the journal describes every row since this collection
+    /// was empty. A missing origin alone cannot prove this after restore or a
+    /// checkpoint namespace change.
+    journal_complete_since_empty: bool,
     version: u32,
     schema: BTreeMap<String, FieldSpec>,
     fields: FastHashMap<String, FieldIndex>,
@@ -3187,6 +3646,8 @@ struct Collection {
     /// skipping would be).
     field_checksums: FastHashMap<u32, FastHashMap<String, u64>>,
 }
+
+pub(crate) type FieldDirtySnapshot = BTreeMap<String, BTreeMap<String, u64>>;
 
 /// One detached generation remains in this registry until the background
 /// reclaimer has drained its per-document work and performed final cleanup.
@@ -3511,6 +3972,16 @@ impl Collection {
             fields.insert(name.clone(), FieldIndex::from_spec(spec)?);
         }
         Ok(Self {
+            collection_generation: 0,
+            data_version: 1,
+            checkpoint_origin: None,
+            checkpoint_lineage: None,
+            checkpoint_lineage_schema: None,
+            field_dirty: BTreeMap::new(),
+            next_field_dirty_revision: 0,
+            change_journal: crate::change_journal::ChangeJournal::new(),
+            requires_full_checkpoint: false,
+            journal_complete_since_empty: true,
             version: 1,
             schema,
             fields,
@@ -3604,10 +4075,130 @@ impl Collection {
         }
     }
 
-    fn clear_search_cache(&self) {
+    fn clear_search_cache(&mut self) {
+        // Conservative invalidation precedes mutation. Even a partially failed
+        // batch must never reuse its earlier immutable checkpoint bytes.
+        self.data_version = self.data_version.saturating_add(1);
+        self.checkpoint_origin = None;
         if let Ok(mut cache) = self.search_cache.write() {
             cache.clear();
         }
+    }
+
+    fn mark_field_dirty(&mut self, field: &str, external_id: &str) -> Result<()> {
+        self.mark_field_dirty_charged(field, external_id, None)
+    }
+
+    fn mark_field_dirty_charged(
+        &mut self,
+        field: &str,
+        external_id: &str,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+    ) -> Result<()> {
+        if !matches!(
+            self.fields.get(field),
+            Some(
+                FieldIndex::Keyword(_)
+                    | FieldIndex::Number(_)
+                    | FieldIndex::Set(_)
+                    | FieldIndex::Hash(_)
+                    | FieldIndex::Text { .. }
+                    | FieldIndex::Vector { .. }
+            )
+        ) {
+            self.requires_full_checkpoint = true;
+            return Ok(());
+        }
+        self.next_field_dirty_revision = self.next_field_dirty_revision.saturating_add(1);
+        self.field_dirty
+            .entry(field.to_owned())
+            .or_default()
+            .insert(external_id.to_owned(), self.next_field_dirty_revision);
+        let value = self.checkpoint_value(field, external_id).map_err(|error| {
+            // The live mutation already happened. A missing journal value must
+            // never authorize reusing older files as if this row were saved.
+            self.requires_full_checkpoint = true;
+            error
+        })?;
+        self.change_journal.record_charged(
+            field.to_owned(),
+            external_id.to_owned(),
+            self.next_field_dirty_revision,
+            value.map(std::sync::Arc::new),
+            charge.cloned(),
+        );
+        Ok(())
+    }
+
+    fn checkpoint_value(&self, field: &str, external_id: &str) -> Result<Option<CheckpointValue>> {
+        let Some(id) = self.interner.id(external_id) else {
+            return Ok(None);
+        };
+        let index = self
+            .fields
+            .get(field)
+            .ok_or_else(|| anyhow!("capture field missing"))?;
+        match index {
+            FieldIndex::Keyword(index) => Ok(index.keyword_at(id).map(CheckpointValue::Keyword)),
+            FieldIndex::Number(index) => Ok(index
+                .number_at(id)
+                .map(|n| CheckpointValue::Number(n.to_f64()))),
+            FieldIndex::Set(index) => Ok(index
+                .set_members(id)
+                .map(|set| CheckpointValue::Set(set.into_iter().collect()))),
+            FieldIndex::Hash(index) => Ok(index.hash_at(id).map(CheckpointValue::Hash)),
+            FieldIndex::Text { idx, .. } => {
+                if let Some(row) = idx.staged_rows.get(&id) {
+                    return Ok(Some(CheckpointValue::StagedText(row.clone())));
+                }
+                let Some(distinct) = idx.distinct_at(id) else {
+                    return Ok(None);
+                };
+                let tokens = distinct
+                    .iter()
+                    .map(|token| {
+                        idx.tokens
+                            .get(token)
+                            .and_then(|posting| posting.tf(id))
+                            .map(|tf| Ok((token.clone(), tf)))
+                            .unwrap_or_else(|| Err(anyhow!("text overlay is missing its posting")))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()?;
+                Ok(Some(CheckpointValue::Text {
+                    doc_len: idx.doc_len(id),
+                    tokens,
+                }))
+            }
+            FieldIndex::Vector { idx, .. } => Ok(idx
+                .checkpoint_vector(external_id)?
+                .map(CheckpointValue::Vector)),
+        }
+    }
+
+    fn field_dirty_snapshot(&self) -> BTreeMap<String, BTreeMap<String, u64>> {
+        self.field_dirty.clone()
+    }
+
+    fn acknowledge_field_dirty(&mut self, captured: &BTreeMap<String, BTreeMap<String, u64>>) {
+        for (field, rows) in captured {
+            let Some(current) = self.field_dirty.get_mut(field) else {
+                continue;
+            };
+            current.retain(|id, revision| rows.get(id) != Some(revision));
+            if current.is_empty() {
+                self.field_dirty.remove(field);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn field_dirty_len(&self, field: &str) -> usize {
+        self.field_dirty.get(field).map_or(0, BTreeMap::len)
+    }
+
+    #[cfg(test)]
+    fn requires_full_checkpoint(&self) -> bool {
+        self.requires_full_checkpoint
     }
 
     fn cached_search_response(&self, key: &str) -> Option<SearchResponse> {
@@ -3642,6 +4233,7 @@ impl Collection {
 
 #[derive(Default)]
 pub struct Engine {
+    pub(crate) capture_barrier: crate::capture_barrier::CaptureBarrier,
     state: RwLock<EngineState>,
     metrics: Metrics,
     draining: AtomicBool,
@@ -3656,6 +4248,11 @@ pub struct Engine {
     /// deterministic in tests (no sleeping required to exercise it) and
     /// immune to system clock adjustments.
     prune_accum_tick: AtomicU64,
+    // Release metadata charges only after the live state has dropped.
+    changes: record_admission::EngineChanges,
+    pub(crate) layer_maintenance: Arc<crate::segment_capacity::Registry>,
+    // Last: files remain available until live readers and pending payloads drop.
+    checkpoint_root_guards: Mutex<Vec<crate::segment_rdb::CheckpointRootGuard>>,
 }
 
 /// `(to_map_version, bucket, collection_id, total_chunks)` — see
@@ -3716,9 +4313,1127 @@ impl std::fmt::Debug for Engine {
 #[derive(Debug, Default)]
 struct EngineState {
     collections: BTreeMap<String, Collection>,
+    next_collection_generation: u64,
+    checkpoint_namespace: Option<std::path::PathBuf>,
+}
+
+impl EngineState {
+    fn allocate_collection_generation(&mut self) -> Result<u64> {
+        let generation = self.next_collection_generation.max(1);
+        self.next_collection_generation = generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("collection generation exhausted"))?;
+        Ok(generation)
+    }
+}
+
+/// Borrowed state view for pending-change cost normalization.  It only exposes
+/// metadata already held by the engine; it never expands postings or clones a
+/// request before admission.
+struct EngineCostContext<'a> {
+    state: &'a EngineState,
+}
+
+impl crate::change_record_cost::CostContext for EngineCostContext<'_> {
+    fn collection_exists(&self, collection_id: &str) -> bool {
+        self.state.collections.contains_key(collection_id)
+    }
+
+    fn index_cell_is_stale(
+        &self,
+        collection_id: &str,
+        external_id: &str,
+        field: &str,
+        version: Option<u64>,
+    ) -> bool {
+        let Some(version) = version else {
+            return false;
+        };
+        self.state
+            .collections
+            .get(collection_id)
+            .and_then(|collection| {
+                collection
+                    .interner
+                    .id(external_id)
+                    .map(|id| (collection, id))
+            })
+            .and_then(|(collection, id)| collection.cell_versions.get(&id))
+            .and_then(|versions| versions.get(field))
+            .is_some_and(|stored| *stored >= version)
+    }
+
+    fn field_spec<'a>(&'a self, collection_id: &str, field: &str) -> Option<&'a FieldSpec> {
+        self.state.collections.get(collection_id)?.schema.get(field)
+    }
+
+    fn known_external_id(&self, collection_id: &str, external_id: &str) -> bool {
+        self.state
+            .collections
+            .get(collection_id)
+            .and_then(|collection| collection.interner.id(external_id))
+            .is_some()
+    }
+
+    fn visit_coverage(&self, collection_id: &str, external_id: &str, visit: &mut dyn FnMut(&str)) {
+        let Some(collection) = self.state.collections.get(collection_id) else {
+            return;
+        };
+        let Some(id) = collection.interner.id(external_id) else {
+            return;
+        };
+        let Some(coverage) = collection.eid_fields.get(&id) else {
+            return;
+        };
+        for field in coverage.iter() {
+            visit(field);
+        }
+    }
+
+    fn request_is_deduplicated(&self, collection_id: &str, request_id: Option<&str>) -> bool {
+        let Some(request_id) = request_id else {
+            return false;
+        };
+        let Some(collection) = self.state.collections.get(collection_id) else {
+            return false;
+        };
+        let now = Instant::now();
+        collection.seen_requests.iter().any(|(known, seen)| {
+            known == request_id && now.duration_since(*seen) <= IDEMPOTENCY_TTL
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CheckpointCollectionIdentity {
+    pub generation: u64,
+    pub data_version: u64,
+    pub schema_version: u32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum CheckpointValue {
+    StagedText(Arc<staged_text_row::StagedTextRow>),
+    StagedVector(Arc<staged_vector_row::StagedVectorRow>),
+    /// File-backed value kept by the immutable dirty journal. The reader owns
+    /// its private directory until every live reader and checkpoint releases it.
+    StagedScalar {
+        reader: Arc<crate::segment::SegmentReader>,
+        row: u32,
+    },
+    Keyword(String),
+    Number(f64),
+    Set(Vec<String>),
+    Hash(u64),
+    Vector(Vec<f32>),
+    Text {
+        doc_len: u32,
+        tokens: BTreeMap<String, u32>,
+    },
+}
+
+pub(crate) struct PreparedCheckpointField {
+    name: String,
+    index: FieldIndex,
+    vector_base: Option<(std::sync::Arc<crate::segment::SegmentReader>, Vec<String>)>,
+}
+
+/// A validated sparse field payload opened outside the capture barrier.  It is
+/// installed only after the generation is durable and published.
+pub(crate) struct PreparedCheckpointDelta {
+    pub field: String,
+    pub reader: std::sync::Arc<crate::segment::SegmentReader>,
+    pub external_ids: Vec<String>,
+}
+
+pub(crate) struct PreparedCheckpointCompaction {
+    pub field: String,
+    pub base: Option<std::sync::Arc<crate::segment::SegmentReader>>,
+    pub inputs: Vec<std::sync::Arc<crate::segment::SegmentReader>>,
+    pub reader: std::sync::Arc<crate::segment::SegmentReader>,
+    pub external_ids: Vec<String>,
+    pub scalar: Option<crate::composed_segment::PreparedScalarReplacement>,
+}
+
+pub(crate) type CheckpointDeltas = BTreeMap<
+    String,
+    Vec<(
+        String,
+        Option<crate::change_journal::SharedValue<CheckpointValue>>,
+    )>,
+>;
+
+pub(crate) struct CheckpointCapture {
+    pub prepared: BTreeMap<String, Vec<PreparedCheckpointField>>,
+    pub prepared_deltas: BTreeMap<String, Vec<PreparedCheckpointDelta>>,
+    pub prepared_compactions: BTreeMap<String, Vec<PreparedCheckpointCompaction>>,
+    /// Immutable scalar views pinned at the capture barrier. Preparation turns
+    /// these into catalog-only replacements before publication can advance.
+    pub scalar_cuts:
+        BTreeMap<String, BTreeMap<String, crate::composed_segment::ScalarCheckpointCut>>,
+    pub scalar_publications:
+        BTreeMap<String, BTreeMap<String, crate::composed_segment::PreparedScalarPublication>>,
+    /// Stable runtime IDs and dirty-match bits computed outside the apply lease.
+    pub scalar_retire: BTreeMap<String, BTreeMap<String, Vec<(u32, String, u64)>>>,
+    pub live_delta_inputs:
+        BTreeMap<String, BTreeMap<String, Vec<std::sync::Arc<crate::segment::SegmentReader>>>>,
+    pub live_base_inputs:
+        BTreeMap<String, BTreeMap<String, std::sync::Arc<crate::segment::SegmentReader>>>,
+    pub collections: BTreeMap<String, CheckpointCollectionIdentity>,
+    pub next_generation: u64,
+    pub field_dirty: BTreeMap<String, FieldDirtySnapshot>,
+    pub frozen_changes: BTreeMap<String, crate::change_journal::FrozenChanges<CheckpointValue>>,
+    pub reused: BTreeSet<String>,
+    /// A new empty base plus the complete frozen journal forms this first
+    /// generation. These collections do not reuse any predecessor catalog.
+    pub initial_sparse: BTreeSet<String>,
+    /// Sparse rows captured from a reusable base.  Frozen-write retries share
+    /// this immutable payload instead of cloning every row and value.
+    pub field_deltas: std::sync::Arc<BTreeMap<String, CheckpointDeltas>>,
+    // Last: keep metadata charges until every capture-owned allocation drops.
+    pub(crate) record_cut: Option<std::sync::Arc<record_admission::RecordCut>>,
+}
+
+/// Detached file work. It has no reference to Engine or its state lock.
+pub(crate) struct FrozenCheckpoint {
+    // File payloads must drop before the capture releases their charge.
+    files: Vec<(String, FrozenCollectionFiles)>,
+    capture: CheckpointCapture,
+}
+
+impl CheckpointCapture {
+    /// A frozen write only needs immutable cut metadata plus fresh prepared
+    /// readers.  Do not clone a prepared index: that would duplicate the
+    /// detached payload that must remain available for a retry.
+    fn for_frozen_write(&self) -> Self {
+        Self {
+            prepared: BTreeMap::new(),
+            prepared_deltas: BTreeMap::new(),
+            prepared_compactions: BTreeMap::new(),
+            scalar_cuts: self.scalar_cuts.clone(),
+            scalar_publications: BTreeMap::new(),
+            scalar_retire: BTreeMap::new(),
+            live_delta_inputs: self.live_delta_inputs.clone(),
+            live_base_inputs: self.live_base_inputs.clone(),
+            collections: self.collections.clone(),
+            next_generation: self.next_generation,
+            field_dirty: self.field_dirty.clone(),
+            frozen_changes: self.frozen_changes.clone(),
+            reused: self.reused.clone(),
+            initial_sparse: self.initial_sparse.clone(),
+            field_deltas: self.field_deltas.clone(),
+            record_cut: self.record_cut.clone(),
+        }
+    }
+}
+
+enum FrozenCollectionFiles {
+    Linked(std::path::PathBuf),
+    EmptyBase {
+        schema: BTreeMap<String, FieldSpec>,
+        version: u32,
+    },
+    Base {
+        schema: BTreeMap<String, FieldSpec>,
+        version: u32,
+        eids: Vec<String>,
+        coverage: FastHashMap<u32, FieldCoverage>,
+        fields: Vec<(String, FrozenField)>,
+    },
+}
+
+enum FrozenField {
+    Column(FieldIndex),
+    Vectors {
+        spec: VectorSpec,
+        rows: Vec<(String, Vec<f32>)>,
+    },
+}
+
+impl FrozenField {
+    fn capture(index: &FieldIndex, collection: &Collection, name: &str) -> Result<Self> {
+        let column = match index {
+            FieldIndex::Keyword(index) => FieldIndex::Keyword(KeywordIndex {
+                dense_forward: index.dense_forward.clone(),
+                forward: index.forward.clone(),
+                segment: index.segment.clone(),
+                tombstones: index.tombstones.clone(),
+                bytes: index.bytes,
+                ..Default::default()
+            }),
+            FieldIndex::Number(index) => FieldIndex::Number(NumberIndex {
+                dense_forward: index.dense_forward.clone(),
+                forward: index.forward.clone(),
+                segment: index.segment.clone(),
+                tombstones: index.tombstones.clone(),
+                bytes: index.bytes,
+                ..Default::default()
+            }),
+            FieldIndex::Set(index) => FieldIndex::Set(SetIndex {
+                forward: index.forward.clone(),
+                segment: index.segment.clone(),
+                tombstones: index.tombstones.clone(),
+                bytes: index.bytes,
+                ..Default::default()
+            }),
+            FieldIndex::Hash(index) => FieldIndex::Hash(HashIndex {
+                forward: index.forward.clone(),
+                segment: index.segment.clone(),
+                tombstones: index.tombstones.clone(),
+                bytes: index.bytes,
+                ..Default::default()
+            }),
+            FieldIndex::Text { analyzer, idx } => FieldIndex::Text {
+                analyzer: *analyzer,
+                idx: TextIndex {
+                    staged_rows: idx.staged_rows.clone(),
+                    tokens: idx.tokens.clone(),
+                    lens: idx.lens.clone(),
+                    distinct: idx.distinct.clone(),
+                    delta_docs: idx.delta_docs.clone(),
+                    segment: idx.segment.clone(),
+                    tombstones: idx.tombstones.clone(),
+                    doc_count: idx.doc_count,
+                    total_doc_len: idx.total_doc_len,
+                    bytes: idx.bytes,
+                    ..Default::default()
+                },
+            },
+            FieldIndex::Vector { spec, idx, .. } => {
+                // A new base needs its live vectors, never a copy or a traversal
+                // of the HNSW graph. Subsequent captures use dirty IDs only.
+                let mut rows = Vec::new();
+                for (id, coverage) in &collection.eid_fields {
+                    if coverage.contains(name) {
+                        let eid = collection.interner.resolve(*id);
+                        let vector = idx
+                            .checkpoint_vector(eid)?
+                            .ok_or_else(|| anyhow!("covered vector missing during capture"))?;
+                        rows.push((eid.to_owned(), vector));
+                    }
+                }
+                rows.sort_by(|left, right| left.0.cmp(&right.0));
+                return Ok(Self::Vectors { spec: *spec, rows });
+            }
+        };
+        Ok(Self::Column(column))
+    }
+}
+
+impl FrozenCheckpoint {
+    pub(crate) fn write(&self, root: &std::path::Path, sequence: u64) -> Result<CheckpointCapture> {
+        let mut capture = self.capture.for_frozen_write();
+        // Only immutable journal handles crossed the capture barrier. Build
+        // encoder row references and revision metadata here, outside it.
+        for (name, frozen) in &capture.frozen_changes {
+            let dirty = capture.field_dirty.entry(name.clone()).or_default();
+            let mut fields: CheckpointDeltas = BTreeMap::new();
+            for (field, eid, row) in frozen.rows() {
+                dirty
+                    .entry(field.to_owned())
+                    .or_default()
+                    .insert(eid.to_owned(), row.revision());
+                if capture.reused.contains(name) || capture.initial_sparse.contains(name) {
+                    fields
+                        .entry(field.to_owned())
+                        .or_default()
+                        .push((eid.to_owned(), row.value().cloned()));
+                }
+            }
+            if capture.reused.contains(name) || capture.initial_sparse.contains(name) {
+                std::sync::Arc::make_mut(&mut capture.field_deltas).insert(name.clone(), fields);
+            }
+        }
+        for (name, files) in &self.files {
+            checkpoint_write_boundary();
+            let dir = root.join(collection_dir_name(&name));
+            // Build the empty codec inputs here, after the capture barrier.
+            // No live index or HNSW graph is inspected or replaced.
+            let empty = if let FrozenCollectionFiles::EmptyBase { schema, version } = files {
+                let collection = Collection::new(schema.clone())?;
+                let fields = collection
+                    .fields
+                    .iter()
+                    .map(|(field, index)| {
+                        Ok((
+                            field.clone(),
+                            FrozenField::capture(index, &collection, field)?,
+                        ))
+                    })
+                    .collect::<Result<_>>()?;
+                Some(FrozenCollectionFiles::Base {
+                    schema: schema.clone(),
+                    version: *version,
+                    eids: Vec::new(),
+                    coverage: FastHashMap::default(),
+                    fields,
+                })
+            } else {
+                None
+            };
+            let files = empty.as_ref().unwrap_or(files);
+            match files {
+                FrozenCollectionFiles::Linked(origin) => hard_link_checkpoint_tree(origin, &dir)?,
+                FrozenCollectionFiles::EmptyBase { .. } => {
+                    unreachable!("empty codec inputs were prepared above")
+                }
+                FrozenCollectionFiles::Base {
+                    schema,
+                    version,
+                    eids,
+                    coverage,
+                    fields,
+                } => {
+                    std::fs::create_dir_all(dir.join("fields"))?;
+                    let sidecar = CheckpointSchema {
+                        version: *version,
+                        applied_seq: sequence,
+                        fields: schema.clone(),
+                        segment_layout: CheckpointLayout::Encoded,
+                    };
+                    std::fs::write(
+                        dir.join(CHECKPOINT_SCHEMA_FILE),
+                        serde_json::to_vec_pretty(&sidecar)?,
+                    )?;
+                    let ids: Vec<&str> = eids.iter().map(String::as_str).collect();
+                    crate::segment::write_eid_segment(&dir.join(EID_META_FILE), sequence, &ids)?;
+                    let count = u32::try_from(eids.len())
+                        .map_err(|_| anyhow!("base row count exceeds u32"))?;
+                    let collection_name = name.clone();
+                    for (name, field) in fields {
+                        let stem = CheckpointLayout::Encoded.field_stem(&name);
+                        match field {
+                            FrozenField::Column(index) => {
+                                let live = |id| {
+                                    coverage
+                                        .get(&id)
+                                        .is_some_and(|fields| fields.contains(name.as_str()))
+                                };
+                                index
+                                    .write_segment_borrowed(&stem, &dir, count, sequence, &live)?;
+                                let prepared = FieldIndex::open_from_segment(
+                                    schema
+                                        .get(name)
+                                        .ok_or_else(|| anyhow!("frozen field missing schema"))?,
+                                    &dir,
+                                    &stem,
+                                    None,
+                                    false,
+                                )?;
+                                capture
+                                    .prepared
+                                    .entry(collection_name.clone())
+                                    .or_default()
+                                    .push(PreparedCheckpointField {
+                                        name: name.clone(),
+                                        index: prepared,
+                                        vector_base: None,
+                                    });
+                            }
+                            FrozenField::Vectors { spec, rows } => {
+                                let vectors: Vec<_> = rows
+                                    .iter()
+                                    .map(|(_, value)| Some(value.as_slice()))
+                                    .collect();
+                                crate::segment::write_vector_segment(
+                                    &dir.join(format!("{stem}.lseg")),
+                                    sequence,
+                                    spec.dim as usize,
+                                    &vectors,
+                                )?;
+                                let ids: Vec<_> =
+                                    rows.iter().map(|(eid, _)| eid.as_str()).collect();
+                                crate::segment::write_eid_segment(
+                                    &dir.join(format!("{stem}.eids.lseg")),
+                                    sequence,
+                                    &ids,
+                                )?;
+                                if spec.backend == crate::types::VectorBackend::FlatCpu {
+                                    let reader =
+                                        std::sync::Arc::new(crate::segment::SegmentReader::open(
+                                            &dir.join(format!("{stem}.lseg")),
+                                        )?);
+                                    let row_eids: Vec<String> =
+                                        rows.iter().map(|(eid, _)| eid.clone()).collect();
+                                    let idx = FlatCpuIndex::open_from_segment(
+                                        *spec,
+                                        reader.clone(),
+                                        row_eids.clone(),
+                                    )?;
+                                    capture
+                                        .prepared
+                                        .entry(collection_name.clone())
+                                        .or_default()
+                                        .push(PreparedCheckpointField {
+                                            name: name.clone(),
+                                            vector_base: Some((reader, row_eids)),
+                                            index: FieldIndex::Vector {
+                                                spec: *spec,
+                                                idx: Box::new(idx),
+                                                bytes: 0,
+                                            },
+                                        });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(capture)
+    }
+}
+
+fn capture_dirty_values(coll: &Collection, dirty: &FieldDirtySnapshot) -> Result<CheckpointDeltas> {
+    dirty
+        .iter()
+        .map(|(field, ids)| {
+            let rows = ids
+                .keys()
+                .map(|eid| {
+                    Ok((
+                        eid.clone(),
+                        coll.checkpoint_value(field, eid)?.map(|value| {
+                            crate::change_journal::SharedValue::new(
+                                std::sync::Arc::new(value),
+                                None,
+                            )
+                        }),
+                    ))
+                })
+                .collect::<Result<_>>()?;
+            Ok((field.clone(), rows))
+        })
+        .collect()
+}
+
+fn hard_link_checkpoint_tree(origin: &std::path::Path, target: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(origin)? {
+        let entry = entry?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        if metadata.file_type().is_symlink() {
+            bail!("checkpoint origin contains a symlink");
+        }
+        let destination = target.join(entry.file_name());
+        if metadata.is_dir() {
+            hard_link_checkpoint_tree(&entry.path(), &destination)?;
+        } else if metadata.is_file() {
+            std::fs::hard_link(entry.path(), destination)
+                .map_err(|e| anyhow!("hard link checkpoint origin: {e}"))?;
+        } else {
+            bail!("checkpoint origin contains a nonregular file");
+        }
+    }
+    Ok(())
+}
+
+fn attach_delta_reader(
+    index: &mut FieldIndex,
+    reader: std::sync::Arc<crate::segment::SegmentReader>,
+    ids: Vec<u32>,
+) -> Result<()> {
+    let attach =
+        |segment: &mut Option<std::sync::Arc<crate::composed_segment::ComposedSegmentReader>>| {
+            let base = segment
+                .as_ref()
+                .ok_or_else(|| anyhow!("delta has no base segment"))?;
+            *segment = Some(std::sync::Arc::new(base.with_delta(reader, ids)?));
+            Ok(())
+        };
+    match index {
+        FieldIndex::Keyword(index) => attach(&mut index.segment),
+        FieldIndex::Number(index) => attach(&mut index.segment),
+        FieldIndex::Set(index) => attach(&mut index.segment),
+        FieldIndex::Hash(index) => attach(&mut index.segment),
+        FieldIndex::Text { idx, .. } => attach(&mut idx.segment),
+        FieldIndex::Vector { .. } => Ok(()),
+    }
+}
+
+fn scalar_prepared_segment(
+    index: &FieldIndex,
+) -> Option<std::sync::Arc<crate::composed_segment::ComposedSegmentReader>> {
+    match index {
+        FieldIndex::Keyword(index) => index.segment.clone(),
+        FieldIndex::Number(index) => index.segment.clone(),
+        FieldIndex::Set(index) => index.segment.clone(),
+        _ => None,
+    }
+}
+
+fn install_scalar_checkpoint_publication(
+    index: &mut FieldIndex,
+    publication: &crate::composed_segment::PreparedScalarPublication,
+) -> Result<()> {
+    let segment = match index {
+        FieldIndex::Keyword(index) => &mut index.segment,
+        FieldIndex::Number(index) => &mut index.segment,
+        FieldIndex::Set(index) => &mut index.segment,
+        _ => bail!("checkpoint scalar publication targets a non-scalar field"),
+    };
+    let next = match segment.as_ref() {
+        Some(live) => live.install_checkpoint_publication(publication)?,
+        None => publication.install_without_composition()?,
+    };
+    *segment = Some(std::sync::Arc::new(next));
+    Ok(())
+}
+
+fn checkpoint_scalar_retire_matches(current: Option<&u64>, captured_revision: u64) -> bool {
+    current == Some(&captured_revision)
+}
+
+fn live_delta_readers(index: &FieldIndex) -> Vec<std::sync::Arc<crate::segment::SegmentReader>> {
+    let segment = match index {
+        FieldIndex::Keyword(index) => &index.segment,
+        FieldIndex::Number(index) => &index.segment,
+        FieldIndex::Set(index) => &index.segment,
+        FieldIndex::Hash(index) => &index.segment,
+        FieldIndex::Text { idx, .. } => &idx.segment,
+        FieldIndex::Vector { idx, .. } => return idx.checkpoint_delta_readers(),
+    };
+    segment
+        .as_ref()
+        .map(|segment| segment.delta_readers())
+        .unwrap_or_default()
+}
+
+fn live_base_reader(index: &FieldIndex) -> Option<std::sync::Arc<crate::segment::SegmentReader>> {
+    let segment = match index {
+        FieldIndex::Keyword(index) => &index.segment,
+        FieldIndex::Number(index) => &index.segment,
+        FieldIndex::Set(index) => &index.segment,
+        FieldIndex::Hash(index) => &index.segment,
+        FieldIndex::Text { idx, .. } => &idx.segment,
+        FieldIndex::Vector { idx, .. } => return idx.checkpoint_base_reader(),
+    };
+    segment
+        .as_ref()
+        .and_then(|segment| segment.catalog_base_reader())
+}
+
+fn replace_live_checkpoint_deltas(
+    coll: &mut Collection,
+    compacted: PreparedCheckpointCompaction,
+) -> Result<()> {
+    let index = coll
+        .fields
+        .get_mut(&compacted.field)
+        .ok_or_else(|| anyhow!("compacted field is absent from live collection"))?;
+    if let FieldIndex::Vector { idx, .. } = index {
+        if let Some(base) = compacted.base {
+            return idx.replace_checkpoint_base(
+                &base,
+                &compacted.inputs,
+                compacted.reader,
+                &compacted.external_ids,
+            );
+        }
+        return idx.replace_checkpoint_deltas(
+            &compacted.inputs,
+            compacted.reader,
+            &compacted.external_ids,
+        );
+    }
+    let prepared = compacted
+        .scalar
+        .ok_or_else(|| anyhow!("scalar compaction was not prepared before publication"))?;
+    let segment = match index {
+        FieldIndex::Keyword(index) => &mut index.segment,
+        FieldIndex::Number(index) => &mut index.segment,
+        FieldIndex::Set(index) => &mut index.segment,
+        FieldIndex::Hash(index) => &mut index.segment,
+        FieldIndex::Text { idx, .. } => &mut idx.segment,
+        FieldIndex::Vector { .. } => unreachable!(),
+    };
+    let old = segment
+        .as_ref()
+        .ok_or_else(|| anyhow!("compacted field has no live base"))?;
+    let replacement = old.install_prepared_replacement(&prepared)?;
+    *segment = Some(std::sync::Arc::new(replacement));
+    Ok(())
+}
+
+fn retire_live_delta_overlay(index: &mut FieldIndex, id: u32) {
+    match index {
+        FieldIndex::Keyword(index) => {
+            if let Some(value) = index.remove_keyword(id) {
+                if let Some(posting) = index.terms.get_mut(&value) {
+                    posting.remove(id);
+                    if posting.len() < 2 {
+                        index.dup_values.remove(&value);
+                    }
+                    if posting.is_empty() {
+                        index.terms.remove(&value);
+                    }
+                }
+            }
+            index.tombstones.remove(id);
+        }
+        FieldIndex::Number(index) => {
+            let dense = index.dense_forward.get_mut(id as usize).and_then(|slot| {
+                let value =
+                    (*slot != MISSING_SORTABLE_F64_BITS).then(|| SortableF64::from_bits(*slot));
+                *slot = MISSING_SORTABLE_F64_BITS;
+                value
+            });
+            let sparse = index.forward.remove(&id);
+            for value in [dense, sparse].into_iter().flatten() {
+                if let Some(posting) = index.values.get_mut(&value) {
+                    posting.remove(id);
+                    if posting.len() < 2 {
+                        index.dup_values.remove(&value);
+                    }
+                    if posting.is_empty() {
+                        index.values.remove(&value);
+                    }
+                }
+            }
+            index.tombstones.remove(id);
+            index.clear_keyword_range_cache();
+        }
+        FieldIndex::Set(index) => {
+            if let Some(values) = index.forward.remove(&id) {
+                for value in values {
+                    if let Some(posting) = index.elements.get_mut(&value) {
+                        posting.remove(id);
+                        if posting.len() < 2 {
+                            index.dup_values.remove(&value);
+                        }
+                        if posting.is_empty() {
+                            index.elements.remove(&value);
+                        }
+                    }
+                }
+            }
+            index.tombstones.remove(id);
+        }
+        FieldIndex::Hash(index) => {
+            index.forward.remove(&id);
+            index.tombstones.remove(id);
+        }
+        FieldIndex::Text { idx, .. } => {
+            idx.staged_rows.remove(&id);
+            if let Some(tokens) = idx.take_distinct(id) {
+                for token in tokens.iter() {
+                    if let Some(posting) = idx.tokens.get_mut(token) {
+                        posting.remove(id);
+                        if posting.docids().is_empty() {
+                            idx.tokens.remove(token);
+                        }
+                    }
+                }
+            }
+            if let Some(len) = idx.lens.get_mut(id as usize) {
+                *len = 0;
+            }
+            idx.tombstones.remove(id);
+            idx.clear_match_rank_cache();
+        }
+        FieldIndex::Vector { .. } => {}
+    }
+}
+
+fn attach_live_checkpoint_delta(
+    coll: &mut Collection,
+    delta: PreparedCheckpointDelta,
+    captured: &FieldDirtySnapshot,
+) -> Result<()> {
+    let rows = captured.get(&delta.field);
+    let ids = delta
+        .external_ids
+        .iter()
+        .map(|eid| {
+            coll.interner
+                .id(eid)
+                .ok_or_else(|| anyhow!("delta external ID is absent from live collection"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let retire: Vec<_> = delta
+        .external_ids
+        .iter()
+        .map(|eid| {
+            rows.is_some_and(|rows| {
+                coll.field_dirty
+                    .get(&delta.field)
+                    .and_then(|current| current.get(eid))
+                    == rows.get(eid)
+            })
+        })
+        .collect();
+    let index = coll
+        .fields
+        .get_mut(&delta.field)
+        .ok_or_else(|| anyhow!("delta field is absent from live collection"))?;
+    if let FieldIndex::Vector { idx, bytes, .. } = index {
+        idx.attach_checkpoint_delta(delta.reader, &delta.external_ids, &retire)?;
+        if let Some(resident) = idx.checkpoint_resident_bytes() {
+            *bytes = resident;
+        }
+    } else {
+        attach_delta_reader(index, delta.reader, ids.clone())?;
+    }
+    for (retire, id) in retire.into_iter().zip(ids) {
+        if retire && !matches!(index, FieldIndex::Vector { .. }) {
+            retire_live_delta_overlay(index, id);
+        }
+    }
+    Ok(())
+}
+
+fn install_prepared_base_segment(current: &mut FieldIndex, prepared: FieldIndex) -> bool {
+    match (current, prepared) {
+        (FieldIndex::Keyword(current), FieldIndex::Keyword(prepared)) => {
+            current.segment = prepared.segment;
+            true
+        }
+        (FieldIndex::Number(current), FieldIndex::Number(prepared)) => {
+            current.segment = prepared.segment;
+            true
+        }
+        (FieldIndex::Set(current), FieldIndex::Set(prepared)) => {
+            current.segment = prepared.segment;
+            true
+        }
+        (FieldIndex::Hash(current), FieldIndex::Hash(prepared)) => {
+            current.segment = prepared.segment;
+            true
+        }
+        (FieldIndex::Text { idx: current, .. }, FieldIndex::Text { idx: prepared, .. }) => {
+            current.segment = prepared.segment;
+            true
+        }
+        _ => false,
+    }
+}
+
+fn install_concurrent_prepared_base(
+    coll: &mut Collection,
+    prepared: PreparedCheckpointField,
+    captured: &FieldDirtySnapshot,
+) -> Result<()> {
+    if let Some((reader, external_ids)) = prepared.vector_base {
+        let captured_rows = captured.get(&prepared.name);
+        let current_rows = coll.field_dirty.get(&prepared.name);
+        let mut acknowledged = HashMap::new();
+        for eid in external_ids
+            .iter()
+            .chain(current_rows.into_iter().flat_map(|rows| rows.keys()))
+            .chain(captured_rows.into_iter().flat_map(|rows| rows.keys()))
+        {
+            acknowledged.insert(
+                eid.clone(),
+                current_rows.and_then(|rows| rows.get(eid))
+                    == captured_rows.and_then(|rows| rows.get(eid)),
+            );
+        }
+        if let Some(FieldIndex::Vector { idx, bytes, .. }) = coll.fields.get_mut(&prepared.name) {
+            idx.install_checkpoint_base(reader, &external_ids, &acknowledged)?;
+            if let Some(resident) = idx.checkpoint_resident_bytes() {
+                *bytes = resident;
+            }
+        }
+        return Ok(());
+    }
+    let retire: Vec<_> = captured
+        .get(&prepared.name)
+        .into_iter()
+        .flat_map(|rows| rows.iter())
+        .filter_map(|(eid, revision)| {
+            (coll
+                .field_dirty
+                .get(&prepared.name)
+                .and_then(|current| current.get(eid))
+                == Some(revision))
+            .then(|| coll.interner.id(eid))
+            .flatten()
+        })
+        .collect();
+    // These mutations happened before a segment existed, so their ordinary
+    // mutation paths could not have marked a base tombstone. Installing the
+    // captured base must add that mask now, including field-only deletions.
+    let newer: Vec<_> = coll
+        .field_dirty
+        .get(&prepared.name)
+        .into_iter()
+        .flat_map(|rows| rows.iter())
+        .filter_map(|(eid, revision)| {
+            (captured.get(&prepared.name).and_then(|rows| rows.get(eid)) != Some(revision))
+                .then(|| coll.interner.id(eid))
+                .flatten()
+        })
+        .collect();
+    let Some(current) = coll.fields.get_mut(&prepared.name) else {
+        return Ok(());
+    };
+    if install_prepared_base_segment(current, prepared.index) {
+        for id in retire {
+            retire_live_delta_overlay(current, id);
+        }
+        match current {
+            FieldIndex::Keyword(index) => index.tombstones.extend(newer),
+            FieldIndex::Number(index) => index.tombstones.extend(newer),
+            FieldIndex::Set(index) => index.tombstones.extend(newer),
+            FieldIndex::Hash(index) => index.tombstones.extend(newer),
+            FieldIndex::Text { idx, .. } => idx.tombstones.extend(newer),
+            FieldIndex::Vector { .. } => {}
+        }
+    }
+    Ok(())
 }
 
 impl Engine {
+    /// Estimate the additional owned pending work for one log entry using a
+    /// borrowed view of the current schema and document coverage.  This is a
+    /// preflight helper only.  A `Retain(ContextMissing)` result is not an API
+    /// error: admission must let the ordered apply owner run the existing
+    /// validation/no-op behavior rather than wait forever on an unknown field
+    /// or collection.
+    pub(crate) fn estimate_record_cost(
+        &self,
+        entry: &crate::log_entry::RaftLogEntry,
+    ) -> crate::change_record_cost::RecordEstimate {
+        let Ok(state) = self.state.read() else {
+            return crate::change_record_cost::RecordEstimate::Retain {
+                cause: crate::change_record_cost::NormalizeError::ContextMissing,
+            };
+        };
+        crate::change_record_cost::estimate_record_or_retain(
+            entry,
+            &EngineCostContext { state: &state },
+        )
+    }
+
+    /// Allocation-free selection before reserving the exact cost workspace.
+    pub(crate) fn may_need_default_ngram_workspace(
+        &self,
+        entry: &crate::log_entry::RaftLogEntry,
+    ) -> bool {
+        let Ok(state) = self.state.read() else {
+            return false;
+        };
+        crate::change_record_cost::may_need_default_ngram_workspace(
+            entry,
+            &EngineCostContext { state: &state },
+        )
+    }
+
+    /// The admission owner reserves the fixed Ngram table before this call.
+    pub(crate) fn estimate_record_exact_default_ngram_cost(
+        &self,
+        entry: &crate::log_entry::RaftLogEntry,
+    ) -> crate::change_record_cost::RecordEstimate {
+        let Ok(state) = self.state.read() else {
+            return crate::change_record_cost::RecordEstimate::Retain {
+                cause: crate::change_record_cost::NormalizeError::ContextMissing,
+            };
+        };
+        crate::change_record_cost::estimate_record_exact_default_ngram(
+            entry,
+            &EngineCostContext { state: &state },
+        )
+    }
+
+    pub(crate) fn finish_checkpoint_vectors(&self) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        for coll in state.collections.values_mut() {
+            for field in coll.fields.values_mut() {
+                if let FieldIndex::Vector { spec, idx, bytes } = field {
+                    if spec.backend == crate::types::VectorBackend::HnswCpu {
+                        let (vectors, codebook) = idx.dump_for_snapshot()?;
+                        *bytes = vectors
+                            .iter()
+                            .map(|(eid, value)| (eid.len() + value.len() * 4) as u64)
+                            .sum();
+                        *idx = Box::new(HnswCpuIndex::restore(*spec, vectors, codebook)?);
+                    }
+                }
+            }
+        }
+        self.publish_storage_bytes(&state);
+        Ok(())
+    }
+
+    pub(crate) fn apply_checkpoint_delta(
+        &self,
+        collection_id: &str,
+        field: &str,
+        rows: Vec<(String, Option<CheckpointValue>)>,
+    ) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let coll = state
+            .collections
+            .get_mut(collection_id)
+            .ok_or_else(|| anyhow!("missing delta collection"))?;
+        for (eid, value) in rows {
+            let id = coll.interner.intern(&eid);
+            let index = coll
+                .fields
+                .get_mut(field)
+                .ok_or_else(|| anyhow!("missing delta field"))?;
+            index.drop_eid(id, &eid);
+            if let Some(value) = value {
+                match (index, value) {
+                    (FieldIndex::Keyword(index), CheckpointValue::Keyword(value)) => {
+                        index.bytes += (value.len() + eid.len()) as u64;
+                        let posting = index.terms.entry(value.clone()).or_default();
+                        posting.insert(id);
+                        if posting.len() >= 2 {
+                            index.dup_values.insert(value.clone());
+                        }
+                        index.forward.insert(id, value);
+                    }
+                    (FieldIndex::Number(index), CheckpointValue::Number(value)) => {
+                        let key = SortableF64::new(value)?;
+                        index.bytes += (8 + eid.len()) as u64;
+                        let posting = index.values.entry(key).or_default();
+                        posting.insert(id);
+                        if posting.len() >= 2 {
+                            index.dup_values.insert(key);
+                        }
+                        index.forward.insert(id, key);
+                        index.clear_keyword_range_cache();
+                    }
+                    (FieldIndex::Set(index), CheckpointValue::Set(values)) => {
+                        let members: BTreeSet<_> = values.into_iter().collect();
+                        for value in &members {
+                            index.bytes += (value.len() + eid.len()) as u64;
+                            let posting = index.elements.entry(value.clone()).or_default();
+                            posting.insert(id);
+                            if posting.len() >= 2 {
+                                index.dup_values.insert(value.clone());
+                            }
+                        }
+                        index.forward.insert(id, members);
+                    }
+                    (FieldIndex::Hash(index), CheckpointValue::Hash(value)) => {
+                        index.bytes += 12;
+                        index.forward.insert(id, value);
+                    }
+                    (FieldIndex::Text { idx, .. }, CheckpointValue::Text { doc_len, tokens }) => {
+                        let mut distinct = TokenSet::default();
+                        for (token, tf) in tokens {
+                            idx.tokens.entry(token.clone()).or_default().upsert(id, tf);
+                            idx.bytes += (token.len() + eid.len()) as u64;
+                            distinct.insert_str(&token);
+                        }
+                        idx.doc_count += 1;
+                        idx.total_doc_len += doc_len as u64;
+                        idx.delta_docs.insert(id, (doc_len, distinct));
+                        idx.clear_match_rank_cache();
+                    }
+                    (
+                        FieldIndex::Vector { idx, bytes, .. },
+                        CheckpointValue::StagedVector(value),
+                    ) => {
+                        idx.restore_checkpoint_vector(&eid, value.as_f32_slice())?;
+                        *bytes += (value.dim() * 4 + eid.len()) as u64;
+                    }
+                    (FieldIndex::Vector { idx, bytes, .. }, CheckpointValue::Vector(value)) => {
+                        idx.restore_checkpoint_vector(&eid, &value)?;
+                        *bytes += (value.len() * 4 + eid.len()) as u64;
+                    }
+                    _ => bail!("delta field type does not match schema"),
+                }
+                coll.eid_fields
+                    .entry(id)
+                    .or_default()
+                    .insert(field.to_owned());
+            } else if let Some(coverage) = coll.eid_fields.get_mut(&id) {
+                coverage.remove(field);
+                if coverage.is_empty() {
+                    coll.eid_fields.remove(&id);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn attach_checkpoint_delta_reader(
+        &self,
+        collection_id: &str,
+        field: &str,
+        reader: std::sync::Arc<crate::segment::SegmentReader>,
+        external_ids: Vec<String>,
+    ) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let coll = state
+            .collections
+            .get_mut(collection_id)
+            .ok_or_else(|| anyhow!("missing delta collection"))?;
+        let ids: Vec<_> = external_ids
+            .iter()
+            .map(|eid| coll.interner.intern(eid))
+            .collect();
+        let index = coll
+            .fields
+            .get_mut(field)
+            .ok_or_else(|| anyhow!("missing delta field"))?;
+        if let FieldIndex::Text { idx, .. } = index {
+            for (row, id) in ids.iter().enumerate() {
+                let row = row as u32;
+                let old_present = idx
+                    .segment
+                    .as_ref()
+                    .is_some_and(|segment| segment.text_is_present(*id));
+                let old_len = old_present
+                    .then(|| {
+                        idx.segment
+                            .as_ref()
+                            .map(|segment| segment.text_doc_len(*id))
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                let new_present = reader.text_is_present(row);
+                let new_len = new_present.then(|| reader.text_doc_len(row)).unwrap_or(0);
+                if old_present {
+                    idx.doc_count = idx.doc_count.saturating_sub(1);
+                    idx.total_doc_len = idx.total_doc_len.saturating_sub(old_len as u64);
+                }
+                if new_present {
+                    idx.doc_count += 1;
+                    idx.total_doc_len += new_len as u64;
+                }
+            }
+            idx.clear_match_rank_cache();
+        }
+        if let FieldIndex::Vector { idx, .. } = index {
+            idx.attach_checkpoint_delta(
+                reader.clone(),
+                &external_ids,
+                &vec![true; external_ids.len()],
+            )?;
+        } else {
+            attach_delta_reader(index, reader.clone(), ids)?;
+        }
+        for (row, eid) in external_ids.iter().enumerate() {
+            let present = match index {
+                FieldIndex::Keyword(_) => reader.keyword_at(row as u32).is_some(),
+                FieldIndex::Number(_) => reader.number_at(row as u32).is_some(),
+                FieldIndex::Set(_) => reader.set_at(row as u32).is_some(),
+                FieldIndex::Hash(_) => reader.hash_at(row as u32).is_some(),
+                FieldIndex::Text { .. } => reader.text_is_present(row as u32),
+                FieldIndex::Vector { spec, .. } => {
+                    reader.vector_at(row as u32, spec.dim as usize).is_some()
+                }
+            };
+            let id = coll.interner.id(eid).expect("interned delta ID");
+            if present {
+                coll.eid_fields
+                    .entry(id)
+                    .or_default()
+                    .insert(field.to_owned());
+            } else if let Some(fields) = coll.eid_fields.get_mut(&id) {
+                fields.remove(field);
+                if fields.is_empty() {
+                    coll.eid_fields.remove(&id);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn new() -> Self {
         // #2475: `metrics` needs `Metrics::new()`'s sentinel seeding (the
         // `raft_shard` "never touched by the raft poller" sentinel), not
@@ -3727,6 +5442,22 @@ impl Engine {
         Self {
             metrics: Metrics::new(),
             ..Default::default()
+        }
+    }
+
+    pub(crate) fn retain_checkpoint_root(
+        &self,
+        root_guard: crate::segment_rdb::CheckpointRootGuard,
+    ) {
+        let mut guards = self
+            .checkpoint_root_guards
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !guards
+            .iter()
+            .any(|existing| Arc::ptr_eq(existing, &root_guard))
+        {
+            guards.push(root_guard);
         }
     }
 
@@ -3789,11 +5520,12 @@ impl Engine {
     /// custom-method routes such as `POST /collections:search`, so keeping
     /// it out of collection ids means the `:search` verb syntax can never be
     /// ambiguous with a collection id.
-    pub fn create_collection(
+    fn create_collection_inner(
         &self,
         collection_id: &str,
         req: CreateCollectionRequest,
     ) -> Result<CreateCollectionResponse> {
+        let _apply = self.capture_barrier.apply();
         if collection_id.contains(':') {
             return Err(StorageError::InvalidCollectionName(collection_id.to_string()).into());
         }
@@ -3834,6 +5566,9 @@ impl Engine {
                     }
                     Some(_) => continue,
                     None => {
+                        coll.clear_search_cache();
+                        coll.requires_full_checkpoint = true;
+                        coll.journal_complete_since_empty = false;
                         coll.schema.insert(name.clone(), spec.clone());
                         let idx = FieldIndex::from_spec(&spec)?;
                         idx.add_field();
@@ -3879,6 +5614,7 @@ impl Engine {
             );
             coll.version = tombstone.version.saturating_add(1);
         }
+        coll.collection_generation = state.allocate_collection_generation()?;
         let version = coll.version;
         let fields_count = coll.fields_count();
         state.collections.insert(collection_id.to_string(), coll);
@@ -3897,7 +5633,8 @@ impl Engine {
     /// - `force = false`: soft-delete — mark `deleted_at = now()` so
     ///   reads/writes start returning 410 Gone and the periodic
     ///   `sweep_deleted` task removes the data after the grace window.
-    pub fn drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> {
+    fn drop_collection_inner(&self, collection_id: &str, force: bool) -> Result<DropOutcome> {
+        let _apply = self.capture_barrier.apply();
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let Some(coll) = state.collections.get_mut(collection_id) else {
             return Ok(DropOutcome::NotFound);
@@ -3919,7 +5656,8 @@ impl Engine {
     /// Drop a field from an existing collection. Online — postings are
     /// freed immediately and the schema version bumps. Returns the new
     /// collection version.
-    pub fn drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> {
+    fn drop_field_inner(&self, collection_id: &str, field_name: &str) -> Result<u32> {
+        let _apply = self.capture_barrier.apply();
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
             .collections
@@ -3936,6 +5674,8 @@ impl Engine {
         coll.clear_search_cache();
         coll.schema.remove(field_name);
         coll.fields.remove(field_name);
+        coll.journal_complete_since_empty = false;
+        coll.requires_full_checkpoint = true;
         // Scrub the eid→fields back-references so deletions don't try
         // to drop nonexistent index entries.
         for fields in coll.eid_fields.values_mut() {
@@ -3951,6 +5691,7 @@ impl Engine {
     /// Physically remove every collection whose `deleted_at` is older
     /// than `grace`. Returns the number of physically removed entries.
     pub fn sweep_deleted(&self, grace: Duration) -> Result<usize> {
+        let _apply = self.capture_barrier.apply();
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let now = Instant::now();
         let to_remove: Vec<String> = state
@@ -3978,7 +5719,13 @@ impl Engine {
     /// Append a new field to an existing collection. Online — existing
     /// documents simply have no postings on the new field until they are
     /// re-indexed. Returns the new collection version.
-    pub fn add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> {
+    fn add_field_inner(
+        &self,
+        collection_id: &str,
+        field_name: &str,
+        spec: FieldSpec,
+    ) -> Result<u32> {
+        let _apply = self.capture_barrier.apply();
         let spec = spec.normalize();
         if field_name.is_empty() {
             bail!("field name cannot be empty");
@@ -3997,6 +5744,8 @@ impl Engine {
         validate_schema(&new_schema)?;
         coll.clear_search_cache();
         coll.schema = new_schema;
+        coll.journal_complete_since_empty = false;
+        coll.requires_full_checkpoint = true;
         let idx = FieldIndex::from_spec(&spec)?;
         idx.add_field();
         coll.fields.insert(field_name.to_string(), idx);
@@ -4017,14 +5766,28 @@ impl Engine {
 
     // -- Index --------------------------------------------------------------
 
-    pub fn index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> {
+    fn index_inner(
+        &self,
+        collection_id: &str,
+        req: IndexRequest,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+        prepared_text: Option<&text_preparation::PreparedTextRows>,
+    ) -> Result<IndexResponse> {
+        let _apply = self.capture_barrier.apply();
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let outcome = {
             let coll = state
                 .collections
                 .get_mut(collection_id)
                 .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-            Self::index_collection(&self.metrics, collection_id, coll, req)
+            Self::index_collection(
+                &self.metrics,
+                collection_id,
+                coll,
+                req,
+                charge,
+                prepared_text,
+            )
         };
         // Keep the live gauge correct even when a malformed batch partially
         // applied before returning its error: it must describe the real local
@@ -4038,6 +5801,8 @@ impl Engine {
         collection_id: &str,
         coll: &mut Collection,
         req: IndexRequest,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+        prepared_text: Option<&text_preparation::PreparedTextRows>,
     ) -> Result<IndexResponse> {
         if req.items.len() > MAX_INDEX_ITEMS {
             return Err(StorageError::BulkLimit {
@@ -4153,9 +5918,33 @@ impl Engine {
                     if field_already_indexed {
                         fi.drop_eid(id, eid);
                     }
-                    match apply_value(fi, id, eid, &items[pos].value, field) {
+                    match apply_prepared_value(
+                        fi,
+                        id,
+                        eid,
+                        &items[pos].value,
+                        field,
+                        prepared_text.and_then(|rows| rows.get(pos, field)),
+                    ) {
                         Ok(bytes) => bytes,
                         Err(e) => {
+                            // `drop_eid` above already made the old value
+                            // absent. Journal that actual post-error value so
+                            // a checkpoint cannot revive a sealed base row.
+                            let stable_id = coll.interner.resolve(id).to_owned();
+                            if let Err(journal_error) =
+                                coll.mark_field_dirty_charged(field, &stable_id, charge)
+                            {
+                                flush_group_coverage(
+                                    &mut coll.eid_fields,
+                                    id,
+                                    new_doc_in_request,
+                                    &mut new_doc_fields,
+                                );
+                                return Err(journal_error.context(format!(
+                                    "record dropped value after apply error: {e}"
+                                )));
+                            }
                             flush_group_coverage(
                                 &mut coll.eid_fields,
                                 id,
@@ -4167,6 +5956,8 @@ impl Engine {
                     }
                 };
                 add_bytes_written(&mut bytes_by_field, field, bytes);
+                let stable_id = coll.interner.resolve(id).to_owned();
+                coll.mark_field_dirty_charged(field, &stable_id, charge)?;
                 // #184: record the highest applied version for this cell so a
                 // later strictly-older write is dropped above.
                 if let Some(v) = item_version {
@@ -4214,12 +6005,14 @@ impl Engine {
 
     // -- Delete -------------------------------------------------------------
 
-    pub fn delete(
+    fn delete_inner(
         &self,
         collection_id: &str,
         external_id: &str,
         field: Option<&str>,
+        charge: Option<&crate::change_budget::RetainedCharge>,
     ) -> Result<()> {
+        let _apply = self.capture_barrier.apply();
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
             .collections
@@ -4238,6 +6031,7 @@ impl Engine {
                 if let Some(fi) = coll.fields.get_mut(f) {
                     fi.drop_eid(id, external_id);
                 }
+                coll.mark_field_dirty_charged(f, external_id, charge)?;
                 if let Some(fields) = coll.eid_fields.get_mut(&id) {
                     fields.remove(f);
                     if fields.is_empty() {
@@ -4255,6 +6049,7 @@ impl Engine {
                     if let Some(fi) = coll.fields.get_mut(&f) {
                         fi.drop_eid(id, external_id);
                     }
+                    coll.mark_field_dirty_charged(&f, external_id, charge)?;
                 }
                 coll.eid_fields.remove(&id);
             }
@@ -4271,7 +6066,13 @@ impl Engine {
     /// entries and postings, so one durable command is atomic within this
     /// physical shard.  Unknown ids deliberately never enter the interner and
     /// are successful no-ops.
-    pub fn unindex_docs(&self, collection_id: &str, req: BatchUnindexDocsRequest) -> Result<()> {
+    fn unindex_docs_inner(
+        &self,
+        collection_id: &str,
+        req: BatchUnindexDocsRequest,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+    ) -> Result<()> {
+        let _apply = self.capture_barrier.apply();
         validate_batch_unindex_docs_request(&req)?;
 
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
@@ -4317,6 +6118,7 @@ impl Engine {
                 if let Some(index) = coll.fields.get_mut(&field) {
                     index.drop_eid(id, &external_id);
                 }
+                coll.mark_field_dirty_charged(&field, &external_id, charge)?;
             }
             coll.eid_fields.remove(&id);
             // A batch unindex has no tombstone.  Future writes to this id
@@ -4337,7 +6139,8 @@ impl Engine {
     /// old postings, interned ids, HNSW state, and mmap handles move to the
     /// process-wide reclaimer after the new state is visible.  This is not a
     /// loop over [`Self::delete`].
-    pub fn truncate_docs(&self, collection_id: &str) -> Result<()> {
+    fn truncate_docs_inner(&self, collection_id: &str) -> Result<()> {
+        let _apply = self.capture_barrier.apply();
         self.truncate_docs_with_retirement(collection_id, collection_retirement_worker())
     }
 
@@ -4359,6 +6162,7 @@ impl Engine {
             // one.  Truncate retains the declaration exactly, including its
             // add/drop-field version.
             replacement.version = existing.version;
+            replacement.collection_generation = state.allocate_collection_generation()?;
             let old = state
                 .collections
                 .insert(collection_id.to_string(), replacement)
@@ -4380,18 +6184,28 @@ impl Engine {
     /// malformed or over [`MAX_BATCH_REPLACE_SIZE`] — a single bad item
     /// (unknown field, type mismatch, stale version) is reported per-item
     /// in [`ReplaceDocResult`] and never fails its siblings.
-    pub fn replace_docs(
+    fn replace_docs_inner(
         &self,
         collection_id: &str,
         req: ReplaceDocsRequest,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+        prepared_text: Option<&text_preparation::PreparedTextRows>,
     ) -> Result<ReplaceDocsResponse> {
+        let _apply = self.capture_barrier.apply();
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let outcome = {
             let coll = state
                 .collections
                 .get_mut(collection_id)
                 .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-            Self::replace_docs_collection(&self.metrics, collection_id, coll, req)
+            Self::replace_docs_collection(
+                &self.metrics,
+                collection_id,
+                coll,
+                req,
+                charge,
+                prepared_text,
+            )
         };
         self.publish_storage_bytes(&state);
         outcome
@@ -4402,6 +6216,8 @@ impl Engine {
         collection_id: &str,
         coll: &mut Collection,
         req: ReplaceDocsRequest,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+        prepared_text: Option<&text_preparation::PreparedTextRows>,
     ) -> Result<ReplaceDocsResponse> {
         if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
             return Err(StorageError::BulkLimit {
@@ -4422,8 +6238,9 @@ impl Engine {
         let mut total_fields_skipped = 0u64;
         let mut total_bytes = 0u64;
         let mut any_written = false;
-        for item in req.docs {
-            let (result, bytes) = Self::replace_one_doc(collection_id, coll, item);
+        for (ordinal, item) in req.docs.into_iter().enumerate() {
+            let (result, bytes) =
+                Self::replace_one_doc(collection_id, coll, item, ordinal, charge, prepared_text);
             if let ReplaceDocResult::Ok {
                 fields_written,
                 fields_skipped,
@@ -4469,6 +6286,9 @@ impl Engine {
         collection_id: &str,
         coll: &mut Collection,
         item: ReplaceDocItem,
+        ordinal: usize,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+        prepared_text: Option<&text_preparation::PreparedTextRows>,
     ) -> (ReplaceDocResult, u64) {
         let (id, new_doc_in_request) = coll
             .interner
@@ -4531,6 +6351,15 @@ impl Engine {
                 if let Some(fi) = coll.fields.get_mut(f.as_str()) {
                     fi.drop_eid(id, &eid);
                 }
+                if let Err(error) = coll.mark_field_dirty_charged(f, &eid, charge) {
+                    return (
+                        ReplaceDocResult::Error {
+                            code: "apply_failed".to_owned(),
+                            message: error.to_string(),
+                        },
+                        0,
+                    );
+                }
                 // The field is gone; drop its stale replace-path checksum
                 // (see `replace_value_unchanged`) so it can never be
                 // mistakenly compared against if the field is re-added
@@ -4561,9 +6390,34 @@ impl Engine {
             if is_delta {
                 fi.drop_eid(id, &eid);
             }
-            let bytes = match apply_value(fi, id, &eid, value, field_name) {
+            let bytes = match apply_prepared_value(
+                fi,
+                id,
+                &eid,
+                value,
+                field_name,
+                prepared_text.and_then(|rows| rows.get(ordinal, field_name)),
+            ) {
                 Ok(bytes) => bytes,
                 Err(e) => {
+                    // Validation normally makes this unreachable, but an
+                    // apply-time error after `drop_eid` still must journal the
+                    // resulting absence before it reports the original error.
+                    if is_delta {
+                        if let Err(journal_error) =
+                            coll.mark_field_dirty_charged(field_name, &eid, charge)
+                        {
+                            return (
+                                ReplaceDocResult::Error {
+                                    code: "apply_failed".to_string(),
+                                    message: format!(
+                                        "{journal_error}; record dropped value after apply error: {e}"
+                                    ),
+                                },
+                                0,
+                            );
+                        }
+                    }
                     return (
                         ReplaceDocResult::Error {
                             code: "apply_failed".to_string(),
@@ -4573,6 +6427,15 @@ impl Engine {
                     );
                 }
             };
+            if let Err(error) = coll.mark_field_dirty_charged(field_name, &eid, charge) {
+                return (
+                    ReplaceDocResult::Error {
+                        code: "apply_failed".to_owned(),
+                        message: error.to_string(),
+                    },
+                    0,
+                );
+            }
             Self::record_replace_checksum(coll, id, field_name, value);
             fields_written += 1;
             bytes_written += bytes;
@@ -5497,6 +7360,7 @@ impl Engine {
     /// Idempotency keys are not part of the snapshot — restored
     /// collections start with an empty deduplication window.
     pub fn restore(&self, snap: SnapshotV1) -> Result<()> {
+        let _apply = self.capture_barrier.apply();
         // Every format up to the one this build writes is readable: the only
         // change so far REMOVED a field, and serde ignores what it does not
         // know. Refusing an older snapshot here would strand data a running
@@ -5508,13 +7372,28 @@ impl Engine {
                 SNAPSHOT_VERSION
             );
         }
-        let collections: BTreeMap<String, Collection> = snap
+        let mut collections: BTreeMap<String, Collection> = snap
             .collections
             .into_iter()
             .map(|(id, snap)| Collection::from_snapshot(snap).map(|c| (id, c)))
             .collect::<Result<_>>()?;
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        for coll in collections.values_mut() {
+            coll.collection_generation = state.allocate_collection_generation()?;
+        }
+        let budget_cut = self
+            .changes
+            .owner
+            .freeze()
+            .map_err(|error| anyhow!("restore pending budget: {error:?}"))?;
+        _apply.replace_epoch();
         state.collections = collections;
+        let retired_charges = self.changes.records.discard_for_restore();
+        self.changes
+            .owner
+            .publish_through(&budget_cut)
+            .map_err(|error| anyhow!("restore pending budget cut: {error:?}"))?;
+        drop(retired_charges);
         self.publish_storage_bytes(&state);
         drop(state);
         self.report_reindex_needed("restore");
@@ -5530,8 +7409,11 @@ impl Engine {
     /// replacement therefore removes every old collection. Old reshard-prune
     /// accumulators are also cleared because they name the replaced dataset.
     pub fn activate_replacement(&self, replacement: Engine) -> Result<()> {
+        let _apply = self.capture_barrier.apply();
         let Engine {
             state: replacement_state,
+            changes: replacement_changes,
+            checkpoint_root_guards: replacement_root_guards,
             ..
         } = replacement;
         let replacement_state = replacement_state
@@ -5543,7 +7425,40 @@ impl Engine {
             .lock()
             .map_err(|_| anyhow!("prune accumulator poisoned"))?;
 
+        let next_generation = state
+            .next_collection_generation
+            .max(replacement_state.next_collection_generation);
+        let previous_cut = self
+            .changes
+            .owner
+            .freeze()
+            .map_err(|error| anyhow!("replace pending budget: {error:?}"))?;
+        let candidate_cut = replacement_changes
+            .owner
+            .freeze()
+            .map_err(|error| anyhow!("candidate pending budget: {error:?}"))?;
+        for guard in replacement_root_guards
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
+            self.retain_checkpoint_root(guard);
+        }
+        _apply.replace_epoch();
         *state = replacement_state;
+        let retired_charges = self.changes.records.discard_for_restore();
+        self.changes
+            .records
+            .adopt_for_restore(replacement_changes.records.discard_for_restore());
+        self.changes
+            .owner
+            .publish_through(&previous_cut)
+            .map_err(|error| anyhow!("replace pending budget cut: {error:?}"))?;
+        replacement_changes
+            .owner
+            .publish_through(&candidate_cut)
+            .map_err(|error| anyhow!("candidate pending budget cut: {error:?}"))?;
+        drop(retired_charges);
+        state.next_collection_generation = next_generation;
         prune_accumulator.clear();
         self.prune_accum_tick.store(0, Ordering::Release);
         self.publish_storage_bytes(&state);
@@ -5591,6 +7506,7 @@ impl Engine {
         delta: SnapshotV1,
         replace: Option<crate::reshard::ReshardBatchReplaceScope>,
     ) -> Result<ReshardApplyOutcome> {
+        let _apply = self.capture_barrier.apply();
         if !(1..=SNAPSHOT_VERSION).contains(&delta.version) {
             bail!(
                 "reshard batch snapshot version mismatch: got {}, supported 1..={}",
@@ -5625,9 +7541,14 @@ impl Engine {
                 }
                 None => delta_collection,
             };
-            state
-                .collections
-                .insert(collection_id, Collection::from_snapshot(merged_collection)?);
+            let mut merged = Collection::from_snapshot(merged_collection)?;
+            if let Some(existing) = state.collections.get(&collection_id) {
+                merged.collection_generation = existing.collection_generation;
+                merged.data_version = existing.data_version.saturating_add(1);
+            } else {
+                merged.collection_generation = state.allocate_collection_generation()?;
+            }
+            state.collections.insert(collection_id, merged);
             collections_touched += 1;
         }
 
@@ -5668,6 +7589,7 @@ impl Engine {
                         if let Some(fi) = coll.fields.get_mut(&f) {
                             fi.drop_eid(*id, external_id);
                         }
+                        coll.mark_field_dirty(&f, external_id)?;
                     }
                     coll.eid_fields.remove(id);
                 }
@@ -5740,6 +7662,7 @@ impl Engine {
         &self,
         chunk: crate::reshard::ReshardPruneChunk,
     ) -> Result<ReshardPruneOutcome> {
+        let _apply = self.capture_barrier.apply();
         if chunk.total_chunks == 0 || chunk.total_chunks > PRUNE_ACCUM_MAX_TOTAL_CHUNKS {
             return Err(StorageError::InvalidPruneChunk {
                 total_chunks: chunk.total_chunks,
@@ -5838,6 +7761,7 @@ impl Engine {
         to: &VirtualBucketShardMap,
         this_shard: u32,
     ) -> Result<ReshardEvictOutcome> {
+        let _apply = self.capture_barrier.apply();
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let mut collections_touched = 0u32;
         let mut documents_evicted = 0u32;
@@ -5869,6 +7793,7 @@ impl Engine {
                     if let Some(fi) = coll.fields.get_mut(&f) {
                         fi.drop_eid(*id, external_id);
                     }
+                    coll.mark_field_dirty(&f, external_id)?;
                 }
                 coll.eid_fields.remove(id);
             }
@@ -5889,6 +7814,10 @@ impl Engine {
     }
 
     pub fn stats(&self, collection_id: &str) -> Result<StatsResponse> {
+        #[cfg(test)]
+        {
+            *STATS_THREAD.lock().expect("stats thread record") = Some(std::thread::current().id());
+        }
         let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
             .collections
@@ -5937,6 +7866,20 @@ impl Engine {
         })
     }
 
+    /// Test-only count of un-absorbed staged Text rows for one field. It reads
+    /// the same live state `/stats` reads and mutates nothing.
+    #[cfg(test)]
+    pub(crate) fn staged_text_row_count(&self, collection_id: &str, field: &str) -> usize {
+        let state = self.state.read().expect("state poisoned");
+        let Some(coll) = state.collections.get(collection_id) else {
+            return 0;
+        };
+        match coll.fields.get(field) {
+            Some(FieldIndex::Text { idx, .. }) => idx.staged_rows.len(),
+            _ => 0,
+        }
+    }
+
     // -- Raft state-machine boundary ---------------------------------------
 
     /// Apply a single committed Raft log entry to the engine.
@@ -5949,24 +7892,33 @@ impl Engine {
     /// Errors from the underlying methods are surfaced unchanged so the
     /// caller (the Raft state-machine impl) can log/translate them. The
     /// engine's RwLock is taken per call, identical to a direct API call.
-    pub fn apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> {
+    fn dispatch_raft_entry(
+        &self,
+        entry: crate::log_entry::RaftLogEntry,
+        charge: Option<&crate::change_budget::RetainedCharge>,
+        prepared_text: Option<&text_preparation::PreparedTextRows>,
+    ) -> Result<ApplyOutcome> {
+        let _apply = self.capture_barrier.apply();
         use crate::log_entry::RaftLogEntry;
         Ok(match entry {
             RaftLogEntry::CreateCollection { collection_id, req } => {
-                ApplyOutcome::Created(self.create_collection(&collection_id, req)?)
+                ApplyOutcome::Created(self.create_collection_inner(&collection_id, req)?)
             }
-            RaftLogEntry::Index { collection_id, req } => {
-                ApplyOutcome::Indexed(self.index(&collection_id, req)?)
-            }
-            RaftLogEntry::ReplaceDocs { collection_id, req } => {
-                ApplyOutcome::Replaced(self.replace_docs(&collection_id, req)?)
-            }
+            RaftLogEntry::Index { collection_id, req } => ApplyOutcome::Indexed(self.index_inner(
+                &collection_id,
+                req,
+                charge,
+                prepared_text,
+            )?),
+            RaftLogEntry::ReplaceDocs { collection_id, req } => ApplyOutcome::Replaced(
+                self.replace_docs_inner(&collection_id, req, charge, prepared_text)?,
+            ),
             RaftLogEntry::TruncateDocs { collection_id } => {
-                self.truncate_docs(&collection_id)?;
+                self.truncate_docs_inner(&collection_id)?;
                 ApplyOutcome::DocsTruncated
             }
             RaftLogEntry::UnindexDocs { collection_id, req } => {
-                self.unindex_docs(&collection_id, req)?;
+                self.unindex_docs_inner(&collection_id, req, charge)?;
                 ApplyOutcome::DocsUnindexed
             }
             RaftLogEntry::Delete {
@@ -5974,22 +7926,26 @@ impl Engine {
                 external_id,
                 field,
             } => {
-                self.delete(&collection_id, &external_id, field.as_deref())?;
+                self.delete_inner(&collection_id, &external_id, field.as_deref(), charge)?;
                 ApplyOutcome::Deleted
             }
             RaftLogEntry::DropCollection {
                 collection_id,
                 force,
-            } => ApplyOutcome::Dropped(self.drop_collection(&collection_id, force)?),
+            } => ApplyOutcome::Dropped(self.drop_collection_inner(&collection_id, force)?),
             RaftLogEntry::AddField {
                 collection_id,
                 field_name,
                 spec,
-            } => ApplyOutcome::FieldChanged(self.add_field(&collection_id, &field_name, spec)?),
+            } => ApplyOutcome::FieldChanged(self.add_field_inner(
+                &collection_id,
+                &field_name,
+                spec,
+            )?),
             RaftLogEntry::DropField {
                 collection_id,
                 field_name,
-            } => ApplyOutcome::FieldChanged(self.drop_field(&collection_id, &field_name)?),
+            } => ApplyOutcome::FieldChanged(self.drop_field_inner(&collection_id, &field_name)?),
         })
     }
 }
@@ -6055,6 +8011,28 @@ fn validate_schema(schema: &BTreeMap<String, FieldSpec>) -> Result<()> {
 // Value application
 // ---------------------------------------------------------------------------
 
+fn apply_prepared_value(
+    fi: &mut FieldIndex,
+    id: u32,
+    eid: &str,
+    value: &FieldValue,
+    field: &str,
+    prepared: Option<&Arc<staged_text_row::StagedTextRow>>,
+) -> Result<u64> {
+    let Some(row) = prepared else {
+        return apply_value(fi, id, eid, value, field);
+    };
+    let FieldIndex::Text { idx, .. } = fi else {
+        bail!("prepared Text field changed after validation");
+    };
+    let bytes = row.indexed_bytes(eid);
+    idx.staged_rows.insert(id, row.clone());
+    idx.doc_count += 1;
+    idx.total_doc_len += u64::from(row.doc_len());
+    idx.bytes += bytes;
+    Ok(bytes)
+}
+
 fn apply_value(
     fi: &mut FieldIndex,
     id: u32,
@@ -6082,7 +8060,14 @@ fn apply_value(
                 Analyzer::WhitespaceLower => tokenize::for_whitespace_lower_cow(&s, |tok| {
                     apply_token(idx, tok.as_ref());
                 }),
-                _ => {
+                Analyzer::Ngram => crate::ngram_stream::stream_default_ngrams(
+                    &s,
+                    |token| -> Result<(), std::convert::Infallible> {
+                        apply_token(idx, token);
+                        Ok(())
+                    },
+                )?,
+                Analyzer::Jieba => {
                     let tokens = tokenize::tokenize(&s, *analyzer);
                     let doc_len = tokens.len() as u32;
                     for tok in &tokens {
@@ -6091,8 +8076,7 @@ fn apply_value(
                     doc_len
                 }
             };
-            idx.set_doc_len(id, doc_len);
-            idx.set_distinct(id, distinct);
+            idx.delta_docs.insert(id, (doc_len, distinct));
             idx.doc_count += 1;
             idx.total_doc_len += doc_len as u64;
             idx.bytes += bytes;
@@ -6545,6 +8529,9 @@ fn eval_query(
                     let base = filter_pos.len() as f32 + nots.len() as f32;
                     let preps = prep_matches(coll, &match_pos)?;
                     let not_preps = prep_matches(coll, &match_nots)?;
+                    // #4246: a small candidate set never materializes a posting.
+                    let sparse_cand: Option<Vec<u32>> =
+                        (cand.len() <= SPARSE_CANDIDATE_MAX).then(|| cand.iter().collect());
                     // Phase 2m: RESOLVE each match's per-token postings ONCE (dict
                     // binary-search + cache fetch paid here, not per candidate doc).
                     // On disk this is THE `filtered_search` fix — the candidate set
@@ -6555,11 +8542,15 @@ fn eval_query(
                     // scores; only the resolution is hoisted.
                     let prepared: Vec<Option<PreparedMatch>> = preps
                         .iter()
-                        .map(|(idx, toks, op)| PreparedMatch::resolve(idx, toks, *op))
+                        .map(|(idx, toks, op)| {
+                            PreparedMatch::resolve_for(idx, toks, *op, sparse_cand.as_deref())
+                        })
                         .collect();
                     let not_prepared: Vec<Option<PreparedMatch>> = not_preps
                         .iter()
-                        .map(|(idx, toks, op)| PreparedMatch::resolve(idx, toks, *op))
+                        .map(|(idx, toks, op)| {
+                            PreparedMatch::resolve_for(idx, toks, *op, sparse_cand.as_deref())
+                        })
                         .collect();
                     let mut acc = ScoredHits::new();
                     'doc: for id in &cand {
@@ -6827,13 +8818,16 @@ fn eval_predicable_and_topk(
 
     let preps = prep_matches(coll, &match_pos)?;
     let not_preps = prep_matches(coll, &match_nots)?;
+    // #4246: a small candidate set never materializes a posting.
+    let sparse_cand: Option<Vec<u32>> =
+        (cand.len() <= SPARSE_CANDIDATE_MAX).then(|| cand.iter().collect());
     let prepared: Vec<Option<PreparedMatch>> = preps
         .iter()
-        .map(|(idx, toks, op)| PreparedMatch::resolve(idx, toks, *op))
+        .map(|(idx, toks, op)| PreparedMatch::resolve_for(idx, toks, *op, sparse_cand.as_deref()))
         .collect();
     let not_prepared: Vec<Option<PreparedMatch>> = not_preps
         .iter()
-        .map(|(idx, toks, op)| PreparedMatch::resolve(idx, toks, *op))
+        .map(|(idx, toks, op)| PreparedMatch::resolve_for(idx, toks, *op, sparse_cand.as_deref()))
         .collect();
 
     if preps.len() == 1 && not_preps.is_empty() {
@@ -7073,12 +9067,8 @@ fn bm25_contrib_cached(
 
 #[inline]
 fn text_doc_len_at(idx: &TextIndex, segment_doc_lens: Option<&[u32]>, id: u32) -> u32 {
-    if idx
-        .distinct
-        .get(id as usize)
-        .is_some_and(|tokens| tokens.is_some())
-    {
-        return idx.lens.get(id as usize).copied().unwrap_or(0);
+    if idx.staged_rows.contains_key(&id) || idx.distinct_at(id).is_some() {
+        return idx.doc_len(id);
     }
     segment_doc_lens
         .and_then(|lens| lens.get(id as usize).copied())
@@ -7182,18 +9172,93 @@ fn match_rank_key(op: MatchOp, tokens: &[String]) -> String {
     key
 }
 
+/// Cached BM25 ranking for one match query (keyed by `match_rank_key`),
+/// lazily extended to serve whatever page is actually asked for.
+/// `entries[..sorted_len]` is fully sorted by `match_rank_cmp` (score desc,
+/// then external id asc — the SAME order `build_and_ranked`/
+/// `build_single_token_ranked` used to produce via an eager full `sort_by`);
+/// `entries[sorted_len..]` holds the rest of the matches in arbitrary order.
+/// Paging never needs the whole set sorted — only `offset + limit` — so a
+/// cold query pays `select_nth_unstable_by` (O(n) average) to place that
+/// boundary, then sorts only the prefix, instead of an O(n log n) sort of
+/// every match (the other half of the cold-500k-AND perf fix, alongside the
+/// zipper probe in `build_and_ranked`).
+#[derive(Debug)]
+struct MatchRankCache {
+    entries: Vec<(u32, f32)>,
+    sorted_len: usize,
+}
+
+/// The ranking order every match path shares: score desc, then external id
+/// asc as a deterministic tie-break. Byte-identical to the comparator the
+/// old eager `sort_by` used.
+#[inline]
+fn match_rank_cmp(interner: &Interner, a: &(u32, f32), b: &(u32, f32)) -> CmpOrdering {
+    b.1.partial_cmp(&a.1)
+        .unwrap_or(CmpOrdering::Equal)
+        .then_with(|| interner.resolve(a.0).cmp(interner.resolve(b.0)))
+}
+
+/// Extends `state.entries[..state.sorted_len]` to at least `want` sorted
+/// entries (clamped to the total match count). A no-op when the prefix is
+/// already that long. `select_nth_unstable_by` is safe to re-run over the
+/// whole (possibly already-partitioned) vector for a larger `want`: it only
+/// depends on `match_rank_cmp`, not on any prior partition, and the element
+/// multiset is unchanged by an earlier partial partition/sort.
+fn ensure_sorted_prefix(state: &mut MatchRankCache, want: usize, interner: &Interner) {
+    let want = want.min(state.entries.len());
+    if want <= state.sorted_len {
+        return;
+    }
+    if want > 0 && want < state.entries.len() {
+        state
+            .entries
+            .select_nth_unstable_by(want - 1, |a, b| match_rank_cmp(interner, a, b));
+    }
+    state.entries[..want].sort_by(|a, b| match_rank_cmp(interner, a, b));
+    state.sorted_len = want;
+}
+
 fn cached_match_ranked_page(
     idx: &TextIndex,
     cache_key: &str,
     k: usize,
+    interner: &Interner,
 ) -> Option<(Vec<(u32, f32)>, u64)> {
-    let ranked = idx
+    let cell = idx
         .match_rank_cache
         .read()
         .ok()
         .and_then(|cache| cache.get(cache_key).cloned())?;
-    let total = ranked.len() as u64;
-    Some((ranked.iter().take(k).copied().collect(), total))
+    let mut state = cell.lock().unwrap_or_else(|poison| poison.into_inner());
+    let total = state.entries.len() as u64;
+    let want = k.min(state.entries.len());
+    ensure_sorted_prefix(&mut state, want, interner);
+    Some((state.entries[..want].to_vec(), total))
+}
+
+/// Inserts a freshly built (unsorted) ranking into `idx.match_rank_cache` and
+/// returns the requested page. The cache stores the RAW scored entries and
+/// only sorts as far as `k` — see `MatchRankCache`.
+fn insert_match_rank_cache_and_page(
+    idx: &TextIndex,
+    cache_key: String,
+    entries: Vec<(u32, f32)>,
+    k: usize,
+    interner: &Interner,
+) -> (Vec<(u32, f32)>, u64) {
+    let total = entries.len() as u64;
+    let want = k.min(entries.len());
+    let cell = std::sync::Arc::new(Mutex::new(MatchRankCache {
+        entries,
+        sorted_len: 0,
+    }));
+    if let Ok(mut cache) = idx.match_rank_cache.write() {
+        cache.insert(cache_key, cell.clone());
+    }
+    let mut state = cell.lock().unwrap_or_else(|poison| poison.into_inner());
+    ensure_sorted_prefix(&mut state, want, interner);
+    (state.entries[..want].to_vec(), total)
 }
 
 struct SingleTokenRankInput<'a> {
@@ -7203,9 +9268,11 @@ struct SingleTokenRankInput<'a> {
     segment_doc_lens: Option<&'a [u32]>,
     idf: f32,
     avgdl: f32,
-    interner: &'a Interner,
 }
 
+/// Builds the UNSORTED per-doc BM25 scores for the single-token match shape.
+/// Sorting (when, and only as far as, a page needs it) happens later via
+/// `MatchRankCache`/`ensure_sorted_prefix` — see that type's doc comment.
 fn build_single_token_ranked(input: SingleTokenRankInput<'_>) -> Vec<(u32, f32)> {
     let mut ranked = Vec::with_capacity(input.docids.len());
     let mut score_cache = Vec::with_capacity(4);
@@ -7223,47 +9290,258 @@ fn build_single_token_ranked(input: SingleTokenRankInput<'_>) -> Vec<(u32, f32)>
             ),
         ));
     }
-    ranked.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(CmpOrdering::Equal)
-            .then_with(|| input.interner.resolve(a.0).cmp(input.interner.resolve(b.0)))
-    });
     ranked
 }
 
 struct AndRankInput<'a> {
     idx: &'a TextIndex,
-    posts: &'a [TokPostings<'a>],
+    posts: &'a [TokProbe<'a>],
     idfs: &'a [f32],
     drive: usize,
+    drive_len: usize,
     avgdl: f32,
-    interner: &'a Interner,
 }
 
+/// A forward-only cursor over one non-driving token's active postings
+/// (`TokProbe::iter_active`), used by the dense-AND zipper in
+/// `build_and_ranked`. `advance_to` walks the underlying merge iterator only
+/// as far as it needs to catch up to `target` — never backward, which is
+/// safe because the driver's own walk visits ids in strictly ascending
+/// order — so intersecting an N-token AND whose OTHER postings are
+/// comparably sized to the driver costs `O(drive_len + Σ other postings)`
+/// total instead of `O(drive_len × Σ log(other postings))` for the
+/// per-doc binary-search probe (`TokProbe::tf`).
+enum ZipCursor<'a> {
+    /// FAST LANE: this token has no segment and no staged-row contribution,
+    /// so its whole active posting is exactly one ascending `(docids, tfs)`
+    /// live slice pair — advancing is a raw index scan over two `&[u32]`
+    /// slices, with none of the per-step 3-way-merge bookkeeping
+    /// (`TokProbeIter::next`'s array/`flatten`/`min` over seg/live/staged)
+    /// that a general probe needs. This is the common case for the
+    /// 500k-hot-doc AND fixture (no sealed segment, no in-flight staged
+    /// rows for most of a query's lifetime).
+    LiveOnly {
+        ids: &'a [u32],
+        tfs: &'a [u32],
+        pos: usize,
+    },
+    /// GENERAL: any token with a segment and/or staged-row contribution.
+    /// This is the REAL 500k-hot-doc path once a checkpoint has published
+    /// (every hot token then has a segment posting), so it must be as tight
+    /// as the live lane: the three ascending sources are advanced
+    /// independently by raw index scans and precedence (staged > live >
+    /// segment-minus-tombstones, exactly `TokProbe::tf`) is resolved only AT
+    /// `target` — never a per-element three-way merge, never a per-element
+    /// tombstone lookup (the tombstone test is per DRIVER doc, shared across
+    /// all cursors through `advance_to`'s `tombstoned` cache).
+    General {
+        seg_ids: &'a [u32],
+        seg_tfs: &'a [u32],
+        seg_pos: usize,
+        live_ids: &'a [u32],
+        live_tfs: &'a [u32],
+        live_pos: usize,
+        staged: &'a [(u32, u32)],
+        staged_pos: usize,
+        tombstones: &'a RoaringBitmap,
+    },
+}
+
+impl<'a> ZipCursor<'a> {
+    fn new(p: &'a TokProbe<'a>) -> Self {
+        if p.seg.is_none() && p.staged.is_empty() {
+            if let Some(live) = p.live {
+                return ZipCursor::LiveOnly {
+                    ids: &live.docids,
+                    tfs: &live.tfs,
+                    pos: 0,
+                };
+            }
+        }
+        ZipCursor::General {
+            seg_ids: p.seg.as_ref().map(|s| &s.0[..]).unwrap_or(&[]),
+            seg_tfs: p.seg.as_ref().map(|s| &s.1[..]).unwrap_or(&[]),
+            seg_pos: 0,
+            live_ids: p.live.map(|l| &l.docids[..]).unwrap_or(&[]),
+            live_tfs: p.live.map(|l| &l.tfs[..]).unwrap_or(&[]),
+            live_pos: 0,
+            staged: &p.staged[..],
+            staged_pos: 0,
+            tombstones: p.tombstones,
+        }
+    }
+
+    /// Advances past every entry `< target`, then reports `target`'s tf if
+    /// the cursor now sits exactly on it. Yields the identical `Option<u32>`
+    /// `TokProbe::tf(target)` would, for any `target` no smaller than a
+    /// previous call's `target` on this cursor. `tombstoned` is the caller's
+    /// per-`target` memo of `tombstones.contains(target)`: every probe of one
+    /// AND comes from the same `TextIndex` and therefore shares one tombstone
+    /// set, so the first cursor that needs the answer for this `target`
+    /// computes it and the rest reuse it (`None` = not computed yet).
+    fn advance_to(&mut self, target: u32, tombstoned: &mut Option<bool>) -> Option<u32> {
+        match self {
+            ZipCursor::LiveOnly { ids, tfs, pos } => {
+                while *pos < ids.len() && ids[*pos] < target {
+                    *pos += 1;
+                }
+                if *pos < ids.len() && ids[*pos] == target {
+                    Some(tfs[*pos])
+                } else {
+                    None
+                }
+            }
+            ZipCursor::General {
+                seg_ids,
+                seg_tfs,
+                seg_pos,
+                live_ids,
+                live_tfs,
+                live_pos,
+                staged,
+                staged_pos,
+                tombstones,
+            } => {
+                while *staged_pos < staged.len() && staged[*staged_pos].0 < target {
+                    *staged_pos += 1;
+                }
+                if *staged_pos < staged.len() && staged[*staged_pos].0 == target {
+                    return Some(staged[*staged_pos].1);
+                }
+                while *live_pos < live_ids.len() && live_ids[*live_pos] < target {
+                    *live_pos += 1;
+                }
+                if *live_pos < live_ids.len() && live_ids[*live_pos] == target {
+                    return Some(live_tfs[*live_pos]);
+                }
+                while *seg_pos < seg_ids.len() && seg_ids[*seg_pos] < target {
+                    *seg_pos += 1;
+                }
+                if *seg_pos < seg_ids.len() && seg_ids[*seg_pos] == target {
+                    let dead = *tombstoned.get_or_insert_with(|| tombstones.contains(target));
+                    if !dead {
+                        return Some(seg_tfs[*seg_pos]);
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+/// `ceil(log2(x))` for `x >= 1` (`0` for `x <= 1`) — sized only for the
+/// dense/sparse zipper heuristic below.
+#[inline]
+fn ceil_log2(x: usize) -> u32 {
+    if x <= 1 {
+        0
+    } else {
+        usize::BITS - (x - 1).leading_zeros()
+    }
+}
+
+/// Chooses the streaming zipper probe over the per-doc binary-search probe
+/// when the OTHER tokens' postings are dense enough, relative to the driver,
+/// that a full streaming pass over them is expected to do no more work than
+/// the binary searches would. The binary-search alternative probes EVERY
+/// other token once per driver doc, so its comparison cost is
+/// `drive_len × Σ_{k≠drive} ceil(log2(upper_bound_len(k)))`, against the
+/// zipper's `Σ_{k≠drive} upper_bound_len(k)` streamed entries — the
+/// inequality compares those two sums. (An earlier form multiplied
+/// `drive_len` by a SINGLE `log2(max len)` — off by the token count — and
+/// judged the 20-token, df≈500k `title_ngram` "durable search" AND to be
+/// sparse, sending it down 19 × 500k segment binary searches per query: the
+/// ~0.5-1 s cold `match` the 500k durable perf cell collapsed on.) A
+/// sparse/rare driver against much larger other postings still fails the
+/// inequality and keeps the binary-search probe, unchanged.
+fn should_use_zipper(posts: &[TokProbe<'_>], drive: usize, drive_len: usize) -> bool {
+    if posts.len() <= 1 {
+        return false;
+    }
+    let mut sum_other = 0usize;
+    let mut sum_log_other = 0usize;
+    for (k, p) in posts.iter().enumerate() {
+        if k == drive {
+            continue;
+        }
+        let len = p.upper_bound_len().max(1);
+        sum_other += len;
+        sum_log_other += ceil_log2(len).max(1) as usize;
+    }
+    sum_other <= drive_len.saturating_mul(sum_log_other)
+}
+
+/// Streams the driving (rarest) token's active postings (`TokProbe::iter_active`,
+/// no per-token merged-`Vec` materialization — the 500k-hot-doc AND perf fix)
+/// and probes every other token either with a streaming zipper cursor
+/// (`ZipCursor`, dense case) or `TokProbe::tf` (a binary search, sparse
+/// case) — see `should_use_zipper`. The per-doc score still sums each
+/// token's BM25 contribution in ORIGINAL TOKEN ORDER (index `k` low to high,
+/// driver's own contribution taken from the SAME merge pass instead of a
+/// redundant re-lookup), so the f32 result is byte-identical on both probe
+/// strategies and to the old per-token merged-postings walk. Returns the
+/// UNSORTED scores — see `build_single_token_ranked`'s doc comment on why.
 fn build_and_ranked(input: AndRankInput<'_>) -> Vec<(u32, f32)> {
-    let mut ranked = Vec::with_capacity(input.posts[input.drive].df());
+    let mut ranked = Vec::with_capacity(input.drive_len);
     let segment_doc_lens = input
         .idx
         .segment
         .as_ref()
         .and_then(|seg| seg.text_doc_lens());
-    let drive_docids = input.posts[input.drive].docids();
-    'docs: for &id in drive_docids {
-        let doc_len = text_doc_len_at(input.idx, segment_doc_lens, id) as f32;
-        let mut score = 0.0f32;
-        for (k, p) in input.posts.iter().enumerate() {
-            let Some(tf) = p.tf(id) else {
-                continue 'docs;
-            };
-            score += bm25_contrib(input.idfs[k], tf as f32, doc_len, input.avgdl);
+    if should_use_zipper(input.posts, input.drive, input.drive_len) {
+        let mut cursors: Vec<Option<ZipCursor<'_>>> = input
+            .posts
+            .iter()
+            .enumerate()
+            .map(|(k, p)| {
+                if k == input.drive {
+                    None
+                } else {
+                    Some(ZipCursor::new(p))
+                }
+            })
+            .collect();
+        'docs: for (id, drive_tf) in input.posts[input.drive].iter_active() {
+            let doc_len = text_doc_len_at(input.idx, segment_doc_lens, id) as f32;
+            let mut score = 0.0f32;
+            // One tombstone lookup per driver doc at most, shared by every
+            // cursor (see `ZipCursor::advance_to`).
+            let mut tombstoned: Option<bool> = None;
+            for (k, cursor) in cursors.iter_mut().enumerate() {
+                let tf = if k == input.drive {
+                    drive_tf
+                } else {
+                    match cursor
+                        .as_mut()
+                        .expect("non-driver index always has a cursor")
+                        .advance_to(id, &mut tombstoned)
+                    {
+                        Some(tf) => tf,
+                        None => continue 'docs,
+                    }
+                };
+                score += bm25_contrib(input.idfs[k], tf as f32, doc_len, input.avgdl);
+            }
+            ranked.push((id, score));
         }
-        ranked.push((id, score));
+    } else {
+        'docs2: for (id, drive_tf) in input.posts[input.drive].iter_active() {
+            let doc_len = text_doc_len_at(input.idx, segment_doc_lens, id) as f32;
+            let mut score = 0.0f32;
+            for (k, p) in input.posts.iter().enumerate() {
+                let tf = if k == input.drive {
+                    drive_tf
+                } else {
+                    match p.tf(id) {
+                        Some(tf) => tf,
+                        None => continue 'docs2,
+                    }
+                };
+                score += bm25_contrib(input.idfs[k], tf as f32, doc_len, input.avgdl);
+            }
+            ranked.push((id, score));
+        }
     }
-    ranked.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(CmpOrdering::Equal)
-            .then_with(|| input.interner.resolve(a.0).cmp(input.interner.resolve(b.0)))
-    });
     ranked
 }
 
@@ -7344,38 +9622,43 @@ fn eval_match(coll: &Collection, m: &MatchQuery) -> Result<ScoredHits> {
             acc
         }
         MatchOp::And => {
-            // Intersect by DRIVING from the rarest token (fewest candidates) and
-            // probing the others by binary-search — no full per-token map
-            // materialization (the old path scored every token's whole posting
-            // list). Any absent token ⇒ empty intersection. The per-doc score
-            // still sums each token's BM25 contribution in ORIGINAL TOKEN ORDER,
-            // so the f32 result is byte-identical to the old per-token-map merge.
-            let mut posts: Vec<TokPostings<'_>> = Vec::with_capacity(tokens.len());
-            for tok in &tokens {
-                match resolve(tok) {
-                    Some(p) => posts.push(p),
-                    None => return Ok(HashMap::new()),
-                }
+            // Intersect via a streaming k-way merge over lazy per-token
+            // cursors (`TokProbe`) — no per-token merged-postings
+            // materialization (the 500k-hot-doc `match … op: "and"` perf
+            // fix: the old path built a full `Vec<u32>`/`Vec<u32>` per token
+            // via `tok_postings`, even for tokens only ever point-probed).
+            // Any absent token ⇒ empty intersection. The per-doc score still
+            // sums each token's BM25 contribution in ORIGINAL TOKEN ORDER
+            // (the driver's own contribution reused from the SAME merge pass
+            // instead of a redundant re-lookup), so the f32 result is
+            // byte-identical to the old per-token merged-postings walk.
+            let posts: Vec<TokProbe<'_>> = tokens.iter().map(|t| idx.tok_probe(t)).collect();
+            if posts.iter().any(|p| p.definitely_absent()) {
+                return Ok(HashMap::new());
             }
-            let idfs: Vec<f32> = posts
+            let dfs: Vec<usize> = posts.iter().map(|p| p.active_len()).collect();
+            let idfs: Vec<f32> = dfs
                 .iter()
-                .map(|p| {
-                    let df = p.df() as f32;
+                .map(|&df| {
+                    let df = df as f32;
                     ((n - df + 0.5) / (df + 0.5) + 1.0).ln()
                 })
                 .collect();
-            let drive = (0..posts.len()).min_by_key(|&i| posts[i].df()).unwrap_or(0);
-            let mut acc: ScoredHits = HashMap::with_capacity(posts[drive].df());
-            let drive_docids = posts[drive].docids();
-            'docs: for &id in drive_docids {
+            let drive = (0..posts.len()).min_by_key(|&i| dfs[i]).unwrap_or(0);
+            let mut acc: ScoredHits = HashMap::with_capacity(dfs[drive]);
+            'docs: for (id, drive_tf) in posts[drive].iter_active() {
                 let doc_len = idx.doc_len(id) as f32;
                 let mut score = 0.0f32;
                 for (k, p) in posts.iter().enumerate() {
-                    let Some(tf) = p.tf(id) else {
-                        continue 'docs;
+                    let tf = if k == drive {
+                        drive_tf
+                    } else {
+                        match p.tf(id) {
+                            Some(tf) => tf,
+                            None => continue 'docs,
+                        }
                     };
-                    let tf = tf as f32;
-                    score += bm25_contrib(idfs[k], tf, doc_len, avgdl);
+                    score += bm25_contrib(idfs[k], tf as f32, doc_len, avgdl);
                 }
                 acc.insert(id, score);
             }
@@ -7442,7 +9725,7 @@ fn eval_match_topk(
         // Single token (Or == And == the one posting list): each docid is
         // scored EXACTLY once, so `out.entry(id).or_insert(0.0) += c == c`.
         let cache_key = match_rank_key(m.op, &tokens);
-        if let Some(page) = cached_match_ranked_page(idx, &cache_key, k) {
+        if let Some(page) = cached_match_ranked_page(idx, &cache_key, k, interner) {
             return Ok(Some(page));
         }
         let Some(postings) = resolve(&tokens[0]) else {
@@ -7455,58 +9738,540 @@ fn eval_match_topk(
             TokPostings::Segment(_) => idx.segment.as_ref().and_then(|seg| seg.text_doc_lens()),
             _ => None,
         };
-        let ranked = std::sync::Arc::new(build_single_token_ranked(SingleTokenRankInput {
+        let entries = build_single_token_ranked(SingleTokenRankInput {
             idx,
             docids,
             tfs,
             segment_doc_lens,
             idf,
             avgdl,
-            interner,
-        }));
-        let total = ranked.len() as u64;
-        if let Ok(mut cache) = idx.match_rank_cache.write() {
-            cache.insert(cache_key, ranked.clone());
-        }
-        return Ok(Some((ranked.iter().take(k).copied().collect(), total)));
+        });
+        return Ok(Some(insert_match_rank_cache_and_page(
+            idx, cache_key, entries, k, interner,
+        )));
     }
 
     // Multi-token AND — same drive-from-rarest + per-token sum as the map
     // branch, but each surviving driver docid is pushed once (unique) instead
     // of `insert`ed. Byte-identical: the per-doc `score` starts at `0.0f32` and
-    // accumulates `bm25_contrib` over the tokens in the SAME order.
-    let mut posts: Vec<TokPostings<'_>> = Vec::with_capacity(tokens.len());
-    for tok in &tokens {
-        match resolve(tok) {
-            Some(p) => posts.push(p),
-            None => return Ok(Some((Vec::new(), 0))),
-        }
+    // accumulates `bm25_contrib` over the tokens in the SAME order. Uses the
+    // lazy `TokProbe` (no per-token merged-postings materialization — the
+    // 500k-hot-doc perf fix) exactly as `eval_match`'s `And` branch does.
+    let posts: Vec<TokProbe<'_>> = tokens.iter().map(|t| idx.tok_probe(t)).collect();
+    if posts.iter().any(|p| p.definitely_absent()) {
+        return Ok(Some((Vec::new(), 0)));
     }
-    let idfs: Vec<f32> = posts
+    let dfs: Vec<usize> = posts.iter().map(|p| p.active_len()).collect();
+    let idfs: Vec<f32> = dfs
         .iter()
-        .map(|p| {
-            let df = p.df() as f32;
+        .map(|&df| {
+            let df = df as f32;
             ((n - df + 0.5) / (df + 0.5) + 1.0).ln()
         })
         .collect();
     let cache_key = match_rank_key(m.op, &tokens);
-    if let Some(page) = cached_match_ranked_page(idx, &cache_key, k) {
+    if let Some(page) = cached_match_ranked_page(idx, &cache_key, k, interner) {
         return Ok(Some(page));
     }
-    let drive = (0..posts.len()).min_by_key(|&i| posts[i].df()).unwrap_or(0);
-    let ranked = std::sync::Arc::new(build_and_ranked(AndRankInput {
+    let drive = (0..posts.len()).min_by_key(|&i| dfs[i]).unwrap_or(0);
+    let entries = build_and_ranked(AndRankInput {
         idx,
         posts: &posts,
         idfs: &idfs,
         drive,
+        drive_len: dfs[drive],
         avgdl,
-        interner,
-    }));
-    let total = ranked.len() as u64;
-    if let Ok(mut cache) = idx.match_rank_cache.write() {
-        cache.insert(cache_key, ranked.clone());
+    });
+    Ok(Some(insert_match_rank_cache_and_page(
+        idx, cache_key, entries, k, interner,
+    )))
+}
+
+#[cfg(test)]
+mod match_rank_cache_tests {
+    use super::*;
+
+    // A small xorshift PRNG, dependency-free and deterministic (the same
+    // recipe `tok_probe_tests` uses).
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u32) -> u32 {
+            (self.next() % u64::from(n.max(1))) as u32
+        }
     }
-    Ok(Some((ranked.iter().take(k).copied().collect(), total)))
+
+    fn interner_with(n: u32) -> Interner {
+        let mut it = Interner::default();
+        for i in 0..n {
+            it.intern(&format!("eid-{i:06}"));
+        }
+        it
+    }
+
+    fn reference_full_sort(entries: &[(u32, f32)], interner: &Interner) -> Vec<(u32, f32)> {
+        let mut v = entries.to_vec();
+        v.sort_by(|a, b| match_rank_cmp(interner, a, b));
+        v
+    }
+
+    /// `ensure_sorted_prefix`, called with a growing sequence of out-of-order
+    /// `k`s (including `k` beyond the total), must always agree with a plain
+    /// full sort on the requested prefix — this is the paging-cache
+    /// equivalence the perf fix depends on.
+    #[test]
+    fn ensure_sorted_prefix_matches_full_sort_for_every_k() {
+        let mut rng = Rng(0xD1B5_4A32_D192_ED03);
+        for trial in 0..60u32 {
+            let n_ids = 1 + rng.below(200);
+            let interner = interner_with(n_ids);
+            // Scores drawn from a small set so many entries tie and the
+            // external-id tie-break actually gets exercised.
+            let entries: Vec<(u32, f32)> = (0..n_ids)
+                .map(|id| (id, rng.below(5) as f32 * 0.25))
+                .collect();
+            let reference = reference_full_sort(&entries, &interner);
+            let mut state = MatchRankCache {
+                entries: entries.clone(),
+                sorted_len: 0,
+            };
+            let ks = [
+                0usize,
+                1,
+                3,
+                n_ids as usize / 2,
+                n_ids as usize,
+                n_ids as usize + 10,
+            ];
+            for &k in &ks {
+                let want = k.min(state.entries.len());
+                ensure_sorted_prefix(&mut state, want, &interner);
+                assert_eq!(
+                    state.entries[..want],
+                    reference[..want],
+                    "trial {trial} k={k}: extended prefix diverged from full-sort reference"
+                );
+            }
+        }
+    }
+
+    /// `insert_match_rank_cache_and_page` then `cached_match_ranked_page` for
+    /// a growing `k` must serve the SAME underlying cache entry (the extend-
+    /// in-place path), each page byte-identical to a full-sort reference.
+    #[test]
+    fn insert_and_cached_page_round_trip_serves_growing_k() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let n_ids = 500u32;
+        let interner = interner_with(n_ids);
+        let entries: Vec<(u32, f32)> = (0..n_ids).map(|id| (id, rng.below(7) as f32)).collect();
+        let reference = reference_full_sort(&entries, &interner);
+
+        let idx = TextIndex::default();
+        let (page, total) =
+            insert_match_rank_cache_and_page(&idx, "k".to_string(), entries.clone(), 5, &interner);
+        assert_eq!(total, n_ids as u64);
+        assert_eq!(page, reference[..5]);
+
+        let (page2, total2) = cached_match_ranked_page(&idx, "k", 50, &interner).unwrap();
+        assert_eq!(total2, n_ids as u64);
+        assert_eq!(page2, reference[..50]);
+
+        // k beyond total clamps to total and still matches the reference.
+        let (page3, total3) =
+            cached_match_ranked_page(&idx, "k", n_ids as usize + 25, &interner).unwrap();
+        assert_eq!(total3, n_ids as u64);
+        assert_eq!(page3, reference);
+    }
+
+    fn postings_from(pairs: &[(u32, u32)]) -> Postings {
+        Postings::from_sorted(
+            pairs.iter().map(|&(id, _)| id).collect(),
+            pairs.iter().map(|&(_, tf)| tf).collect(),
+        )
+    }
+
+    /// Naive oracle: score every doc carrying EVERY token via a plain
+    /// nested-loop intersection (no probe/zipper strategy), using the exact
+    /// same `bm25_contrib` expression `build_and_ranked` does.
+    fn reference_and_scores(
+        idx: &TextIndex,
+        token_posts: &[Vec<(u32, u32)>],
+        idfs: &[f32],
+        avgdl: f32,
+    ) -> BTreeMap<u32, f32> {
+        let mut out = BTreeMap::new();
+        if token_posts.is_empty() {
+            return out;
+        }
+        'docs: for &(id, _) in &token_posts[0] {
+            let doc_len = idx.doc_len(id) as f32;
+            let mut score = 0.0f32;
+            for (k, posts) in token_posts.iter().enumerate() {
+                match posts.iter().find(|&&(pid, _)| pid == id) {
+                    Some(&(_, tf)) => {
+                        score += bm25_contrib(idfs[k], tf as f32, doc_len, avgdl);
+                    }
+                    None => continue 'docs,
+                }
+            }
+            out.insert(id, score);
+        }
+        out
+    }
+
+    /// Randomized equivalence: `build_and_ranked` must match the naive
+    /// intersection oracle whether the dense-zipper branch or the sparse
+    /// binary-search branch runs — trial parity biases the fixture toward
+    /// each so both strategies get exercised across the sweep.
+    #[test]
+    fn build_and_ranked_agrees_with_reference_dense_and_sparse() {
+        let mut rng = Rng(0x243F_6A88_85A3_08D3);
+        for trial in 0..80u32 {
+            let universe = 5 + rng.below(120);
+            let n_tokens = 2 + rng.below(3); // 2..=4 tokens
+            let dense = trial % 2 == 0;
+            let mk_ids = |rng: &mut Rng, dense: bool| -> Vec<u32> {
+                let threshold = if dense { 1 } else { 6 };
+                let mut ids: Vec<u32> = (0..universe)
+                    .filter(|_| rng.below(threshold) == 0)
+                    .collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids
+            };
+
+            let mut idx = TextIndex {
+                doc_count: universe as u64,
+                total_doc_len: universe as u64,
+                ..Default::default()
+            };
+            for _ in 0..universe {
+                idx.lens.push(1 + rng.below(20));
+            }
+
+            let mut token_pairs: Vec<Vec<(u32, u32)>> = Vec::new();
+            for _ in 0..n_tokens {
+                let ids = mk_ids(&mut rng, dense);
+                let pairs: Vec<(u32, u32)> = ids.iter().map(|&id| (id, 1 + rng.below(9))).collect();
+                token_pairs.push(pairs);
+            }
+            // Always drive from the rarest (shortest) token, matching
+            // `eval_match_topk`'s `min_by_key(dfs)` selection.
+            token_pairs.sort_by_key(|p| p.len());
+
+            let postings: Vec<Postings> = token_pairs.iter().map(|p| postings_from(p)).collect();
+            let empty_tombstones = RoaringBitmap::new();
+            let posts: Vec<TokProbe<'_>> = postings
+                .iter()
+                .map(|p| TokProbe {
+                    seg: None,
+                    live: Some(p),
+                    staged: Vec::new(),
+                    tombstones: &empty_tombstones,
+                })
+                .collect();
+
+            let n = universe as f32;
+            let idfs: Vec<f32> = token_pairs
+                .iter()
+                .map(|p| {
+                    let df = p.len() as f32;
+                    ((n - df + 0.5) / (df + 0.5) + 1.0).ln()
+                })
+                .collect();
+            let avgdl = idx.total_doc_len as f32 / idx.doc_count.max(1) as f32;
+            let drive = 0usize;
+            let drive_len = token_pairs[0].len();
+
+            let entries = build_and_ranked(AndRankInput {
+                idx: &idx,
+                posts: &posts,
+                idfs: &idfs,
+                drive,
+                drive_len,
+                avgdl,
+            });
+
+            let want = reference_and_scores(&idx, &token_pairs, &idfs, avgdl);
+            let got: BTreeMap<u32, f32> = entries.into_iter().collect();
+            assert_eq!(
+                got, want,
+                "trial {trial} (dense={dense}): build_and_ranked diverged from reference"
+            );
+        }
+    }
+
+    /// The dense/sparse switch itself: a sparse driver against one huge dense
+    /// other posting must stay on the binary-search probe (a streaming pass
+    /// over the dense posting would be strictly more work), while two
+    /// postings comparably dense to the driver must pick the zipper.
+    #[test]
+    fn should_use_zipper_switches_on_density() {
+        let empty = RoaringBitmap::new();
+        let sparse_driver = postings_from(&[(1, 1)]);
+        let dense_other_ids: Vec<(u32, u32)> = (0..2000).map(|i| (i, 1)).collect();
+        let dense_other = postings_from(&dense_other_ids);
+        let posts = vec![
+            TokProbe {
+                seg: None,
+                live: Some(&sparse_driver),
+                staged: Vec::new(),
+                tombstones: &empty,
+            },
+            TokProbe {
+                seg: None,
+                live: Some(&dense_other),
+                staged: Vec::new(),
+                tombstones: &empty,
+            },
+        ];
+        assert!(!should_use_zipper(&posts, 0, 1));
+
+        let dense_a_ids: Vec<(u32, u32)> = (0..2000).map(|i| (i, 1)).collect();
+        let dense_b_ids: Vec<(u32, u32)> = (0..2000).map(|i| (i, 1)).collect();
+        let dense_a = postings_from(&dense_a_ids);
+        let dense_b = postings_from(&dense_b_ids);
+        let posts2 = vec![
+            TokProbe {
+                seg: None,
+                live: Some(&dense_a),
+                staged: Vec::new(),
+                tombstones: &empty,
+            },
+            TokProbe {
+                seg: None,
+                live: Some(&dense_b),
+                staged: Vec::new(),
+                tombstones: &empty,
+            },
+        ];
+        assert!(should_use_zipper(&posts2, 0, 2000));
+    }
+
+    /// The 20-token df≈500k `title_ngram` shape that collapsed the 500k cell:
+    /// every other token is as dense as the driver, so the zipper must win
+    /// regardless of token count (the old single-`log2` model flipped to the
+    /// binary-search probe at ≥ `log2(len)` tokens).
+    #[test]
+    fn should_use_zipper_holds_for_many_equally_dense_tokens() {
+        let empty = RoaringBitmap::new();
+        let ids: Vec<(u32, u32)> = (0..4096).map(|i| (i, 1)).collect();
+        let postings: Vec<Postings> = (0..20).map(|_| postings_from(&ids)).collect();
+        let posts: Vec<TokProbe<'_>> = postings
+            .iter()
+            .map(|p| TokProbe {
+                seg: None,
+                live: Some(p),
+                staged: Vec::new(),
+                tombstones: &empty,
+            })
+            .collect();
+        assert!(should_use_zipper(&posts, 0, 4096));
+    }
+
+    /// Randomized equivalence for the GENERAL zipper lane (a probe whose
+    /// postings are spread over segment / live / staged sources with
+    /// tombstones — the real post-checkpoint shape) against the naive oracle
+    /// fed each probe's own `iter_active()` stream, which is the already
+    /// tested definition of a token's active postings. Even trials are dense
+    /// (zipper), odd trials sparse (binary-search probe); both must agree.
+    #[test]
+    fn build_and_ranked_general_lane_agrees_with_reference() {
+        let mut rng = Rng(0x1319_8A2E_0370_7344);
+        for trial in 0..120u32 {
+            let universe = 8 + rng.below(160);
+            let n_tokens = 2 + rng.below(4); // 2..=5 tokens
+            let dense = trial % 2 == 0;
+            let threshold = if dense { 2 } else { 7 };
+
+            let mut idx = TextIndex {
+                doc_count: universe as u64,
+                total_doc_len: universe as u64,
+                ..Default::default()
+            };
+            for _ in 0..universe {
+                idx.lens.push(1 + rng.below(20));
+            }
+            let mut tomb = RoaringBitmap::new();
+            for id in 0..universe {
+                if rng.below(6) == 0 {
+                    tomb.insert(id);
+                }
+            }
+
+            struct Src {
+                seg: Option<std::sync::Arc<(Vec<u32>, Vec<u32>)>>,
+                live: Option<Postings>,
+                staged: Vec<(u32, u32)>,
+            }
+            let mut srcs: Vec<Src> = Vec::new();
+            for _ in 0..n_tokens {
+                let mut seg: Vec<(u32, u32)> = Vec::new();
+                let mut live: Vec<(u32, u32)> = Vec::new();
+                let mut staged: Vec<(u32, u32)> = Vec::new();
+                for id in 0..universe {
+                    if rng.below(threshold) != 0 {
+                        continue;
+                    }
+                    // Bit 0 → segment, bit 1 → live, bit 2 → staged; at
+                    // least one source, overlaps allowed (precedence case).
+                    let mask = 1 + rng.below(7);
+                    if mask & 1 != 0 {
+                        seg.push((id, 1 + rng.below(9)));
+                    }
+                    if mask & 2 != 0 {
+                        live.push((id, 1 + rng.below(9)));
+                    }
+                    if mask & 4 != 0 {
+                        staged.push((id, 1 + rng.below(9)));
+                    }
+                }
+                let seg = (!seg.is_empty() || rng.below(3) == 0).then(|| {
+                    std::sync::Arc::new((
+                        seg.iter().map(|&(id, _)| id).collect::<Vec<u32>>(),
+                        seg.iter().map(|&(_, tf)| tf).collect::<Vec<u32>>(),
+                    ))
+                });
+                let live = (!live.is_empty()).then(|| postings_from(&live));
+                srcs.push(Src { seg, live, staged });
+            }
+            let posts: Vec<TokProbe<'_>> = srcs
+                .iter()
+                .map(|s| TokProbe {
+                    seg: s.seg.clone(),
+                    live: s.live.as_ref(),
+                    staged: s.staged.clone(),
+                    tombstones: &tomb,
+                })
+                .collect();
+            if posts.iter().any(|p| p.definitely_absent()) {
+                continue;
+            }
+
+            let effective: Vec<Vec<(u32, u32)>> =
+                posts.iter().map(|p| p.iter_active().collect()).collect();
+            let n = universe as f32;
+            let idfs: Vec<f32> = effective
+                .iter()
+                .map(|p| {
+                    let df = p.len() as f32;
+                    ((n - df + 0.5) / (df + 0.5) + 1.0).ln()
+                })
+                .collect();
+            let avgdl = idx.total_doc_len as f32 / idx.doc_count.max(1) as f32;
+            let drive = (0..posts.len())
+                .min_by_key(|&i| effective[i].len())
+                .unwrap();
+            let drive_len = effective[drive].len();
+
+            let entries = build_and_ranked(AndRankInput {
+                idx: &idx,
+                posts: &posts,
+                idfs: &idfs,
+                drive,
+                drive_len,
+                avgdl,
+            });
+            let want = reference_and_scores(&idx, &effective, &idfs, avgdl);
+            let got: BTreeMap<u32, f32> = entries.into_iter().collect();
+            assert_eq!(
+                got,
+                want,
+                "trial {trial} (dense={dense}, zipper={}): general lane diverged",
+                should_use_zipper(&posts, drive, drive_len)
+            );
+        }
+    }
+
+    /// TIMING HARNESS (not a correctness gate) — measures the two cold-path
+    /// stages `build_and_ranked` used to spend ~550-800ms in: the probe/score
+    /// loop, and (via `ensure_sorted_prefix`) the top-k extraction that used
+    /// to be an eager full sort. 500k docs, ~20 tokens, all matching every
+    /// doc (df≈500k each) — the `title_ngram` "durable search" `op: and`
+    /// fixture from the perf regression. Run explicitly in release:
+    /// `cargo test --release -p lumen --lib -- --ignored \
+    ///   timing_and_match_500k_all_docs_match --nocapture`.
+    #[test]
+    #[ignore = "timing harness, not a correctness gate — run explicitly in release"]
+    fn timing_and_match_500k_all_docs_match() {
+        const N_DOCS: u32 = 500_000;
+        const N_TOKENS: usize = 20;
+
+        let mut idx = TextIndex {
+            doc_count: N_DOCS as u64,
+            ..Default::default()
+        };
+        let mut rng = Rng(0xA076_1D64_78BD_642F);
+        let mut postings: Vec<Postings> = (0..N_TOKENS).map(|_| Postings::default()).collect();
+        let mut total_len: u64 = 0;
+        for id in 0..N_DOCS {
+            // Every doc carries every token (df≈500k each), tf/doc_len varying
+            // in a narrow band — mirrors the "durable search token " × N
+            // title fixture, whose scores cluster heavily.
+            let doc_len = 250 + rng.below(36);
+            total_len += doc_len as u64;
+            idx.lens.push(doc_len);
+            for p in postings.iter_mut() {
+                p.upsert(id, 1 + rng.below(3));
+            }
+        }
+        idx.total_doc_len = total_len;
+        for (i, p) in postings.into_iter().enumerate() {
+            idx.tokens.insert(format!("tok{i}"), p);
+        }
+
+        let n = N_DOCS as f32;
+        let avgdl = idx.total_doc_len as f32 / idx.doc_count as f32;
+        let posts: Vec<TokProbe<'_>> = (0..N_TOKENS)
+            .map(|i| idx.tok_probe(&format!("tok{i}")))
+            .collect();
+        let dfs: Vec<usize> = posts.iter().map(|p| p.iter_active().count()).collect();
+        let idfs: Vec<f32> = dfs
+            .iter()
+            .map(|&df| {
+                let df = df as f32;
+                ((n - df + 0.5) / (df + 0.5) + 1.0).ln()
+            })
+            .collect();
+        let drive = (0..posts.len()).min_by_key(|&i| dfs[i]).unwrap_or(0);
+
+        let t0 = std::time::Instant::now();
+        let entries = build_and_ranked(AndRankInput {
+            idx: &idx,
+            posts: &posts,
+            idfs: &idfs,
+            drive,
+            drive_len: dfs[drive],
+            avgdl,
+        });
+        let probe_and_score = t0.elapsed();
+
+        let interner = interner_with(N_DOCS);
+        let mut state = MatchRankCache {
+            entries,
+            sorted_len: 0,
+        };
+        let t1 = std::time::Instant::now();
+        ensure_sorted_prefix(&mut state, 10, &interner);
+        let topk_extract = t1.elapsed();
+
+        eprintln!(
+            "timing_and_match_500k_all_docs_match: probe+score={:?} topk_extract={:?} total={:?}",
+            probe_and_score,
+            topk_extract,
+            probe_and_score + topk_extract
+        );
+        assert!(
+            probe_and_score + topk_extract < std::time::Duration::from_millis(50),
+            "cold 500k AND match took {:?}, target < 50ms",
+            probe_and_score + topk_extract
+        );
+    }
 }
 
 /// Authoritative field-presence bitmap. `eid_fields` is updated on every
@@ -7975,7 +10740,22 @@ fn is_predicable(node: &QueryNode) -> bool {
             | QueryNode::Match(_)
             | QueryNode::Exists(_)
             | QueryNode::Duplicated(_)
-    )
+    ) || is_exact_hamming(node)
+}
+
+/// An exact `hamming` (`max_distance == 0`) is a point filter: it matches only
+/// the docs whose hash is bit-equal to the query, and [`eval_hamming`] scores
+/// such a hit `(64 - 0) / 64 == 1.0` — the same constant every filter conjunct
+/// contributes on the AND fast path. So the planner may treat it as a filter
+/// (bitmap driver or per-doc predicate) with byte-identical scores, instead of
+/// forcing the materialize-and-intersect fallback, where an
+/// `and[hamming, match(<hundreds of ngram tokens>)]` evaluates the whole
+/// `match` over the corpus to intersect it with one doc (#4246: the 500k
+/// durable readback timed out on exactly that shape). A fuzzy hamming
+/// (`max_distance > 0`) scores by distance and stays on the fallback, where it
+/// keeps its graded score.
+fn is_exact_hamming(node: &QueryNode) -> bool {
+    matches!(node, QueryNode::Hamming(h) if h.max_distance == 0)
 }
 
 /// Extract this bound's numeric value, or a clear error if the caller sent a
@@ -8324,6 +11104,11 @@ fn estimate_selectivity(coll: &Collection, node: &QueryNode) -> u64 {
             }
             _ => u64::MAX,
         },
+        // An exact hamming is a 64-bit point lookup (see `is_exact_hamming`):
+        // its expected df is 1, so it drives the AND — one linear hash scan to
+        // a tiny candidate set — rather than a wide `match` sibling whose
+        // rarest-token df is the corpus. A prior, not a measured count.
+        QueryNode::Hamming(h) if h.max_distance == 0 => 1,
         // Don't drive an AND from these. Exists/Duplicated would need a full
         // value-union scan to size, so they're not chosen as the cheap driver
         // either — a cheaper sibling clause (term/range) drives, then they filter.
@@ -8351,6 +11136,30 @@ fn match_doc_score(idx: &TextIndex, tokens: &[String], op: MatchOp, id: u32) -> 
     let prepared = PreparedMatch::resolve(idx, tokens, op)?;
     prepared.score(idx, id)
 }
+
+/// Number of ids present in both ascending, duplicate-free slices.
+fn count_common_sorted(a: &[u32], b: &[u32]) -> usize {
+    let (mut i, mut j, mut common) = (0usize, 0usize, 0usize);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            CmpOrdering::Less => i += 1,
+            CmpOrdering::Greater => j += 1,
+            CmpOrdering::Equal => {
+                common += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    common
+}
+
+/// Largest filter candidate set the `and[filter, match]` planner resolves
+/// sparsely (#4246). Below it every match token is resolved through
+/// [`TextIndex::tok_postings_at`] — one streamed pass per distinct token —
+/// instead of materializing each token's full posting; above it the posting
+/// is reused across enough candidates to be worth holding.
+const SPARSE_CANDIDATE_MAX: u64 = 64;
 
 /// A match clause with its per-token postings RESOLVED once (Phase 2m). On the
 /// segment path each `TokPostings` holds the cache-resident posting `Arc`, so a
@@ -8396,6 +11205,75 @@ impl<'a> PreparedMatch<'a> {
             n_tokens: tokens.len(),
             avgdl,
         })
+    }
+
+    /// [`Self::resolve`] for a SMALL candidate set (#4246): every token
+    /// occurrence is resolved through [`TextIndex::tok_postings_at`] and
+    /// memoized per distinct token, so a clause repeating a token pays one
+    /// resolution. Scores are byte-identical to `resolve` — same corpus
+    /// scalars, same `df`, same per-token order and float summation — because
+    /// a sparse posting differs from the full one only in the ids it omits,
+    /// none of which is a candidate. Empty `candidates` resolve to `None`:
+    /// there is no doc to score.
+    fn resolve_at(
+        idx: &'a TextIndex,
+        tokens: &[String],
+        op: MatchOp,
+        candidates: &[u32],
+    ) -> Option<Self> {
+        let (corpus_n, corpus_total_len) = idx.bm25_corpus();
+        if corpus_n == 0 || tokens.is_empty() || candidates.is_empty() {
+            return None;
+        }
+        let n = corpus_n as f32;
+        let avgdl = corpus_total_len as f32 / corpus_n as f32;
+        let mut memo: FastHashMap<&str, Option<std::sync::Arc<SparsePosting>>> =
+            FastHashMap::default();
+        let mut per_token = Vec::with_capacity(tokens.len());
+        for tok in tokens {
+            let resolved = match memo.get(tok.as_str()) {
+                Some(Some(sparse)) => Some(TokPostings::Sparse(std::sync::Arc::clone(sparse))),
+                Some(None) => None,
+                None => {
+                    let resolved = idx.tok_postings_at(tok, candidates);
+                    match &resolved {
+                        Some(TokPostings::Sparse(sparse)) => {
+                            memo.insert(tok.as_str(), Some(std::sync::Arc::clone(sparse)));
+                        }
+                        None => {
+                            memo.insert(tok.as_str(), None);
+                        }
+                        Some(_) => {}
+                    }
+                    resolved
+                }
+            };
+            per_token.push(resolved.map(|postings| {
+                let df = postings.df() as f32;
+                let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
+                (postings, idf)
+            }));
+        }
+        Some(PreparedMatch {
+            per_token,
+            op,
+            n_tokens: tokens.len(),
+            avgdl,
+        })
+    }
+
+    /// The planner's entry: `resolve_at` when the filter candidate set is
+    /// small enough to have been projected (`Some`), `resolve` otherwise.
+    fn resolve_for(
+        idx: &'a TextIndex,
+        tokens: &[String],
+        op: MatchOp,
+        sparse_candidates: Option<&[u32]>,
+    ) -> Option<Self> {
+        match sparse_candidates {
+            Some(candidates) => Self::resolve_at(idx, tokens, op, candidates),
+            None => Self::resolve(idx, tokens, op),
+        }
     }
 
     /// Score one doc against the pre-resolved postings — the identical BM25
@@ -8563,6 +11441,20 @@ fn clause_matches(coll: &Collection, node: &QueryNode, id: u32) -> Result<Option
             let tokens = tokenize::tokenize(&m.text, *analyzer);
             match_doc_score(idx, &tokens, m.op, id)
         }
+        // Exact hamming as a per-doc predicate: the same `hash_at` read
+        // `eval_hamming` scans with, and the same score it gives a distance-0
+        // hit, `(64 - 0) / 64`.
+        QueryNode::Hamming(h) if h.max_distance == 0 => {
+            let fi = coll.fields.get(&h.field).ok_or_else(|| unknown(&h.field))?;
+            let FieldIndex::Hash(hidx) = fi else {
+                bail!(
+                    "hamming query is only valid on hash fields (field `{}`)",
+                    h.field
+                );
+            };
+            let query = parse_hash(&h.hash)?;
+            (hidx.hash_at(id) == Some(query)).then_some(1.0)
+        }
         _ => bail!("clause_matches called on a non-predicable node"),
     })
 }
@@ -8611,6 +11503,12 @@ fn eval_filter_bitmap(coll: &Collection, node: &QueryNode) -> Result<RoaringBitm
         QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1),
         QueryNode::Duplicated(d) => {
             eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)
+        }
+        // Exact hamming (`is_exact_hamming`): the hit set of the very scan
+        // `eval_hamming` runs. Its constant 1.0 score is the caller's `base`
+        // contribution, like every other filter here.
+        QueryNode::Hamming(h) if h.max_distance == 0 => {
+            Ok(eval_hamming(coll, h)?.into_keys().collect())
         }
         _ => bail!("eval_filter_bitmap called on a non-filter node"),
     }
@@ -11035,6 +13933,19 @@ impl FieldIndex {
                     token_names.extend(entries.into_iter().map(|(tok, _, _)| tok));
                 }
                 token_names.extend(idx.tokens.keys().cloned());
+                for row in idx.staged_rows.values() {
+                    let reader = row.reader();
+                    let count = reader
+                        .keyword_ordinal_count()
+                        .ok_or_else(|| anyhow!("staged dictionary missing"))?;
+                    for ordinal in 0..count {
+                        token_names.insert(
+                            reader
+                                .keyword_term_at_ordinal(ordinal)
+                                .ok_or_else(|| anyhow!("staged dictionary torn"))?,
+                        );
+                    }
+                }
                 let active: BTreeMap<String, (Vec<u32>, Vec<u32>)> = token_names
                     .into_iter()
                     .filter_map(|tok| {
@@ -11127,7 +14038,10 @@ impl FieldIndex {
                 }
             }
             FieldIndex::Hash(h) => FieldIndexSnapshot::Hash {
-                forward: h.forward.iter().map(|(id, v)| (eid(*id), *v)).collect(),
+                forward: field_ids
+                    .iter()
+                    .filter_map(|&id| h.hash_at(id).map(|value| (eid(id), value)))
+                    .collect(),
                 bytes: h.bytes,
             },
         })
@@ -11149,6 +14063,16 @@ impl Collection {
             fields.insert(name, FieldIndex::from_snapshot(fi_snap, &mut interner)?);
         }
         Ok(Self {
+            collection_generation: 0,
+            data_version: 1,
+            checkpoint_origin: None,
+            checkpoint_lineage: None,
+            checkpoint_lineage_schema: None,
+            field_dirty: BTreeMap::new(),
+            next_field_dirty_revision: 0,
+            change_journal: crate::change_journal::ChangeJournal::new(),
+            requires_full_checkpoint: false,
+            journal_complete_since_empty: false,
             version: snap.version,
             schema: snap.schema,
             fields,
@@ -11176,7 +14100,7 @@ impl FieldIndex {
                 total_doc_len,
                 bytes,
             } => {
-                let mut t: FastHashMap<String, Postings> = FastHashMap::default();
+                let mut t: BTreeMap<String, Postings> = BTreeMap::new();
                 for (tok, m) in tokens {
                     // Re-intern (assigns fresh ids in arbitrary order), then sort
                     // by docid so the flat postings are ascending.
@@ -11208,9 +14132,12 @@ impl FieldIndex {
                 FieldIndex::Text {
                     analyzer,
                     idx: TextIndex {
+                        staged_rows: BTreeMap::new(),
+                        live_term_cache: Mutex::new(None),
                         tokens: t,
                         lens,
                         distinct,
+                        delta_docs: FastHashMap::default(),
                         doc_count,
                         total_doc_len,
                         bytes,
@@ -11315,6 +14242,7 @@ impl FieldIndex {
                     fwd.insert(interner.intern(&eid), v);
                 }
                 FieldIndex::Hash(HashIndex {
+                    tombstones: RoaringBitmap::new(),
                     forward: fwd,
                     bytes,
                     // A rehydrated snapshot has no sealed segment yet.
@@ -11368,6 +14296,89 @@ const EID_META_FILE: &str = "_collection.lmeta.lseg";
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl FieldIndex {
+    /// Write a segment from an immutable detached checkpoint field.  Unlike
+    /// `seal_to_segment`, this preserves the source maps and postings so the
+    /// same frozen checkpoint can be written again after a pre-publication
+    /// failure.  The caller opens a separate small mmap-backed prepared index
+    /// for publication.
+    fn write_segment_borrowed(
+        &self,
+        field_name: &str,
+        dir: &std::path::Path,
+        n_docs: u32,
+        applied_seq: u64,
+        live: &dyn Fn(u32) -> bool,
+    ) -> Result<()> {
+        let path = dir.join(format!("{field_name}.lseg"));
+        match self {
+            FieldIndex::Number(n) => {
+                let values: Vec<Option<f64>> = (0..n_docs)
+                    .map(|id| {
+                        live(id)
+                            .then(|| n.number_at(id).map(|s| s.to_f64()))
+                            .flatten()
+                    })
+                    .collect();
+                crate::segment::write_number_segment(&path, applied_seq, &values)
+            }
+            FieldIndex::Hash(h) => {
+                let values: Vec<Option<u64>> = (0..n_docs)
+                    .map(|id| if live(id) { h.hash_at(id) } else { None })
+                    .collect();
+                crate::segment::write_hash_segment(&path, applied_seq, &values)
+            }
+            FieldIndex::Keyword(k) => {
+                let owned: Vec<Option<String>> = (0..n_docs)
+                    .map(|id| if live(id) { k.keyword_at(id) } else { None })
+                    .collect();
+                let values: Vec<Option<&str>> =
+                    owned.iter().map(|value| value.as_deref()).collect();
+                let mut terms = BTreeMap::new();
+                for (id, value) in values.iter().enumerate() {
+                    if let Some(value) = value {
+                        terms
+                            .entry((*value).to_owned())
+                            .or_insert_with(RoaringBitmap::new)
+                            .insert(id as u32);
+                    }
+                }
+                crate::segment::write_keyword_segment(&path, applied_seq, &values, &terms)
+            }
+            FieldIndex::Set(s) => {
+                let owned: Vec<Option<Vec<String>>> = (0..n_docs)
+                    .map(|id| {
+                        if live(id) {
+                            s.set_members(id)
+                                .map(|members| members.into_iter().collect())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let values: Vec<Option<&[String]>> =
+                    owned.iter().map(|value| value.as_deref()).collect();
+                let mut elements = BTreeMap::new();
+                for (id, value) in values.iter().enumerate() {
+                    if let Some(members) = value {
+                        for member in *members {
+                            elements
+                                .entry(member.clone())
+                                .or_insert_with(RoaringBitmap::new)
+                                .insert(id as u32);
+                        }
+                    }
+                }
+                crate::segment::write_set_segment(&path, applied_seq, &values, &elements)
+            }
+            FieldIndex::Text { idx, .. } => {
+                text_projection::write_live(&path, applied_seq, idx, n_docs, live)
+            }
+            // Vectors are captured as `FrozenField::Vectors`, which owns their
+            // rows and is already written through immutable slices below.
+            FieldIndex::Vector { .. } => bail!("vector field captured as a column"),
+        }
+    }
+
     /// Seal this field's forward payload into `<field>.lseg` under `dir`, attach
     /// the reader, and DROP the in-RAM forward payload. Keeps the inverted
     /// driver in RAM. `n_docs` is the collection's dense docid count; `applied_seq`
@@ -11419,7 +14430,11 @@ impl FieldIndex {
                 // postings) is now on disk; reopen/queries drive from the mmap.
                 // The RAM win Phase 2h-3 targets: RAM after reopen is O(live tail),
                 // not O(distinct numeric values).
-                n.segment = Some(std::sync::Arc::new(reader));
+                n.segment = Some(std::sync::Arc::new(
+                    crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(
+                        reader,
+                    )),
+                ));
                 n.forward = FastHashMap::default();
                 n.dense_forward = Vec::new();
                 n.values = BTreeMap::new();
@@ -11441,7 +14456,12 @@ impl FieldIndex {
                     .collect();
                 crate::segment::write_hash_segment(&path, applied_seq, &values)?;
                 let reader = crate::segment::SegmentReader::open(&path)?;
-                h.segment = Some(std::sync::Arc::new(reader));
+                h.segment = Some(std::sync::Arc::new(
+                    crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(
+                        reader,
+                    )),
+                ));
+                h.tombstones.clear();
                 h.forward = FastHashMap::default();
                 Ok(None)
             }
@@ -11474,7 +14494,11 @@ impl FieldIndex {
                 // BOTH the forward tail AND the inverted `terms` driver — the
                 // whole [0..n_docs) index is now on disk; reopen/queries drive
                 // from the mmap. The RAM win Phase 2h-1 targets.
-                k.segment = Some(std::sync::Arc::new(reader));
+                k.segment = Some(std::sync::Arc::new(
+                    crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(
+                        reader,
+                    )),
+                ));
                 k.forward = FastHashMap::default();
                 k.dense_forward = Vec::new();
                 k.terms = BTreeMap::new();
@@ -11522,7 +14546,11 @@ impl FieldIndex {
                 // Attach the NEW reader (dropping any prior segment Arc) and free
                 // BOTH the forward tail AND the inverted `elements` driver — the
                 // whole [0..n_docs) index is now on disk. The RAM win 2h-2 targets.
-                s.segment = Some(std::sync::Arc::new(reader));
+                s.segment = Some(std::sync::Arc::new(
+                    crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(
+                        reader,
+                    )),
+                ));
                 s.forward = FastHashMap::default();
                 s.elements = BTreeMap::new();
                 s.dup_values = BTreeSet::new();
@@ -11533,34 +14561,7 @@ impl FieldIndex {
                 Ok(None)
             }
             FieldIndex::Text { idx, .. } => {
-                // RE-SEAL-CAPABLE postings gather: a re-seal after a prior drop has
-                // an EMPTY `tokens` map (postings live on the prior segment, served
-                // via `tok_postings`). Materialize the postings to seal from the
-                // SEGMENT-AWARE source — the prior segment for base tokens, the live
-                // `tokens` for the tail — into a fresh BTreeMap, then write that.
-                // A first-time seal reads entirely from the live `tokens` (no
-                // segment), byte-identical to the old direct `&idx.tokens` write.
-                //
-                // TOMBSTONE GC (Phase 2g-A): a deleted base doc was already removed
-                // from the live `tokens`/`distinct` and decremented out of the live
-                // corpus scalars by `drop_eid`, but its postings still live on the
-                // IMMUTABLE prior segment, which `tokens_for_seal` reads back. Pass
-                // `live` so the merged base postings drop deleted docids; the live
-                // corpus scalars (`corpus_for_seal`) and live `lens` (`lens_for_seal`)
-                // already exclude the deleted doc, so they need no further filtering.
-                let lens: Vec<u32> = idx.lens_for_seal(n_docs, live);
-                let present = idx.present_for_seal(n_docs, live);
-                let tokens = idx.tokens_for_seal(live);
-                let (doc_count, total_doc_len) = idx.corpus_for_seal();
-                crate::segment::write_text_segment(
-                    &path,
-                    applied_seq,
-                    &tokens,
-                    &lens,
-                    &present,
-                    doc_count,
-                    total_doc_len,
-                )?;
+                text_projection::write_live(&path, applied_seq, idx, n_docs, live)?;
                 let reader = crate::segment::SegmentReader::open(&path)?;
                 // Phase 2h-4: DROP the bulky `tokens` postings AND `distinct` to
                 // disk — neither is rebuilt. `drop_eid` no longer consumes
@@ -11571,8 +14572,14 @@ impl FieldIndex {
                 // is dropped too — `doc_len()` reads an overlay first and then the
                 // segment DocLen column for a base id. A re-seal CLEARS
                 // `tombstones` after baking deletes via `tokens_for_seal`.
-                idx.segment = Some(std::sync::Arc::new(reader));
-                idx.tokens = FastHashMap::default(); // bulky postings now on disk
+                idx.segment = Some(std::sync::Arc::new(
+                    crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(
+                        reader,
+                    )),
+                ));
+                idx.tokens = BTreeMap::new(); // bulky postings now on disk
+                idx.delta_docs.clear();
+                idx.staged_rows.clear();
                 idx.distinct = Vec::new(); // drop_eid uses tombstones for base ids
                 idx.lens = Vec::new(); // doc_len reads the segment DocLen column
                 idx.clear_match_rank_cache();
@@ -11596,7 +14603,7 @@ impl FieldIndex {
                 // contiguous buffer to the mmap and keeps nothing; HNSW keeps
                 // its graph and raw vectors resident, which is exactly what
                 // the declared backend is asking for.
-                let row_eids = idx.seal_to_segment_prod(&path)?;
+                let row_eids = idx.seal_to_segment_prod_at(&path, applied_seq)?;
                 if row_eids.is_some() && idx.seal_releases_ram() {
                     *bytes = 0;
                 }
@@ -11616,6 +14623,7 @@ impl FieldIndex {
         dir: &std::path::Path,
         field_name: &str,
         vec_row_eids: Option<Vec<String>>,
+        defer_hnsw: bool,
     ) -> Result<FieldIndex> {
         let path = dir.join(format!("{field_name}.lseg"));
         let reader = std::sync::Arc::new(crate::segment::SegmentReader::open(&path)?);
@@ -11642,16 +14650,21 @@ impl FieldIndex {
                     keyword_range_bitmap_cache: RwLock::new(FastHashMap::default()),
                     range_stats: RwLock::new(None),
                     bytes: 0,
-                    segment: Some(reader),
+                    segment: Some(std::sync::Arc::new(
+                        crate::composed_segment::ComposedSegmentReader::from_base(reader),
+                    )),
                     // Reopen starts with NO pending deletes — the on-disk segment
                     // already reflects every deletion baked in at its seal.
                     tombstones: RoaringBitmap::new(),
                 }))
             }
             FieldType::Hash => Ok(FieldIndex::Hash(HashIndex {
+                tombstones: RoaringBitmap::new(),
                 forward: FastHashMap::default(),
                 bytes: 0,
-                segment: Some(reader),
+                segment: Some(std::sync::Arc::new(
+                    crate::composed_segment::ComposedSegmentReader::from_base(reader),
+                )),
             })),
             FieldType::Keyword => {
                 // Phase 2h-1: the inverted `terms` index is ON DISK (the
@@ -11667,7 +14680,9 @@ impl FieldIndex {
                     dense_forward: Vec::new(),
                     forward: FastHashMap::default(),
                     bytes: 0,
-                    segment: Some(reader),
+                    segment: Some(std::sync::Arc::new(
+                        crate::composed_segment::ComposedSegmentReader::from_base(reader),
+                    )),
                     // Reopen starts with NO pending deletes — the on-disk segment
                     // already reflects every deletion baked in at its seal.
                     tombstones: RoaringBitmap::new(),
@@ -11686,7 +14701,9 @@ impl FieldIndex {
                     dup_values: BTreeSet::new(),
                     forward: FastHashMap::default(),
                     bytes: 0,
-                    segment: Some(reader),
+                    segment: Some(std::sync::Arc::new(
+                        crate::composed_segment::ComposedSegmentReader::from_base(reader),
+                    )),
                     // Reopen starts with NO pending deletes — the on-disk segment
                     // already reflects every deletion baked in at its seal.
                     tombstones: RoaringBitmap::new(),
@@ -11716,13 +14733,18 @@ impl FieldIndex {
                 Ok(FieldIndex::Text {
                     analyzer,
                     idx: TextIndex {
-                        tokens: FastHashMap::default(),
+                        staged_rows: BTreeMap::new(),
+                        live_term_cache: Mutex::new(None),
+                        tokens: BTreeMap::new(),
                         lens: Vec::new(),
                         distinct: Vec::new(),
+                        delta_docs: FastHashMap::default(),
                         doc_count,
                         total_doc_len,
                         bytes: 0,
-                        segment: Some(reader),
+                        segment: Some(std::sync::Arc::new(
+                            crate::composed_segment::ComposedSegmentReader::from_base(reader),
+                        )),
                         match_rank_cache: RwLock::new(FastHashMap::default()),
                         tombstones: RoaringBitmap::new(),
                     },
@@ -11752,8 +14774,18 @@ impl FieldIndex {
                             .iter()
                             .map(|eid| (vs.dim as u64) * 4 + eid.len() as u64)
                             .sum();
-                        let idx = HnswCpuIndex::open_from_segment(vs, reader, row_eids)?;
-                        (Box::new(idx), bytes)
+                        let idx: Box<dyn VectorIndex> = if defer_hnsw {
+                            let mut staging_spec = vs;
+                            staging_spec.quantize = None;
+                            Box::new(FlatCpuIndex::open_from_segment(
+                                staging_spec,
+                                reader,
+                                row_eids,
+                            )?)
+                        } else {
+                            Box::new(HnswCpuIndex::open_from_segment(vs, reader, row_eids)?)
+                        };
+                        (idx, bytes)
                     }
                     crate::types::VectorBackend::FlatCpu => {
                         // The rows stay on the mmap and are read demand-paged,
@@ -11791,8 +14823,20 @@ impl Collection {
     /// segment; gating the re-seal gather on `eid_fields` writes `None` for that
     /// id so the new segment excludes it and reopen never resurrects it.
     pub fn seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()> {
+        self.seal_to_segments_with_layout(dir, applied_seq, CheckpointLayout::Legacy)
+    }
+
+    fn seal_to_segments_with_layout(
+        &mut self,
+        dir: &std::path::Path,
+        applied_seq: u64,
+        layout: CheckpointLayout,
+    ) -> Result<()> {
         std::fs::create_dir_all(dir)
             .map_err(|e| anyhow!("create seal dir {}: {e}", dir.display()))?;
+        if layout == CheckpointLayout::Encoded {
+            std::fs::create_dir_all(dir.join("fields"))?;
+        }
         let n_docs = self.interner.to_eid.len() as u32;
 
         // 1) The collection EID column: external_id of docid i at position i.
@@ -11807,9 +14851,10 @@ impl Collection {
         for (name, fi) in self.fields.iter_mut() {
             let live =
                 |id: u32| -> bool { eid_fields.get(&id).is_some_and(|fs| fs.contains(name)) };
-            let row_eids = fi.seal_to_segment(name, dir, n_docs, applied_seq, &live)?;
+            let stem = layout.field_stem(name);
+            let row_eids = fi.seal_to_segment(&stem, dir, n_docs, applied_seq, &live)?;
             if let Some(row_eids) = row_eids {
-                let sidecar = dir.join(format!("{name}.eids.lseg"));
+                let sidecar = dir.join(format!("{stem}.eids.lseg"));
                 let refs: Vec<&str> = row_eids.iter().map(|s| s.as_str()).collect();
                 crate::segment::write_eid_segment(&sidecar, applied_seq, &refs)?;
             }
@@ -11830,6 +14875,26 @@ impl Collection {
         schema: BTreeMap<String, FieldSpec>,
         version: u32,
     ) -> Result<Self> {
+        Self::open_from_segments_with_vectors(
+            dir,
+            schema,
+            version,
+            false,
+            CheckpointLayout::Legacy,
+            None,
+        )
+    }
+
+    fn open_from_segments_with_vectors(
+        dir: &std::path::Path,
+        schema: BTreeMap<String, FieldSpec>,
+        version: u32,
+        defer_hnsw: bool,
+        layout: CheckpointLayout,
+        mapped_rows: Option<&BTreeMap<String, Vec<String>>>,
+    ) -> Result<Self> {
+        #[cfg(test)]
+        CHECKPOINT_COLLECTION_OPENS.with(|count| count.set(count.get() + 1));
         // 1) Rebuild the interner from the EID column.
         let meta_path = dir.join(EID_META_FILE);
         let meta = crate::segment::SegmentReader::open(&meta_path)
@@ -11841,6 +14906,14 @@ impl Collection {
         for eid in &to_eid {
             interner.intern(eid);
         }
+        // A compacted field can contain IDs newer than the retained collection
+        // metadata file. Intern its validated stable IDs before rebuilding any
+        // field's runtime coverage.
+        for ids in mapped_rows.into_iter().flat_map(|fields| fields.values()) {
+            for eid in ids {
+                interner.intern(eid);
+            }
+        }
 
         // 2) Rebuild each field from its segment + reconstruct eid_fields from
         //    per-field coverage (a doc "wrote" a field iff that field's segment
@@ -11848,9 +14921,10 @@ impl Collection {
         let mut fields: FastHashMap<String, FieldIndex> = FastHashMap::default();
         let mut eid_fields: FastHashMap<u32, FieldCoverage> = FastHashMap::default();
         for (name, spec) in &schema {
+            let stem = layout.field_stem(name);
             // Vector fields carry a row→eid sidecar.
             let vec_row_eids = if spec.field_type == FieldType::Vector {
-                let sidecar = dir.join(format!("{name}.eids.lseg"));
+                let sidecar = dir.join(format!("{stem}.eids.lseg"));
                 let r = crate::segment::SegmentReader::open(&sidecar)
                     .map_err(|e| anyhow!("open vector eid sidecar {}: {e}", sidecar.display()))?;
                 Some(
@@ -11860,12 +14934,31 @@ impl Collection {
             } else {
                 None
             };
-            let fi = FieldIndex::open_from_segment(spec, dir, name, vec_row_eids)?;
+            let mut fi = FieldIndex::open_from_segment(spec, dir, &stem, vec_row_eids, defer_hnsw)?;
+            if let Some(rows) = mapped_rows.and_then(|fields| fields.get(name)) {
+                if spec.field_type != FieldType::Vector {
+                    let ids = rows
+                        .iter()
+                        .map(|eid| interner.id(eid).expect("mapped base ID was interned"))
+                        .collect();
+                    map_loaded_base_rows(&mut fi, ids)?;
+                }
+            }
             record_field_coverage(&fi, name, &interner, &mut eid_fields);
             fields.insert(name.clone(), fi);
         }
 
         Ok(Self {
+            collection_generation: 0,
+            data_version: 1,
+            checkpoint_origin: None,
+            checkpoint_lineage: None,
+            checkpoint_lineage_schema: None,
+            field_dirty: BTreeMap::new(),
+            next_field_dirty_revision: 0,
+            change_journal: crate::change_journal::ChangeJournal::new(),
+            requires_full_checkpoint: false,
+            journal_complete_since_empty: false,
             version,
             schema,
             fields,
@@ -11880,6 +14973,25 @@ impl Collection {
             field_checksums: FastHashMap::default(),
         })
     }
+}
+
+fn map_loaded_base_rows(index: &mut FieldIndex, ids: Vec<u32>) -> Result<()> {
+    let segment = match index {
+        FieldIndex::Keyword(index) => &mut index.segment,
+        FieldIndex::Number(index) => &mut index.segment,
+        FieldIndex::Set(index) => &mut index.segment,
+        FieldIndex::Hash(index) => &mut index.segment,
+        FieldIndex::Text { idx, .. } => &mut idx.segment,
+        FieldIndex::Vector { .. } => return Ok(()),
+    };
+    let reader = segment
+        .as_ref()
+        .ok_or_else(|| anyhow!("mapped field has no base segment"))?
+        .immutable_base_reader();
+    *segment = Some(std::sync::Arc::new(
+        crate::composed_segment::ComposedSegmentReader::from_mapped_base(reader, ids)?,
+    ));
+    Ok(())
 }
 
 /// Reconstruct, into `eid_fields`, the set of fields each doc-id wrote, from a
@@ -11947,7 +15059,7 @@ fn record_field_coverage(
                     }
                 }
             }
-            for id in idx.distinct_ids() {
+            for id in idx.distinct_ids().chain(idx.staged_rows.keys().copied()) {
                 eid_fields.entry(id).or_default().insert(name.to_string());
             }
         }
@@ -11993,6 +15105,38 @@ struct CheckpointSchema {
     version: u32,
     applied_seq: u64,
     fields: BTreeMap<String, FieldSpec>,
+    #[serde(default)]
+    segment_layout: CheckpointLayout,
+}
+
+/// The marker is absent in shipped checkpoints. Public field names never
+/// become path components in newly published generations.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) enum CheckpointLayout {
+    #[default]
+    #[serde(rename = "legacy-raw-v0")]
+    Legacy,
+    #[serde(rename = "encoded-fields-v1")]
+    Encoded,
+}
+
+impl CheckpointLayout {
+    pub(crate) fn field_stem(self, name: &str) -> String {
+        match self {
+            Self::Legacy => name.to_owned(),
+            Self::Encoded => format!("fields/{}", collection_dir_name(name)),
+        }
+    }
+
+    pub(crate) fn from_sidecar(sidecar: &serde_json::Value) -> Result<Self> {
+        sidecar
+            .get("segment_layout")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map(|layout| layout.unwrap_or_default())
+            .map_err(Into::into)
+    }
 }
 
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
@@ -12014,6 +15158,305 @@ impl Engine {
     /// checkpoint. The state lock is taken and released PER collection (not held
     /// across the whole flush), so reads/writes to other collections proceed.
     pub fn flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()> {
+        self.flush_checkpoint_collections(dir, up_to_seq, None, CheckpointLayout::Legacy)
+            .map(|_| ())
+    }
+
+    pub(crate) fn prepare_checkpoint_namespace(
+        &self,
+        root: &std::path::Path,
+        floor: u64,
+    ) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        if state.checkpoint_namespace.as_deref() != Some(root) {
+            state.next_collection_generation = state.next_collection_generation.max(floor);
+            let names: Vec<_> = state.collections.keys().cloned().collect();
+            for name in names {
+                let generation = state.allocate_collection_generation()?;
+                let coll = state.collections.get_mut(&name).unwrap();
+                coll.collection_generation = generation;
+                coll.checkpoint_origin = None;
+                coll.checkpoint_lineage = None;
+                coll.checkpoint_lineage_schema = None;
+            }
+            state.checkpoint_namespace = Some(root.to_path_buf());
+        }
+        Ok(())
+    }
+
+    /// Called only inside CaptureBarrier. Capture has no filesystem work.
+    pub(crate) fn capture_background_merge(
+        &self,
+        expected: BTreeMap<String, CheckpointCollectionIdentity>,
+    ) -> Result<CheckpointCapture> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        let mut bases = BTreeMap::new();
+        let mut deltas = BTreeMap::new();
+        for (name, identity) in &expected {
+            let coll = state
+                .collections
+                .get(name)
+                .ok_or_else(|| anyhow!("background merge collection is absent"))?;
+            if coll.deleted_at.is_some()
+                || coll.collection_generation != identity.generation
+                || coll.version != identity.schema_version
+            {
+                bail!("background merge collection identity changed");
+            }
+            bases.insert(
+                name.clone(),
+                coll.fields
+                    .iter()
+                    .filter_map(|(field, index)| {
+                        live_base_reader(index).map(|reader| (field.clone(), reader))
+                    })
+                    .collect(),
+            );
+            deltas.insert(
+                name.clone(),
+                coll.fields
+                    .iter()
+                    .map(|(field, index)| (field.clone(), live_delta_readers(index)))
+                    .collect(),
+            );
+        }
+        Ok(CheckpointCapture {
+            prepared: BTreeMap::new(),
+            prepared_deltas: BTreeMap::new(),
+            prepared_compactions: BTreeMap::new(),
+            scalar_cuts: BTreeMap::new(),
+            scalar_publications: BTreeMap::new(),
+            scalar_retire: BTreeMap::new(),
+            live_delta_inputs: deltas,
+            live_base_inputs: bases,
+            collections: expected,
+            next_generation: state.next_collection_generation.max(1),
+            field_dirty: BTreeMap::new(),
+            frozen_changes: BTreeMap::new(),
+            reused: BTreeSet::new(),
+            initial_sparse: BTreeSet::new(),
+            field_deltas: std::sync::Arc::new(BTreeMap::new()),
+            record_cut: None,
+        })
+    }
+
+    pub(crate) fn checkpoint_dirty_fields(
+        &self,
+    ) -> Result<BTreeMap<String, (u64, u32, BTreeSet<String>)>> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        Ok(state
+            .collections
+            .iter()
+            .filter(|(_, coll)| coll.deleted_at.is_none())
+            .map(|(name, coll)| {
+                (
+                    name.clone(),
+                    (
+                        coll.collection_generation,
+                        coll.version,
+                        coll.field_dirty
+                            .iter()
+                            .filter(|(_, rows)| !rows.is_empty())
+                            .map(|(field, _)| field.clone())
+                            .collect(),
+                    ),
+                )
+            })
+            .collect())
+    }
+
+    pub(crate) fn bind_background_merge(
+        &self,
+        root: &std::path::Path,
+        capture: &mut CheckpointCapture,
+    ) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        for (name, identity) in &capture.collections {
+            let Some(coll) = state.collections.get_mut(name) else {
+                continue;
+            };
+            if coll.deleted_at.is_some()
+                || coll.collection_generation != identity.generation
+                || coll.version != identity.schema_version
+            {
+                continue;
+            }
+            coll.checkpoint_lineage = Some(root.join(collection_dir_name(name)));
+            coll.checkpoint_lineage_schema = Some(coll.version);
+            if coll.data_version == identity.data_version && !coll.requires_full_checkpoint {
+                coll.checkpoint_origin = coll.checkpoint_lineage.clone();
+            }
+            if let Some(compactions) = capture.prepared_compactions.remove(name) {
+                for compacted in compactions {
+                    replace_live_checkpoint_deltas(coll, compacted)?;
+                }
+            }
+        }
+        self.publish_storage_bytes(&state);
+        Ok(())
+    }
+
+    pub(crate) fn checkpoint_reusable_dirty_fields(
+        &self,
+        root: &std::path::Path,
+    ) -> Result<BTreeMap<String, (u64, u32, BTreeSet<String>)>> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        Ok(state
+            .collections
+            .iter()
+            .filter(|(name, coll)| {
+                coll.deleted_at.is_none()
+                    && !coll.requires_full_checkpoint
+                    && coll.checkpoint_lineage_schema == Some(coll.version)
+                    && coll.checkpoint_lineage.as_ref()
+                        == Some(&root.join(collection_dir_name(name)))
+            })
+            .map(|(name, coll)| {
+                (
+                    name.clone(),
+                    (
+                        coll.collection_generation,
+                        coll.version,
+                        coll.field_dirty
+                            .iter()
+                            .filter(|(_, rows)| !rows.is_empty())
+                            .map(|(field, _)| field.clone())
+                            .collect(),
+                    ),
+                )
+            })
+            .collect())
+    }
+
+    pub(crate) fn freeze_checkpoint_collections(
+        &self,
+        reuse_root: Option<&std::path::Path>,
+    ) -> Result<FrozenCheckpoint> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        let mut capture = CheckpointCapture {
+            prepared: BTreeMap::new(),
+            prepared_deltas: BTreeMap::new(),
+            prepared_compactions: BTreeMap::new(),
+            scalar_cuts: BTreeMap::new(),
+            scalar_publications: BTreeMap::new(),
+            scalar_retire: BTreeMap::new(),
+            live_delta_inputs: BTreeMap::new(),
+            live_base_inputs: BTreeMap::new(),
+            collections: BTreeMap::new(),
+            next_generation: state.next_collection_generation.max(1),
+            field_dirty: BTreeMap::new(),
+            frozen_changes: BTreeMap::new(),
+            reused: BTreeSet::new(),
+            initial_sparse: BTreeSet::new(),
+            field_deltas: std::sync::Arc::new(BTreeMap::new()),
+            record_cut: None,
+        };
+        let mut files = Vec::new();
+        for (name, coll) in &state.collections {
+            if coll.deleted_at.is_some() {
+                continue;
+            }
+            capture.collections.insert(
+                name.clone(),
+                CheckpointCollectionIdentity {
+                    generation: coll.collection_generation,
+                    data_version: coll.data_version,
+                    schema_version: coll.version,
+                },
+            );
+            // Pin every scalar field, including a field that has not yet acquired
+            // a composed reader. The empty cut is later replaced by the real empty
+            // base plus its first sparse catalog delta.
+            let mut cuts = BTreeMap::new();
+            for (field, index) in &coll.fields {
+                let segment = match index {
+                    FieldIndex::Keyword(index) => index.segment.as_ref(),
+                    FieldIndex::Number(index) => index.segment.as_ref(),
+                    FieldIndex::Set(index) => index.segment.as_ref(),
+                    _ => continue,
+                };
+                cuts.insert(
+                    field.clone(),
+                    match segment {
+                        Some(segment) => segment.checkpoint_cut()?,
+                        None => crate::composed_segment::ScalarCheckpointCut::empty(),
+                    },
+                );
+            }
+            capture.scalar_cuts.insert(name.clone(), cuts);
+            let reusable = reuse_root.map(|root| root.join(collection_dir_name(name)));
+            let origin = coll.checkpoint_lineage.as_ref().filter(|origin| {
+                Some(*origin) == reusable.as_ref()
+                    && coll.checkpoint_lineage_schema == Some(coll.version)
+                    && !coll.requires_full_checkpoint
+            });
+            let work = if let Some(origin) = origin {
+                capture.live_base_inputs.insert(
+                    name.clone(),
+                    coll.fields
+                        .iter()
+                        .filter_map(|(field, index)| {
+                            live_base_reader(index).map(|reader| (field.clone(), reader))
+                        })
+                        .collect(),
+                );
+                capture.live_delta_inputs.insert(
+                    name.clone(),
+                    coll.fields
+                        .iter()
+                        .map(|(field, index)| (field.clone(), live_delta_readers(index)))
+                        .collect(),
+                );
+                capture.reused.insert(name.clone());
+                FrozenCollectionFiles::Linked(origin.clone())
+            } else if coll.journal_complete_since_empty && !coll.requires_full_checkpoint {
+                capture.initial_sparse.insert(name.clone());
+                FrozenCollectionFiles::EmptyBase {
+                    schema: coll.schema.clone(),
+                    version: coll.version,
+                }
+            } else {
+                let fields = coll
+                    .fields
+                    .iter()
+                    .map(|(field, index)| {
+                        Ok((field.clone(), FrozenField::capture(index, coll, field)?))
+                    })
+                    .collect::<Result<_>>()?;
+                FrozenCollectionFiles::Base {
+                    schema: coll.schema.clone(),
+                    version: coll.version,
+                    eids: coll.interner.to_eid.clone(),
+                    coverage: coll.eid_fields.clone(),
+                    fields,
+                }
+            };
+            files.push((name.clone(), work));
+        }
+        // Finish every fallible base capture before changing journal ownership.
+        // Each freeze moves a BTreeMap root and shares it through Arc. It does
+        // not traverse changed rows or clone their payloads.
+        capture.record_cut = Some(self.freeze_record_charges()?);
+        for name in capture.collections.keys() {
+            capture.frozen_changes.insert(
+                name.clone(),
+                state.collections[name].change_journal.freeze(),
+            );
+        }
+        Ok(FrozenCheckpoint { capture, files })
+    }
+
+    pub(crate) fn flush_checkpoint_collections(
+        &self,
+        dir: &std::path::Path,
+        up_to_seq: u64,
+        reuse_root: Option<&std::path::Path>,
+        layout: CheckpointLayout,
+    ) -> Result<CheckpointCapture> {
+        let mut captured = BTreeMap::new();
+        let mut field_dirty = BTreeMap::new();
+        let mut reused = BTreeSet::new();
+        let mut field_deltas = BTreeMap::new();
         std::fs::create_dir_all(dir)
             .map_err(|e| anyhow!("create checkpoint dir {}: {e}", dir.display()))?;
         // Snapshot the live collection names under a read lock, then seal each one
@@ -12033,6 +15476,34 @@ impl Engine {
             let coll_dir = dir.join(collection_dir_name(&name));
             std::fs::create_dir_all(&coll_dir)
                 .map_err(|e| anyhow!("create checkpoint subdir {}: {e}", coll_dir.display()))?;
+            captured.insert(
+                name.clone(),
+                CheckpointCollectionIdentity {
+                    generation: coll.collection_generation,
+                    data_version: coll.data_version,
+                    schema_version: coll.version,
+                },
+            );
+            let dirty = coll.field_dirty_snapshot();
+            field_dirty.insert(name.clone(), dirty.clone());
+            let reusable = reuse_root.map(|root| root.join(collection_dir_name(&name)));
+            let origin = coll
+                .checkpoint_lineage
+                .as_ref()
+                .filter(|origin| {
+                    Some(*origin) == reusable.as_ref()
+                        && coll.checkpoint_lineage_schema == Some(coll.version)
+                        && !coll.requires_full_checkpoint
+                })
+                .cloned();
+            if let Some(origin) = origin {
+                let fields = capture_dirty_values(coll, &dirty)?;
+                reused.insert(name.clone());
+                field_deltas.insert(name.clone(), fields);
+                drop(state);
+                hard_link_checkpoint_tree(&origin, &coll_dir)?;
+                continue;
+            }
             // Persist the schema sidecar BEFORE the segments so a reopen that finds
             // the segments always finds the schema too (the store's atomic rename
             // makes the whole subdir visible at once regardless of write order).
@@ -12040,14 +15511,475 @@ impl Engine {
                 version: coll.version,
                 applied_seq: up_to_seq,
                 fields: coll.schema.clone(),
+                segment_layout: layout,
             };
             let schema_path = coll_dir.join(CHECKPOINT_SCHEMA_FILE);
+            checkpoint_write_boundary();
             let json = serde_json::to_vec_pretty(&sidecar)
                 .map_err(|e| anyhow!("encode checkpoint schema for `{name}`: {e}"))?;
             std::fs::write(&schema_path, &json)
                 .map_err(|e| anyhow!("write checkpoint schema {}: {e}", schema_path.display()))?;
-            coll.seal_to_segments(&coll_dir, up_to_seq)?;
+            coll.seal_to_segments_with_layout(&coll_dir, up_to_seq, layout)?;
         }
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        Ok(CheckpointCapture {
+            prepared: BTreeMap::new(),
+            prepared_deltas: BTreeMap::new(),
+            prepared_compactions: BTreeMap::new(),
+            scalar_cuts: BTreeMap::new(),
+            scalar_publications: BTreeMap::new(),
+            scalar_retire: BTreeMap::new(),
+            live_delta_inputs: BTreeMap::new(),
+            live_base_inputs: BTreeMap::new(),
+            collections: captured,
+            next_generation: state.next_collection_generation.max(1),
+            field_dirty,
+            frozen_changes: BTreeMap::new(),
+            reused,
+            initial_sparse: BTreeSet::new(),
+            field_deltas: std::sync::Arc::new(field_deltas),
+            record_cut: None,
+        })
+    }
+
+    /// Prepare captured scalar views before the durable generation pointer moves.
+    /// Row maps are made outside the apply lease, while the cut holds only Arcs.
+    pub(crate) fn prepare_scalar_checkpoint_publications(
+        &self,
+        capture: &mut CheckpointCapture,
+    ) -> Result<()> {
+        let mut plans = Vec::new();
+        {
+            let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+            for (name, cuts) in &capture.scalar_cuts {
+                let identity = capture
+                    .collections
+                    .get(name)
+                    .ok_or_else(|| anyhow!("scalar checkpoint collection identity missing"))?;
+                let Some(coll) = state.collections.get(name).filter(|coll| {
+                    coll.collection_generation == identity.generation
+                        && coll.version == identity.schema_version
+                        && coll.deleted_at.is_none()
+                }) else {
+                    continue;
+                };
+                for (field, cut) in cuts {
+                    let retire = capture
+                        .field_dirty
+                        .get(name)
+                        .and_then(|fields| fields.get(field))
+                        .into_iter()
+                        .flatten()
+                        .map(|(eid, revision)| {
+                            let id = coll.interner.id(eid).ok_or_else(|| {
+                                anyhow!(
+                                    "captured scalar external ID is absent from live collection"
+                                )
+                            })?;
+                            Ok((id, eid.clone(), *revision))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let base = capture
+                        .prepared
+                        .get(name)
+                        .into_iter()
+                        .flatten()
+                        .find(|prepared| prepared.name == *field)
+                        .and_then(|prepared| scalar_prepared_segment(&prepared.index));
+                    let deltas: Vec<_> = capture.prepared_deltas.get(name).into_iter().flatten()
+                        .filter(|delta| delta.field == *field)
+                        .map(|delta| {
+                            let ids = delta.external_ids.iter().map(|eid| coll.interner.id(eid)
+                                .ok_or_else(|| anyhow!("scalar checkpoint external ID is absent from live collection")))
+                                .collect::<Result<Vec<_>>>()?;
+                            Ok((delta.reader.clone(), ids))
+                        }).collect::<Result<Vec<_>>>()?;
+                    if base.is_some() || !deltas.is_empty() {
+                        plans.push((
+                            name.clone(),
+                            field.clone(),
+                            cut.clone(),
+                            base,
+                            deltas,
+                            retire,
+                        ));
+                    }
+                }
+            }
+        }
+        for (name, field, cut, base, deltas, retire) in plans {
+            let publication = if let Some(base) = base {
+                let mut catalog = (*base).clone();
+                for (reader, ids) in &deltas {
+                    catalog = catalog.with_delta(reader.clone(), ids.clone())?;
+                }
+                cut.prepare_full(catalog)?
+            } else {
+                if deltas.len() != 1 {
+                    bail!("scalar delta checkpoint has no full catalog base");
+                }
+                let (reader, ids) = deltas.first().expect("checked one delta");
+                cut.prepare_delta(reader.clone(), ids.clone())?
+            };
+            capture
+                .scalar_publications
+                .entry(name.clone())
+                .or_default()
+                .insert(field.clone(), publication);
+            capture
+                .scalar_retire
+                .entry(name)
+                .or_default()
+                .insert(field, retire);
+        }
+        // This is the final dry prefix check before the generation caller may
+        // validate its staged layout and advance CURRENT. A later mutation may
+        // append only a private layer; a changed catalog prefix refuses here.
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        for (name, publications) in &capture.scalar_publications {
+            let identity = capture
+                .collections
+                .get(name)
+                .ok_or_else(|| anyhow!("scalar checkpoint identity missing before publication"))?;
+            let Some(coll) = state.collections.get(name).filter(|coll| {
+                coll.collection_generation == identity.generation
+                    && coll.version == identity.schema_version
+                    && coll.deleted_at.is_none()
+            }) else {
+                continue;
+            };
+            for (field, publication) in publications {
+                let index = coll.fields.get(field).ok_or_else(|| {
+                    anyhow!("scalar checkpoint field disappeared before publication")
+                })?;
+                let live = match index {
+                    FieldIndex::Keyword(index) => index.segment.as_ref(),
+                    FieldIndex::Number(index) => index.segment.as_ref(),
+                    FieldIndex::Set(index) => index.segment.as_ref(),
+                    _ => bail!("scalar checkpoint publication changed field kind"),
+                };
+                match live {
+                    Some(live) => publication.validate_live(live)?,
+                    None => {
+                        let _ = publication.install_without_composition()?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Prepare scalar row maps outside CaptureBarrier. The read lock pins only
+    /// schema and stable runtime IDs while we copy the selected IDs. Readers
+    /// can still query. Coverage and replacement layers are built after that
+    /// lock is released; binding checks their exact immutable input identities.
+    pub(crate) fn prepare_checkpoint_compactions(
+        &self,
+        capture: &mut CheckpointCapture,
+    ) -> Result<()> {
+        self.prepare_scalar_checkpoint_publications(capture)?;
+        let mut plans = Vec::new();
+        {
+            let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+            for (name, compactions) in &capture.prepared_compactions {
+                let identity = capture
+                    .collections
+                    .get(name)
+                    .ok_or_else(|| anyhow!("compaction collection identity missing"))?;
+                let Some(coll) = state.collections.get(name).filter(|coll| {
+                    coll.collection_generation == identity.generation
+                        && coll.version == identity.schema_version
+                        && coll.deleted_at.is_none()
+                }) else {
+                    // Binding skips this obsolete collection too. Restore is
+                    // separately checked by the publication epoch guard.
+                    continue;
+                };
+                let mut views = BTreeMap::new();
+                for compaction in compactions {
+                    let index = coll
+                        .fields
+                        .get(&compaction.field)
+                        .ok_or_else(|| anyhow!("compacted field is absent from live collection"))?;
+                    let segment = match index {
+                        FieldIndex::Keyword(index) => &index.segment,
+                        FieldIndex::Number(index) => &index.segment,
+                        FieldIndex::Set(index) => &index.segment,
+                        FieldIndex::Hash(index) => &index.segment,
+                        FieldIndex::Text { idx, .. } => &idx.segment,
+                        FieldIndex::Vector { .. } => continue,
+                    };
+                    let view = if let Some(publication) = capture
+                        .scalar_publications
+                        .get(name)
+                        .and_then(|fields| fields.get(&compaction.field))
+                    {
+                        std::sync::Arc::new(publication.catalog_view())
+                    } else {
+                        segment
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("compacted field has no live base"))?
+                            .clone()
+                    };
+                    views.insert(compaction.field.clone(), view);
+                }
+                let map_ids = |eids: &[String]| -> Result<Vec<u32>> {
+                    eids.iter()
+                        .map(|eid| {
+                            coll.interner.id(eid).ok_or_else(|| {
+                                anyhow!("compacted external ID is absent from live collection")
+                            })
+                        })
+                        .collect()
+                };
+                let mut deltas = Vec::new();
+                for delta in capture.prepared_deltas.get(name).into_iter().flatten() {
+                    if views.contains_key(&delta.field)
+                        && !capture
+                            .scalar_publications
+                            .get(name)
+                            .is_some_and(|fields| fields.contains_key(&delta.field))
+                    {
+                        deltas.push((
+                            delta.field.clone(),
+                            delta.reader.clone(),
+                            map_ids(&delta.external_ids)?,
+                        ));
+                    }
+                }
+                let mut outputs = Vec::new();
+                for (index, compaction) in compactions.iter().enumerate() {
+                    if views.contains_key(&compaction.field) {
+                        outputs.push((index, map_ids(&compaction.external_ids)?));
+                    }
+                }
+                plans.push((name.clone(), views, deltas, outputs));
+            }
+        }
+        for (name, mut views, deltas, outputs) in plans {
+            // The newly written delta is installed first at publication. Use
+            // that same order while preparing every successive merge.
+            for (field, reader, ids) in deltas {
+                let view = views.get_mut(&field).expect("selected scalar view");
+                *view = std::sync::Arc::new(view.with_delta(reader, ids)?);
+            }
+            for (index, ids) in outputs {
+                let compacted = &mut capture
+                    .prepared_compactions
+                    .get_mut(&name)
+                    .expect("captured compaction collection")[index];
+                let view = views
+                    .get_mut(&compacted.field)
+                    .expect("selected scalar view");
+                let prepared = view.prepare_replacement(
+                    compacted.base.as_ref(),
+                    &compacted.inputs,
+                    compacted.reader.clone(),
+                    ids,
+                )?;
+                *view = std::sync::Arc::new(view.install_prepared_replacement(&prepared)?);
+                compacted.scalar = Some(prepared);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn bind_checkpoint_origins(
+        &self,
+        root: &std::path::Path,
+        capture: &mut CheckpointCapture,
+    ) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        for (name, identity) in &capture.collections {
+            if let Some(coll) = state.collections.get_mut(name) {
+                if coll.collection_generation == identity.generation
+                    && coll.version == identity.schema_version
+                    && coll.deleted_at.is_none()
+                {
+                    coll.checkpoint_lineage = Some(root.join(collection_dir_name(name)));
+                    coll.checkpoint_lineage_schema = Some(coll.version);
+                    // A durable base with this schema is reusable even when newer
+                    // row mutations remain above its captured data version.
+                    coll.requires_full_checkpoint = false;
+                    coll.journal_complete_since_empty = false;
+                    // Publish catalog scalar layers by the captured cut.  This
+                    // replaces only the prefix present at freeze and retains any
+                    // private layers attached while files were written.
+                    let scalar_fields: BTreeSet<_> = capture
+                        .scalar_publications
+                        .get(name)
+                        .into_iter()
+                        .flat_map(|fields| fields.keys().cloned())
+                        .collect();
+                    let scalar_retire = capture.scalar_retire.remove(name).unwrap_or_default();
+                    if let Some(publications) = capture.scalar_publications.remove(name) {
+                        for (field, publication) in publications {
+                            let index = coll.fields.get_mut(&field).ok_or_else(|| {
+                                anyhow!("checkpoint scalar field is absent from live collection")
+                            })?;
+                            install_scalar_checkpoint_publication(index, &publication)?;
+                            // An ordinary mutation made before the first reader
+                            // existed could not mark that reader's tombstones.
+                            // Mask the newly published catalog row now. A newer
+                            // private winner already masks it and must stay visible.
+                            for (eid, revision) in
+                                coll.field_dirty.get(&field).into_iter().flatten()
+                            {
+                                if capture
+                                    .field_dirty
+                                    .get(name)
+                                    .and_then(|fields| fields.get(&field))
+                                    .and_then(|rows| rows.get(eid))
+                                    == Some(revision)
+                                {
+                                    continue;
+                                }
+                                let Some(id) = coll.interner.id(eid) else {
+                                    continue;
+                                };
+                                match index {
+                                    FieldIndex::Keyword(k) => {
+                                        let overlay = k
+                                            .dense_forward
+                                            .get(id as usize)
+                                            .is_some_and(Option::is_some)
+                                            || k.forward.contains_key(&id);
+                                        if overlay
+                                            || !k
+                                                .segment
+                                                .as_ref()
+                                                .is_some_and(|view| view.has_private_winner(id))
+                                        {
+                                            k.tombstones.insert(id);
+                                        }
+                                    }
+                                    FieldIndex::Number(n) => {
+                                        let overlay =
+                                            n.dense_forward.get(id as usize).is_some_and(|value| {
+                                                *value != MISSING_SORTABLE_F64_BITS
+                                            }) || n.forward.contains_key(&id);
+                                        if overlay
+                                            || !n
+                                                .segment
+                                                .as_ref()
+                                                .is_some_and(|view| view.has_private_winner(id))
+                                        {
+                                            n.tombstones.insert(id);
+                                        }
+                                    }
+                                    FieldIndex::Set(s) => {
+                                        if s.forward.contains_key(&id)
+                                            || !s
+                                                .segment
+                                                .as_ref()
+                                                .is_some_and(|view| view.has_private_winner(id))
+                                        {
+                                            s.tombstones.insert(id);
+                                        }
+                                    }
+                                    _ => unreachable!("prepared scalar kind"),
+                                }
+                            }
+                            for (id, eid, captured_revision) in
+                                scalar_retire.get(&field).into_iter().flatten()
+                            {
+                                if checkpoint_scalar_retire_matches(
+                                    coll.field_dirty.get(&field).and_then(|rows| rows.get(eid)),
+                                    *captured_revision,
+                                ) {
+                                    retire_live_delta_overlay(index, *id);
+                                }
+                            }
+                        }
+                    }
+                    if coll.data_version == identity.data_version {
+                        coll.checkpoint_origin = coll.checkpoint_lineage.clone();
+                        coll.requires_full_checkpoint = false;
+                        // Prepared mmap fields describe exactly the captured version.
+                        // Never overwrite mutations made while file I/O was running.
+                        if let Some(fields) = capture.prepared.remove(name) {
+                            let dirty = capture.field_dirty.get(name).cloned().unwrap_or_default();
+                            for field in fields {
+                                if scalar_fields.contains(&field.name) {
+                                    continue;
+                                }
+                                if field.vector_base.is_some()
+                                    || capture.initial_sparse.contains(name)
+                                {
+                                    install_concurrent_prepared_base(coll, field, &dirty)?;
+                                } else {
+                                    coll.fields.insert(field.name, field.index);
+                                }
+                            }
+                        }
+                    } else if let Some(fields) = capture.prepared.remove(name) {
+                        let dirty = capture.field_dirty.get(name).cloned().unwrap_or_default();
+                        for field in fields {
+                            if scalar_fields.contains(&field.name) {
+                                continue;
+                            }
+                            install_concurrent_prepared_base(coll, field, &dirty)?;
+                        }
+                    }
+                    if let Some(deltas) = capture.prepared_deltas.remove(name) {
+                        let dirty = capture.field_dirty.get(name).cloned().unwrap_or_default();
+                        for delta in deltas {
+                            if scalar_fields.contains(&delta.field) {
+                                continue;
+                            }
+                            attach_live_checkpoint_delta(coll, delta, &dirty)?;
+                        }
+                    }
+                    if let Some(compactions) = capture.prepared_compactions.remove(name) {
+                        for compacted in compactions {
+                            replace_live_checkpoint_deltas(coll, compacted)?;
+                        }
+                    }
+                    if let Some(dirty) = capture.field_dirty.get(name) {
+                        coll.acknowledge_field_dirty(dirty);
+                    }
+                    if let Some(frozen) = capture.frozen_changes.get(name) {
+                        coll.change_journal.acknowledge_through(frozen);
+                    }
+                }
+            }
+        }
+        self.publish_storage_bytes(&state);
+        Ok(())
+    }
+
+    pub(crate) fn bind_legacy_checkpoint_origin(&self, root: &std::path::Path) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        for (name, coll) in &mut state.collections {
+            coll.checkpoint_origin = Some(root.join(collection_dir_name(name)));
+            coll.checkpoint_lineage = coll.checkpoint_origin.clone();
+            coll.checkpoint_lineage_schema = Some(coll.version);
+            coll.journal_complete_since_empty = false;
+        }
+        state.checkpoint_namespace = root.parent().map(std::path::Path::to_path_buf);
+        Ok(())
+    }
+
+    pub(crate) fn hydrate_checkpoint_identities(
+        &self,
+        root: &std::path::Path,
+        capture: &CheckpointCapture,
+    ) -> Result<()> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        for (name, identity) in &capture.collections {
+            let coll = state
+                .collections
+                .get_mut(name)
+                .ok_or_else(|| anyhow!("missing reopened collection"))?;
+            coll.collection_generation = identity.generation;
+            coll.data_version = identity.data_version;
+            coll.checkpoint_origin = Some(root.join(collection_dir_name(name)));
+            coll.checkpoint_lineage = coll.checkpoint_origin.clone();
+            coll.checkpoint_lineage_schema = Some(coll.version);
+            coll.journal_complete_since_empty = false;
+        }
+        state.next_collection_generation = capture.next_generation;
+        state.checkpoint_namespace = root.parent().map(std::path::Path::to_path_buf);
         Ok(())
     }
 
@@ -12058,6 +15990,24 @@ impl Engine {
     /// whole-collection load — the forward payload stays demand-paged on the
     /// mmaps). The returned seq is the WAL position the binary tails from.
     pub fn reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64> {
+        self.reopen_from_segment_dir_with_vectors(dir, false)
+    }
+
+    pub(crate) fn reopen_from_segment_dir_with_vectors(
+        &self,
+        dir: &std::path::Path,
+        defer_hnsw: bool,
+    ) -> Result<u64> {
+        self.reopen_from_segment_dir_with_base_rows(dir, defer_hnsw, &BTreeMap::new())
+    }
+
+    pub(crate) fn reopen_from_segment_dir_with_base_rows(
+        &self,
+        dir: &std::path::Path,
+        defer_hnsw: bool,
+        mapped_rows: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    ) -> Result<u64> {
+        let _apply = self.capture_barrier.apply();
         if !dir.exists() {
             return Ok(0);
         }
@@ -12081,7 +16031,15 @@ impl Engine {
                 .map_err(|e| anyhow!("decode checkpoint schema {}: {e}", schema_path.display()))?;
             let name = collection_name_from_dir(&coll_dir)
                 .ok_or_else(|| anyhow!("undecodable checkpoint subdir {}", coll_dir.display()))?;
-            let coll = Collection::open_from_segments(&coll_dir, sidecar.fields, sidecar.version)?;
+            let mut coll = Collection::open_from_segments_with_vectors(
+                &coll_dir,
+                sidecar.fields,
+                sidecar.version,
+                defer_hnsw,
+                sidecar.segment_layout,
+                mapped_rows.get(&name),
+            )?;
+            coll.collection_generation = state.allocate_collection_generation()?;
             max_seq = max_seq.max(sidecar.applied_seq);
             state.collections.insert(name, coll);
         }
@@ -12117,7 +16075,10 @@ impl Engine {
             FieldIndex::Keyword(k) => (k.forward_len(), k.segment.is_some()),
             FieldIndex::Set(s) => (s.forward.len(), s.segment.is_some()),
             FieldIndex::Text { idx, .. } => (idx.tokens.len(), idx.segment.is_some()),
-            FieldIndex::Vector { .. } => (0, true),
+            FieldIndex::Vector { idx, .. } => (
+                idx.resident_vector_payload_rows(),
+                idx.has_checkpoint_mapping(),
+            ),
         })
     }
 }
@@ -12130,7 +16091,7 @@ fn collection_dir_name(name: &str) -> String {
 
 /// Decode a checkpoint subdir's hex-encoded name back to the collection id.
 /// `None` if the leaf is not valid hex (a stray file/dir in the checkpoint).
-fn collection_name_from_dir(dir: &std::path::Path) -> Option<String> {
+pub(crate) fn collection_name_from_dir(dir: &std::path::Path) -> Option<String> {
     let leaf = dir.file_name()?.to_str()?;
     if leaf.is_empty() || leaf.len() % 2 != 0 {
         return None;
@@ -12193,7 +16154,9 @@ impl Engine {
         crate::segment::write_number_segment(&path, n_docs as u64, &values)?;
         let reader = crate::segment::SegmentReader::open(&path)?;
         debug_assert_eq!(reader.n_docs() as usize, n_docs);
-        n.segment = Some(std::sync::Arc::new(reader));
+        n.segment = Some(std::sync::Arc::new(
+            crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(reader)),
+        ));
         // Phase 2h-3: mirror PRODUCTION `seal_to_segment` — drop BOTH the in-RAM
         // `forward` tail AND the inverted/range `values` driver (the sorted-value
         // column + per-value postings are on disk now). Queries drive from the
@@ -12262,7 +16225,9 @@ impl Engine {
         crate::segment::write_keyword_segment(&path, n_docs as u64, &values, &terms)?;
         let reader = crate::segment::SegmentReader::open(&path)?;
         debug_assert_eq!(reader.n_docs() as usize, n_docs);
-        k.segment = Some(std::sync::Arc::new(reader));
+        k.segment = Some(std::sync::Arc::new(
+            crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(reader)),
+        ));
         // Drop the RAM index — the whole [0..n_docs) inverted+forward state is
         // on disk now (Phase 2h-1). Queries drive from the mmap segment.
         k.forward = FastHashMap::default();
@@ -12334,7 +16299,9 @@ impl Engine {
         crate::segment::write_set_segment(&path, n_docs as u64, &values, &elements)?;
         let reader = crate::segment::SegmentReader::open(&path)?;
         debug_assert_eq!(reader.n_docs() as usize, n_docs);
-        s.segment = Some(std::sync::Arc::new(reader));
+        s.segment = Some(std::sync::Arc::new(
+            crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(reader)),
+        ));
         // Drop the RAM index — the whole [0..n_docs) inverted+forward state is on
         // disk now (Phase 2h-2). Queries drive from the mmap segment.
         s.forward = FastHashMap::default();
@@ -12400,13 +16367,16 @@ impl Engine {
         let reader = crate::segment::SegmentReader::open(&path)?;
         debug_assert_eq!(reader.n_docs() as usize, n_docs);
 
-        idx.segment = Some(std::sync::Arc::new(reader));
+        idx.segment = Some(std::sync::Arc::new(
+            crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(reader)),
+        ));
         // Phase 2h-4: mirror PRODUCTION `seal_to_segment` — DROP the bulky `tokens`
         // postings AND `distinct` AND `lens` to disk (no rebuild). `drop_eid`
         // tombstones a sealed base id instead of consuming `distinct`; `doc_len()`
         // reads the segment DocLen column. First-time seal: no prior tombstone, but
         // reset for symmetry with the production re-seal path.
-        idx.tokens = FastHashMap::default();
+        idx.tokens = BTreeMap::new();
+        idx.delta_docs.clear();
         idx.distinct = Vec::new();
         idx.lens = Vec::new();
         idx.clear_match_rank_cache();
@@ -12447,7 +16417,10 @@ impl Engine {
         crate::segment::write_hash_segment(&path, n_docs as u64, &values)?;
         let reader = crate::segment::SegmentReader::open(&path)?;
         debug_assert_eq!(reader.n_docs() as usize, n_docs);
-        h.segment = Some(std::sync::Arc::new(reader));
+        h.segment = Some(std::sync::Arc::new(
+            crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(reader)),
+        ));
+        h.tombstones.clear();
         Ok(n_docs as u32)
     }
 
@@ -14025,7 +17998,7 @@ mod segment_number_range_diff_tests {
             // segment can answer a range WITHOUT the RAM map.
             let seg = n.segment.as_ref().unwrap();
             assert_eq!(
-                seg.number_distinct_count(),
+                seg.number_range_distinct_count(None, None).unwrap(),
                 3,
                 "distinct values {{-3.0, 0.0, 3.0}} live on the mmap sorted column"
             );
@@ -15878,6 +19851,113 @@ mod segment_text_diff_tests {
         );
     }
 
+    /// AND-STREAMING PERF FIX regression (the 500k-hot-doc `match … op: "and"`
+    /// fix): seal `body` to a segment, add MORE docs afterward (a live-tail
+    /// overlay on top of the sealed base — one of the four sources
+    /// `TokProbe`/`eval_match_topk`'s streaming intersection must compose),
+    /// THEN delete some of the sealed docs (tombstones — the segment, live
+    /// tail, AND tombstones are all simultaneously non-empty, matching the
+    /// perf brief's corpus shape). The AND result set and f32 scores through
+    /// BOTH `eval_match_topk` (`run`, the search hot path) and the nested
+    /// `eval_match` map path (`QueryNode::And([Match])`, which is NOT the
+    /// `eval_match_topk` fast path) must equal an in-RAM oracle that indexed
+    /// only the surviving docs and never sealed.
+    #[test]
+    fn and_query_matches_oracle_over_segment_plus_live_tail_plus_tombstones() {
+        let subject = Arc::new(Engine::new());
+        subject.create_collection("c", schema()).unwrap();
+        // Sealed base: d0..d3.
+        index_doc(
+            &subject,
+            "d0",
+            &body_from(&[("alpha", 3), ("beta", 1)]),
+            Some(10.0),
+        );
+        index_doc(
+            &subject,
+            "d1",
+            &body_from(&[("alpha", 1), ("beta", 2)]),
+            Some(20.0),
+        );
+        index_doc(&subject, "d2", &body_from(&[("alpha", 2)]), Some(30.0));
+        index_doc(&subject, "d3", &body_from(&[("beta", 3)]), Some(40.0));
+        let dir = tempfile::tempdir().unwrap();
+        subject
+            .__seal_text_field_to_segment("c", "body", dir.path())
+            .unwrap();
+        // Live tail, added AFTER the seal (never sealed — pure live overlay).
+        index_doc(
+            &subject,
+            "d4",
+            &body_from(&[("alpha", 4), ("beta", 1)]),
+            Some(50.0),
+        );
+        index_doc(
+            &subject,
+            "d5",
+            &body_from(&[("alpha", 1), ("beta", 4)]),
+            Some(60.0),
+        );
+        // Tombstone a sealed base doc that carries BOTH query tokens.
+        subject.delete("c", "d1", None).unwrap();
+
+        let oracle = Arc::new(Engine::new());
+        oracle.create_collection("c", schema()).unwrap();
+        index_doc(
+            &oracle,
+            "d0",
+            &body_from(&[("alpha", 3), ("beta", 1)]),
+            Some(10.0),
+        );
+        index_doc(&oracle, "d2", &body_from(&[("alpha", 2)]), Some(30.0));
+        index_doc(&oracle, "d3", &body_from(&[("beta", 3)]), Some(40.0));
+        index_doc(
+            &oracle,
+            "d4",
+            &body_from(&[("alpha", 4), ("beta", 1)]),
+            Some(50.0),
+        );
+        index_doc(
+            &oracle,
+            "d5",
+            &body_from(&[("alpha", 1), ("beta", 4)]),
+            Some(60.0),
+        );
+
+        // The `eval_match_topk` hot path (through `search`, top-level Match).
+        let s_topk = run(&subject, text_and("alpha", "beta"));
+        let o_topk = run(&oracle, text_and("alpha", "beta"));
+        assert_eq!(set_of(&s_topk), set_of(&o_topk), "topk AND set diverged");
+        assert_eq!(
+            scores_of(&s_topk),
+            scores_of(&o_topk),
+            "topk AND scores diverged"
+        );
+        // d1 is gone (tombstoned); d0/d4/d5 carry both tokens, d2/d3 carry only one.
+        assert_eq!(
+            set_of(&s_topk),
+            ["d0", "d4", "d5"]
+                .into_iter()
+                .map(String::from)
+                .collect::<BTreeSet<_>>(),
+            "AND must keep exactly the docs carrying both surviving tokens"
+        );
+
+        // The `eval_match` map path: nest the Match under a single-child And so
+        // the top-level query is NOT `QueryNode::Match` and the search router's
+        // `eval_match_topk` fast path is bypassed, reaching `eval_query`'s
+        // `QueryNode::Match(m) => eval_match(coll, m)?` instead.
+        let wrapped = QueryNode::And(vec![text_and("alpha", "beta")]);
+        let s_map = run(&subject, wrapped.clone());
+        let o_map = run(&oracle, wrapped);
+        assert_eq!(set_of(&s_map), set_of(&o_map), "map-path AND set diverged");
+        assert_eq!(
+            scores_of(&s_map),
+            scores_of(&o_map),
+            "map-path AND scores diverged"
+        );
+    }
+
     /// RE-SEAL after delete (Phase 2h-4): once re-sealed the deletes are BAKED into
     /// the new segment (2g-A live(id) GC), the tombstone is CLEARED, and a fresh
     /// reopen excludes the deleted docs with a correct corpus.
@@ -16132,11 +20212,9 @@ mod segment_text_diff_tests {
             assert!(idx.tok_postings("new").is_none());
             assert_eq!(idx.tok_df("latest"), Some(1));
             assert_eq!(idx.bm25_corpus(), (1, 1));
-            assert!(idx.distinct.get(0).is_some_and(|tokens| {
-                tokens
-                    .as_ref()
-                    .is_some_and(|tokens| tokens.iter().next().is_some())
-            }));
+            assert!(idx
+                .distinct_at(0)
+                .is_some_and(|tokens| tokens.iter().next().is_some()));
             assert_eq!(idx.doc_len(0), 1);
             assert!(idx.tombstones.contains(0));
         }
@@ -16259,6 +20337,49 @@ mod segment_text_diff_tests {
             scores_of(&run(&oracle, bm25_single("new")))
         );
         assert!(run(&reopened, old).is_empty());
+    }
+
+    #[test]
+    fn ngram_streamed_write_survives_checkpoint_and_cold_reopen() {
+        let engine = Arc::new(Engine::new());
+        let mut ngram_schema = schema();
+        ngram_schema.fields.get_mut("body").unwrap().analyzer = Some(Analyzer::Ngram);
+        engine.create_collection("c", ngram_schema).unwrap();
+
+        let text = "İstanbul ABcd";
+        index_doc(&engine, "unicode", text, Some(1.0));
+        let expected_len =
+            u32::try_from(crate::tokenize::tokenize(text, Analyzer::Ngram).len()).unwrap();
+        let doc_len = |subject: &Engine| {
+            let state = subject.state.read().unwrap();
+            let collection = state.collections.get("c").unwrap();
+            let id = collection.interner.id("unicode").unwrap();
+            let FieldIndex::Text { idx, .. } = collection.fields.get("body").unwrap() else {
+                panic!("body must be text");
+            };
+            idx.doc_len(id)
+        };
+        assert_eq!(doc_len(&engine), expected_len);
+        let before = run(&engine, bm25_single("ABCD"));
+        assert_eq!(set_of(&before), BTreeSet::from(["unicode".to_owned()]));
+
+        let directory = tempfile::tempdir().unwrap();
+        engine
+            .__seal_collection_to_segments("c", directory.path(), 1)
+            .unwrap();
+        let cold = Engine::__open_collection_from_segments(
+            "c",
+            directory.path(),
+            engine.__collection_schema("c").unwrap(),
+            1,
+        )
+        .unwrap();
+        assert_eq!(doc_len(&cold), expected_len);
+        assert_eq!(
+            scores_of(&run(&cold, bm25_single("ABCD"))),
+            scores_of(&before),
+            "cold search must retain the ngram stream postings and document length"
+        );
     }
 
     #[test]
@@ -16457,6 +20578,675 @@ mod segment_text_diff_tests {
 }
 
 // ---------------------------------------------------------------------------
+// TokProbe unit tests (the 500k-hot-doc `match … op: "and"` perf fix): the
+// lazy, non-materializing per-token cursor `eval_match`/`eval_match_topk`'s
+// AND branch streams instead of `tok_postings`'s merged-`Vec` materialization.
+// White-box: `TokProbe` composes only borrowed slices / a shared `Arc` / a
+// small staged `Vec`, decoupled from the real `ComposedSegmentReader`, so
+// every source combination is constructed directly without a real sealed
+// segment.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tok_probe_tests {
+    use super::*;
+
+    fn probe<'a>(
+        seg: Option<(&[u32], &[u32])>,
+        live: Option<&'a Postings>,
+        staged: &[(u32, u32)],
+        tombstones: &'a RoaringBitmap,
+    ) -> TokProbe<'a> {
+        TokProbe {
+            seg: seg.map(|(ids, tfs)| std::sync::Arc::new((ids.to_vec(), tfs.to_vec()))),
+            live,
+            staged: staged.to_vec(),
+            tombstones,
+        }
+    }
+
+    fn live_postings(pairs: &[(u32, u32)]) -> Postings {
+        Postings::from_sorted(
+            pairs.iter().map(|&(id, _)| id).collect(),
+            pairs.iter().map(|&(_, tf)| tf).collect(),
+        )
+    }
+
+    #[test]
+    fn segment_only_streams_and_probes_every_entry() {
+        let empty = RoaringBitmap::new();
+        let p = probe(Some((&[1, 3, 5], &[10, 30, 50])), None, &[], &empty);
+        assert!(!p.definitely_absent());
+        assert_eq!(
+            p.iter_active().collect::<Vec<_>>(),
+            vec![(1, 10), (3, 30), (5, 50)]
+        );
+        assert_eq!(p.tf(3), Some(30));
+        assert_eq!(p.tf(4), None);
+    }
+
+    #[test]
+    fn segment_plus_live_live_overrides_reused_id_and_adds_new_ids() {
+        let empty = RoaringBitmap::new();
+        // Segment has 1,3; live has 3 (override) and 7 (tail-only new id).
+        let live = live_postings(&[(3, 300), (7, 700)]);
+        let p = probe(Some((&[1, 3], &[10, 30])), Some(&live), &[], &empty);
+        assert_eq!(
+            p.iter_active().collect::<Vec<_>>(),
+            vec![(1, 10), (3, 300), (7, 700)],
+            "live tf must override the reused segment id"
+        );
+        assert_eq!(p.tf(1), Some(10));
+        assert_eq!(p.tf(3), Some(300));
+        assert_eq!(p.tf(7), Some(700));
+    }
+
+    #[test]
+    fn segment_plus_tombstones_drops_pure_segment_id_only() {
+        let mut tombstones = RoaringBitmap::new();
+        tombstones.insert(3);
+        let p = probe(Some((&[1, 3, 5], &[10, 30, 50])), None, &[], &tombstones);
+        assert_eq!(
+            p.iter_active().collect::<Vec<_>>(),
+            vec![(1, 10), (5, 50)],
+            "tombstoned pure-segment id must be dropped"
+        );
+        assert_eq!(p.tf(3), None);
+    }
+
+    #[test]
+    fn segment_plus_live_plus_tombstones_live_wins_over_a_tombstoned_reused_id() {
+        let mut tombstones = RoaringBitmap::new();
+        tombstones.insert(3); // reused AND tombstoned base id
+        tombstones.insert(5); // pure-segment tombstoned id
+        let live = live_postings(&[(3, 999)]);
+        let p = probe(
+            Some((&[1, 3, 5], &[10, 30, 50])),
+            Some(&live),
+            &[],
+            &tombstones,
+        );
+        assert_eq!(
+            p.iter_active().collect::<Vec<_>>(),
+            vec![(1, 10), (3, 999)],
+            "a live posting must override a reused base id EVEN when tombstoned; \
+             the pure-segment tombstoned id must still be dropped"
+        );
+        assert_eq!(p.tf(3), Some(999));
+        assert_eq!(p.tf(5), None);
+    }
+
+    #[test]
+    fn staged_row_overrides_both_live_and_segment() {
+        let empty = RoaringBitmap::new();
+        let live = live_postings(&[(2, 20), (4, 40)]);
+        // Staged overrides id 2 (was live) and id 1 (was segment-only); id 9 is
+        // staged-only (neither segment nor live).
+        let p = probe(
+            Some((&[1, 4], &[100, 400])),
+            Some(&live),
+            &[(1, 111), (2, 222), (9, 999)],
+            &empty,
+        );
+        assert_eq!(
+            p.iter_active().collect::<Vec<_>>(),
+            vec![(1, 111), (2, 222), (4, 40), (9, 999)],
+            "staged must win over both live and segment for a shared id"
+        );
+        assert_eq!(p.tf(1), Some(111));
+        assert_eq!(p.tf(2), Some(222));
+        assert_eq!(p.tf(4), Some(40));
+        assert_eq!(p.tf(9), Some(999));
+    }
+
+    #[test]
+    fn absent_token_has_no_source_and_no_matches() {
+        let empty = RoaringBitmap::new();
+        let p = probe(None, None, &[], &empty);
+        assert!(p.definitely_absent());
+        assert_eq!(p.iter_active().collect::<Vec<_>>(), Vec::new());
+        assert_eq!(p.tf(0), None);
+    }
+
+    #[test]
+    fn tok_probe_wiring_through_text_index_staged_overrides_live() {
+        // Exercises `TextIndex::tok_probe` itself (not just the `TokProbe`
+        // struct), so the staged-row gather + precedence wiring is covered
+        // end-to-end for the live+staged combination.
+        let mut idx = TextIndex {
+            doc_count: 2,
+            total_doc_len: 2,
+            ..Default::default()
+        };
+        idx.lens.push(1);
+        let mut live = Postings::default();
+        live.upsert(0, 7);
+        idx.tokens.insert("tok".to_string(), live);
+        idx.staged_rows.insert(
+            1,
+            std::sync::Arc::new(
+                staged_text_row::StagedTextRow::stage(
+                    "tok",
+                    Analyzer::WhitespaceLower,
+                    crate::segment::text_row_stage::TextRowStageOptions::minimum_scratch_bytes()
+                        + 4096,
+                    |_| Ok(()),
+                )
+                .expect("stage one Text row"),
+            ),
+        );
+        let p = idx.tok_probe("tok");
+        assert!(!p.definitely_absent());
+        assert_eq!(p.iter_active().collect::<Vec<_>>(), vec![(0, 7), (1, 1)]);
+        let absent = idx.tok_probe("nowhere");
+        assert!(absent.definitely_absent());
+    }
+
+    /// Reference (`#[cfg(test)]`-only) oracle: the OLD algorithm — materialize
+    /// a fully-merged `(docids, tfs)` pair via a naive three-way merge, tombstone
+    /// subtraction, and staged override, matching `tok_postings`'s SEMANTICS
+    /// without sharing its code — then look up by binary search. `TokProbe`
+    /// must produce the IDENTICAL `(docid, tf)` set for every randomized fixture.
+    fn reference_active(
+        seg: &Option<(Vec<u32>, Vec<u32>)>,
+        live: &Option<Postings>,
+        staged: &[(u32, u32)],
+        tombstones: &RoaringBitmap,
+    ) -> BTreeMap<u32, u32> {
+        let mut merged: BTreeMap<u32, u32> = BTreeMap::new();
+        if let Some((ids, tfs)) = seg {
+            for (&id, &tf) in ids.iter().zip(tfs.iter()) {
+                if !tombstones.contains(id) {
+                    merged.insert(id, tf);
+                }
+            }
+        }
+        if let Some(live) = live {
+            for (&id, &tf) in live.docids.iter().zip(live.tfs.iter()) {
+                merged.insert(id, tf); // live always overrides, tombstoned or not
+            }
+        }
+        for &(id, tf) in staged {
+            merged.insert(id, tf); // staged always overrides
+        }
+        merged
+    }
+
+    #[test]
+    fn tok_probe_matches_reference_over_randomized_fixtures() {
+        // A small xorshift PRNG so this stays dependency-free and deterministic.
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+            fn below(&mut self, n: u32) -> u32 {
+                (self.next() % u64::from(n)) as u32
+            }
+        }
+        let mut rng = Rng(0x9E3779B97F4A7C15);
+        for trial in 0..200u32 {
+            let universe = 1 + rng.below(40);
+            let mk_ids = |rng: &mut Rng, universe: u32| -> Vec<u32> {
+                let mut ids: Vec<u32> = (0..universe).filter(|_| rng.below(3) == 0).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids
+            };
+            let seg_ids = mk_ids(&mut rng, universe);
+            let seg: Option<(Vec<u32>, Vec<u32>)> = if rng.below(4) == 0 {
+                None
+            } else {
+                let tfs: Vec<u32> = seg_ids.iter().map(|_| 1 + rng.below(9)).collect();
+                Some((seg_ids.clone(), tfs))
+            };
+            let live_ids = mk_ids(&mut rng, universe);
+            let live: Option<Postings> = if rng.below(4) == 0 {
+                None
+            } else {
+                let tfs: Vec<u32> = live_ids.iter().map(|_| 1 + rng.below(9)).collect();
+                Some(Postings::from_sorted(live_ids.clone(), tfs))
+            };
+            let staged_ids = mk_ids(&mut rng, universe);
+            let staged: Vec<(u32, u32)> = staged_ids
+                .iter()
+                .map(|&id| (id, 1 + rng.below(9)))
+                .collect();
+            let mut tombstones = RoaringBitmap::new();
+            for id in 0..universe {
+                if rng.below(3) == 0 {
+                    tombstones.insert(id);
+                }
+            }
+
+            let want = reference_active(&seg, &live, &staged, &tombstones);
+            let p = probe(
+                seg.as_ref().map(|(ids, tfs)| (&ids[..], &tfs[..])),
+                live.as_ref(),
+                &staged,
+                &tombstones,
+            );
+            let got: BTreeMap<u32, u32> = p.iter_active().collect();
+            assert_eq!(
+                got, want,
+                "trial {trial}: iter_active diverged from reference"
+            );
+            assert_eq!(
+                p.active_len(),
+                want.len(),
+                "trial {trial}: active_len diverged from the exact df"
+            );
+            for id in 0..universe {
+                assert_eq!(
+                    p.tf(id),
+                    want.get(&id).copied(),
+                    "trial {trial}: tf({id}) diverged from reference"
+                );
+            }
+            assert_eq!(
+                p.definitely_absent(),
+                seg.is_none() && live.is_none() && staged.is_empty(),
+                "trial {trial}: definitely_absent diverged"
+            );
+        }
+    }
+
+    /// The shape `active_len` is built for: a long, dense segment lane (the
+    /// stop-token at scale) with sparse live/staged overlays and either sparse
+    /// or heavy tombstones. The galloping count must equal the streaming one.
+    #[test]
+    fn active_len_matches_streaming_count_on_long_segments() {
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+            fn below(&mut self, n: u32) -> u32 {
+                (self.next() % u64::from(n)) as u32
+            }
+        }
+        let mut rng = Rng(0xD1B54A32D192ED03);
+        for trial in 0..40u32 {
+            let universe = 2000 + rng.below(6001);
+            let seg_ids: Vec<u32> = (0..universe).filter(|_| rng.below(10) != 0).collect();
+            let seg_tfs: Vec<u32> = seg_ids.iter().map(|_| 1 + rng.below(9)).collect();
+            let mut live_ids: Vec<u32> = (0..universe).filter(|_| rng.below(97) == 0).collect();
+            live_ids.dedup();
+            let live = Postings::from_sorted(
+                live_ids.clone(),
+                live_ids.iter().map(|_| 1 + rng.below(9)).collect(),
+            );
+            let live = if rng.below(3) == 0 { None } else { Some(live) };
+            let staged_ids: Vec<u32> = (0..universe).filter(|_| rng.below(131) == 0).collect();
+            let staged: Vec<(u32, u32)> = staged_ids
+                .iter()
+                .map(|&id| (id, 1 + rng.below(9)))
+                .collect();
+            let heavy = rng.below(2) == 0;
+            let mut tombstones = RoaringBitmap::new();
+            for id in 0..universe {
+                let hit = if heavy {
+                    rng.below(2) == 0
+                } else {
+                    rng.below(53) == 0
+                };
+                if hit {
+                    tombstones.insert(id);
+                }
+            }
+            let seg = Some((seg_ids, seg_tfs));
+            let p = probe(
+                seg.as_ref().map(|(ids, tfs)| (&ids[..], &tfs[..])),
+                live.as_ref(),
+                &staged,
+                &tombstones,
+            );
+            let want = reference_active(&seg, &live, &staged, &tombstones).len();
+            assert_eq!(
+                p.iter_active().count(),
+                want,
+                "trial {trial}: streaming count"
+            );
+            assert_eq!(
+                p.active_len(),
+                want,
+                "trial {trial}: galloping count (heavy={heavy})"
+            );
+        }
+        // Degenerate lanes: empty segment, and a segment fully tombstoned.
+        let empty = RoaringBitmap::new();
+        let p = probe(Some((&[], &[])), None, &[], &empty);
+        assert_eq!(p.active_len(), 0);
+        let all: RoaringBitmap = (0..100u32).collect();
+        let ids: Vec<u32> = (0..100).collect();
+        let tfs = vec![1u32; 100];
+        let p = probe(Some((&ids, &tfs)), None, &[(5, 2), (200, 3)], &all);
+        assert_eq!(p.active_len(), 2);
+        assert_eq!(p.iter_active().count(), 2);
+    }
+
+    /// Randomized fixture for the sparse route (#4246): a real sealed Text
+    /// segment, a live overlay, staged rows and tombstones over one small
+    /// universe, so `tok_postings_at` is compared against `tok_postings`
+    /// itself — the same code the production BM25 scan reads — for the exact
+    /// df and every candidate's tf.
+    struct SparseFixture {
+        idx: TextIndex,
+        tokens: Vec<&'static str>,
+        universe: u32,
+    }
+
+    fn sparse_fixture(dir: &std::path::Path, seed: u64, resident: bool) -> SparseFixture {
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+            fn below(&mut self, n: u32) -> u32 {
+                (self.next() % u64::from(n)) as u32
+            }
+        }
+        let mut rng = Rng(seed | 1);
+        let tokens = vec!["alpha", "beta", "gamma", "delta"];
+        let n_base = 1 + rng.below(60);
+        let universe = n_base + rng.below(20);
+        // Sealed base: every base id carries a random subset of the tokens.
+        let mut sealed: BTreeMap<String, Postings> = BTreeMap::new();
+        let mut lens = vec![0u32; n_base as usize];
+        let mut present = vec![false; n_base as usize];
+        for id in 0..n_base {
+            if rng.below(5) == 0 {
+                continue;
+            }
+            present[id as usize] = true;
+            for tok in &tokens {
+                if rng.below(2) == 0 {
+                    let tf = 1 + rng.below(6);
+                    sealed.entry((*tok).to_string()).or_default().upsert(id, tf);
+                    lens[id as usize] += tf;
+                }
+            }
+        }
+        let doc_count = present.iter().filter(|p| **p).count() as u64;
+        let total_len: u64 = lens.iter().map(|&l| u64::from(l)).sum();
+        let path = dir.join(format!("f{seed}.lseg"));
+        crate::segment::write_text_segment(
+            &path, 7, &sealed, &lens, &present, doc_count, total_len,
+        )
+        .expect("seal fixture");
+        let reader = crate::segment::SegmentReader::open(&path).expect("open fixture");
+        if resident {
+            for tok in &tokens {
+                let _ = reader.text_postings_arc(tok);
+            }
+        }
+        let mut idx = TextIndex {
+            doc_count: u64::from(universe),
+            total_doc_len: total_len + u64::from(universe),
+            segment: Some(std::sync::Arc::new(
+                crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(
+                    reader,
+                )),
+            )),
+            ..Default::default()
+        };
+        idx.lens = vec![3; universe as usize];
+        // Live overlay over base AND tail ids.
+        for tok in &tokens {
+            let mut live = Postings::default();
+            for id in 0..universe {
+                if rng.below(4) == 0 {
+                    live.upsert(id, 1 + rng.below(6));
+                }
+            }
+            if !live.docids.is_empty() && rng.below(5) != 0 {
+                idx.tokens.insert((*tok).to_string(), live);
+            }
+        }
+        // Staged rows: a text repeating each carried token tf times.
+        for id in 0..universe {
+            if rng.below(6) != 0 {
+                continue;
+            }
+            let mut text = String::new();
+            for tok in &tokens {
+                if rng.below(2) == 0 {
+                    for _ in 0..(1 + rng.below(4)) {
+                        text.push_str(tok);
+                        text.push(' ');
+                    }
+                }
+            }
+            if text.is_empty() {
+                text.push_str("filler ");
+            }
+            let row = staged_text_row::StagedTextRow::stage(
+                text.trim_end(),
+                Analyzer::WhitespaceLower,
+                crate::segment::text_row_stage::TextRowStageOptions::minimum_scratch_bytes() + 4096,
+                |_| Ok(()),
+            )
+            .expect("stage row");
+            idx.staged_rows.insert(id, std::sync::Arc::new(row));
+        }
+        for id in 0..n_base {
+            if rng.below(4) == 0 {
+                idx.tombstones.insert(id);
+            }
+        }
+        SparseFixture {
+            idx,
+            tokens,
+            universe,
+        }
+    }
+
+    fn sparse_candidates(universe: u32, seed: u64) -> Vec<u32> {
+        let mut x = seed | 1;
+        (0..universe + 5)
+            .filter(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x % 3 == 0
+            })
+            .collect()
+    }
+
+    /// `tok_postings_at` returns the `Sparse` projection on cold AND resident
+    /// postings, with the exact df of `tok_postings` and the same tf for
+    /// every candidate, over random overlays; ids outside the candidate set
+    /// are absent; an absent token or an empty active posting is `None` on
+    /// both routes.
+    #[test]
+    fn tok_postings_at_matches_tok_postings_for_every_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sparse_seen = 0usize;
+        for trial in 0..40u64 {
+            let resident = trial % 2 == 1;
+            let fx = sparse_fixture(dir.path(), 0x4246_0000 + trial, resident);
+            let candidates = sparse_candidates(fx.universe, trial * 7919 + 1);
+            for tok in fx.tokens.iter().chain(["missing"].iter()) {
+                let full = fx.idx.tok_postings(tok);
+                let sparse = fx.idx.tok_postings_at(tok, &candidates);
+                let label = format!("trial {trial} resident {resident} token {tok}");
+                match (&full, &sparse) {
+                    (None, None) => {}
+                    (Some(full), Some(sparse)) => {
+                        assert_eq!(sparse.df(), full.df(), "{label}: df");
+                        if let TokPostings::Sparse(p) = sparse {
+                            sparse_seen += 1;
+                            assert!(
+                                p.docids
+                                    .iter()
+                                    .all(|id| candidates.binary_search(id).is_ok()),
+                                "{label}: projection ⊆ candidates"
+                            );
+                            assert!(
+                                p.docids.windows(2).all(|w| w[0] < w[1]),
+                                "{label}: projection ascending"
+                            );
+                        } else if fx
+                            .idx
+                            .segment
+                            .as_ref()
+                            .unwrap()
+                            .text_postings_arc(tok)
+                            .is_some()
+                        {
+                            panic!("{label}: expected the Sparse projection");
+                        }
+                        for &id in &candidates {
+                            assert_eq!(sparse.tf(id), full.tf(id), "{label}: tf({id})");
+                        }
+                        let projected: Vec<u32> = candidates
+                            .iter()
+                            .copied()
+                            .filter(|&id| full.tf(id).is_some())
+                            .collect();
+                        assert_eq!(
+                            sparse
+                                .docids()
+                                .iter()
+                                .copied()
+                                .filter(|id| candidates.binary_search(id).is_ok())
+                                .collect::<Vec<_>>(),
+                            projected,
+                            "{label}: docids ∩ candidates"
+                        );
+                    }
+                    (full, sparse) => panic!(
+                        "{label}: presence diverged: full {:?} sparse {:?}",
+                        full.as_ref().map(|p| p.df()),
+                        sparse.as_ref().map(|p| p.df())
+                    ),
+                }
+            }
+        }
+        assert!(
+            sparse_seen > 60,
+            "the fixture must exercise the sparse route ({sparse_seen})"
+        );
+    }
+
+    /// `resolve_at` yields bit-identical BM25 scores to `resolve` for every
+    /// candidate — repeated tokens, AND and OR — and memoizes per distinct
+    /// token (one `Sparse` `Arc` shared across the repeats).
+    #[test]
+    fn resolve_at_scores_are_bit_identical_to_resolve() {
+        let dir = tempfile::tempdir().unwrap();
+        for trial in 0..30u64 {
+            let fx = sparse_fixture(dir.path(), 0x4246_1000 + trial, trial % 3 == 0);
+            let candidates = sparse_candidates(fx.universe, trial * 104729 + 3);
+            let tokens: Vec<String> = [
+                "alpha", "beta", "alpha", "gamma", "missing", "beta", "delta", "alpha",
+            ]
+            .iter()
+            .take(2 + (trial % 7) as usize)
+            .map(|t| t.to_string())
+            .collect();
+            for op in [MatchOp::And, MatchOp::Or] {
+                let full = PreparedMatch::resolve(&fx.idx, &tokens, op);
+                let sparse = PreparedMatch::resolve_at(&fx.idx, &tokens, op, &candidates);
+                let label = format!("trial {trial} op {op:?} tokens {tokens:?}");
+                if candidates.is_empty() {
+                    assert!(sparse.is_none(), "{label}: no candidates ⇒ None");
+                    continue;
+                }
+                let (full, sparse) = match (full, sparse) {
+                    (Some(f), Some(s)) => (f, s),
+                    (f, s) => panic!("{label}: presence diverged {} {}", f.is_some(), s.is_some()),
+                };
+                assert_eq!(sparse.per_token.len(), tokens.len());
+                for (i, (f, s)) in full.per_token.iter().zip(&sparse.per_token).enumerate() {
+                    assert_eq!(f.is_some(), s.is_some(), "{label}: token {i} presence");
+                    if let (Some((_, fi)), Some((_, si))) = (f, s) {
+                        assert_eq!(fi.to_bits(), si.to_bits(), "{label}: token {i} idf");
+                    }
+                }
+                let mut arcs: FastHashMap<&str, *const SparsePosting> = FastHashMap::default();
+                for (tok, entry) in tokens.iter().zip(&sparse.per_token) {
+                    if let Some((TokPostings::Sparse(p), _)) = entry {
+                        let ptr = std::sync::Arc::as_ptr(p);
+                        assert_eq!(
+                            *arcs.entry(tok.as_str()).or_insert(ptr),
+                            ptr,
+                            "{label}: {tok} memoized"
+                        );
+                    }
+                }
+                for &id in &candidates {
+                    let want = full.score(&fx.idx, id).map(f32::to_bits);
+                    let got = sparse.score(&fx.idx, id).map(f32::to_bits);
+                    assert_eq!(got, want, "{label}: score({id})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn count_common_sorted_counts_the_intersection() {
+        assert_eq!(count_common_sorted(&[], &[]), 0);
+        assert_eq!(count_common_sorted(&[1, 2, 3], &[]), 0);
+        assert_eq!(count_common_sorted(&[1, 3, 5, 7], &[2, 3, 4, 7, 9]), 2);
+        assert_eq!(count_common_sorted(&[0, 1, 2], &[0, 1, 2]), 3);
+        assert_eq!(count_common_sorted(&[10], &[1, 2, 10, 11]), 1);
+    }
+
+    /// `gallop_to` must land on exactly the `partition_point` position for
+    /// every ascending target sequence, from any starting position.
+    #[test]
+    fn gallop_to_matches_partition_point() {
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+            fn below(&mut self, n: u32) -> u32 {
+                (self.next() % u64::from(n)) as u32
+            }
+        }
+        let mut rng = Rng(0x2545F4914F6CDD1D);
+        for trial in 0..300u32 {
+            let n = rng.below(600);
+            let mut ids: Vec<u32> = (0..n).map(|_| rng.below(5000)).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            let mut targets: Vec<u32> = (0..rng.below(80)).map(|_| rng.below(5200)).collect();
+            targets.sort_unstable();
+            let mut pos = 0usize;
+            for &t in &targets {
+                let hit = gallop_to(&ids, &mut pos, t);
+                let want = ids.partition_point(|&x| x < t);
+                assert_eq!(pos, want, "trial {trial}: position for target {t}");
+                assert_eq!(hit, ids.get(want) == Some(&t), "trial {trial}: hit for {t}");
+            }
+        }
+        let ids = [3u32, 8, 8, 20];
+        let mut pos = 0;
+        assert!(!gallop_to(&ids, &mut pos, 0));
+        assert_eq!(pos, 0);
+        assert!(gallop_to(&ids, &mut pos, 3));
+        assert!(!gallop_to(&ids, &mut pos, 21));
+        assert_eq!(pos, 4);
+        assert!(!gallop_to(&ids, &mut pos, 99));
+        assert_eq!(pos, 4);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Dual-path diff test: segment-backed Hash (Hamming) read must be
 // byte-identical to the live in-RAM read (Stage 2 Phase 2d).
 // ---------------------------------------------------------------------------
@@ -16596,6 +21386,253 @@ mod segment_hash_diff_tests {
         assert_eq!(h.hash_at(1), Some(u64::MAX)); // segment
         assert_eq!(h.hash_at(2), Some(3)); // live tail
         assert_eq!(h.hash_at(99), None);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Exact hamming as an AND filter (#4246): `and[hamming(max_distance 0), match]`
+// must plan as filter-driven (bitmap driver / per-doc predicate) and return
+// the SAME hit set with byte-identical scores as the materialize-and-intersect
+// fallback, which a fuzzy hamming (`max_distance > 0`) still takes.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod exact_hamming_filter_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn fieldspec(t: FieldType, analyzer: Option<Analyzer>) -> FieldSpec {
+        FieldSpec {
+            field_type: t,
+            analyzer,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+
+    /// `sig` (Hash) + `body` (Text, whitespace-lower).
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert("sig".into(), fieldspec(FieldType::Hash, None));
+        fields.insert(
+            "body".into(),
+            fieldspec(FieldType::Text, Some(Analyzer::WhitespaceLower)),
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    /// Even-weight code `(i << 1) | parity(i)`: every pair of hashes sits at
+    /// Hamming distance ≥ 2, so `max_distance 1` (fallback path) and
+    /// `max_distance 0` (filter path) select exactly the same docs.
+    fn sig(i: u32) -> u64 {
+        ((i as u64) << 1) | (i.count_ones() & 1) as u64
+    }
+
+    /// Every doc shares most tokens (like the durable workload's ngram text)
+    /// and carries one unique token, so a full-text `match … op=and` selects
+    /// exactly one doc while every token's posting spans the corpus.
+    fn body(i: u32) -> String {
+        let parity = if i % 2 == 0 { "even" } else { "odd" };
+        format!("doc {i} shared token stream alpha beta gamma {parity}")
+    }
+
+    fn index(e: &Engine, eid: &str, hash: u64, text: &str) {
+        e.index(
+            "c",
+            IndexRequest {
+                items: vec![
+                    crate::types::IndexItem {
+                        external_id: eid.into(),
+                        field: "sig".into(),
+                        value: FieldValue::String(format!("{hash:016x}")),
+                        version: None,
+                    },
+                    crate::types::IndexItem {
+                        external_id: eid.into(),
+                        field: "body".into(),
+                        value: FieldValue::String(text.into()),
+                        version: None,
+                    },
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    fn seed(n: u32) -> Arc<Engine> {
+        let e = Arc::new(Engine::new());
+        e.create_collection("c", schema()).unwrap();
+        for i in 0..n {
+            index(&e, &format!("d{i}"), sig(i), &body(i));
+        }
+        e
+    }
+
+    fn hamming_raw(hash: u64, max: u32) -> QueryNode {
+        QueryNode::Hamming(HammingQuery {
+            field: "sig".into(),
+            hash: format!("{hash:016x}"),
+            max_distance: max,
+        })
+    }
+
+    fn hamming(i: u32, max: u32) -> QueryNode {
+        hamming_raw(sig(i), max)
+    }
+
+    fn matchq(text: &str) -> QueryNode {
+        QueryNode::Match(MatchQuery {
+            field: "body".into(),
+            text: text.into(),
+            op: MatchOp::And,
+        })
+    }
+
+    /// (external_id, score_bits) — order-independent, byte-exact.
+    fn run(e: &Engine, query: QueryNode) -> BTreeMap<String, u32> {
+        e.search(
+            "c",
+            SearchRequest {
+                query,
+                limit: 100,
+                offset: 0,
+                cursor: None,
+                routing_key: None,
+                sort: None,
+                track_total: true,
+                collapse: None,
+            },
+        )
+        .unwrap()
+        .hits
+        .into_iter()
+        .map(|h| (h.external_id, h.score.to_bits()))
+        .collect()
+    }
+
+    #[test]
+    fn exact_hamming_is_a_filter_and_fuzzy_is_not() {
+        assert!(is_exact_hamming(&hamming(3, 0)));
+        assert!(is_predicable(&hamming(3, 0)));
+        assert!(!is_exact_hamming(&hamming(3, 1)));
+        assert!(!is_predicable(&hamming(3, 1)));
+
+        let e = seed(8);
+        let state = e.state.read().unwrap();
+        let coll = state.collections.get("c").unwrap();
+        assert_eq!(estimate_selectivity(coll, &hamming(3, 0)), 1);
+        assert_eq!(estimate_selectivity(coll, &hamming(3, 1)), u64::MAX);
+        // The exact hamming drives the AND ahead of a corpus-wide match, so
+        // the match is scored over the hash hits, never materialized.
+        assert!(
+            estimate_selectivity(coll, &hamming(3, 0))
+                <= estimate_selectivity(coll, &matchq("shared token")),
+            "exact hamming must be the cheaper driver"
+        );
+    }
+
+    #[test]
+    fn exact_hamming_bitmap_and_predicate_match_eval_hamming() {
+        let e = seed(16);
+        // Seal the hash field so `hash_at` serves ids from the segment, then
+        // add a live-tail doc: the filter reads must cover both sources.
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            e.__seal_hash_field_to_segment("c", "sig", dir.path())
+                .unwrap(),
+            16
+        );
+        index(&e, "d16", sig(16), &body(16));
+
+        let state = e.state.read().unwrap();
+        let coll = state.collections.get("c").unwrap();
+        for i in [0u32, 5, 15, 16, 40] {
+            let q = hamming(i, 0);
+            let QueryNode::Hamming(hq) = &q else {
+                unreachable!()
+            };
+            let want: RoaringBitmap = eval_hamming(coll, hq).unwrap().into_keys().collect();
+            assert_eq!(want.len(), u64::from(i < 17), "sig({i}) hit count");
+            let got = eval_filter_bitmap(coll, &q).unwrap();
+            assert_eq!(got, want, "bitmap for sig({i})");
+            for id in 0..17u32 {
+                let pred = clause_matches(coll, &q, id).unwrap();
+                assert_eq!(
+                    pred,
+                    want.contains(id).then_some(1.0),
+                    "predicate sig({i}) on id {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn exact_hamming_and_match_scores_are_byte_identical_to_fallback() {
+        let e = seed(24);
+        for i in [0u32, 7, 23] {
+            let full = body(i);
+            // Fallback: a fuzzy hamming is never predicable, and the pairwise
+            // distance ≥ 2 makes `max_distance 1` select the same single doc.
+            let fallback = run(&e, QueryNode::And(vec![hamming(i, 1), matchq(&full)]));
+            assert_eq!(fallback.len(), 1, "sig({i}) selects exactly its doc");
+            assert!(fallback.contains_key(&format!("d{i}")));
+
+            // Filter path, top-k entry (`eval_predicable_and_topk`).
+            let topk = run(&e, QueryNode::And(vec![hamming(i, 0), matchq(&full)]));
+            assert_eq!(topk, fallback, "top-k filter path vs fallback for d{i}");
+
+            // Filter path, general `eval_query` AND branch (reached through a
+            // single-child `or`), with the conjuncts in the other order.
+            let general = run(
+                &e,
+                QueryNode::Or(vec![QueryNode::And(vec![matchq(&full), hamming(i, 0)])]),
+            );
+            let general_fallback = run(
+                &e,
+                QueryNode::Or(vec![QueryNode::And(vec![matchq(&full), hamming(i, 1)])]),
+            );
+            assert_eq!(
+                general, general_fallback,
+                "eval_query filter path vs fallback for d{i}"
+            );
+            assert_eq!(
+                general, fallback,
+                "conjunct order must not change the score for d{i}"
+            );
+
+            // A wrong-field text under the same hash misses on every path.
+            let wrong = format!("readback mismatch window {i} body");
+            assert!(run(&e, QueryNode::And(vec![hamming(i, 0), matchq(&wrong)])).is_empty());
+            assert!(run(&e, QueryNode::And(vec![hamming(i, 1), matchq(&wrong)])).is_empty());
+        }
+    }
+
+    #[test]
+    fn fuzzy_hamming_keeps_its_graded_score_on_the_fallback() {
+        let e = Arc::new(Engine::new());
+        e.create_collection("c", schema()).unwrap();
+        index(&e, "near", 0, "tok");
+        index(&e, "far", 1, "tok"); // distance 1 from the query hash 0
+
+        let bm25 = run(&e, matchq("tok"));
+        let got = run(&e, QueryNode::And(vec![hamming_raw(0, 1), matchq("tok")]));
+        assert_eq!(got.len(), 2);
+        assert_eq!(
+            got["near"],
+            (1.0f32 + f32::from_bits(bm25["near"])).to_bits()
+        );
+        assert_eq!(
+            got["far"],
+            ((64 - 1) as f32 / 64.0 + f32::from_bits(bm25["far"])).to_bits()
+        );
+        // And the exact form drops the distance-1 doc.
+        let exact = run(&e, QueryNode::And(vec![hamming_raw(0, 0), matchq("tok")]));
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact["near"], got["near"]);
     }
 }
 
@@ -16753,6 +21790,28 @@ mod segment_vector_diff_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hash_snapshot_keeps_sealed_base_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut interner = Interner::default();
+        let id = interner.intern("document");
+        let mut hash = HashIndex::default();
+        hash.forward.insert(id, 42);
+        let mut field = FieldIndex::Hash(hash);
+        field
+            .seal_to_segment("sig", dir.path(), 1, 7, &|_| true)
+            .unwrap();
+        let FieldIndexSnapshot::Hash { forward, .. } = field.to_snapshot(&interner, &[id]).unwrap()
+        else {
+            panic!("hash snapshot")
+        };
+        assert_eq!(
+            forward.get("document"),
+            Some(&42),
+            "sealed hash value missing from backup"
+        );
+    }
+
     use crate::types::{DuplicatedQuery, ExistsQuery};
 
     fn build_users_schema() -> CreateCollectionRequest {
@@ -16815,6 +21874,647 @@ mod tests {
             value,
             version: None,
         }
+    }
+
+    fn record_cost_schema(
+        vector_backend: Option<crate::types::VectorBackend>,
+    ) -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "text".into(),
+            FieldSpec {
+                field_type: FieldType::Text,
+                analyzer: Some(Analyzer::Ngram),
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        fields.insert(
+            "email".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        if let Some(backend) = vector_backend {
+            fields.insert(
+                "vector".into(),
+                FieldSpec {
+                    field_type: FieldType::Vector,
+                    analyzer: None,
+                    multi: None,
+                    dim: Some(3),
+                    metric: Some(crate::types::VectorMetric::Cosine),
+                    backend: Some(backend),
+                    quantize: None,
+                },
+            );
+        }
+        CreateCollectionRequest { fields }
+    }
+
+    fn estimated_total(record: crate::change_record_cost::RecordCost) -> usize {
+        record.active + record.frozen + record.prepublish
+    }
+
+    fn ready_record_cost(
+        engine: &Engine,
+        entry: &crate::log_entry::RaftLogEntry,
+    ) -> crate::change_record_cost::RecordCost {
+        match engine.estimate_record_cost(entry) {
+            crate::change_record_cost::RecordEstimate::Ready(cost) => cost,
+            retained => panic!("expected a decidable record cost, got {retained:?}"),
+        }
+    }
+
+    #[test]
+    fn record_cost_uses_engine_schema_and_known_external_id() {
+        let engine = Engine::new();
+        engine
+            .create_collection("c", record_cost_schema(None))
+            .unwrap();
+        let entry = crate::log_entry::RaftLogEntry::Index {
+            collection_id: "c".into(),
+            req: IndexRequest {
+                items: vec![item(
+                    "doc",
+                    "email",
+                    FieldValue::String("a@example.test".into()),
+                )],
+                request_id: None,
+            },
+        };
+        let new_document = ready_record_cost(&engine, &entry);
+        engine
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![item(
+                        "doc",
+                        "email",
+                        FieldValue::String("a@example.test".into()),
+                    )],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        let existing_document = ready_record_cost(&engine, &entry);
+
+        assert!(
+            estimated_total(new_document) > estimated_total(existing_document),
+            "a new external ID must include interner and coverage ownership"
+        );
+    }
+
+    #[test]
+    fn record_cost_charges_replace_tombstones_and_actual_unindex_coverage() {
+        let engine = Engine::new();
+        engine
+            .create_collection("c", record_cost_schema(None))
+            .unwrap();
+        engine
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![
+                        item("doc", "email", FieldValue::String("a@example.test".into())),
+                        item("doc", "text", FieldValue::String("alphabet".into())),
+                    ],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+
+        let replace = crate::log_entry::RaftLogEntry::ReplaceDocs {
+            collection_id: "c".into(),
+            req: ReplaceDocsRequest {
+                docs: vec![crate::types::ReplaceDocItem {
+                    external_id: "doc".into(),
+                    version: None,
+                    fields: BTreeMap::from([(
+                        "email".into(),
+                        FieldValue::String("next@example.test".into()),
+                    )]),
+                }],
+            },
+        };
+        let replace_cost = ready_record_cost(&engine, &replace);
+        let unindex = crate::log_entry::RaftLogEntry::UnindexDocs {
+            collection_id: "c".into(),
+            req: crate::types::BatchUnindexDocsRequest {
+                external_ids: vec!["doc".into()],
+            },
+        };
+        let covered_unindex = ready_record_cost(&engine, &unindex);
+        let missing_unindex = ready_record_cost(
+            &engine,
+            &crate::log_entry::RaftLogEntry::UnindexDocs {
+                collection_id: "c".into(),
+                req: crate::types::BatchUnindexDocsRequest {
+                    external_ids: vec!["missing".into()],
+                },
+            },
+        );
+
+        assert!(
+            estimated_total(replace_cost) > 0,
+            "omitted text must add a tombstone cost"
+        );
+        assert!(
+            estimated_total(covered_unindex) > estimated_total(missing_unindex),
+            "unindex must use current coverage instead of a caller supplied field count"
+        );
+    }
+
+    #[test]
+    fn record_cost_skips_deduplicated_requests_and_excludes_vector_graph() {
+        let flat = Engine::new();
+        let hnsw = Engine::new();
+        flat.create_collection(
+            "c",
+            record_cost_schema(Some(crate::types::VectorBackend::FlatCpu)),
+        )
+        .unwrap();
+        hnsw.create_collection(
+            "c",
+            record_cost_schema(Some(crate::types::VectorBackend::HnswCpu)),
+        )
+        .unwrap();
+        let vector_entry = |collection_id: &str| crate::log_entry::RaftLogEntry::Index {
+            collection_id: collection_id.into(),
+            req: IndexRequest {
+                items: vec![item(
+                    "doc",
+                    "vector",
+                    FieldValue::Vector(vec![1.0, 2.0, 3.0]),
+                )],
+                request_id: None,
+            },
+        };
+        assert_eq!(
+            ready_record_cost(&flat, &vector_entry("c")),
+            ready_record_cost(&hnsw, &vector_entry("c")),
+            "pending vector payload cost must not charge an HNSW graph"
+        );
+
+        let request_id = "request-1";
+        let valid_request = IndexRequest {
+            items: vec![item(
+                "doc",
+                "vector",
+                FieldValue::Vector(vec![1.0, 2.0, 3.0]),
+            )],
+            request_id: Some(request_id.into()),
+        };
+        flat.index("c", valid_request.clone()).unwrap();
+        let duplicate = crate::log_entry::RaftLogEntry::Index {
+            collection_id: "c".into(),
+            req: valid_request,
+        };
+        assert_eq!(
+            ready_record_cost(&flat, &duplicate),
+            crate::change_record_cost::RecordCost::default()
+        );
+    }
+
+    #[test]
+    fn record_cost_ngram_bound_covers_public_tokenizer_for_ascii_and_unicode() {
+        for input in ["abcd", "İstanbul 42"] {
+            let actual = crate::tokenize::tokenize(input, Analyzer::Ngram);
+            let bound = crate::change_record_cost::text_upper_bound(
+                input,
+                crate::change_record_cost::AnalyzerKind::Ngram,
+                crate::tokenize::DEFAULT_NGRAM_MIN,
+                crate::tokenize::DEFAULT_NGRAM_MAX,
+            )
+            .unwrap();
+            assert!(bound.terms >= actual.len());
+            assert!(bound.total_utf8_bytes >= actual.iter().map(|term| term.len()).sum::<usize>());
+        }
+    }
+
+    #[test]
+    fn frozen_checkpoint_replays_the_same_captured_payload_after_live_mutation() {
+        let engine = Engine::new();
+        engine.create_collection("c", build_users_schema()).unwrap();
+        engine
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![
+                        item(
+                            "doc",
+                            "bio",
+                            FieldValue::String("captured biography".into()),
+                        ),
+                        item(
+                            "doc",
+                            "email",
+                            FieldValue::String("captured@example.test".into()),
+                        ),
+                        item(
+                            "doc",
+                            "tags",
+                            FieldValue::StringList(vec!["captured".into()]),
+                        ),
+                        item("doc", "age", FieldValue::Number(42.0)),
+                    ],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        // A restored legacy collection has no complete change journal. Keep
+        // this test on the full-base retry path; fresh journals have their own
+        // sparse ownership and generation round-trip tests below.
+        engine.restore(engine.snapshot().unwrap()).unwrap();
+        let frozen = engine.freeze_checkpoint_collections(None).unwrap();
+        let first = tempfile::tempdir().unwrap();
+        frozen.write(first.path(), 7).unwrap();
+
+        engine
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![item(
+                        "doc",
+                        "email",
+                        FieldValue::String("later@example.test".into()),
+                    )],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        let replay = tempfile::tempdir().unwrap();
+        frozen.write(replay.path(), 7).unwrap();
+
+        let first_engine = Engine::new();
+        first_engine.reopen_from_segment_dir(first.path()).unwrap();
+        let replay_engine = Engine::new();
+        replay_engine
+            .reopen_from_segment_dir(replay.path())
+            .unwrap();
+        for checkpoint in [&first_engine, &replay_engine] {
+            let result = checkpoint
+                .search(
+                    "c",
+                    SearchRequest {
+                        query: QueryNode::Term(crate::types::TermQuery {
+                            field: "email".into(),
+                            value: FieldValue::String("captured@example.test".into()),
+                        }),
+                        limit: 10,
+                        offset: 0,
+                        cursor: None,
+                        routing_key: None,
+                        sort: None,
+                        track_total: true,
+                        collapse: None,
+                    },
+                )
+                .unwrap();
+            assert_eq!(result.hits.len(), 1);
+            assert_eq!(result.hits[0].external_id, "doc");
+            let text = checkpoint
+                .search(
+                    "c",
+                    SearchRequest {
+                        query: QueryNode::Match(crate::types::MatchQuery {
+                            field: "bio".into(),
+                            text: "captured".into(),
+                            op: crate::types::MatchOp::And,
+                        }),
+                        limit: 10,
+                        offset: 0,
+                        cursor: None,
+                        routing_key: None,
+                        sort: None,
+                        track_total: true,
+                        collapse: None,
+                    },
+                )
+                .unwrap();
+            assert_eq!(text.hits.len(), 1, "replayed text field missing");
+            for field in ["email", "tags", "age"] {
+                let exists = checkpoint
+                    .search(
+                        "c",
+                        SearchRequest {
+                            query: QueryNode::Exists(ExistsQuery {
+                                field: field.into(),
+                            }),
+                            limit: 10,
+                            offset: 0,
+                            cursor: None,
+                            routing_key: None,
+                            sort: None,
+                            track_total: true,
+                            collapse: None,
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(exists.hits.len(), 1, "replayed field `{field}` missing");
+            }
+        }
+    }
+
+    #[test]
+    fn initial_sparse_capture_requires_complete_journal_provenance() {
+        let engine = Engine::new();
+        engine.create_collection("c", build_users_schema()).unwrap();
+        engine
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![item(
+                        "legacy",
+                        "email",
+                        FieldValue::String("legacy-value".into()),
+                    )],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        engine.restore(engine.snapshot().unwrap()).unwrap();
+        engine
+            .prepare_checkpoint_namespace(
+                std::path::Path::new("/unused-test-checkpoint-namespace"),
+                1,
+            )
+            .unwrap();
+        let frozen = engine.freeze_checkpoint_collections(None).unwrap();
+        assert!(
+            frozen.capture.initial_sparse.is_empty(),
+            "a missing origin must not imply journal completeness"
+        );
+        assert!(
+            matches!(&frozen.files[0].1, FrozenCollectionFiles::Base { eids, .. } if !eids.is_empty())
+        );
+
+        let fresh = Engine::new();
+        fresh.create_collection("c", build_users_schema()).unwrap();
+        fresh.drop_field("c", "age").unwrap();
+        let frozen = fresh.freeze_checkpoint_collections(None).unwrap();
+        assert!(
+            frozen.capture.initial_sparse.is_empty(),
+            "schema changes must invalidate initial journal provenance"
+        );
+        assert!(matches!(
+            &frozen.files[0].1,
+            FrozenCollectionFiles::Base { .. }
+        ));
+    }
+
+    #[test]
+    fn first_checkpoint_freeze_does_not_clone_live_field_rows() {
+        for backend in [
+            crate::types::VectorBackend::FlatCpu,
+            crate::types::VectorBackend::HnswCpu,
+        ] {
+            let engine = Engine::new();
+            let mut schema = build_users_schema();
+            let mut vector = record_cost_schema(Some(backend));
+            schema
+                .fields
+                .insert("vector".into(), vector.fields.remove("vector").unwrap());
+            let mut hash = schema.fields["email"].clone();
+            hash.field_type = FieldType::Hash;
+            schema.fields.insert("sig".into(), hash);
+            engine.create_collection("c", schema).unwrap();
+            let fields = [
+                ("email", FieldValue::String("captured".into())),
+                ("bio", FieldValue::String("captured captured text".into())),
+                (
+                    "tags",
+                    serde_json::from_value(serde_json::json!(["one", "two"])).unwrap(),
+                ),
+                ("age", FieldValue::Number(42.0)),
+                ("sig", FieldValue::String("000000000000002a".into())),
+                (
+                    "vector",
+                    serde_json::from_value(serde_json::json!([1.0, 0.0, 0.0])).unwrap(),
+                ),
+            ];
+            engine
+                .index(
+                    "c",
+                    IndexRequest {
+                        items: fields
+                            .iter()
+                            .map(|(field, value)| item("sparse-first", field, value.clone()))
+                            .collect(),
+                        request_id: None,
+                    },
+                )
+                .unwrap();
+            let frozen = engine.freeze_checkpoint_collections(None).unwrap();
+            assert!(
+                frozen
+                    .files
+                    .iter()
+                    .all(|(_, files)| !matches!(files, FrozenCollectionFiles::Base { .. })),
+                "fresh checkpoint must freeze journal handles instead of cloning live field rows"
+            );
+            engine.delete("c", "sparse-first", None).unwrap();
+            let output = tempfile::tempdir().unwrap();
+            let capture = frozen.write(output.path(), 0).unwrap();
+            for (field, _) in fields {
+                let saved = capture.field_deltas["c"][field][0].1.as_ref().unwrap();
+                let row = capture.frozen_changes["c"]
+                    .row(field, "sparse-first")
+                    .unwrap();
+                assert!(
+                    saved.same_identity(row.value().unwrap()),
+                    "first checkpoint must retain the captured row handle for {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn checkpoint_freeze_exchanges_journal_for_all_field_backends() {
+        for backend in [
+            crate::types::VectorBackend::FlatCpu,
+            crate::types::VectorBackend::HnswCpu,
+        ] {
+            let engine = std::sync::Arc::new(Engine::new());
+            let mut schema = build_users_schema();
+            let mut vector = record_cost_schema(Some(backend));
+            schema
+                .fields
+                .insert("vector".into(), vector.fields.remove("vector").unwrap());
+            let mut hash = schema.fields["email"].clone();
+            hash.field_type = FieldType::Hash;
+            schema.fields.insert("sig".into(), hash);
+            engine.create_collection("c", schema).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let store = crate::segment_rdb::SegmentRdbStore::new(directory.path()).unwrap();
+            store.save(&engine, 0).unwrap();
+            let fields = [
+                ("email", FieldValue::String("captured".into())),
+                ("bio", FieldValue::String("captured captured text".into())),
+                (
+                    "tags",
+                    serde_json::from_value(serde_json::json!(["one", "two"])).unwrap(),
+                ),
+                (
+                    "age",
+                    serde_json::from_value(serde_json::json!(42)).unwrap(),
+                ),
+                ("sig", FieldValue::String("000000000000002a".into())),
+                (
+                    "vector",
+                    serde_json::from_value(serde_json::json!([1.0, 0.0, 0.0])).unwrap(),
+                ),
+            ];
+            engine
+                .index(
+                    "c",
+                    IndexRequest {
+                        items: fields
+                            .iter()
+                            .map(|(name, value)| item("sparse-1000000", name, value.clone()))
+                            .collect(),
+                        request_id: None,
+                    },
+                )
+                .unwrap();
+            let lineage = {
+                let state = engine.state.read().unwrap();
+                let coll = &state.collections["c"];
+                for (field, _) in &fields {
+                    assert!(coll
+                        .change_journal
+                        .active_revision(field, "sparse-1000000")
+                        .is_some());
+                }
+                coll.checkpoint_lineage
+                    .as_ref()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            };
+            let frozen = engine
+                .freeze_checkpoint_collections(Some(&lineage))
+                .unwrap();
+            {
+                let state = engine.state.read().unwrap();
+                for (field, _) in &fields {
+                    assert_eq!(
+                        state.collections["c"]
+                            .change_journal
+                            .active_revision(field, "sparse-1000000"),
+                        None,
+                        "checkpoint must exchange active journal ownership during capture"
+                    );
+                }
+            }
+            engine.delete("c", "sparse-1000000", None).unwrap();
+            let written = tempfile::tempdir().unwrap();
+            let captured = frozen.write(written.path(), 1).unwrap();
+            let values = &captured.field_deltas["c"];
+            for (field, _) in &fields {
+                assert!(
+                    values[*field][0].1.as_ref().unwrap().same_identity(
+                        captured.frozen_changes["c"]
+                            .row(field, "sparse-1000000")
+                            .unwrap()
+                            .value()
+                            .unwrap(),
+                    ),
+                    "encoding must borrow the frozen typed payload without copying it"
+                );
+            }
+            assert!(
+                matches!(values["email"][0].1.as_deref(), Some(CheckpointValue::Keyword(value)) if value == "captured")
+            );
+            assert!(
+                matches!(values["age"][0].1.as_deref(), Some(CheckpointValue::Number(value)) if *value == 42.0)
+            );
+            assert!(matches!(
+                values["sig"][0].1.as_deref(),
+                Some(CheckpointValue::Hash(42))
+            ));
+            assert!(
+                matches!(values["tags"][0].1.as_deref(), Some(CheckpointValue::Set(value)) if value == &["one", "two"])
+            );
+            assert!(
+                matches!(values["vector"][0].1.as_deref(), Some(CheckpointValue::Vector(value)) if value == &[1.0, 0.0, 0.0])
+            );
+            assert!(
+                matches!(values["bio"][0].1.as_deref(), Some(CheckpointValue::Text { doc_len: 3, tokens }) if tokens.get("captured") == Some(&2))
+            );
+            let deleted = engine
+                .freeze_checkpoint_collections(Some(&lineage))
+                .unwrap();
+            let deleted_dir = tempfile::tempdir().unwrap();
+            let deleted_capture = deleted.write(deleted_dir.path(), 2).unwrap();
+            for (field, _) in &fields {
+                assert!(
+                    deleted_capture.field_deltas["c"][*field][0].1.is_none(),
+                    "delete must be an explicit frozen tombstone for {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn field_dirty_rows_are_per_field_latest_and_revision_safe() {
+        let mut schema = BTreeMap::new();
+        for name in ["left", "right"] {
+            schema.insert(
+                name.to_owned(),
+                FieldSpec {
+                    field_type: FieldType::Keyword,
+                    analyzer: None,
+                    multi: None,
+                    dim: None,
+                    metric: None,
+                    backend: None,
+                    quantize: None,
+                },
+            );
+        }
+        schema.insert(
+            "number".to_owned(),
+            FieldSpec {
+                field_type: FieldType::Number,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        let mut collection = Collection::new(schema).unwrap();
+        collection.mark_field_dirty("left", "same").unwrap();
+        let captured = collection.field_dirty_snapshot();
+        collection.mark_field_dirty("left", "same").unwrap();
+        collection.mark_field_dirty("right", "same").unwrap();
+        collection.mark_field_dirty("left", "other").unwrap();
+
+        assert_eq!(collection.field_dirty_len("left"), 2);
+        assert_eq!(collection.field_dirty_len("right"), 1);
+        collection.mark_field_dirty("number", "same").unwrap();
+        assert_eq!(collection.field_dirty_len("number"), 1);
+        assert!(!collection.requires_full_checkpoint());
+        // A field not handled by this capture format must take a full checkpoint.
+        collection
+            .mark_field_dirty("unknown-field", "same")
+            .unwrap();
+        assert!(collection.requires_full_checkpoint());
+        collection.acknowledge_field_dirty(&captured);
+        assert_eq!(collection.field_dirty_len("left"), 2);
+        assert_eq!(collection.field_dirty_len("right"), 1);
     }
 
     /// Walk every page through the returned cursors; assert the
@@ -22574,6 +28274,231 @@ mod multikey_sort_cap_tests {
         );
     }
 }
+#[cfg(test)]
+mod sparse_scalar_overlay_tests {
+    use super::*;
+
+    #[test]
+    fn sealed_number_reads_replacement_overlay_and_then_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("number.lseg");
+        crate::segment::write_number_segment(&path, 1, &[Some(1.0)]).unwrap();
+        let mut number = NumberIndex::default();
+        number.segment = Some(Arc::new(
+            crate::composed_segment::ComposedSegmentReader::from_base(Arc::new(
+                crate::segment::SegmentReader::open(&path).unwrap(),
+            )),
+        ));
+        number.tombstones.insert(0);
+        number.forward.insert(0, SortableF64::new(2.0).unwrap());
+        assert_eq!(number.live_number_at(0).map(|v| v.to_f64()), Some(2.0));
+        number.forward.remove(&0);
+        assert_eq!(number.live_number_at(0), None);
+    }
+
+    #[test]
+    fn sparse_high_delta_does_not_hide_middle_live_scalar_overlays() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.lseg");
+        let delta = dir.path().join("delta.lseg");
+
+        crate::segment::write_keyword_segment(&base, 1, &[Some("base")], &BTreeMap::new()).unwrap();
+        crate::segment::write_keyword_segment(&delta, 1, &[Some("delta")], &BTreeMap::new())
+            .unwrap();
+        let keyword_view = crate::composed_segment::ComposedSegmentReader::from_base(Arc::new(
+            crate::segment::SegmentReader::open(&base).unwrap(),
+        ))
+        .with_delta(
+            Arc::new(crate::segment::SegmentReader::open(&delta).unwrap()),
+            vec![100],
+        )
+        .unwrap();
+        let mut keyword = KeywordIndex::default();
+        keyword.segment = Some(Arc::new(keyword_view));
+        keyword.forward.insert(2, "middle".into());
+        assert_eq!(keyword.keyword_at(2).as_deref(), Some("middle"));
+
+        let base_set = ["base".to_string()];
+        crate::segment::write_set_segment(&base, 1, &[Some(base_set.as_slice())], &BTreeMap::new())
+            .unwrap();
+        let delta_set = ["delta".to_string()];
+        crate::segment::write_set_segment(
+            &delta,
+            1,
+            &[Some(delta_set.as_slice())],
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let set_view = crate::composed_segment::ComposedSegmentReader::from_base(Arc::new(
+            crate::segment::SegmentReader::open(&base).unwrap(),
+        ))
+        .with_delta(
+            Arc::new(crate::segment::SegmentReader::open(&delta).unwrap()),
+            vec![100],
+        )
+        .unwrap();
+        let mut set = SetIndex::default();
+        set.segment = Some(Arc::new(set_view));
+        set.forward
+            .insert(2, ["middle".to_string()].into_iter().collect());
+        assert!(set.set_contains(2, "middle"));
+        assert_eq!(
+            set.set_members(2),
+            Some(["middle".to_string()].into_iter().collect())
+        );
+
+        crate::segment::write_hash_segment(&base, 1, &[Some(1)]).unwrap();
+        crate::segment::write_hash_segment(&delta, 1, &[Some(3)]).unwrap();
+        let hash_view = crate::composed_segment::ComposedSegmentReader::from_base(Arc::new(
+            crate::segment::SegmentReader::open(&base).unwrap(),
+        ))
+        .with_delta(
+            Arc::new(crate::segment::SegmentReader::open(&delta).unwrap()),
+            vec![100],
+        )
+        .unwrap();
+        let mut hash = HashIndex::default();
+        hash.segment = Some(Arc::new(hash_view));
+        hash.forward.insert(2, 2);
+        assert_eq!(hash.hash_at(2), Some(2));
+    }
+}
+
+#[cfg(test)]
+mod scalar_checkpoint_cut_tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_capture_marks_unsealed_scalar_fields_with_empty_cuts() {
+        let mut fields = BTreeMap::new();
+        for (name, field_type) in [
+            ("keyword", FieldType::Keyword),
+            ("number", FieldType::Number),
+            ("set", FieldType::Set),
+        ] {
+            fields.insert(
+                name.into(),
+                FieldSpec {
+                    field_type,
+                    analyzer: None,
+                    multi: None,
+                    dim: None,
+                    metric: None,
+                    backend: None,
+                    quantize: None,
+                },
+            );
+        }
+        let engine = Engine::new();
+        engine
+            .create_collection("c", CreateCollectionRequest { fields })
+            .unwrap();
+        let frozen = engine.freeze_checkpoint_collections(None).unwrap();
+        let cuts = frozen.capture.scalar_cuts.get("c").unwrap();
+        assert_eq!(cuts.len(), 3);
+        for field in ["keyword", "number", "set"] {
+            assert!(cuts.contains_key(field), "{field} must get an empty cut");
+        }
+    }
+
+    #[test]
+    fn scalar_checkpoint_retirement_keeps_a_mutation_after_preparation() {
+        let engine = Engine::with_change_budget(
+            crate::change_budget::ChangeBudget::with_hard_limit(32 * 1024 * 1024),
+        );
+        engine
+            .create_collection_inner(
+                "c",
+                CreateCollectionRequest {
+                    fields: serde_json::from_value(serde_json::json!({
+                        "keyword":{"type":"keyword"}, "number":{"type":"number"}
+                    }))
+                    .unwrap(),
+                },
+            )
+            .unwrap();
+        let write = |value: &str, include_number: bool| {
+            let mut items = vec![crate::types::IndexItem {
+                external_id: "e".into(),
+                field: "keyword".into(),
+                value: FieldValue::String(value.into()),
+                version: None,
+            }];
+            if include_number {
+                items.push(crate::types::IndexItem {
+                    external_id: "e".into(),
+                    field: "number".into(),
+                    value: FieldValue::Number(3.0),
+                    version: None,
+                });
+            }
+            engine
+                .index_inner(
+                    "c",
+                    IndexRequest {
+                        items,
+                        request_id: None,
+                    },
+                    None,
+                    None,
+                )
+                .unwrap();
+        };
+        write("captured", true);
+        // Select the full-base branch so both ordinary overlay retirement and
+        // a newer ordinary overlay cross the real Engine publication seam.
+        engine
+            .state
+            .write()
+            .unwrap()
+            .collections
+            .get_mut("c")
+            .unwrap()
+            .requires_full_checkpoint = true;
+        let root = tempfile::tempdir().unwrap();
+        let frozen = engine.freeze_checkpoint_collections(None).unwrap();
+        let mut capture = frozen.write(root.path(), 0).unwrap();
+        engine
+            .prepare_scalar_checkpoint_publications(&mut capture)
+            .unwrap();
+        write("later", false);
+        engine
+            .bind_checkpoint_origins(root.path(), &mut capture)
+            .unwrap();
+        let state = engine.state.read().unwrap();
+        let coll = &state.collections["c"];
+        let id = coll.interner.id("e").unwrap();
+        let FieldIndex::Keyword(keyword) = &coll.fields["keyword"] else {
+            unreachable!()
+        };
+        assert_eq!(
+            keyword.keyword_at(id).as_deref(),
+            Some("later"),
+            "publication must preserve the ordinary write made after preparation"
+        );
+        assert!(
+            keyword
+                .dense_forward
+                .get(id as usize)
+                .and_then(Option::as_ref)
+                .is_some()
+                || keyword.forward.contains_key(&id)
+        );
+        let FieldIndex::Number(number) = &coll.fields["number"] else {
+            unreachable!()
+        };
+        assert_eq!(number.number_at(id).unwrap().to_f64(), 3.0);
+        assert!(
+            number.forward.is_empty(),
+            "unchanged captured overlays must be retired"
+        );
+        assert!(number
+            .dense_forward
+            .get(id as usize)
+            .is_none_or(|value| *value == MISSING_SORTABLE_F64_BITS));
+        assert!(number.segment.is_some());
+    }
+}
 // CODEGEN-END
 
 #[cfg(test)]
@@ -22732,5 +28657,236 @@ mod batch_unindex_docs_tests {
             .unwrap_err();
         assert!(err.to_string().contains("at least one"), "got: {err}");
         assert_eq!(engine.stats("docs").unwrap().documents_indexed, 0);
+    }
+
+    #[test]
+    fn background_merge_capture_and_bind_preserve_live_dirty_ownership() {
+        let engine = Engine::new();
+        engine
+            .create_collection(
+                "docs",
+                serde_json::from_value(serde_json::json!({"fields":{"email":{"type":"keyword"}}}))
+                    .unwrap(),
+            )
+            .unwrap();
+        engine
+            .index(
+                "docs",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "one".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("old".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        let dirty = engine.checkpoint_dirty_fields().unwrap();
+        let (generation, schema, fields) = dirty["docs"].clone();
+        assert_eq!(fields, BTreeSet::from(["email".to_owned()]));
+        let expected = BTreeMap::from([(
+            "docs".to_owned(),
+            CheckpointCollectionIdentity {
+                generation,
+                schema_version: schema,
+                data_version: 0,
+            },
+        )]);
+        let mut capture = engine.capture_background_merge(expected).unwrap();
+        assert!(capture.field_dirty.is_empty());
+        assert!(capture.frozen_changes.is_empty());
+        assert!(capture.field_deltas.is_empty());
+        {
+            let mut state = engine.state.write().unwrap();
+            state
+                .collections
+                .get_mut("docs")
+                .unwrap()
+                .requires_full_checkpoint = true;
+        }
+        let root = tempfile::tempdir().unwrap();
+        engine
+            .bind_background_merge(root.path(), &mut capture)
+            .unwrap();
+        assert!(engine.checkpoint_dirty_fields().unwrap()["docs"]
+            .2
+            .contains("email"));
+        assert!(engine.state.read().unwrap().collections["docs"].requires_full_checkpoint);
+    }
+}
+
+/// `/stats` cost with un-absorbed staged Text rows present (#4246). A
+/// committed-WAL Text value stays in `TextIndex::staged_rows` until a
+/// checkpoint publication absorbs it, so `unique_terms` must stay linear in
+/// live terms plus staged tokens instead of scanning every staged row once
+/// per term.
+#[cfg(test)]
+mod staged_text_stats_tests {
+    use super::*;
+    use crate::segment::text_row_stage::TextRowStageOptions;
+
+    fn staged_row(input: &str) -> Arc<staged_text_row::StagedTextRow> {
+        Arc::new(
+            staged_text_row::StagedTextRow::stage(
+                input,
+                Analyzer::WhitespaceLower,
+                TextRowStageOptions::minimum_scratch_bytes() + 4096,
+                |_| Ok(()),
+            )
+            .expect("stage one Text row"),
+        )
+    }
+
+    /// `tail` distinct live-tail tokens on doc 0, then `rows` staged rows each
+    /// carrying one token shared with every other row plus one of its own.
+    fn index_with_staged_rows(tail: u32, rows: u32) -> TextIndex {
+        let mut idx = TextIndex {
+            doc_count: 1,
+            total_doc_len: u64::from(tail),
+            ..Default::default()
+        };
+        idx.lens.push(tail);
+        for n in 0..tail {
+            let mut posting = Postings::default();
+            posting.upsert(0, 1);
+            idx.tokens.insert(format!("tail{n}"), posting);
+        }
+        for row in 0..rows {
+            idx.staged_rows
+                .insert(row + 1, staged_row(&format!("shared only{row}")));
+            idx.doc_count += 1;
+        }
+        idx
+    }
+
+    #[test]
+    fn live_unique_tokens_counts_every_staged_and_tail_token_exactly_once() {
+        let idx = index_with_staged_rows(30, 50);
+        // 30 tail tokens + the one token every staged row shares + 50
+        // row-private tokens.
+        assert_eq!(idx.live_unique_tokens(), 30 + 1 + 50);
+    }
+
+    #[test]
+    fn live_unique_tokens_cost_stays_linear_in_the_staged_row_count() {
+        let small = index_with_staged_rows(30, 25);
+        reset_staged_term_probes();
+        assert_eq!(small.live_unique_tokens(), 30 + 1 + 25);
+        let small_probes = staged_term_probes();
+
+        let large = index_with_staged_rows(30, 100);
+        reset_staged_term_probes();
+        assert_eq!(large.live_unique_tokens(), 30 + 1 + 100);
+        let large_probes = staged_term_probes();
+
+        // Reading each staged row's dictionary once costs its 2 tokens and
+        // nothing per live tail term: 2 x rows probes. Asking `tok_postings`
+        // per union term instead costs (tail + 1 + rows) x rows, which is
+        // 13_100 here and is what made `/stats` superlinear in document count.
+        assert!(
+            large_probes <= 4 * (30 + 2 * 100),
+            "counting staged tokens must cost O(live terms + staged tokens), \
+             observed {large_probes} probes"
+        );
+        // Four times the rows may cost at most four times the probes.
+        assert!(
+            large_probes <= 4 * small_probes + 16,
+            "staged-row cost must grow linearly, not quadratically: \
+             {small_probes} probes at 25 rows, {large_probes} at 100"
+        );
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_publish_releases_retained_charge_tests {
+    use super::*;
+    use crate::types::IndexItem;
+
+    fn text_field(analyzer: Analyzer) -> FieldSpec {
+        FieldSpec {
+            field_type: FieldType::Text,
+            analyzer: Some(analyzer),
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+
+    /// Admit N committed rows that each retain a real
+    /// [`crate::change_budget::RetainedCharge`], run one real checkpoint
+    /// freeze + write + publish through the exact Engine code path, and
+    /// assert the process-wide budget's `active + frozen` (its `total`) after
+    /// publication. If publication does not release every payload, this must
+    /// fail before any fix and pass after.
+    #[test]
+    fn checkpoint_publish_releases_every_committed_row_charge() {
+        let budget = crate::change_budget::ChangeBudget::with_hard_limit(8 * 1024 * 1024);
+        let engine = Engine::with_change_budget(budget.clone());
+        let mut fields = BTreeMap::new();
+        fields.insert("body".to_string(), text_field(Analyzer::WhitespaceLower));
+        engine
+            .create_collection_inner("c", CreateCollectionRequest { fields })
+            .unwrap();
+
+        let mut charges = Vec::new();
+        for i in 0..50 {
+            let charge = engine
+                .changes
+                .owner
+                .try_reserve(1024)
+                .unwrap()
+                .commit_retained()
+                .unwrap();
+            engine
+                .index_inner(
+                    "c",
+                    IndexRequest {
+                        items: vec![IndexItem {
+                            external_id: format!("doc{i}"),
+                            field: "body".to_string(),
+                            value: FieldValue::String("hello world from lumen".to_string()),
+                            version: None,
+                        }],
+                        request_id: None,
+                    },
+                    Some(&charge),
+                    None,
+                )
+                .unwrap();
+            charges.push(charge);
+        }
+        // The caller's own handles drop here; the journal rows still hold
+        // their own clones of the same retained charges.
+        drop(charges);
+        let before = budget.snapshot();
+        assert!(
+            before.total > 0,
+            "committed rows must remain charged before any checkpoint runs"
+        );
+
+        let root = tempfile::tempdir().unwrap();
+        let frozen = engine.freeze_checkpoint_collections(None).unwrap();
+        let mut capture = frozen.write(root.path(), 0).unwrap();
+        engine
+            .bind_checkpoint_origins(root.path(), &mut capture)
+            .unwrap();
+        engine.acknowledge_record_charges(&capture).unwrap();
+        drop(capture);
+        // Mirrors the real driver: `PendingFrozenLease::disarm` drops the
+        // original `FrozenCheckpoint` only after publication and live
+        // binding both succeed (`segment_rdb.rs`'s `pending.disarm()`).
+        drop(frozen);
+
+        let after = budget.snapshot();
+        assert_eq!(
+            after.total, 0,
+            "publishing a checkpoint that captured every committed row must \
+             release each row's retained charge: active={} frozen={} reserved={}",
+            after.active, after.frozen, after.reserved
+        );
     }
 }

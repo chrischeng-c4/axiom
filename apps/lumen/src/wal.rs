@@ -3,8 +3,8 @@
 //!
 //! lumen's write path is "turn the database inside out": a write is published
 //! to an ordered log and then folded into each serving node's materialized
-//! index. The log may be in-process (`MemWal`), legacy externally owned
-//! (`NatsWal`), or Lumen-owned primary/replica replication.
+//! index. The log may be in-process (`MemWal`) or Lumen-owned
+//! primary/replica replication.
 //!
 //! This mirrors Redis's AOF (the op log) + replication stream, with the
 //! "master" role dissolved into "the log owner":
@@ -14,32 +14,40 @@
 //!   with the log sequence they correspond to, so a fresh node loads a
 //!   baseline then tails the log from there.
 //!
-//! Two local/external WAL backends implement [`WalLog`]:
+//! The local WAL backend implements [`WalLog`]:
 //!
 //! - [`MemWal`] — in-process, in-memory. Unit tests + the simplest
 //!   single-node dev runs. Publish applies synchronously from the
 //!   caller's perspective (the subscriber sees it immediately).
-//! - `NatsWal` (in `wal_nats`) — legacy NATS JetStream backend retained for
-//!   compatibility/tests.
 //!
 //! The record payload reuses [`crate::log_entry::RaftLogEntry`] — it
 //! already enumerates every mutation 1:1 with an `Engine` method and is
 //! the exact shape a replication record needs.
 
+use std::io::Write;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 use crate::log_entry::RaftLogEntry;
+use crate::storage::Engine;
 use crate::types::{
     validate_batch_unindex_docs_request, BatchUnindexDocsRequest, FieldValue, IndexItem,
     IndexRequest, MAX_BATCH_UNINDEX_DOCS_SIZE,
 };
+use crate::wal_source_stage::{
+    MappedFastIndexPayload, MappedGenericCborPayload, StagedWalRecord, WalSourceStager,
+};
+
+pub(crate) mod borrowed_replace_scanner;
+pub(crate) mod borrowed_replace_spool;
+pub(crate) mod bounded_generic;
+pub(crate) mod fast_index_scanner;
 
 /// Legacy on-the-wire record format version.  Existing writable operations
 /// keep emitting this byte so a 0.4.30 reader sees their exact old wire form.
@@ -92,6 +100,112 @@ pub struct WalRecord {
 }
 
 impl WalRecord {
+    pub(crate) fn is_fast_index_wire(&self) -> bool {
+        self.version == WAL_FORMAT_VERSION && matches!(&self.entry, RaftLogEntry::Index { .. })
+    }
+
+    /// Stream the frozen fast Index wire format. This writes no aggregate
+    /// payload buffer and rejects every length that cannot fit the public u32
+    /// frame fields before it writes that field.
+    pub(crate) fn write_fast_index_wire(&self, out: &mut dyn Write) -> std::io::Result<()> {
+        let RaftLogEntry::Index { collection_id, req } = &self.entry else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "not a fast Index record",
+            ));
+        };
+        if self.version != WAL_FORMAT_VERSION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported fast Index version",
+            ));
+        }
+        let string = |out: &mut dyn Write, value: &str| -> std::io::Result<()> {
+            let len = u32::try_from(value.len()).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "fast WAL string exceeds u32",
+                )
+            })?;
+            out.write_all(&len.to_le_bytes())?;
+            out.write_all(value.as_bytes())
+        };
+        let versioned = req.items.iter().any(|item| item.version.is_some());
+        out.write_all(WAL_FAST_MAGIC)?;
+        out.write_all(&[
+            self.version,
+            if versioned {
+                WAL_FAST_INDEX_VERSIONED
+            } else {
+                WAL_FAST_INDEX
+            },
+        ])?;
+        string(out, collection_id)?;
+        match &req.request_id {
+            Some(value) => {
+                out.write_all(&[1])?;
+                string(out, value)?;
+            }
+            None => out.write_all(&[0])?,
+        }
+        let items = u32::try_from(req.items.len()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "fast WAL item count exceeds u32",
+            )
+        })?;
+        out.write_all(&items.to_le_bytes())?;
+        for item in &req.items {
+            string(out, &item.external_id)?;
+            string(out, &item.field)?;
+            if versioned {
+                match item.version {
+                    Some(value) => {
+                        out.write_all(&[1])?;
+                        out.write_all(&value.to_le_bytes())?;
+                    }
+                    None => out.write_all(&[0])?,
+                }
+            }
+            match &item.value {
+                FieldValue::String(value) => {
+                    out.write_all(&[WAL_VALUE_STRING])?;
+                    string(out, value)?;
+                }
+                FieldValue::Number(value) => {
+                    out.write_all(&[WAL_VALUE_NUMBER])?;
+                    out.write_all(&value.to_le_bytes())?;
+                }
+                FieldValue::Vector(values) => {
+                    out.write_all(&[WAL_VALUE_VECTOR])?;
+                    let len = u32::try_from(values.len()).map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "fast WAL vector count exceeds u32",
+                        )
+                    })?;
+                    out.write_all(&len.to_le_bytes())?;
+                    for value in values {
+                        out.write_all(&value.to_le_bytes())?;
+                    }
+                }
+                FieldValue::StringList(values) => {
+                    out.write_all(&[WAL_VALUE_STRING_LIST])?;
+                    let len = u32::try_from(values.len()).map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "fast WAL set count exceeds u32",
+                        )
+                    })?;
+                    out.write_all(&len.to_le_bytes())?;
+                    for value in values {
+                        string(out, value)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn new(entry: RaftLogEntry) -> Self {
         Self {
             version: match entry {
@@ -143,12 +257,7 @@ impl WalRecord {
         if bytes.starts_with(WAL_FAST_MAGIC) {
             return decode_fast_record(bytes);
         }
-        let rec: WalRecord = match ciborium::de::from_reader(bytes) {
-            Ok(rec) => rec,
-            Err(cbor_err) => serde_json::from_slice(bytes).map_err(|json_err| {
-                anyhow!("decode WAL record as cbor ({cbor_err}) or legacy json ({json_err})")
-            })?,
-        };
+        let rec = bounded_generic::decode(bytes)?;
         anyhow::ensure!(
             rec.version == WAL_FORMAT_VERSION,
             "unsupported generic WAL record version {} (expected {})",
@@ -523,6 +632,209 @@ impl<'a> FastCursor<'a> {
 /// increasing `seq`, delivered as they become available. Never
 /// completes on its own (it tails the log) unless the backend closes.
 pub type WalStream = Pin<Box<dyn Stream<Item = Result<(u64, WalRecord)>> + Send>>;
+pub type WalAdmissionStream = Pin<Box<dyn Stream<Item = Result<(u64, WalDelivery)>> + Send>>;
+
+#[doc(hidden)]
+pub enum WalDelivery {
+    Resident(WalRecord),
+    Deferred(WalSourceRecord),
+}
+
+#[doc(hidden)]
+pub struct WalSourceRecord {
+    sequence: u64,
+    slot: Arc<Mutex<MemWalSlot>>,
+}
+
+#[doc(hidden)]
+pub struct WalSourceRelease {
+    sequence: u64,
+}
+
+impl WalSourceRelease {
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+fn check_resident_admission(record: &WalRecord, admitted_bytes: usize) -> Result<()> {
+    let raw = Engine::record_owned_bytes(&record.entry)?;
+    anyhow::ensure!(
+        admitted_bytes >= raw,
+        "resident WAL record was read without decoded-record admission"
+    );
+    Ok(())
+}
+
+impl WalDelivery {
+    /// Return a pinned mapped fast Index payload after dropping the source-slot
+    /// mutex. The owner keeps the staged directory and inode alive for callers
+    /// that wait for capacity or move work to a blocking task.
+    pub(crate) fn mapped_fast_index(&self) -> Result<Option<MappedFastIndexPayload>> {
+        let Self::Deferred(source) = self else {
+            return Ok(None);
+        };
+        source.mapped_fast_index()
+    }
+    /// Return a pinned mapped generic-CBOR body after releasing the source
+    /// slot mutex. The returned bytes exclude the private stage header.
+    pub(crate) fn mapped_generic_cbor(&self) -> Result<Option<MappedGenericCborPayload>> {
+        let Self::Deferred(source) = self else {
+            return Ok(None);
+        };
+        source.mapped_generic_cbor()
+    }
+    /// Associate source-backed reservation ownership with a native deferred
+    /// source until its resident slot is staged or truncated.
+    pub(crate) fn retain_source(
+        &self,
+        retention: crate::change_budget::SourceRetention,
+    ) -> Result<()> {
+        let Self::Deferred(source) = self else {
+            return Ok(());
+        };
+        let mut slot = source
+            .slot
+            .lock()
+            .map_err(|_| anyhow!("MemWal source slot poisoned"))?;
+        if let MemWalSlot::Resident(_, retentions) = &mut *slot {
+            retentions.push(retention);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn decoded_owned_bytes(&self) -> Result<usize> {
+        match self {
+            Self::Resident(record) => Engine::record_owned_bytes(&record.entry).map_err(Into::into),
+            Self::Deferred(record) => record.decoded_owned_bytes(),
+        }
+    }
+    pub(crate) fn read_scratch_bytes(&self) -> usize {
+        match self {
+            Self::Resident(_) => 0,
+            Self::Deferred(record) => record.read_scratch_bytes(),
+        }
+    }
+    /// A staged source has no retained raw transport record. Reserve its
+    /// decoder workspace and, when used, the AOF clone/encoder separately.
+    pub(crate) fn extra_delivery_bytes(&self, has_aof: bool) -> Result<usize> {
+        let raw = self.decoded_owned_bytes()?;
+        let staged = match self {
+            Self::Resident(_) => false,
+            Self::Deferred(source) => matches!(
+                &*source
+                    .slot
+                    .lock()
+                    .map_err(|_| anyhow!("MemWal source slot poisoned"))?,
+                MemWalSlot::Staged(_)
+            ),
+        };
+        let copies = match (staged, has_aof) {
+            (true, false) => 0,
+            (true, true) => 3,
+            (false, false) => 2,
+            (false, true) => 4,
+        };
+        raw.checked_mul(copies)
+            .and_then(|extra| extra.checked_add(self.read_scratch_bytes()))
+            .ok_or_else(|| anyhow!("WAL delivery memory bound overflow"))
+    }
+
+    pub(crate) fn read(self, admitted_bytes: usize) -> Result<WalRecord> {
+        match self {
+            Self::Resident(record) => {
+                check_resident_admission(&record, admitted_bytes)?;
+                Ok(record)
+            }
+            Self::Deferred(record) => record.read(admitted_bytes),
+        }
+    }
+}
+
+impl WalSourceRecord {
+    fn mapped_fast_index(&self) -> Result<Option<MappedFastIndexPayload>> {
+        let stage = {
+            let slot = self
+                .slot
+                .lock()
+                .map_err(|_| anyhow!("MemWal source slot poisoned"))?;
+            match &*slot {
+                MemWalSlot::Resident(_, _) => return Ok(None),
+                MemWalSlot::Staged(stage) => {
+                    anyhow::ensure!(
+                        stage.sequence() == self.sequence,
+                        "staged MemWal descriptor sequence mismatch"
+                    );
+                    stage.clone()
+                }
+            }
+        };
+        stage.mapped_fast_index().map_err(Into::into)
+    }
+    fn mapped_generic_cbor(&self) -> Result<Option<MappedGenericCborPayload>> {
+        let stage = {
+            let slot = self
+                .slot
+                .lock()
+                .map_err(|_| anyhow!("MemWal source slot poisoned"))?;
+            match &*slot {
+                MemWalSlot::Resident(_, _) => return Ok(None),
+                MemWalSlot::Staged(stage) => {
+                    anyhow::ensure!(
+                        stage.sequence() == self.sequence,
+                        "staged MemWal descriptor sequence mismatch"
+                    );
+                    stage.clone()
+                }
+            }
+        };
+        stage.mapped_generic_cbor().map_err(Into::into)
+    }
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+    pub(crate) fn decoded_owned_bytes(&self) -> Result<usize> {
+        let slot = self
+            .slot
+            .lock()
+            .map_err(|_| anyhow!("MemWal source slot poisoned"))?;
+        match &*slot {
+            MemWalSlot::Resident(record, _) => {
+                Engine::record_owned_bytes(&record.entry).map_err(Into::into)
+            }
+            MemWalSlot::Staged(stage) => Ok(stage.decoded_owned_bytes()),
+        }
+    }
+    pub(crate) fn read_scratch_bytes(&self) -> usize {
+        self.slot
+            .lock()
+            .ok()
+            .map(|slot| match &*slot {
+                MemWalSlot::Resident(_, _) => 0,
+                MemWalSlot::Staged(stage) => stage.read_scratch_bytes(),
+            })
+            .unwrap_or(0)
+    }
+    pub(crate) fn read(self, admitted_bytes: usize) -> Result<WalRecord> {
+        let slot = self
+            .slot
+            .lock()
+            .map_err(|_| anyhow!("MemWal source slot poisoned"))?;
+        match &*slot {
+            MemWalSlot::Resident(record, _) => {
+                check_resident_admission(record, admitted_bytes)?;
+                Ok(record.clone())
+            }
+            MemWalSlot::Staged(stage) => {
+                anyhow::ensure!(
+                    stage.sequence() == self.sequence,
+                    "staged MemWal descriptor sequence mismatch"
+                );
+                stage.read(admitted_bytes).map_err(Into::into)
+            }
+        }
+    }
+}
 
 /// The log seam. `publish` appends and returns the assigned global
 /// sequence; `subscribe` tails from a sequence; `latest_seq` reports the
@@ -535,6 +847,16 @@ pub trait WalLog: Send + Sync {
     /// Tail every record with `seq > from_seq` (use `0` for "from the
     /// beginning"), in order, including future appends.
     async fn subscribe(&self, from_seq: u64) -> Result<WalStream>;
+
+    async fn subscribe_admitted(&self, from_seq: u64) -> Result<WalAdmissionStream> {
+        Ok(Box::pin(self.subscribe(from_seq).await?.map(|item| {
+            item.map(|(seq, record)| (seq, WalDelivery::Resident(record)))
+        })))
+    }
+
+    async fn stage_source(&self, _: u64) -> Result<Option<WalSourceRelease>> {
+        Ok(None)
+    }
 
     /// Highest sequence currently in the log (`0` if empty).
     async fn latest_seq(&self) -> Result<u64>;
@@ -563,13 +885,21 @@ pub type SharedWal = Arc<dyn WalLog>;
 pub struct MemWal {
     shared: Arc<Mutex<MemWalInner>>,
     len_tx: Arc<watch::Sender<u64>>,
+    source_stager: Arc<Mutex<Option<WalSourceStager>>>,
 }
 
 struct MemWalInner {
-    records: std::collections::VecDeque<WalRecord>,
+    records: std::collections::VecDeque<Arc<Mutex<MemWalSlot>>>,
     base: u64,
-    subs: std::collections::HashMap<u64, u64>, // sub id → highest delivered seq
+    // Sub id → highest sequence safe to discard. The most recently returned
+    // record stays pinned until the subscriber begins its next poll.
+    subs: std::collections::HashMap<u64, u64>,
     next_sub_id: u64,
+}
+
+enum MemWalSlot {
+    Resident(WalRecord, Vec<crate::change_budget::SourceRetention>),
+    Staged(Arc<StagedWalRecord>),
 }
 
 impl MemWalInner {
@@ -636,6 +966,7 @@ impl MemWal {
                 next_sub_id: 0,
             })),
             len_tx: Arc::new(len_tx),
+            source_stager: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -648,7 +979,11 @@ impl WalLog for MemWal {
                 .shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("MemWal poisoned"))?;
-            s.records.push_back(record);
+            s.records
+                .push_back(Arc::new(Mutex::new(MemWalSlot::Resident(
+                    record,
+                    Vec::new(),
+                ))));
             let seq = s.latest();
             s.maybe_truncate();
             seq
@@ -673,8 +1008,10 @@ impl WalLog for MemWal {
             shared: shared.clone(),
             id,
         };
-        // State: (delivered seq, watch rx, shared, guard). Dropping the
-        // stream drops the guard → unregisters the subscription.
+        // State: (most recently delivered seq, watch rx, shared, guard).
+        // A poll first acknowledges the prior record, so the record returned
+        // by this poll remains replayable until the caller polls again.
+        // Dropping the stream drops the guard → unregisters the subscription.
         let stream = futures::stream::unfold(
             (from_seq, rx, shared, guard),
             |(delivered, mut rx, shared, guard)| async move {
@@ -684,20 +1021,32 @@ impl WalLog for MemWal {
                             Ok(s) => s,
                             Err(_) => return None,
                         };
+                        // The caller has started another poll, so it no
+                        // longer needs its prior delivered record. Do this
+                        // before selecting the next item; a record returned
+                        // below is retained until the following poll.
+                        s.subs.insert(guard.id, delivered);
+                        s.maybe_truncate();
                         // Deliver the next seq after `delivered`, clamped
                         // above the truncation floor (never < base+1).
                         let want = (delivered + 1).max(s.base + 1);
                         let idx = (want - s.base - 1) as usize;
                         match s.records.get(idx).cloned() {
-                            Some(rec) => {
-                                s.subs.insert(guard.id, want);
-                                Some((want, rec))
-                            }
+                            Some(slot) => Some((want, slot)),
                             None => None,
                         }
                     };
-                    if let Some((seq, rec)) = next {
-                        return Some((Ok((seq, rec)), (seq, rx, shared, guard)));
+                    if let Some((seq, slot)) = next {
+                        let rec = slot
+                            .lock()
+                            .map_err(|_| anyhow!("MemWal source slot poisoned"))
+                            .and_then(|slot| match &*slot {
+                                MemWalSlot::Resident(record, _) => Ok(record.clone()),
+                                MemWalSlot::Staged(stage) => {
+                                    stage.read(usize::MAX).map_err(Into::into)
+                                }
+                            });
+                        return Some((rec.map(|rec| (seq, rec)), (seq, rx, shared, guard)));
                     }
                     if rx.changed().await.is_err() {
                         return None;
@@ -706,6 +1055,100 @@ impl WalLog for MemWal {
             },
         );
         Ok(Box::pin(stream))
+    }
+
+    async fn subscribe_admitted(&self, from_seq: u64) -> Result<WalAdmissionStream> {
+        let shared = self.shared.clone();
+        let rx = self.len_tx.subscribe();
+        let id = {
+            let mut state = shared.lock().map_err(|_| anyhow!("MemWal poisoned"))?;
+            let id = state.next_sub_id;
+            state.next_sub_id += 1;
+            state.subs.insert(id, from_seq);
+            id
+        };
+        let guard = SubGuard {
+            shared: shared.clone(),
+            id,
+        };
+        let stream = futures::stream::unfold(
+            (from_seq, rx, shared, guard),
+            |(delivered, mut rx, shared, guard)| async move {
+                loop {
+                    let next = {
+                        let mut state = match shared.lock() {
+                            Ok(state) => state,
+                            Err(_) => return None,
+                        };
+                        state.subs.insert(guard.id, delivered);
+                        state.maybe_truncate();
+                        let want = (delivered + 1).max(state.base + 1);
+                        let index = (want - state.base - 1) as usize;
+                        state.records.get(index).cloned().map(|slot| (want, slot))
+                    };
+                    if let Some((sequence, slot)) = next {
+                        let delivery = WalDelivery::Deferred(WalSourceRecord { sequence, slot });
+                        return Some((Ok((sequence, delivery)), (sequence, rx, shared, guard)));
+                    }
+                    if rx.changed().await.is_err() {
+                        return None;
+                    }
+                }
+            },
+        );
+        Ok(Box::pin(stream))
+    }
+
+    async fn stage_source(&self, sequence: u64) -> Result<Option<WalSourceRelease>> {
+        let slot = {
+            let state = self.shared.lock().map_err(|_| anyhow!("MemWal poisoned"))?;
+            if sequence <= state.base {
+                return Ok(None);
+            }
+            state
+                .records
+                .get((sequence - state.base - 1) as usize)
+                .cloned()
+        };
+        let Some(slot) = slot else {
+            return Ok(None);
+        };
+        let source_stager = self.source_stager.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<WalSourceRelease>> {
+            let stager = {
+                let mut source_stager = source_stager
+                    .lock()
+                    .map_err(|_| anyhow!("MemWal stager poisoned"))?;
+                if source_stager.is_none() {
+                    *source_stager = Some(WalSourceStager::for_mem_wal()?);
+                }
+                source_stager.as_ref().expect("just created stager").clone()
+            };
+            let mut slot = slot
+                .lock()
+                .map_err(|_| anyhow!("MemWal source slot poisoned"))?;
+            match &mut *slot {
+                MemWalSlot::Staged(stage) => {
+                    if stage.sequence() != sequence || stage.source_id() != stager.source_id() {
+                        anyhow::bail!("staged MemWal source identity mismatch");
+                    }
+                    Ok(Some(WalSourceRelease { sequence }))
+                }
+                MemWalSlot::Resident(record, _) => {
+                    let staged = match stager.stage_fast_index(sequence, record)? {
+                        Some(staged) => staged,
+                        None => stager.stage(sequence, record)?,
+                    };
+                    if staged.sequence() != sequence || staged.source_id() != stager.source_id() {
+                        anyhow::bail!("staged MemWal receipt identity mismatch");
+                    }
+                    *slot = MemWalSlot::Staged(Arc::new(staged));
+                    Ok(Some(WalSourceRelease { sequence }))
+                }
+            }
+        })
+        .await
+        .map_err(|error| anyhow!("MemWal stage worker failed: {error}"))?
     }
 
     async fn latest_seq(&self) -> Result<u64> {
@@ -720,11 +1163,234 @@ impl WalLog for MemWal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::change_budget::ChangeBudget;
     use crate::types::{
         BatchUnindexDocsRequest, CreateCollectionRequest, FieldValue, IndexItem, IndexRequest,
     };
     use futures::StreamExt;
     use std::collections::BTreeMap;
+
+    // Append inside `apps/lumen/src/wal.rs`'s existing `#[cfg(test)] mod tests`.
+    // The injected-fault test needs this test-only helper in `wal_source_stage.rs`:
+    //
+    // #[cfg(test)] pub(crate) fn for_mem_wal_with_injector(
+    //     injector: Arc<dyn StageFailureInjector>,
+    // ) -> io::Result<Self>
+    //
+    // It must create the normal private directory and StageStore::with_injector;
+    // do not expose it outside cfg(test).
+
+    #[tokio::test]
+    async fn admitted_locator_observes_exact_record_after_its_source_is_staged() {
+        let wal = MemWal::new();
+        let mut stream = wal.subscribe_admitted(0).await.unwrap();
+        wal.publish(WalRecord::new(index_entry("orders", "a", "email", "a@x")))
+            .await
+            .unwrap();
+        let (sequence, delivery) = stream.next().await.unwrap().unwrap();
+        let WalDelivery::Deferred(locator) = delivery else {
+            panic!("MemWal must deliver source locator");
+        };
+        assert_eq!(locator.sequence(), sequence);
+        assert_eq!(
+            wal.stage_source(sequence)
+                .await
+                .unwrap()
+                .unwrap()
+                .sequence(),
+            sequence
+        );
+        // Staging changes the owned representation. Reprice its decode bound
+        // after the source replacement and before reading it.
+        let admitted = locator.decoded_owned_bytes().unwrap() + locator.read_scratch_bytes();
+        let decoded = locator.read(admitted).unwrap();
+        let RaftLogEntry::Index { collection_id, req } = decoded.entry else {
+            panic!("expected Index");
+        };
+        assert_eq!(collection_id, "orders");
+        assert!(matches!(&req.items[0].value, FieldValue::String(value) if value == "a@x"));
+    }
+
+    #[tokio::test]
+    async fn staged_locator_pins_source_after_subscription_truncates_it() {
+        let wal = MemWal::new();
+        let mut stream = wal.subscribe_admitted(0).await.unwrap();
+        wal.publish(WalRecord::new(create_entry("one")))
+            .await
+            .unwrap();
+        let (sequence, delivery) = stream.next().await.unwrap().unwrap();
+        let WalDelivery::Deferred(locator) = delivery else {
+            panic!("expected locator");
+        };
+        wal.stage_source(sequence).await.unwrap();
+        wal.publish(WalRecord::new(create_entry("two")))
+            .await
+            .unwrap();
+        let _ = stream.next().await.unwrap().unwrap();
+        assert_eq!(wal.shared.lock().unwrap().base, sequence);
+        // Staging changes the owned representation. Reprice its decode bound
+        // after the source replacement and before reading it.
+        let admitted = locator.decoded_owned_bytes().unwrap() + locator.read_scratch_bytes();
+        assert!(
+            matches!(locator.read(admitted).unwrap().entry, RaftLogEntry::CreateCollection { collection_id, .. } if collection_id == "one")
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_is_checked_for_resident_and_staged_sources() {
+        let wal = MemWal::new();
+        let mut stream = wal.subscribe_admitted(0).await.unwrap();
+        wal.publish(WalRecord::new(create_entry("orders")))
+            .await
+            .unwrap();
+        let (sequence, delivery) = stream.next().await.unwrap().unwrap();
+        let WalDelivery::Deferred(resident) = delivery else {
+            panic!("expected locator");
+        };
+        let raw = resident.decoded_owned_bytes().unwrap();
+        assert!(resident.read(raw - 1).is_err());
+        let (_, delivery) = wal
+            .subscribe_admitted(0)
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+        let WalDelivery::Deferred(staged) = delivery else {
+            panic!("expected locator");
+        };
+        wal.stage_source(sequence).await.unwrap();
+        assert!(
+            staged.read(raw).is_err(),
+            "stage scratch must also be admitted"
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_proof_follows_slot_replacement_and_is_repeatable_per_source() {
+        let wal = MemWal::new();
+        wal.publish(WalRecord::new(create_entry("orders")))
+            .await
+            .unwrap();
+        let first = wal.stage_source(1).await.unwrap().unwrap();
+        assert_eq!(first.sequence(), 1);
+        assert!(matches!(
+            &*wal.shared.lock().unwrap().records[0].lock().unwrap(),
+            MemWalSlot::Staged(_)
+        ));
+        assert_eq!(wal.stage_source(1).await.unwrap().unwrap().sequence(), 1);
+        wal.publish(WalRecord::new(create_entry("other")))
+            .await
+            .unwrap();
+        assert_eq!(wal.stage_source(2).await.unwrap().unwrap().sequence(), 2);
+    }
+
+    #[tokio::test]
+    async fn compatibility_subscribe_replays_values_after_staging() {
+        let wal = MemWal::new();
+        wal.publish(WalRecord::new(index_entry("orders", "a", "email", "a@x")))
+            .await
+            .unwrap();
+        wal.stage_source(1).await.unwrap();
+        let mut stream = wal.subscribe(0).await.unwrap();
+        let (sequence, record) = stream.next().await.unwrap().unwrap();
+        assert_eq!(sequence, 1);
+        assert_eq!(record.version, WAL_FORMAT_VERSION);
+        assert!(matches!(record.entry, RaftLogEntry::Index { .. }));
+    }
+
+    // Injected fault contract: after adding the cfg(test) stager factory above,
+    // replace `wal.source_stager` with the injected stager before calling
+    // `stage_source`. Assert it returns Err, the slot remains Resident, and no
+    // WalSourceRelease is produced. This needs a small MemWal cfg(test) setter
+    // because the source stager is intentionally lazy and private.
+
+    #[test]
+    fn owned_delivery_rejects_missing_admission() {
+        let record = WalRecord::new(create_entry("orders"));
+        let raw = Engine::record_owned_bytes(&record.entry).unwrap();
+        assert!(
+            WalDelivery::Resident(record).read(raw - 1).is_err(),
+            "owned delivery needs raw memory admission"
+        );
+    }
+
+    #[tokio::test]
+    async fn staged_descriptor_rejects_a_different_sequence() {
+        let wal = MemWal::new();
+        wal.publish(WalRecord::new(create_entry("orders")))
+            .await
+            .unwrap();
+        let mut stream = wal.subscribe_admitted(0).await.unwrap();
+        let (_, delivery) = stream.next().await.unwrap().unwrap();
+        let WalDelivery::Deferred(mut locator) = delivery else {
+            panic!("expected locator");
+        };
+        wal.stage_source(1).await.unwrap();
+        let admitted = locator.decoded_owned_bytes().unwrap() + locator.read_scratch_bytes();
+        locator.sequence = 2;
+        assert!(
+            locator.read(admitted).is_err(),
+            "staged descriptor must match its source sequence"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_source_stage_keeps_resident_until_a_durable_retry() {
+        use crate::committed_stage::{StageFailureInjector, StageFailurePoint};
+        struct FailOnce(Mutex<Option<StageFailurePoint>>);
+        impl StageFailureInjector for FailOnce {
+            fn check(&self, point: StageFailurePoint) -> std::io::Result<()> {
+                let mut fail = self.0.lock().unwrap();
+                if fail.as_ref() == Some(&point) {
+                    *fail = None;
+                    return Err(std::io::Error::other(
+                        "injected native source staging fault",
+                    ));
+                }
+                Ok(())
+            }
+        }
+        for point in [
+            StageFailurePoint::SyncPayload,
+            StageFailurePoint::RenamePayload,
+            StageFailurePoint::SyncPayloadDirectory,
+            StageFailurePoint::SyncMarker,
+            StageFailurePoint::PublishMarker,
+            StageFailurePoint::SyncMarkerDirectory,
+        ] {
+            let wal = MemWal::new();
+            *wal.source_stager.lock().unwrap() = Some(
+                WalSourceStager::for_mem_wal_with_injector(Arc::new(FailOnce(Mutex::new(Some(
+                    point,
+                )))))
+                .unwrap(),
+            );
+            let original = WalRecord::new(index_entry("orders", "a", "email", "a@x"));
+            let expected = original.encode().unwrap();
+            wal.publish(original).await.unwrap();
+            assert!(wal.stage_source(1).await.is_err(), "{point:?}");
+            {
+                let state = wal.shared.lock().unwrap();
+                let slot = state.records[0].lock().unwrap();
+                let MemWalSlot::Resident(record, _) = &*slot else {
+                    panic!("failed stage discarded resident at {point:?}");
+                };
+                assert_eq!(record.encode().unwrap(), expected, "{point:?}");
+            }
+            assert_eq!(wal.stage_source(1).await.unwrap().unwrap().sequence(), 1);
+            let (_, delivered) = wal
+                .subscribe(0)
+                .await
+                .unwrap()
+                .next()
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(delivered.encode().unwrap(), expected, "{point:?}");
+        }
+    }
 
     fn create_entry(coll: &str) -> RaftLogEntry {
         RaftLogEntry::CreateCollection {
@@ -748,6 +1414,94 @@ mod tests {
                 request_id: None,
             },
         }
+    }
+
+    fn source_retention(budget: &ChangeBudget) -> crate::change_budget::SourceRetention {
+        let owner = budget.owner();
+        let mut reservation = owner.try_reserve(7).unwrap();
+        let retention = reservation.source_retention();
+        drop(reservation);
+        retention
+    }
+
+    #[tokio::test]
+    async fn resident_source_retention_outlives_delivery_and_first_subscriber_poll() {
+        let budget = ChangeBudget::with_hard_limit(16);
+        let wal = MemWal::new();
+        let mut first = wal.subscribe_admitted(0).await.unwrap();
+        let mut second = wal.subscribe_admitted(0).await.unwrap();
+        wal.publish(WalRecord::new(create_entry("one")))
+            .await
+            .unwrap();
+
+        let (sequence, delivery) = first.next().await.unwrap().unwrap();
+        assert_eq!(sequence, 1);
+        let retention = source_retention(&budget);
+        delivery.retain_source(retention.clone()).unwrap();
+        drop(retention);
+        drop(delivery);
+        assert_eq!(
+            budget.snapshot().total,
+            7,
+            "resident slot owns the source charge"
+        );
+
+        // The first subscriber has released its owned delivery and polls again,
+        // but the second subscriber has not yet released this native source.
+        wal.publish(WalRecord::new(create_entry("two")))
+            .await
+            .unwrap();
+        assert_eq!(first.next().await.unwrap().unwrap().0, 2);
+        assert_eq!(
+            budget.snapshot().total,
+            7,
+            "second source pin still owns charge"
+        );
+
+        // Polling second through sequence two lets MemWal truncate sequence one.
+        // The resident slot's final drop, rather than any timer or idle poll,
+        // must release the charge.
+        assert_eq!(second.next().await.unwrap().unwrap().0, 1);
+        assert_eq!(second.next().await.unwrap().unwrap().0, 2);
+        assert_eq!(budget.snapshot().total, 0);
+    }
+
+    #[tokio::test]
+    async fn verified_stage_replacement_releases_resident_source_retention_while_pinned() {
+        let budget = ChangeBudget::with_hard_limit(16);
+        let wal = MemWal::new();
+        let mut subscriber = wal.subscribe_admitted(0).await.unwrap();
+        wal.publish(WalRecord::new(create_entry("one")))
+            .await
+            .unwrap();
+
+        let (sequence, delivery) = subscriber.next().await.unwrap().unwrap();
+        let retention = source_retention(&budget);
+        delivery.retain_source(retention.clone()).unwrap();
+        drop(retention);
+        assert_eq!(budget.snapshot().total, 7);
+
+        assert_eq!(
+            wal.stage_source(sequence)
+                .await
+                .unwrap()
+                .unwrap()
+                .sequence(),
+            sequence
+        );
+        assert_eq!(
+            budget.snapshot().total,
+            0,
+            "verified replacement releases only the resident-source charge"
+        );
+
+        // `subscriber` still pins the source slot and `delivery` still owns a
+        // descriptor. The replacement must not make the staged record unreadable.
+        let admitted = delivery.decoded_owned_bytes().unwrap() + delivery.read_scratch_bytes();
+        assert!(matches!(
+            delivery.read(admitted).unwrap().entry,
+            RaftLogEntry::CreateCollection { collection_id, .. } if collection_id == "one"
+        ));
     }
 
     #[test]
@@ -1206,6 +1960,38 @@ mod tests {
             retained <= 1,
             "log should truncate behind the consumer, retained={retained}"
         );
+    }
+
+    #[tokio::test]
+    async fn mem_keeps_delivered_record_until_the_consumer_polls_again() {
+        let wal = MemWal::new();
+        let mut first = wal.subscribe(0).await.unwrap();
+
+        wal.publish(WalRecord::new(create_entry("one")))
+            .await
+            .unwrap();
+        let (first_seq, _) = first.next().await.unwrap().unwrap();
+        assert_eq!(first_seq, 1);
+
+        // The first consumer still owns the returned record. A publisher
+        // must not discard it before another subscriber can install a replay
+        // cursor for that record.
+        wal.publish(WalRecord::new(create_entry("two")))
+            .await
+            .unwrap();
+        let mut replay = wal.subscribe(0).await.unwrap();
+        let (replayed_seq, _) = replay.next().await.unwrap().unwrap();
+        assert_eq!(replayed_seq, 1, "the held record must remain replayable");
+
+        // Once the first consumer asks for its next record, its previous
+        // record is safe to truncate. Drop the replay cursor first so it no
+        // longer pins record 1.
+        drop(replay);
+        let (second_seq, _) = first.next().await.unwrap().unwrap();
+        assert_eq!(second_seq, 2);
+        let state = wal.shared.lock().unwrap();
+        assert_eq!(state.base, 1, "polling forward must advance truncation");
+        assert_eq!(state.records.len(), 1);
     }
 
     #[tokio::test]

@@ -1,4 +1,23 @@
 //! Static and local-fixture oracle for the run-scoped release candidate.
+//!
+//! # Facets
+//!
+//! - Behavior: `apps/lumen/e2e/release_candidate.rs:2595` rejects each broken
+//!   sixteen-cell workflow shape, and `apps/lumen/e2e/release_candidate.rs:4104`
+//!   refuses a final 0.6.1 receipt without its evidence.
+//! - Security: `apps/lumen/e2e/release_candidate.rs:2595` carries mutable-image,
+//!   run-binding, and shared-path refusals; `apps/lumen/e2e/release_candidate.rs:4153`
+//!   carries missing, corrupt, and foreign receipt refusal at the workflow/script boundary.
+//! - Performance: the approved release gate is verbatim at
+//!   `apps/lumen/e2e/release_candidate.rs:54`; `apps/lumen/e2e/release_candidate.rs:1842`
+//!   requires that command and its receipt checks. This asserts wiring only,
+//!   not that a 30-minute workload has passed.
+//!
+//! The parent controller owns the workflow and verifier implementation. This
+//! file only freezes their externally observable release contract.
+#[path = "support/perf_cell_receipt.rs"]
+mod perf_cell_receipt;
+
 use serde_json::{json, Value};
 use serde_yaml::Value as Yaml;
 use std::{
@@ -29,12 +48,12 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "5a2c619bf5a28083bc8e337cd7f7d97e1baf3c76ec6e6c646be19e055064e664";
+    "2f4af9d9c248d0b829350bbe4f18989f075fbe36fdeb6f919aa8e32ac6e8da97";
 const KIND_E2E_BYTES_SHA256: &str =
     "1e6bb83156af06463fed2ba8408cc0b6ab433ce08a68d92a5b17c934972fdedc";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
 const VERIFIER_BYTES_SHA256: &str =
-    "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7";
+    "988f572370ebecc3839c233237c749ca41e03109326e72a958009747161461f5";
 
 fn sha256_bytes(bytes: &[u8]) -> String {
     let mut child = Command::new("shasum")
@@ -944,11 +963,16 @@ fn validate_exact_run_step(
 ) -> Result<(), Finding> {
     let step = named_step(workflow, job_name, step_name).ok_or(Finding("GATE_COMMANDS"))?;
     let map = step.as_mapping().ok_or(Finding("GATE_COMMANDS"))?;
+    let product_gated =
+        job_name == "verify-candidate" && PRODUCT_GATED_STEP_NAMES.contains(&step_name);
     require(
-        map.len() == expected_keys.len()
+        map.len() == expected_keys.len() + if product_gated { 1 } else { 0 }
             && expected_keys
                 .iter()
-                .all(|name| map.contains_key(&key(name))),
+                .all(|name| map.contains_key(&key(name)))
+            && (!product_gated
+                || map.get(&key("if")).and_then(Yaml::as_str)
+                    == Some("${{ matrix.product_gates }}")),
         "GATE_COMMANDS",
     )?;
     require(
@@ -1039,6 +1063,8 @@ fn validate_gate_step_inventory(workflow: &Yaml) -> Result<(), Finding> {
                 "Run cloud-free Terraform acceptance gate",
                 "Run cloud-free Kustomize acceptance gate",
                 "Run required Lumen product gates without GKE",
+                "Run qualifying durable performance cell",
+                "Upload qualifying durable performance receipt",
                 "Verify full run-scoped candidate supply chain",
             ][..],
         ),
@@ -1072,6 +1098,8 @@ fn validate_gate_step_inventory(workflow: &Yaml) -> Result<(), Finding> {
                 "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
                 "uses:actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
                 "Verify exact preflight manifest sidecar",
+                "Download all qualifying durable performance receipts",
+                "Verify all sixteen durable performance cells",
                 "Bind all successful job conclusions into final receipt",
                 "Verify final receipt as local fixture only",
                 "uses:actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
@@ -1128,8 +1156,20 @@ fn validate_fail_closed_gate_conditions(workflow: &Yaml) -> Result<(), Finding> 
             .ok_or(Finding("CONDITIONS"))?;
         for step in steps {
             let step = step.as_mapping().ok_or(Finding("CONDITIONS"))?;
-            for forbidden in ["if", "continue-on-error"] {
-                require(!step.contains_key(&key(forbidden)), "CONDITIONS")?;
+            require(!step.contains_key(&key("continue-on-error")), "CONDITIONS")?;
+            let product_gated = name == "verify-candidate"
+                && step
+                    .get(&key("name"))
+                    .and_then(Yaml::as_str)
+                    .is_some_and(|step_name| PRODUCT_GATED_STEP_NAMES.contains(&step_name));
+            if product_gated {
+                require(
+                    step.get(&key("if")).and_then(Yaml::as_str)
+                        == Some("${{ matrix.product_gates }}"),
+                    "CONDITIONS",
+                )?;
+            } else {
+                require(!step.contains_key(&key("if")), "CONDITIONS")?;
             }
         }
     }
@@ -1178,9 +1218,6 @@ fn validate_product_gate_partition(workflow: &Yaml, _source: &str) -> Result<(),
                 "cargo clean",
                 "df -h /",
                 "cargo test --locked -p lumen --features \"operator delegated-auth\"",
-                "cargo clean",
-                "df -h /",
-                RELEASE_PERF_GATE,
                 "cargo clean",
                 "df -h /",
                 "cargo test --locked -p lumen --features release --test release_feature_set",
@@ -1250,20 +1287,336 @@ fn perf_gate_inventory(source: &str) -> Vec<(String, bool)> {
     inventory
 }
 
-fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
+const DURABLE_WORKLOAD_BEGIN: &str = "// DURABLE-WORKLOAD-BEGIN";
+const DURABLE_WORKLOAD_END: &str = "// DURABLE-WORKLOAD-END";
+
+/// Finds a raw-string opener at one UTF-8 boundary and returns its content
+/// start plus its closing delimiter.
+fn raw_string_start_at(line: &str, start: usize) -> Option<(usize, String)> {
+    let bytes = line.as_bytes();
+    let raw = match bytes.get(start) {
+        Some(b'r') => start,
+        Some(b'b') if bytes.get(start + 1) == Some(&b'r') => start + 1,
+        _ => return None,
+    };
+    if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+        return None;
+    }
+    let mut quote = raw + 1;
+    while quote < bytes.len() && bytes[quote] == b'#' {
+        quote += 1;
+    }
+    if quote >= bytes.len() || bytes[quote] != b'"' {
+        return None;
+    }
+    Some((quote + 1, format!("\"{}", "#".repeat(quote - raw - 1))))
+}
+
+/// Returns the byte after the next unescaped ordinary-string quote.
+fn next_unescaped_quote(line: &str, start: usize) -> Option<usize> {
+    let mut escaped = false;
+    for (relative, character) in line[start..].char_indices() {
+        if character == '\\' && !escaped {
+            escaped = true;
+            continue;
+        }
+        if character == '"' && !escaped {
+            return Some(start + relative + character.len_utf8());
+        }
+        escaped = false;
+    }
+    None
+}
+
+/// Looks only for one exact executable line. It intentionally does not try to
+/// parse Rust. Line comments, block comments, ordinary multiline strings, and
+/// raw multiline strings cannot satisfy a durable-workload requirement.
+fn has_active_line(source: &str, expected: &str) -> bool {
+    let mut in_block_comment = false;
+    let mut raw_string_terminator = None::<String>;
+    let mut in_quoted_string = false;
+    for raw in source.lines() {
+        let line = raw.trim();
+        let mut active = String::new();
+        let mut offset = 0usize;
+        loop {
+            if let Some(terminator) = raw_string_terminator.as_deref() {
+                let Some(relative) = line[offset..].find(terminator) else {
+                    break;
+                };
+                offset += relative + terminator.len();
+                raw_string_terminator = None;
+                continue;
+            }
+            if in_quoted_string {
+                let Some(end) = next_unescaped_quote(line, offset) else {
+                    break;
+                };
+                offset = end;
+                in_quoted_string = false;
+                continue;
+            }
+            if in_block_comment {
+                let Some(relative) = line[offset..].find("*/") else {
+                    break;
+                };
+                offset += relative + 2;
+                in_block_comment = false;
+                continue;
+            }
+            if offset == line.len() {
+                break;
+            }
+            let rest = &line[offset..];
+            if rest.starts_with("//") {
+                break;
+            }
+            if rest.starts_with("/*") {
+                let content_start = offset + 2;
+                if let Some(relative) = line[content_start..].find("*/") {
+                    offset = content_start + relative + 2;
+                    continue;
+                }
+                in_block_comment = true;
+                break;
+            }
+            if let Some((content_start, terminator)) = raw_string_start_at(line, offset) {
+                if let Some(relative) = line[content_start..].find(&terminator) {
+                    let end = content_start + relative + terminator.len();
+                    active.push_str(&line[offset..end]);
+                    offset = end;
+                    continue;
+                }
+                raw_string_terminator = Some(terminator);
+                break;
+            }
+            if rest.starts_with('"') {
+                let Some(end) = next_unescaped_quote(line, offset + 1) else {
+                    in_quoted_string = true;
+                    break;
+                };
+                active.push_str(&line[offset..end]);
+                offset = end;
+                continue;
+            }
+            let character = rest
+                .chars()
+                .next()
+                .expect("nonempty remaining source has one character");
+            active.push(character);
+            offset += character.len_utf8();
+        }
+        if active.trim() == expected {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns one executable source branch bounded by two unique active lines.
+/// A comment, quoted string, duplicate decoy, or missing bound refuses the
+/// static oracle before its inner requirement can count.
+fn active_source_region<'a>(source: &'a str, begin: &str, end: &str) -> Option<&'a str> {
+    if !has_active_line(source, begin) || !has_active_line(source, end) {
+        return None;
+    }
+    // Match complete lines. A suffix of a later match arm is a different
+    // boundary, and a quoted substring must not determine the byte offsets.
+    let mut offset = 0;
+    let mut starts = Vec::new();
+    let mut ends = Vec::new();
+    for line in source.split_inclusive('\n') {
+        if line.trim() == begin {
+            starts.push(offset + line.len());
+        }
+        if line.trim() == end {
+            ends.push(offset);
+        }
+        offset += line.len();
+    }
+    match (starts.as_slice(), ends.as_slice()) {
+        ([start], [end]) if start <= end => Some(&source[*start..*end]),
+        _ => None,
+    }
+}
+
+#[test]
+fn active_line_parser_ignores_comment_markers_inside_literals() {
+    const REQUIRED: &str = "const HOT_DOCUMENTS: usize = 500_000;";
+    let active = r###"
+        let endpoint = "http://127.0.0.1:7373";
+        let raw = r#"// const HOT_DOCUMENTS: usize = 500_000;"#;
+        const HOT_DOCUMENTS: usize = 500_000;
+    "###;
+    assert!(
+        has_active_line(active, REQUIRED),
+        "an executable requirement after a URL literal must stay active"
+    );
+
+    let decoys = r###"
+        let ordinary = "// const HOT_DOCUMENTS: usize = 500_000;";
+        let raw = r#"const HOT_DOCUMENTS: usize = 500_000;"#;
+        /* const HOT_DOCUMENTS: usize = 500_000; */
+    "###;
+    assert!(
+        !has_active_line(decoys, REQUIRED),
+        "comments and ordinary or raw literals must not satisfy a requirement"
+    );
+}
+
+fn durable_workload_region(source: &str) -> Result<(&str, &str), Finding> {
     require(
-        source.contains("const TRUNCATE_LARGE_DOCUMENTS: usize = 100_000;")
-            && source.contains("const READ_DOCUMENTS: usize = 100_000;")
-            && !source.contains("500_000")
-            && !source.contains("500k")
-            && source.contains("fn number_range_request(start: usize)")
-            && source.contains("gte: Some(RangeBound::Number(start as f64))")
-            && source
+        source.matches(DURABLE_WORKLOAD_BEGIN).count() == 1
+            && source.matches(DURABLE_WORKLOAD_END).count() == 1,
+        "PERF_GATE",
+    )?;
+    let (coarse, after_begin) = source
+        .split_once(DURABLE_WORKLOAD_BEGIN)
+        .ok_or(Finding("PERF_GATE"))?;
+    let (durable, after_end) = after_begin
+        .split_once(DURABLE_WORKLOAD_END)
+        .ok_or(Finding("PERF_GATE"))?;
+    require(
+        !after_end.contains(DURABLE_WORKLOAD_BEGIN) && !after_end.contains(DURABLE_WORKLOAD_END),
+        "PERF_GATE",
+    )?;
+    Ok((coarse, durable))
+}
+
+fn validate_perf_workload_ledger_source(source: &str) -> Result<(), Finding> {
+    let required = [
+        "input_duration: Duration::from_secs(30 * 60),",
+        "docops_per_second: 100,",
+        "query_qps: 10,",
+        "completed_percent: 95,",
+        "p99_limit: Duration::from_secs(1),",
+        "max_query_limit: Duration::from_secs(5),",
+        "drain_limit: Duration::from_secs(60),",
+        "rss_limit_bytes: 12 * GIB,",
+        "let required_docops = self.limits.docops_per_second * seconds;",
+        "if report.docops_offered_in_input < required_docops {",
+        "for (second, offered) in self.input_docop_offer_buckets.iter().copied().enumerate() {",
+        "let body_started_in_input = body_started_bucket.is_some();",
+        "&& operation.submitted.len() == operation.required.len()",
+        "&& operation.successful.len() == operation.required.len();",
+        "if started_in_input && self.input_bucket(finished_at).is_some() {",
+        "if !seen_document_targets.insert(document_target.clone()) {",
+        "let required_queries = self.limits.query_qps * seconds;",
+        "if report.queries_completed_in_input < required_queries {",
+        "for (second, offered) in self.input_query_start_buckets.iter().copied().enumerate() {",
+        "if self.input_requests_finished != self.input_requests_submitted {",
+        "if report.checkpoints == 0 {",
+        "if report.merges == 0 {",
+    ];
+    require(
+        required
+            .iter()
+            .all(|expected| has_active_line(source, expected)),
+        "PERF_GATE",
+    )
+}
+
+fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
+    let (coarse, durable) = durable_workload_region(source)?;
+    require(
+        coarse.contains("const TRUNCATE_LARGE_DOCUMENTS: usize = 100_000;")
+            && coarse.contains("const READ_DOCUMENTS: usize = 100_000;")
+            && !coarse.contains("500_000")
+            && !coarse.contains("500k")
+            && coarse.contains("fn number_range_request(start: usize)")
+            && coarse.contains("gte: Some(RangeBound::Number(start as f64))")
+            && coarse
                 .contains("fn sorted_number_request(cursor: Option<String>, lower_bound: usize)")
-            && source.contains("gte: Some(RangeBound::Number(lower_bound as f64))")
-            && source.contains("let mut range_start = READ_RANGE_START;")
-            && source.contains("let mut sort_lower_bound = READ_SORT_LOWER_BOUND;")
-            && source.contains("let mut cursor_lower_bound = READ_CURSOR_LOWER_BOUND;"),
+            && coarse.contains("gte: Some(RangeBound::Number(lower_bound as f64))")
+            && coarse.contains("let mut range_start = READ_RANGE_START;")
+            && coarse.contains("let mut sort_lower_bound = READ_SORT_LOWER_BOUND;")
+            && coarse.contains("let mut cursor_lower_bound = READ_CURSOR_LOWER_BOUND;"),
+        "PERF_GATE",
+    )?;
+    let durable_required = [
+        "#[path = \"support/perf_cell_receipt.rs\"]",
+        "mod perf_cell_receipt;",
+        "#[path = \"support/perf_workload_ledger.rs\"]",
+        "mod perf_workload_ledger;",
+        "mod durable_workload {",
+        "const IDLE_COLLECTIONS: usize = 181;",
+        "const HOT_DOCUMENTS: usize = 500_000;",
+        "const MUTATION_DOCUMENTS_PER_CLASS: usize = (INPUT_SECONDS as usize / 3) * DOCOPS_PER_SECOND;",
+        "const VECTOR_READBACK_REFERENCE_NUMBER: usize = 400_000;",
+        "const READBACK_MISMATCH_TOKEN: &str = \"readback-mismatch\";",
+        "const IDLE_DOCUMENTS_PER_COLLECTION: usize = 100;",
+        "const FIELD_COUNT: usize = 14;",
+        "const INPUT_SECONDS: u64 = 30 * 60;",
+        "const DOCOPS_PER_SECOND: usize = 100;",
+        "const QUERY_QPS: usize = 10;",
+        "const DOCKER_CPUS: &str = \"2.5\";",
+        "const DOCKER_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;",
+        "const DOCKER_MEMORY: &str = \"17179869184\";",
+        "const SNAPSHOT_SECONDS: &str = \"15\";",
+        "const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);",
+        "\"--cpus\",",
+        "DOCKER_CPUS,",
+        "\"--memory\",",
+        "DOCKER_MEMORY,",
+        "\"--memory-swap\",",
+        "deltas.assert_complete_interval_evidence()?;",
+        "let report = ledger.validate().map_err(HarnessError::Workload)?;",
+        "counter_delta.checkpoints > 0,",
+        "counter_delta.merges > 0,",
+        "let restart_elapsed = post_input_step(",
+        "server.restart_and_wait_ready(),",
+        "fn semantic_wrong_field_query(",
+        "let mismatch = semantic_wrong_field_query(field, value, fingerprint, document.number)?;",
+        "if response_contains_id(&mismatch_response, &document.external_id) {",
+        "\"title_ngram\" | \"body_ngram\" | \"summary_ngram\" => {",
+        "\"text\": value,",
+        "\"{value} {READBACK_MISMATCH_TOKEN} window {number} field {field}\"",
+        "fn bounded_vector_query(",
+        "{ \"or\": [",
+        "\"k\": 1,",
+        "fn assert_vector_reference_is_untouched(reference: &SemanticDocument) -> Result<()> {",
+        "fn assert_vector_pair_is_distinct_and_non_collinear(",
+        "async fn assert_bounded_embedding_readback(",
+        "assert_vector_reference_is_untouched(reference)?;",
+        "assert_vector_pair_is_distinct_and_non_collinear(target, reference)?;",
+        "&vector_readback_reference(),",
+        "selection.qualifying.as_deref(),",
+        "if diagnostic && qualifying {",
+        "(Some(config), false, true) => Ok(Self::Qualifying(config)),",
+        "SelectedMode::Diagnostic(config) => {",
+        "SelectedMode::Qualifying(config) => {",
+        "perf_cell_receipt::write_new(&context.receipt_path, &receipt)",
+        "for config in qualifying_matrix() {",
+        "run_case(config)",
+        "assert_eq!(cases.len(), 16);",
+    ];
+    require(
+        durable_required
+            .iter()
+            .all(|expected| has_active_line(durable, expected)),
+        "PERF_GATE",
+    )?;
+    let ngram_positive = active_source_region(
+        durable,
+        "\"title_ngram\" | \"body_ngram\" | \"summary_ngram\" => {",
+        "\"title_text\" | \"body_text\" => {",
+    );
+    require(
+        ngram_positive.is_some_and(|region| has_active_line(region, "\"text\": value,")),
+        "PERF_GATE",
+    )?;
+    let text_mismatch = active_source_region(
+        durable,
+        "\"title_ngram\" | \"body_ngram\" | \"summary_ngram\" | \"title_text\" | \"body_text\" => {",
+        "unexpected => Err(HarnessError::DataInvariant(format!(",
+    );
+    require(
+        text_mismatch.is_some_and(|region| {
+            has_active_line(
+                region,
+                "\"{value} {READBACK_MISMATCH_TOKEN} window {number} field {field}\"",
+            )
+        }),
         "PERF_GATE",
     )?;
     require(
@@ -1278,6 +1631,121 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 ("number_read_costs_on_100k_documents".into(), true),
                 ("median_statistic_and_ignored_inventory".into(), false),
+                (
+                    "restart_command_timeout_kills_and_reaps_a_stuck_child".into(),
+                    false,
+                ),
+                ("approved_30_minute_durable_workload".into(), true),
+                (
+                    "fingerprint_only_readback_cannot_pass_an_ignored_field_predicate".into(),
+                    false,
+                ),
+                (
+                    "vector_readback_rejects_the_target_for_both_candidate_vectors".into(),
+                    false,
+                ),
+                (
+                    "selected_qualifying_cell_is_explicit_and_never_a_diagnostic_false_green"
+                        .into(),
+                    false,
+                ),
+                (
+                    "approved_index_operation_requires_the_frozen_fourteen_field_schema".into(),
+                    false,
+                ),
+                (
+                    "runtime_metrics_reject_a_missing_required_row".into(),
+                    false,
+                ),
+                (
+                    "runtime_metrics_reject_a_duplicate_required_row".into(),
+                    false,
+                ),
+                (
+                    "runtime_metrics_reject_an_invalid_required_row".into(),
+                    false,
+                ),
+                (
+                    "runtime_metrics_reject_an_unavailable_vmhwm_probe".into(),
+                    false,
+                ),
+                (
+                    "duration_counters_reject_backward_and_nonfinite_values".into(),
+                    false,
+                ),
+                (
+                    "warmup_retry_policy_accepts_only_the_one_second_backpressure_hint".into(),
+                    false,
+                ),
+                (
+                    "seed_backpressure_retry_honors_absolute_setup_deadline".into(),
+                    false,
+                ),
+                (
+                    "request_deadline_is_the_approved_five_seconds".into(),
+                    false,
+                ),
+                (
+                    "post_input_workload_drain_deadline_returns_promptly".into(),
+                    false,
+                ),
+                (
+                    "input_window_deadline_returns_promptly_with_the_timed_out_stage".into(),
+                    false,
+                ),
+                (
+                    "input_window_timeout_aborts_sampler_before_drive_finalization".into(),
+                    false,
+                ),
+                (
+                    "request_pump_capacity_wait_honors_input_window_deadline".into(),
+                    false,
+                ),
+                (
+                    "post_restart_backend_residency_rejects_flat_and_hnsw_coercion".into(),
+                    false,
+                ),
+                (
+                    "post_restart_backend_residency_rejects_missing_or_unknown_stats".into(),
+                    false,
+                ),
+                (
+                    "post_restart_backend_residency_covers_every_fixed_collection_and_vector_field"
+                        .into(),
+                    false,
+                ),
+                (
+                    "bounded_failure_streams_keep_success_stderr_and_http_bodies_small".into(),
+                    false,
+                ),
+                (
+                    "docker_log_tail_keeps_final_stdout_and_stderr_within_artifact_cap".into(),
+                    false,
+                ),
+                (
+                    "failure_evidence_keeps_request_chain_and_collects_before_cleanup".into(),
+                    false,
+                ),
+                (
+                    "journal_records_a_real_reqwest_connect_error_with_full_chain".into(),
+                    false,
+                ),
+                (
+                    "request_error_journal_lands_in_the_failure_evidence_bundle".into(),
+                    false,
+                ),
+                (
+                    "request_error_journal_caps_entries_and_counts_the_overflow".into(),
+                    false,
+                ),
+                (
+                    "non_success_status_record_carries_status_and_a_truncated_body".into(),
+                    false,
+                ),
+                (
+                    "qualifying_matrix_keeps_every_mutation_endpoint_and_backend".into(),
+                    false,
+                ),
             ],
         "PERF_GATE",
     )
@@ -1354,6 +1822,395 @@ fn validate_scale_matrix_sources(
     )
 }
 
+const PERF_WORKFLOW: &str = "PERF_WORKFLOW";
+const PERF_FINAL_RECEIPT: &str = "PERF_FINAL_RECEIPT";
+const PRODUCT_GATED_STEP_NAMES: &[&str] = &[
+    "Install verified Terraform 1.9.4",
+    "Install verified kubectl v1.37.0",
+    "Run cloud-free Terraform acceptance gate",
+    "Run cloud-free Kustomize acceptance gate",
+    "Run required Lumen product gates without GKE",
+    "Verify full run-scoped candidate supply chain",
+];
+
+fn yaml_u64(value: Option<&Yaml>) -> Option<u64> {
+    value.and_then(Yaml::as_u64)
+}
+
+fn exact_mapping_keys(value: &Yaml, expected: &[&str]) -> bool {
+    value.as_mapping().is_some_and(|map| {
+        map.len() == expected.len() && expected.iter().all(|name| map.contains_key(&key(name)))
+    })
+}
+
+fn step_named<'a>(steps: &'a [Yaml], name: &str) -> Result<&'a Yaml, Finding> {
+    let matches = steps
+        .iter()
+        .filter(|step| field(step, "name").and_then(Yaml::as_str) == Some(name))
+        .collect::<Vec<_>>();
+    require(matches.len() == 1, PERF_WORKFLOW)?;
+    Ok(matches[0])
+}
+
+fn durable_perf_env() -> [(&'static str, &'static str); 10] {
+    [
+        (
+            "LUMEN_PERF_IMAGE",
+            "${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}",
+        ),
+        ("LUMEN_PERF_ENDPOINT", "${{ matrix.endpoint }}"),
+        ("LUMEN_PERF_BATCH", "${{ matrix.batch }}"),
+        ("LUMEN_PERF_BACKEND", "${{ matrix.backend }}"),
+        ("LUMEN_PERF_QUALIFYING_CELL", "1"),
+        ("LUMEN_PERF_REPOSITORY", "${{ github.repository }}"),
+        ("LUMEN_PERF_RUN_ID", "${{ github.run_id }}"),
+        ("LUMEN_PERF_RUN_ATTEMPT", "${{ github.run_attempt }}"),
+        ("LUMEN_PERF_COMMIT", "${{ needs.identity.outputs.commit }}"),
+        (
+            "LUMEN_PERF_RECEIPT_PATH",
+            "receipts/${{ matrix.cell_id }}.json",
+        ),
+    ]
+}
+
+fn validate_durable_perf_matrix(workflow: &Yaml, source: &str) -> Result<(), Finding> {
+    let candidate = job(workflow, "verify-candidate").ok_or(Finding(PERF_WORKFLOW))?;
+    require(
+        field(candidate, "runs-on").and_then(Yaml::as_str) == Some("ubuntu-latest"),
+        PERF_WORKFLOW,
+    )?;
+    require(
+        field(candidate, "continue-on-error").is_none() && field(candidate, "if").is_none(),
+        PERF_WORKFLOW,
+    )?;
+    let strategy = field(candidate, "strategy").ok_or(Finding(PERF_WORKFLOW))?;
+    require(
+        exact_mapping_keys(strategy, &["fail-fast", "max-parallel", "matrix"])
+            && field(strategy, "fail-fast").and_then(Yaml::as_bool) == Some(false)
+            && yaml_u64(field(strategy, "max-parallel")) == Some(4),
+        PERF_WORKFLOW,
+    )?;
+    let include = field(
+        field(strategy, "matrix").ok_or(Finding(PERF_WORKFLOW))?,
+        "include",
+    )
+    .and_then(Yaml::as_sequence)
+    .ok_or(Finding(PERF_WORKFLOW))?;
+    let expected = perf_cell_receipt::qualifying_workflow_cells();
+    require(include.len() == expected.len(), PERF_WORKFLOW)?;
+    let mut actual = std::collections::BTreeSet::new();
+    let mut product_gates = 0_usize;
+    for row in include {
+        require(
+            exact_mapping_keys(
+                row,
+                &["endpoint", "batch", "backend", "cell_id", "product_gates"],
+            ),
+            PERF_WORKFLOW,
+        )?;
+        let endpoint = field(row, "endpoint").and_then(Yaml::as_str);
+        let batch = yaml_u64(field(row, "batch"));
+        let backend = field(row, "backend").and_then(Yaml::as_str);
+        let cell_id = field(row, "cell_id").and_then(Yaml::as_str);
+        let enabled = field(row, "product_gates").and_then(Yaml::as_bool);
+        let Some((endpoint, batch, backend, cell_id, enabled)) = endpoint
+            .zip(batch)
+            .zip(backend)
+            .zip(cell_id)
+            .zip(enabled)
+            .map(|((((endpoint, batch), backend), cell_id), enabled)| {
+                (endpoint, batch, backend, cell_id, enabled)
+            })
+        else {
+            return Err(Finding(PERF_WORKFLOW));
+        };
+        let cell = perf_cell_receipt::Cell::new(endpoint, batch, backend);
+        require(cell.id == cell_id, PERF_WORKFLOW)?;
+        if enabled {
+            product_gates += 1;
+            require(cell.id == "index-1-flat-cpu", PERF_WORKFLOW)?;
+        }
+        require(actual.insert((cell.id, enabled)), PERF_WORKFLOW)?;
+    }
+    require(product_gates == 1, PERF_WORKFLOW)?;
+    let expected_rows = expected
+        .iter()
+        .map(|row| (row.cell.id.clone(), row.product_gates))
+        .collect::<std::collections::BTreeSet<_>>();
+    require(actual == expected_rows, PERF_WORKFLOW)?;
+
+    let steps = field(candidate, "steps")
+        .and_then(Yaml::as_sequence)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    for step in steps {
+        require(field(step, "continue-on-error").is_none(), PERF_WORKFLOW)?;
+        let name = field(step, "name").and_then(Yaml::as_str);
+        let condition = field(step, "if").and_then(Yaml::as_str);
+        if PRODUCT_GATED_STEP_NAMES.contains(&name.unwrap_or_default()) {
+            require(
+                condition == Some("${{ matrix.product_gates }}"),
+                PERF_WORKFLOW,
+            )?;
+        } else {
+            require(condition.is_none(), PERF_WORKFLOW)?;
+        }
+    }
+    require(!source.contains("LUMEN_PERF_DIAGNOSTIC"), PERF_WORKFLOW)?;
+
+    let perf = step_named(steps, "Run qualifying durable performance cell")?;
+    require(
+        exact_mapping_keys(perf, &["name", "env", "shell", "run"])
+            && field(perf, "shell").and_then(Yaml::as_str) == Some("bash"),
+        PERF_WORKFLOW,
+    )?;
+    let environment = field(perf, "env")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    require(
+        environment.len() == durable_perf_env().len()
+            || (environment.len() == durable_perf_env().len() + 1
+                && environment
+                    .get(&key("CARGO_INCREMENTAL"))
+                    .and_then(Yaml::as_str)
+                    == Some("0")),
+        PERF_WORKFLOW,
+    )?;
+    for (name, value) in durable_perf_env() {
+        require(
+            environment.get(&key(name)).and_then(Yaml::as_str) == Some(value),
+            PERF_WORKFLOW,
+        )?;
+    }
+    let run = field(perf, "run")
+        .and_then(Yaml::as_str)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    let perf_lines = shell_logical_lines(run);
+    require(
+        active_line_contains(&perf_lines, "set -euo pipefail")
+            && active_line_contains(&perf_lines, "mkdir -p receipts")
+            && perf_lines
+                .iter()
+                .filter(|line| line.as_str() == RELEASE_PERF_GATE)
+                .count()
+                == 1
+            && active_line_contains(&perf_lines, "test -f \"$LUMEN_PERF_RECEIPT_PATH\"")
+            && active_line_contains(&perf_lines, "test ! -L \"$LUMEN_PERF_RECEIPT_PATH\"")
+            && active_line_contains(&perf_lines, "find receipts -mindepth 1 -maxdepth 1 | wc -l")
+            && !perf_lines.iter().any(|line| line.contains("--exact")),
+        PERF_WORKFLOW,
+    )?;
+
+    let upload = step_named(steps, "Upload qualifying durable performance receipt")?;
+    require(
+        exact_mapping_keys(upload, &["name", "uses", "with"])
+            && field(upload, "uses").and_then(Yaml::as_str)
+                == Some("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"),
+        PERF_WORKFLOW,
+    )?;
+    let upload_with = field(upload, "with")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    for (name, value) in [
+        (
+            "name",
+            "lumen-durable-perf-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cell_id }}",
+        ),
+        ("path", "receipts/${{ matrix.cell_id }}.json"),
+        ("if-no-files-found", "error"),
+    ] {
+        require(
+            upload_with.get(&key(name)).and_then(Yaml::as_str) == Some(value),
+            PERF_WORKFLOW,
+        )?;
+    }
+    require(
+        upload_with.get(&key("overwrite")).and_then(Yaml::as_bool) == Some(false)
+            && upload_with.len() == 4,
+        PERF_WORKFLOW,
+    )
+}
+
+fn active_line_contains(lines: &[String], needle: &str) -> bool {
+    lines.iter().any(|line| line.contains(needle))
+}
+
+fn validate_durable_perf_final_binding(workflow: &Yaml) -> Result<(), Finding> {
+    let result = job(workflow, "result").ok_or(Finding(PERF_WORKFLOW))?;
+    let steps = field(result, "steps")
+        .and_then(Yaml::as_sequence)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    let downloads = steps
+        .iter()
+        .filter(|step| {
+            field(step, "uses").and_then(Yaml::as_str)
+                == Some("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093")
+                && field(step, "with")
+                    .and_then(|with| field(with, "pattern"))
+                    .and_then(Yaml::as_str)
+                    == Some("lumen-durable-perf-${{ github.run_id }}-${{ github.run_attempt }}-*")
+        })
+        .collect::<Vec<_>>();
+    require(downloads.len() == 1, PERF_WORKFLOW)?;
+    let download = downloads[0];
+    require(
+        exact_mapping_keys(download, &["name", "uses", "with"])
+            && field(download, "uses").and_then(Yaml::as_str)
+                == Some("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"),
+        PERF_WORKFLOW,
+    )?;
+    let download_with = field(download, "with")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    for (name, value) in [
+        (
+            "pattern",
+            "lumen-durable-perf-${{ github.run_id }}-${{ github.run_attempt }}-*",
+        ),
+        ("path", "candidate/perf"),
+    ] {
+        require(
+            download_with.get(&key(name)).and_then(Yaml::as_str) == Some(value),
+            PERF_WORKFLOW,
+        )?;
+    }
+    require(
+        download_with
+            .get(&key("merge-multiple"))
+            .and_then(Yaml::as_bool)
+            == Some(true)
+            && download_with.len() == 3,
+        PERF_WORKFLOW,
+    )?;
+
+    let verifications = steps
+        .iter()
+        .filter(|step| {
+            field(step, "run")
+                .and_then(Yaml::as_str)
+                .is_some_and(|run| run.contains("apps/lumen/scripts/verify-durable-perf.py"))
+        })
+        .collect::<Vec<_>>();
+    require(verifications.len() == 1, PERF_WORKFLOW)?;
+    let verify = verifications[0];
+    require(
+        exact_mapping_keys(verify, &["name", "shell", "run"])
+            && field(verify, "shell").and_then(Yaml::as_str) == Some("bash"),
+        PERF_WORKFLOW,
+    )?;
+    let verify_run = field(verify, "run")
+        .and_then(Yaml::as_str)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    let verify_lines = shell_logical_lines(verify_run);
+    let verify_command = verify_lines
+        .iter()
+        .filter(|line| line.contains("apps/lumen/scripts/verify-durable-perf.py"))
+        .collect::<Vec<_>>();
+    require(
+        verify_command.len() == 1
+            && active_line_contains(&verify_lines, "set -euo pipefail")
+            && [
+                "--receipts-dir candidate/perf",
+                "--repo \"${{ github.repository }}\"",
+                "--run-id \"${{ github.run_id }}\"",
+                "--run-attempt \"${{ github.run_attempt }}\"",
+                "--commit \"${{ needs.identity.outputs.commit }}\"",
+                "--image \"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\"",
+                "--output candidate/durable-perf-summary.json",
+            ]
+            .iter()
+            .all(|needle| verify_command[0].contains(needle)),
+        PERF_WORKFLOW,
+    )?;
+
+    let bind = step_named(
+        steps,
+        "Bind all successful job conclusions into final receipt",
+    )?;
+    let bind_run = field(bind, "run")
+        .and_then(Yaml::as_str)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    let bind_lines = shell_logical_lines(bind_run);
+    for needle in [
+        "durable-perf-summary.json.sha256",
+        "[0-9a-f]{64}",
+        "performance:{schema_version:1,summary_file:\"durable-perf-summary.json\"",
+        "receipts_directory:\"perf\"}",
+        "jobs:{identity:",
+        "final-candidate-manifest.json",
+    ] {
+        require(active_line_contains(&bind_lines, needle), PERF_WORKFLOW)?;
+    }
+
+    let uploads = steps
+        .iter()
+        .filter(|step| {
+            field(step, "uses").and_then(Yaml::as_str)
+                == Some("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02")
+        })
+        .collect::<Vec<_>>();
+    require(uploads.len() == 1, PERF_WORKFLOW)?;
+    let upload_path = field(uploads[0], "with")
+        .and_then(|with| field(with, "path"))
+        .and_then(Yaml::as_str)
+        .ok_or(Finding(PERF_WORKFLOW))?;
+    for path in [
+        "candidate/perf/*.json",
+        "candidate/durable-perf-summary.json",
+        "candidate/durable-perf-summary.json.sha256",
+    ] {
+        require(
+            upload_path.lines().any(|line| line.trim() == path),
+            PERF_WORKFLOW,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_durable_perf_workflow(source: &str) -> Result<(), Finding> {
+    let workflow: Yaml = serde_yaml::from_str(source).map_err(|_| Finding(PERF_WORKFLOW))?;
+    validate_durable_perf_matrix(&workflow, source)?;
+    validate_durable_perf_final_binding(&workflow)
+}
+
+fn validate_durable_final_verifier(source: &str) -> Result<(), Finding> {
+    for needle in [
+        "verify-durable-perf.py",
+        "--verify-existing",
+        "--summary-sha256",
+        "performance",
+        "[0,6,1]",
+        "durable-perf-summary.json",
+        "receipts_directory",
+    ] {
+        require(source.contains(needle), PERF_FINAL_RECEIPT)?;
+    }
+    Ok(())
+}
+
+fn validate_final_jobs_manifest_binding(workflow: &Yaml) -> Result<(), Finding> {
+    const JOBS: &str = "jobs:{identity:\"${{ needs.identity.result }}\",build:\"${{ needs.build.result }}\",manifest:\"${{ needs.manifest.result }}\",\"ghcr-image-and-attest\":\"${{ needs.ghcr-image-and-attest.result }}\",\"verify-candidate\":\"${{ needs.verify-candidate.result }}\",\"verify-libraries\":\"${{ needs.verify-libraries.result }}\",\"kind-amd64\":\"${{ needs.kind-amd64.result }}\",\"kind-arm64\":\"${{ needs.kind-arm64.result }}\",result:\"success\"}";
+    let step = named_step(
+        workflow,
+        "result",
+        "Bind all successful job conclusions into final receipt",
+    )
+    .ok_or(Finding("MANIFEST"))?;
+    let run = field(step, "run")
+        .and_then(Yaml::as_str)
+        .ok_or(Finding("MANIFEST"))?;
+    let jq_lines = shell_logical_lines(run)
+        .into_iter()
+        .filter(|line| line.starts_with("jq -c "))
+        .collect::<Vec<_>>();
+    require(
+        jq_lines.len() == 1
+            && jq_lines[0].contains(". + {")
+            && jq_lines[0].contains(JOBS)
+            && jq_lines[0].contains("> final-candidate-manifest.json"),
+        "MANIFEST",
+    )
+}
+
 fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Finding> {
     let workflow: Yaml = serde_yaml::from_str(source).map_err(|_| Finding("YAML"))?;
     let events = field(&workflow, "on")
@@ -1410,6 +2267,7 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
     validate_libraries_job(&workflow)?;
     validate_product_gate_partition(&workflow, source)?;
     validate_perf_gate_source(&perf_gate_source())?;
+    validate_perf_workload_ledger_source(&perf_workload_ledger_source())?;
     validate_scale_matrix_sources(
         &perf_gate_vs_db_source(),
         &lumen_scale_script(),
@@ -1638,12 +2496,7 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
     ] {
         require(source.contains(binding), "MANIFEST")?;
     }
-    require(
-        source.contains(
-            ". + {jobs:{identity:\"${{ needs.identity.result }}\",build:\"${{ needs.build.result }}\",manifest:\"${{ needs.manifest.result }}\",\"ghcr-image-and-attest\":\"${{ needs.ghcr-image-and-attest.result }}\",\"verify-candidate\":\"${{ needs.verify-candidate.result }}\",\"verify-libraries\":\"${{ needs.verify-libraries.result }}\",\"kind-amd64\":\"${{ needs.kind-amd64.result }}\",\"kind-arm64\":\"${{ needs.kind-arm64.result }}\",result:\"success\"}}",
-        ),
-        "MANIFEST",
-    )?;
+    validate_final_jobs_manifest_binding(&workflow)?;
     require(source.contains("LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.amd64_digest }}\""), "KIND")?;
     require(source.contains("LUMEN_E2E_EXPECTED_RUNTIME_DIGEST=\"${{ needs.ghcr-image-and-attest.outputs.arm64_digest }}\""), "KIND")?;
     require(
@@ -1656,6 +2509,7 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
 
 fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
     validate_workflow_semantics(source, dockerfile)?;
+    validate_durable_perf_workflow(source)?;
     require(
         sha256_bytes(source.as_bytes()) == WORKFLOW_BYTES_SHA256,
         "WORKFLOW_BYTES",
@@ -1751,6 +2605,9 @@ fn kind_e2e_source() -> String {
 fn perf_gate_source() -> String {
     fs::read_to_string(root().join("apps/lumen/e2e/perf_gate.rs")).unwrap()
 }
+fn perf_workload_ledger_source() -> String {
+    fs::read_to_string(root().join("apps/lumen/e2e/support/perf_workload_ledger.rs")).unwrap()
+}
 fn perf_gate_vs_db_source() -> String {
     fs::read_to_string(root().join("apps/lumen/e2e/perf_gate_vs_db.rs")).unwrap()
 }
@@ -1769,6 +2626,263 @@ fn verifier() -> (String, u32) {
 }
 fn dockerfile() -> String {
     fs::read_to_string(root().join("apps/lumen/Dockerfile.release")).unwrap()
+}
+
+fn durable_perf_workflow_fixture() -> String {
+    let matrix = perf_cell_receipt::qualifying_workflow_cells()
+        .into_iter()
+        .map(|row| {
+            format!(
+                "          - endpoint: {}\n            batch: {}\n            backend: {}\n            cell_id: {}\n            product_gates: {}",
+                row.cell.endpoint, row.cell.batch_size, row.cell.backend, row.cell.id, row.product_gates
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"jobs:
+  verify-candidate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+{matrix}
+    steps:
+      - name: Run cloud-free Terraform acceptance gate
+        if: ${{{{ matrix.product_gates }}}}
+        shell: bash
+        run: true
+      - name: Run cloud-free Kustomize acceptance gate
+        if: ${{{{ matrix.product_gates }}}}
+        shell: bash
+        run: true
+      - name: Run required Lumen product gates without GKE
+        if: ${{{{ matrix.product_gates }}}}
+        shell: bash
+        run: true
+      - name: Verify full run-scoped candidate supply chain
+        if: ${{{{ matrix.product_gates }}}}
+        shell: bash
+        run: true
+      - name: Run qualifying durable performance cell
+        env:
+          LUMEN_PERF_IMAGE: ${{{{ needs.ghcr-image-and-attest.outputs.image_repo }}}}@${{{{ needs.ghcr-image-and-attest.outputs.root_digest }}}}
+          LUMEN_PERF_ENDPOINT: ${{{{ matrix.endpoint }}}}
+          LUMEN_PERF_BATCH: ${{{{ matrix.batch }}}}
+          LUMEN_PERF_BACKEND: ${{{{ matrix.backend }}}}
+          LUMEN_PERF_QUALIFYING_CELL: "1"
+          LUMEN_PERF_REPOSITORY: ${{{{ github.repository }}}}
+          LUMEN_PERF_RUN_ID: ${{{{ github.run_id }}}}
+          LUMEN_PERF_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}
+          LUMEN_PERF_COMMIT: ${{{{ needs.identity.outputs.commit }}}}
+          LUMEN_PERF_RECEIPT_PATH: receipts/${{{{ matrix.cell_id }}}}.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          {RELEASE_PERF_GATE}
+          test -f "$LUMEN_PERF_RECEIPT_PATH"
+          test ! -L "$LUMEN_PERF_RECEIPT_PATH"
+          test "$(find receipts -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
+      - name: Upload qualifying durable performance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lumen-durable-perf-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}-${{{{ matrix.cell_id }}}}
+          path: receipts/${{{{ matrix.cell_id }}}}.json
+          if-no-files-found: error
+          overwrite: false
+  result:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download qualifying durable performance receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: lumen-durable-perf-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}-*
+          path: candidate/perf
+          merge-multiple: true
+      - name: Verify qualifying durable performance receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 apps/lumen/scripts/verify-durable-perf.py --receipts-dir candidate/perf --repo "${{{{ github.repository }}}}" --run-id "${{{{ github.run_id }}}}" --run-attempt "${{{{ github.run_attempt }}}}" --commit "${{{{ needs.identity.outputs.commit }}}}" --image "${{{{ needs.ghcr-image-and-attest.outputs.image_repo }}}}@${{{{ needs.ghcr-image-and-attest.outputs.root_digest }}}}" --output candidate/durable-perf-summary.json
+      - name: Bind all successful job conclusions into final receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidate
+          summary_sha256="$(tr -d '\n' < durable-perf-summary.json.sha256)"
+          [[ "$summary_sha256" =~ ^[0-9a-f]{{64}}$ ]]
+          jq -c --arg summary_sha256 "$summary_sha256" '. + {{jobs:{{identity:"success"}},performance:{{schema_version:1,summary_file:"durable-perf-summary.json",summary_sha256:$summary_sha256,receipts_directory:"perf"}}}}' candidate-manifest.json > final-candidate-manifest.json
+      - name: Verify final receipt as local fixture only
+        shell: bash
+        run: true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lumen-release-candidate-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}
+          path: |
+            candidate/perf/*.json
+            candidate/durable-perf-summary.json
+            candidate/durable-perf-summary.json.sha256
+            candidate/final-candidate-manifest.json
+          if-no-files-found: error
+          overwrite: false
+"#
+    )
+}
+
+#[test]
+fn durable_performance_release_workflow_is_fail_closed() {
+    let source = durable_perf_workflow_fixture();
+    validate_durable_perf_workflow(&source).expect("synthetic qualifying workflow");
+
+    let assert_rejected = |name: &str, changed: String| {
+        assert_eq!(
+            validate_durable_perf_workflow(&changed),
+            Err(Finding(PERF_WORKFLOW)),
+            "{name} mutation passed"
+        );
+    };
+    assert_rejected(
+        "missing matrix cell",
+        replace_once(
+            &source,
+            "          - endpoint: unindex\n            batch: 1000\n            backend: hnsw-cpu\n            cell_id: unindex-1000-hnsw-cpu\n            product_gates: false\n",
+            "",
+        ),
+    );
+    assert_rejected(
+        "duplicate matrix cell",
+        replace_once(
+            &source,
+            "cell_id: index-1-hnsw-cpu",
+            "cell_id: index-1-flat-cpu",
+        ),
+    );
+    assert_rejected(
+        "wrong batch",
+        replace_once(
+            &source,
+            "endpoint: index\n            batch: 1000\n            backend: flat-cpu",
+            "endpoint: index\n            batch: 999\n            backend: flat-cpu",
+        ),
+    );
+    assert_rejected(
+        "wrong backend",
+        replace_once(
+            &source,
+            "backend: flat-cpu\n            cell_id: index-1-flat-cpu",
+            "backend: hnsw-cpu\n            cell_id: index-1-flat-cpu",
+        ),
+    );
+    assert_rejected(
+        "no product gate child",
+        replace_once(&source, "product_gates: true", "product_gates: false"),
+    );
+    assert_rejected(
+        "two product gate children",
+        replace_once(
+            &source,
+            "cell_id: index-100-flat-cpu\n            product_gates: false",
+            "cell_id: index-100-flat-cpu\n            product_gates: true",
+        ),
+    );
+    assert_rejected(
+        "fail fast",
+        replace_once(&source, "fail-fast: false", "fail-fast: true"),
+    );
+    assert_rejected(
+        "continue on error",
+        replace_once(
+            &source,
+            "    runs-on: ubuntu-latest\n    strategy:",
+            "    runs-on: ubuntu-latest\n    continue-on-error: true\n    strategy:",
+        ),
+    );
+    assert_rejected(
+        "diagnostic selection",
+        replace_once(
+            &source,
+            "          LUMEN_PERF_QUALIFYING_CELL: \"1\"",
+            "          LUMEN_PERF_QUALIFYING_CELL: \"1\"\n          LUMEN_PERF_DIAGNOSTIC: \"1\"",
+        ),
+    );
+    assert_rejected(
+        "mutable image",
+        replace_once(
+            &source,
+            "LUMEN_PERF_IMAGE: ${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}",
+            "LUMEN_PERF_IMAGE: ${{ needs.ghcr-image-and-attest.outputs.image_repo }}:latest",
+        ),
+    );
+    assert_rejected(
+        "missing run binding",
+        replace_once(
+            &source,
+            "          LUMEN_PERF_RUN_ATTEMPT: ${{ github.run_attempt }}\n",
+            "",
+        ),
+    );
+    assert_rejected(
+        "shared receipt filename",
+        replace_once(
+            &source,
+            "LUMEN_PERF_RECEIPT_PATH: receipts/${{ matrix.cell_id }}.json",
+            "LUMEN_PERF_RECEIPT_PATH: receipts/receipt.json",
+        ),
+    );
+    assert_rejected(
+        "skipped performance gate",
+        replace_once(&source, RELEASE_PERF_GATE, "true"),
+    );
+    assert_rejected(
+        "missing aggregate",
+        replace_once(
+            &source,
+            "      - name: Verify qualifying durable performance receipts\n        shell: bash\n        run: |\n          set -euo pipefail\n          python3 apps/lumen/scripts/verify-durable-perf.py --receipts-dir candidate/perf --repo \"${{ github.repository }}\" --run-id \"${{ github.run_id }}\" --run-attempt \"${{ github.run_attempt }}\" --commit \"${{ needs.identity.outputs.commit }}\" --image \"${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}\" --output candidate/durable-perf-summary.json\n",
+            "",
+        ),
+    );
+    assert_rejected(
+        "missing final performance binding",
+        replace_once(
+            &source,
+            ",performance:{schema_version:1,summary_file:\"durable-perf-summary.json\",summary_sha256:$summary_sha256,receipts_directory:\"perf\"}",
+            "",
+        ),
+    );
+    assert_rejected(
+        "raw receipt artifact omitted",
+        replace_once(&source, "            candidate/perf/*.json\n", ""),
+    );
+
+    validate_durable_perf_workflow(&workflow())
+        .expect("the checked-in release workflow must run every qualifying cell");
+}
+
+#[test]
+fn durable_final_receipt_verifier_is_fail_closed() {
+    let (source, _) = verifier();
+    validate_durable_final_verifier(&source)
+        .expect("the final candidate verifier must bind durable performance receipts");
+
+    let fixture = "verify-durable-perf.py --verify-existing --summary-sha256 performance [0,6,1] durable-perf-summary.json receipts_directory";
+    validate_durable_final_verifier(fixture).expect("synthetic final verifier contract");
+    for needle in [
+        "--verify-existing",
+        "--summary-sha256",
+        "performance",
+        "[0,6,1]",
+        "durable-perf-summary.json",
+        "receipts_directory",
+    ] {
+        assert_eq!(
+            validate_durable_final_verifier(&fixture.replacen(needle, "removed", 1)),
+            Err(Finding(PERF_FINAL_RECEIPT)),
+            "final receipt verifier accepted missing {needle}"
+        );
+    }
 }
 
 #[test]
@@ -1821,7 +2935,7 @@ fn cloud_free_gate_mutations_fail_without_hash_oracle() {
         "bash kustomize/lumen-standalone-acceptance/tests/other.sh",
         "GATE_COMMANDS",
     );
-    let terraform_step = "      - name: Install verified Terraform 1.9.4\n        shell: bash\n        run: |\n          set -euo pipefail\n          curl -fsSL https://releases.hashicorp.com/terraform/1.9.4/terraform_1.9.4_linux_amd64.zip -o /tmp/terraform.zip\n          echo '6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c  /tmp/terraform.zip' | sha256sum -c -\n          unzip -oq /tmp/terraform.zip -d /tmp/terraform-bin\n          sudo install -m 0755 /tmp/terraform-bin/terraform /usr/local/bin/terraform\n";
+    let terraform_step = "      - name: Install verified Terraform 1.9.4\n        if: ${{ matrix.product_gates }}\n        shell: bash\n        run: |\n          set -euo pipefail\n          curl -fsSL https://releases.hashicorp.com/terraform/1.9.4/terraform_1.9.4_linux_amd64.zip -o /tmp/terraform.zip\n          echo '6e9b2cc741875ab906d800af3134b076489f049565e0a1dbdb6deacd91f5054c  /tmp/terraform.zip' | sha256sum -c -\n          unzip -oq /tmp/terraform.zip -d /tmp/terraform-bin\n          sudo install -m 0755 /tmp/terraform-bin/terraform /usr/local/bin/terraform\n";
     let without_terraform = replace_once(&source, terraform_step, "");
     assert_eq!(
         validate_workflow_semantics(&without_terraform, &dockerfile()).unwrap_err(),
@@ -2130,39 +3244,68 @@ fn candidate_source_mutations_fail_with_stable_categories() {
             "uv setup version occurrence {occurrence} passed",
         );
     }
-    for (name, replacement) in [
+    for (name, replacement, finding) in [
         (
             "missing release",
             RELEASE_PERF_GATE.replace("--release ", ""),
+            "GATES",
         ),
-        ("missing locked", RELEASE_PERF_GATE.replace("--locked ", "")),
+        (
+            "missing locked",
+            RELEASE_PERF_GATE.replace("--locked ", ""),
+            "GATES",
+        ),
         (
             "missing ignored",
             RELEASE_PERF_GATE.replace("--ignored ", ""),
+            "GATES",
         ),
         (
             "missing test threads",
             RELEASE_PERF_GATE.replace("--test-threads=1 ", ""),
+            "GATES",
         ),
         (
             "missing nocapture",
             RELEASE_PERF_GATE.replace("--nocapture", ""),
+            "GATES",
         ),
-        ("comment", format!("# {RELEASE_PERF_GATE}")),
-        ("quoted prose", format!("echo '{RELEASE_PERF_GATE}'")),
+        ("comment", format!("# {RELEASE_PERF_GATE}"), PERF_WORKFLOW),
+        (
+            "quoted prose",
+            format!("echo '{RELEASE_PERF_GATE}'"),
+            PERF_WORKFLOW,
+        ),
         (
             "reordered command",
             RELEASE_PERF_GATE.replace("--release --locked", "--locked --release"),
+            "GATES",
         ),
-        ("semicolon split", format!("{RELEASE_PERF_GATE}; true")),
-        ("and split", format!("true && {RELEASE_PERF_GATE}")),
-        ("if split", format!("if true; then {RELEASE_PERF_GATE}; fi")),
-        ("eval split", format!("eval '{RELEASE_PERF_GATE}'")),
+        (
+            "semicolon split",
+            format!("{RELEASE_PERF_GATE}; true"),
+            PERF_WORKFLOW,
+        ),
+        (
+            "and split",
+            format!("true && {RELEASE_PERF_GATE}"),
+            PERF_WORKFLOW,
+        ),
+        (
+            "if split",
+            format!("if true; then {RELEASE_PERF_GATE}; fi"),
+            PERF_WORKFLOW,
+        ),
+        (
+            "eval split",
+            format!("eval '{RELEASE_PERF_GATE}'"),
+            PERF_WORKFLOW,
+        ),
     ] {
         let changed = replace_once(&source, RELEASE_PERF_GATE, &replacement);
         assert_eq!(
             validate_workflow(&changed, &dockerfile()).unwrap_err(),
-            Finding("GATES"),
+            Finding(finding),
             "{name} mutation passed",
         );
     }
@@ -2289,6 +3432,293 @@ fn candidate_source_mutations_fail_with_stable_categories() {
         validate_perf_gate_source(&standard_500k).unwrap_err(),
         Finding("PERF_GATE")
     );
+
+    for (name, changed) in [
+        (
+            "durable workload module vanished",
+            replace_once(
+                &perf_source,
+                "mod durable_workload {",
+                "mod removed_durable_workload {",
+            ),
+        ),
+        (
+            "durable workload lost ignore",
+            replace_once(
+                &perf_source,
+                "#[ignore = \"30-minute Docker release workload; default execution runs all sixteen matrix cells serially\"]\n",
+                "",
+            ),
+        ),
+        (
+            "durable document count",
+            replace_once(
+                &perf_source,
+                "const HOT_DOCUMENTS: usize = 500_000;",
+                "const HOT_DOCUMENTS: usize = 499_999;",
+            ),
+        ),
+        (
+            "durable input duration",
+            replace_once(
+                &perf_source,
+                "const INPUT_SECONDS: u64 = 30 * 60;",
+                "const INPUT_SECONDS: u64 = 29 * 60;",
+            ),
+        ),
+        (
+            "durable document offer rate",
+            replace_once(
+                &perf_source,
+                "const DOCOPS_PER_SECOND: usize = 100;",
+                "const DOCOPS_PER_SECOND: usize = 99;",
+            ),
+        ),
+        (
+            "durable query offer rate",
+            replace_once(
+                &perf_source,
+                "const QUERY_QPS: usize = 10;",
+                "const QUERY_QPS: usize = 9;",
+            ),
+        ),
+        (
+            "durable CPU limit",
+            replace_once(
+                &perf_source,
+                "const DOCKER_CPUS: &str = \"2.5\";",
+                "const DOCKER_CPUS: &str = \"3.0\";",
+            ),
+        ),
+        (
+            "durable memory limit",
+            replace_once(
+                &perf_source,
+                "const DOCKER_MEMORY: &str = \"17179869184\";",
+                "const DOCKER_MEMORY: &str = \"17179869183\";",
+            ),
+        ),
+        (
+            "interval metric evidence",
+            replace_once(
+                &perf_source,
+                "deltas.assert_complete_interval_evidence()?;",
+                "// deltas.assert_complete_interval_evidence()?;",
+            ),
+        ),
+        (
+            "diagnostic and qualifying mode are no longer exclusive",
+            replace_once(
+                &perf_source,
+                "if diagnostic && qualifying {",
+                "if false {",
+            ),
+        ),
+        (
+            "selected qualifying mode becomes diagnostic",
+            replace_once(
+                &perf_source,
+                "(Some(config), false, true) => Ok(Self::Qualifying(config)),",
+                "(Some(config), false, true) => Ok(Self::Diagnostic(config)),",
+            ),
+        ),
+        (
+            "qualifying receipt write is hidden in a comment",
+            replace_once(
+                &perf_source,
+                "perf_cell_receipt::write_new(&context.receipt_path, &receipt)",
+                "// perf_cell_receipt::write_new(&context.receipt_path, &receipt)",
+            ),
+        ),
+        (
+            "paired scalar mismatch builder is hidden in a comment",
+            replace_once(
+                &perf_source,
+                "let mismatch = semantic_wrong_field_query(field, value, fingerprint, document.number)?;",
+                "// semantic_wrong_field_query(field, value, fingerprint, document.number)?;",
+            ),
+        ),
+        (
+            "paired scalar mismatch exclusion is hidden in a comment",
+            replace_once(
+                &perf_source,
+                "if response_contains_id(&mismatch_response, &document.external_id) {",
+                "// if response_contains_id(&mismatch_response, &document.external_id) {",
+            ),
+        ),
+        (
+            "long ngram readback is reduced to a prefix",
+            replace_occurrence(
+                &perf_source,
+                "\"text\": value,",
+                "\"text\": \"ngram document\",",
+                0,
+            ),
+        ),
+        (
+            "ngram mismatch loses its known absent token and window",
+            replace_once(
+                &perf_source,
+                "{value} {READBACK_MISMATCH_TOKEN} window {number} field {field}",
+                "{value} window {number} field {field}",
+            ),
+        ),
+        (
+            "bounded vector candidate OR filter becomes AND",
+            replace_once(&perf_source, "{ \"or\": [", "{ \"and\": ["),
+        ),
+        (
+            "bounded vector k becomes two",
+            replace_once(&perf_source, "\"k\": 1,", "\"k\": 2,"),
+        ),
+        (
+            "bounded vector reference liveness proof is hidden in a comment",
+            replace_once(
+                &perf_source,
+                "assert_vector_reference_is_untouched(reference)?;",
+                "// assert_vector_reference_is_untouched(reference)?;",
+            ),
+        ),
+        (
+            "bounded vector noncollinearity proof is hidden in a comment",
+            replace_once(
+                &perf_source,
+                "assert_vector_pair_is_distinct_and_non_collinear(target, reference)?;",
+                "// assert_vector_pair_is_distinct_and_non_collinear(target, reference)?;",
+            ),
+        ),
+        (
+            "fingerprint-only readback oracle is renamed",
+            replace_once(
+                &perf_source,
+                "fn fingerprint_only_readback_cannot_pass_an_ignored_field_predicate",
+                "fn renamed_fingerprint_only_readback_oracle",
+            ),
+        ),
+        (
+            "bounded-vector ordering oracle is renamed",
+            replace_once(
+                &perf_source,
+                "fn vector_readback_rejects_the_target_for_both_candidate_vectors",
+                "fn renamed_vector_readback_oracle",
+            ),
+        ),
+        (
+            "default matrix hidden in a comment",
+            replace_once(
+                &perf_source,
+                "for config in qualifying_matrix() {",
+                "// for config in qualifying_matrix() {",
+            ),
+        ),
+        (
+            "default matrix hidden in quoted prose",
+            replace_once(
+                &perf_source,
+                "for config in qualifying_matrix() {",
+                "let _ = \"for config in qualifying_matrix() {\";",
+            ),
+        ),
+        (
+            "default matrix hidden in a multiline raw string",
+            replace_once(
+                &perf_source,
+                "for config in qualifying_matrix() {",
+                "let _ = r#\"\nfor config in qualifying_matrix() {\n\"#;",
+            ),
+        ),
+    ] {
+        assert_eq!(
+            validate_perf_gate_source(&changed).unwrap_err(),
+            Finding("PERF_GATE"),
+            "durable workload mutation {name} passed",
+        );
+    }
+    let ledger_source = perf_workload_ledger_source();
+    for (name, changed) in [
+        (
+            "ledger input duration",
+            replace_once(
+                &ledger_source,
+                "input_duration: Duration::from_secs(30 * 60),",
+                "input_duration: Duration::from_secs(29 * 60),",
+            ),
+        ),
+        (
+            "ledger document offer rate",
+            replace_once(
+                &ledger_source,
+                "docops_per_second: 100,",
+                "docops_per_second: 99,",
+            ),
+        ),
+        (
+            "ledger query offer rate",
+            replace_once(&ledger_source, "query_qps: 10,", "query_qps: 9,"),
+        ),
+        (
+            "ledger checkpoint evidence",
+            replace_once(
+                &ledger_source,
+                "if report.checkpoints == 0 {",
+                "// if report.checkpoints == 0 {",
+            ),
+        ),
+        (
+            "ledger merge evidence",
+            replace_once(
+                &ledger_source,
+                "if report.merges == 0 {",
+                "// if report.merges == 0 {",
+            ),
+        ),
+        (
+            "ledger input request drain evidence",
+            replace_once(
+                &ledger_source,
+                "if self.input_requests_finished != self.input_requests_submitted {",
+                "// if self.input_requests_finished != self.input_requests_submitted {",
+            ),
+        ),
+        (
+            "ledger counts scheduled work instead of actual HTTP body starts",
+            replace_once(
+                &ledger_source,
+                "let body_started_in_input = body_started_bucket.is_some();",
+                "let body_started_in_input = scheduled_in_input;",
+            ),
+        ),
+        (
+            "ledger counts a partial Index document as complete",
+            replace_once(
+                &ledger_source,
+                "&& operation.successful.len() == operation.required.len();",
+                "&& true;",
+            ),
+        ),
+        (
+            "ledger counts a late completion as in-window evidence",
+            replace_once(
+                &ledger_source,
+                "if started_in_input && self.input_bucket(finished_at).is_some() {",
+                "if started_in_input {",
+            ),
+        ),
+        (
+            "ledger permits duplicate logical targets in one request",
+            replace_once(
+                &ledger_source,
+                "if !seen_document_targets.insert(document_target.clone()) {",
+                "if false {",
+            ),
+        ),
+    ] {
+        assert_eq!(
+            validate_perf_workload_ledger_source(&changed).unwrap_err(),
+            Finding("PERF_GATE"),
+            "durable ledger mutation {name} passed",
+        );
+    }
 
     let scale_source = perf_gate_vs_db_source();
     let scale_script = lumen_scale_script();
@@ -2468,12 +3898,12 @@ fn candidate_source_mutations_fail_with_stable_categories() {
     );
     for (from, to) in [
         (
-            "      - name: Run required Lumen product gates without GKE\n        shell: bash",
+            "      - name: Run required Lumen product gates without GKE\n        if: ${{ matrix.product_gates }}\n        shell: bash",
             "      - name: Run required Lumen product gates without GKE\n        if: false\n        shell: bash",
         ),
         (
-            "      - name: Verify full run-scoped candidate supply chain\n        env:",
-            "      - name: Verify full run-scoped candidate supply chain\n        continue-on-error: true\n        env:",
+            "      - name: Verify full run-scoped candidate supply chain\n        if: ${{ matrix.product_gates }}\n        env:",
+            "      - name: Verify full run-scoped candidate supply chain\n        if: ${{ matrix.product_gates }}\n        continue-on-error: true\n        env:",
         ),
         (
             "  kind-amd64:\n    name: kind e2e (amd64)",
@@ -2758,14 +4188,14 @@ fn replace_host_archive(dir: &Path, stage_name: &str, readme: bool, mode: u32, v
     write_manifest(&path, &manifest);
 }
 
-fn run_local(dir: &Path) -> Output {
+fn run_local_version(dir: &Path, version: &str) -> Output {
     Command::new("bash")
         .arg(root().join("apps/lumen/scripts/verify-release-candidate.sh"))
         .args([
             "--repo",
             "chrischeng-c4/axiom",
             "--version",
-            "0.4.27",
+            version,
             "--commit",
             "0123456789012345678901234567890123456789",
             "--run-id",
@@ -2782,6 +4212,260 @@ fn run_local(dir: &Path) -> Output {
         .args(["--mode", "local"])
         .output()
         .unwrap()
+}
+
+fn run_local(dir: &Path) -> Output {
+    run_local_version(dir, "0.4.27")
+}
+
+fn set_fixture_version(dir: &Path, version: &str) {
+    replace_host_archive(dir, "version-stage", true, 0o755, version);
+    let path = dir.join("final-candidate-manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest["version"] = json!(version);
+    manifest["tag"] = json!(format!("lumen@{version}"));
+    write_manifest(&path, &manifest);
+}
+
+fn durable_perf_fixture_binding() -> perf_cell_receipt::Binding {
+    perf_cell_receipt::Binding {
+        repository: "chrischeng-c4/axiom".to_owned(),
+        run_id: "7".to_owned(),
+        run_attempt: "2".to_owned(),
+        commit: "0123456789012345678901234567890123456789".to_owned(),
+        image_reference: format!("ghcr.io/chrischeng-c4/lumen@sha256:{}", "1".repeat(64)),
+        actual_image_id: format!("sha256:{}", "4".repeat(64)),
+    }
+}
+
+fn durable_perf_fixture_measurement() -> perf_cell_receipt::Measurement {
+    perf_cell_receipt::Measurement {
+        input_duration_ms: 1_800_000,
+        observed_input_elapsed_ms: 1_800_000,
+        requests_offered: 18_000,
+        requests_finished: 18_000,
+        requests_completed: 18_000,
+        requests_started_in_input: 18_000,
+        requests_finished_in_input: 18_000,
+        requests_completed_in_input: 18_000,
+        requests_started_per_second_milli: 10_000,
+        requests_completed_per_second_milli: 10_000,
+        request_errors: 0,
+        client_cancellations: 0,
+        items_offered: 2_520_000,
+        items_completed: 2_520_000,
+        items_failed: 0,
+        items_started_in_input: 2_520_000,
+        items_completed_in_input: 2_520_000,
+        items_started_per_second_milli: 1_400_000,
+        items_completed_per_second_milli: 1_400_000,
+        docops_offered: 180_000,
+        docops_completed: 180_000,
+        docops_offered_in_input: 180_000,
+        docops_completed_in_input: 180_000,
+        index_requests_started_in_input: 6_000,
+        replace_requests_started_in_input: 6_000,
+        unindex_requests_started_in_input: 6_000,
+        docops_offered_per_second_milli: 100_000,
+        docops_completed_per_second_milli: 100_000,
+        docops_completion_percent_milli: 100_000,
+        request_latency_p99_ms: 800,
+        request_latency_max_ms: 1_200,
+        queries_offered: 18_000,
+        queries_completed: 18_000,
+        queries_started_in_input: 18_000,
+        queries_completed_in_input: 18_000,
+        hot_queries_started_in_input: 14_400,
+        idle_queries_started_in_input: 3_600,
+        queries_started_per_second_milli: 10_000,
+        queries_completed_per_second_milli: 10_000,
+        query_errors_or_timeouts: 0,
+        query_latency_p99_ms: 900,
+        query_latency_max_ms: 1_100,
+        request_drain_ms: 45,
+        query_drain_ms: 50,
+        checkpoint_delta: 2,
+        merge_delta: 1,
+        checkpoint_bytes: 9,
+        merge_read_bytes: 10,
+        merge_write_bytes: 11,
+        capture_hold_ns_total: 12,
+        pending_delta_bytes: 13,
+        pending_delta_layers: 14,
+        backpressure_events: 0,
+        segment_disk_bytes: 15,
+        peak_rss_bytes: perf_cell_receipt::RSS_LIMIT_BYTES - 1,
+        restart_duration_ms: 16,
+        restart_recovered: true,
+        live_mutation_readback: true,
+        cold_mutation_readback: true,
+    }
+}
+
+fn add_valid_durable_perf_evidence(dir: &Path) {
+    let receipts = dir.join("perf");
+    fs::create_dir_all(&receipts).unwrap();
+    for cell in perf_cell_receipt::expected_cells() {
+        let receipt = perf_cell_receipt::Receipt {
+            schema_version: perf_cell_receipt::SCHEMA_VERSION,
+            kind: perf_cell_receipt::RECEIPT_KIND.to_owned(),
+            binding: durable_perf_fixture_binding(),
+            cell: cell.clone(),
+            limits: perf_cell_receipt::Limits::approved(),
+            measurement: durable_perf_fixture_measurement(),
+            outcome: perf_cell_receipt::Outcome {
+                qualifying: true,
+                diagnostic: false,
+                succeeded: true,
+            },
+        };
+        perf_cell_receipt::write_new(&receipts.join(format!("{}.json", cell.id)), &receipt)
+            .expect("write a unique valid receipt");
+    }
+    let summary = dir.join("durable-perf-summary.json");
+    let status = Command::new("python3")
+        .arg(root().join("apps/lumen/scripts/verify-durable-perf.py"))
+        .args([
+            "--receipts-dir",
+            receipts.to_str().unwrap(),
+            "--repo",
+            "chrischeng-c4/axiom",
+            "--run-id",
+            "7",
+            "--run-attempt",
+            "2",
+            "--commit",
+            "0123456789012345678901234567890123456789",
+            "--image",
+            &durable_perf_fixture_binding().image_reference,
+            "--output",
+            summary.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run local durable receipt verifier");
+    assert!(status.success(), "build a valid local durable summary");
+
+    let manifest_path = dir.join("final-candidate-manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["performance"] = json!({
+        "schema_version": 1,
+        "summary_file": "durable-perf-summary.json",
+        "summary_sha256": sha(&summary),
+        "receipts_directory": "perf",
+    });
+    write_manifest(&manifest_path, &manifest);
+}
+
+fn final_v061_with_durable_perf_fixture() -> tempfile::TempDir {
+    let fixture = local_fixture();
+    set_fixture_version(fixture.path(), "0.6.1");
+    add_valid_durable_perf_evidence(fixture.path());
+    fixture
+}
+
+#[test]
+fn final_v061_receipt_refuses_to_omit_durable_performance_evidence() {
+    let fixture = local_fixture();
+    set_fixture_version(fixture.path(), "0.6.1");
+    let output = run_local_version(fixture.path(), "0.6.1");
+    assert!(
+        !output.status.success(),
+        "a final 0.6.1 receipt without sixteen durable performance receipts passed: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("final candidate manifest requires durable performance evidence"),
+        "missing-performance refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn preflight_v061_receipt_without_jobs_or_performance_remains_valid() {
+    let fixture = local_fixture();
+    set_fixture_version(fixture.path(), "0.6.1");
+    let path = fixture.path().join("final-candidate-manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest
+        .as_object_mut()
+        .expect("fixture manifest object")
+        .remove("jobs");
+    manifest
+        .as_object_mut()
+        .expect("fixture manifest object")
+        .remove("performance");
+    write_manifest(&path, &manifest);
+
+    let output = run_local_version(fixture.path(), "0.6.1");
+    assert!(
+        output.status.success(),
+        "a preflight 0.6.1 manifest must not require final-only performance evidence: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn final_v061_receipt_binds_all_raw_durable_performance_evidence() {
+    let fixture = final_v061_with_durable_perf_fixture();
+    assert!(
+        run_local_version(fixture.path(), "0.6.1").status.success(),
+        "a complete sixteen-cell receipt must be locally verifiable"
+    );
+
+    fn negative(name: &str, mutate: fn(&Path), needle: &str) {
+        let fixture = final_v061_with_durable_perf_fixture();
+        mutate(fixture.path());
+        let output = run_local_version(fixture.path(), "0.6.1");
+        assert!(!output.status.success(), "{name} mutation passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(needle),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    negative(
+        "missing receipt",
+        |dir| fs::remove_file(dir.join("perf/index-1-flat-cpu.json")).unwrap(),
+        "durable performance evidence verification failed",
+    );
+    negative(
+        "corrupt summary",
+        |dir| fs::write(dir.join("durable-perf-summary.json"), "{}\n").unwrap(),
+        "durable performance evidence verification failed",
+    );
+    negative(
+        "corrupt summary sidecar",
+        |dir| {
+            fs::write(
+                dir.join("durable-perf-summary.json.sha256"),
+                format!("{}\n", "0".repeat(64)),
+            )
+            .unwrap()
+        },
+        "durable performance evidence verification failed",
+    );
+    negative(
+        "manifest summary hash",
+        |dir| {
+            let path = dir.join("final-candidate-manifest.json");
+            let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            manifest["performance"]["summary_sha256"] = json!("0".repeat(64));
+            write_manifest(&path, &manifest);
+        },
+        "durable performance evidence verification failed",
+    );
+    negative(
+        "foreign receipt binding",
+        |dir| {
+            let path = dir.join("perf/index-1-flat-cpu.json");
+            let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            receipt["binding"]["run_id"] = json!("foreign-run");
+            fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        },
+        "durable performance evidence verification failed",
+    );
 }
 
 #[test]

@@ -865,8 +865,9 @@ fn test_durable_script_contract_and_negative_mutations() {
             "",
         ),
     );
-    let safe_port_lookup =
-        format!("    docker inspect --format '{SAFE_PUBLISHED_PORT_TEMPLATE}' \"$1\" 2>/dev/null\n");
+    let safe_port_lookup = format!(
+        "    docker inspect --format '{SAFE_PUBLISHED_PORT_TEMPLATE}' \"$1\" 2>/dev/null\n"
+    );
     assert_durable_rejected(
         "unchecked published port lookup",
         replace_exact(

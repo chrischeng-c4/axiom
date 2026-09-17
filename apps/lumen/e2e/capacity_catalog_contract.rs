@@ -200,7 +200,8 @@ fn allowed_direct_machine_type_override_resolves_without_exposing_tier_or_pool_n
 }
 
 #[test]
-fn three_namespaces_selecting_e2_standard_2_share_pool_selector_and_render_cross_namespace_anti_affinity() {
+fn three_namespaces_selecting_e2_standard_2_share_pool_selector_and_render_cross_namespace_anti_affinity(
+) {
     let catalog: CapacityCatalog = CapacityCatalog::from_json(sample_catalog_json()).unwrap();
     let placements = vec![
         Placement {
@@ -220,8 +221,8 @@ fn three_namespaces_selecting_e2_standard_2_share_pool_selector_and_render_cross
         },
     ];
 
-    let shared = resolve_shared_placement("e2-standard-2", &catalog, &placements)
-        .expect("shared placement");
+    let shared =
+        resolve_shared_placement("e2-standard-2", &catalog, &placements).expect("shared placement");
     assert_eq!(shared.selectors["lumen-a"], shared.selectors["lumen-b"]);
     assert_eq!(shared.selectors["lumen-b"], shared.selectors["lumen-c"]);
 
@@ -245,7 +246,12 @@ fn three_namespaces_selecting_e2_standard_2_share_pool_selector_and_render_cross
 fn unsupported_or_absent_machine_type_in_published_catalog_fails_to_resolve() {
     let catalog: CapacityCatalog = CapacityCatalog::from_json(sample_catalog_json()).unwrap();
 
-    for absent_machine in ["m1-megamem-96", "c3-standard-4", "n1-standard-1", "a2-highgpu-1g"] {
+    for absent_machine in [
+        "m1-megamem-96",
+        "c3-standard-4",
+        "n1-standard-1",
+        "a2-highgpu-1g",
+    ] {
         let err = resolve_machine_type(absent_machine, &catalog)
             .expect_err("absent machine type must not resolve");
         assert_eq!(err.reason, RejectionReason::UnsupportedMachineType);
@@ -259,7 +265,10 @@ fn unsupported_or_absent_machine_type_in_published_catalog_fails_to_resolve() {
         };
         let preflight_err = preflight_capacity(&req, Some(&catalog))
             .expect_err("absent machine type preflight must fail");
-        assert_eq!(preflight_err.reason, RejectionReason::UnsupportedMachineType);
+        assert_eq!(
+            preflight_err.reason,
+            RejectionReason::UnsupportedMachineType
+        );
     }
 }
 

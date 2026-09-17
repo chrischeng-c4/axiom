@@ -19,12 +19,17 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static HNSW_CHECKPOINT_FULL_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 // ---------------------------------------------------------------------------
 // VectorIndex trait
@@ -40,6 +45,26 @@ pub trait VectorIndex: Send + Sync {
     /// Remove the vector for `external_id`. No-op if it isn't present.
     /// Returns `true` if a vector was removed.
     fn remove(&self, external_id: &str) -> Result<bool>;
+
+    /// Read one current vector for an incremental checkpoint. Backends must
+    /// provide a keyed lookup; a full-corpus snapshot is not a fallback.
+    fn checkpoint_vector(&self, _external_id: &str) -> Result<Option<Vec<f32>>> {
+        bail!("backend does not support keyed checkpoint capture")
+    }
+
+    /// Internal preparation snapshot for a staged Vector checkpoint row. This
+    /// copies only the scalar-quantization codebook; it never enumerates or
+    /// decodes stored vectors. Callers must separately recheck their apply cut.
+    #[doc(hidden)]
+    fn checkpoint_codebook_for_preparation(&self) -> Result<Option<ScalarCodebook>> {
+        bail!("vector backend does not support codebook preparation snapshots")
+    }
+
+    /// Install an already decoded checkpoint value. Cold readers use this to
+    /// avoid quantizing persisted vectors again while composing their layers.
+    fn restore_checkpoint_vector(&self, external_id: &str, vector: &[f32]) -> Result<()> {
+        self.add(external_id, vector)
+    }
 
     /// Like [`VectorIndex::search_knn`] but only `external_id`s for
     /// which `allow` returns `true` are eligible for the result.
@@ -124,6 +149,16 @@ pub trait VectorIndex: Send + Sync {
         Ok(None)
     }
 
+    /// Seal an unpublished checkpoint with its actual WAL cut. The default
+    /// preserves compatibility for third-party backends using the legacy hook.
+    fn seal_to_segment_prod_at(
+        &self,
+        path: &std::path::Path,
+        _sequence: u64,
+    ) -> Result<Option<Vec<String>>> {
+        self.seal_to_segment_prod(path)
+    }
+
     /// Whether a successful [`VectorIndex::seal_to_segment_prod`] left this
     /// index holding NO in-RAM copy of the sealed vectors, so the caller should
     /// zero the field's reported byte footprint.
@@ -138,6 +173,68 @@ pub trait VectorIndex: Send + Sync {
     /// wrong footprint until someone remembered to.
     fn seal_releases_ram(&self) -> bool {
         false
+    }
+
+    fn attach_checkpoint_delta(
+        &self,
+        _reader: Arc<crate::segment::SegmentReader>,
+        _external_ids: &[String],
+        _acknowledged: &[bool],
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Immutable inputs used to verify a staged compaction at publication.
+    fn checkpoint_delta_readers(&self) -> Vec<Arc<crate::segment::SegmentReader>> {
+        Vec::new()
+    }
+
+    fn checkpoint_base_reader(&self) -> Option<Arc<crate::segment::SegmentReader>> {
+        None
+    }
+
+    fn replace_checkpoint_base(
+        &self,
+        _base: &Arc<crate::segment::SegmentReader>,
+        _inputs: &[Arc<crate::segment::SegmentReader>],
+        _reader: Arc<crate::segment::SegmentReader>,
+        _external_ids: &[String],
+    ) -> Result<()> {
+        bail!("vector backend does not support mapped base replacement")
+    }
+
+    fn replace_checkpoint_deltas(
+        &self,
+        _inputs: &[Arc<crate::segment::SegmentReader>],
+        _reader: Arc<crate::segment::SegmentReader>,
+        _external_ids: &[String],
+    ) -> Result<()> {
+        bail!("vector backend does not support checkpoint delta replacement")
+    }
+
+    fn resident_vector_payload_rows(&self) -> usize {
+        self.len()
+    }
+    /// The existing field-byte estimate for payloads still resident after a
+    /// checkpoint. Backends that retain their complete corpus keep the
+    /// caller's estimate by returning None.
+    fn checkpoint_resident_bytes(&self) -> Option<u64> {
+        None
+    }
+    fn has_checkpoint_mapping(&self) -> bool {
+        false
+    }
+
+    /// Install a newly written full vector base.  `acknowledged[eid] == false`
+    /// means this live index has a later update or delete which must remain
+    /// above the new mmap base.
+    fn install_checkpoint_base(
+        &self,
+        _reader: Arc<crate::segment::SegmentReader>,
+        _external_ids: &[String],
+        _acknowledged: &HashMap<String, bool>,
+    ) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -596,6 +693,22 @@ impl HnswCpuIndex {
 }
 
 impl VectorIndex for HnswCpuIndex {
+    fn checkpoint_vector(&self, external_id: &str) -> Result<Option<Vec<f32>>> {
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        Ok(inner.store.get_decoded(external_id))
+    }
+
+    fn checkpoint_codebook_for_preparation(&self) -> Result<Option<ScalarCodebook>> {
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        Ok(inner.store.codebook)
+    }
+
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self
             .inner
@@ -781,46 +894,15 @@ impl VectorIndex for HnswCpuIndex {
     /// No scalar quantization on the wire, matching the flat seal contract:
     /// the segment stores decoded `f32`, so recovery reads plain rows.
     fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
-        let inner = self
-            .inner
-            .read()
-            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
-        let dim = inner.store.spec.dim as usize;
-        let rows: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
-        drop(inner);
-        let n = rows.len();
-        // Split the pairs into the two shapes the writer and the caller each
-        // need, without cloning the eids: the vectors are borrowed for the
-        // duration of the write and the Strings are moved straight out.
-        let mut row_eids: Vec<String> = Vec::with_capacity(n);
-        let mut row_vecs: Vec<Vec<f32>> = Vec::with_capacity(n);
-        for (eid, v) in rows {
-            row_eids.push(eid);
-            row_vecs.push(v);
-        }
-        let vectors: Vec<Option<&[f32]>> = row_vecs.iter().map(|v| Some(v.as_slice())).collect();
-        crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
-        // Reopen what was just written, in every build. Once the caller commits
-        // this checkpoint it drops the in-RAM store, so these bytes become the
-        // only copy of the vectors; a segment that cannot be read back has to
-        // fail HERE, while the RAM copy is still there to retry from, rather
-        // than at the next restart with nothing left to recover. The reopen is
-        // one header read against a file the page cache still holds — it is not
-        // the cost that would justify compiling it out.
-        let reader = crate::segment::SegmentReader::open(path).map_err(|e| {
-            anyhow!(
-                "vector segment written to {} could not be read back: {e}",
-                path.display()
-            )
-        })?;
-        if reader.n_docs() as usize != n {
-            bail!(
-                "vector segment written to {} reopened with {} rows, expected {n}",
-                path.display(),
-                reader.n_docs()
-            );
-        }
-        Ok(Some(row_eids))
+        self.seal_checkpoint(path, None)
+    }
+
+    fn seal_to_segment_prod_at(
+        &self,
+        path: &std::path::Path,
+        sequence: u64,
+    ) -> Result<Option<Vec<String>>> {
+        self.seal_checkpoint(path, Some(sequence))
     }
 }
 
@@ -851,61 +933,55 @@ struct FlatInner {
     flat: Option<FlatVecs>,
 }
 
+#[derive(Clone, Copy)]
+enum FlatLocation {
+    Base(u32),
+    Layer { layer: u32, row: u32 },
+    Ram,
+}
+
+struct FlatLayer {
+    reader: Arc<crate::segment::SegmentReader>,
+}
+
+/// A stable EID slot has one current source.  Mmap sources are immutable;
+/// `data` contains only current, uncheckpointed decoded payloads.
 struct FlatVecs {
-    /// Stage 2 Phase 2k-1: with no segment attached this is the full
-    /// contiguous `N*dim` corpus (every row). With a segment
-    /// attached it holds ONLY the live TAIL — rows `[n_base..total)` — appended
-    /// after the seal; the base rows `[0..n_base)` live on the mmap (`seg`).
-    /// Empty when there is no tail.
-    data: Vec<f32>,
+    data: HashMap<u32, Vec<f32>>,
     eids: Vec<String>,
     dim: usize,
-    /// Stage 2 disk-tier (Phase 2d): when present, the flat kNN scan reads each
-    /// BASE row's `dim` f32s ZERO-COPY off this mmap'd segment instead of `data`.
-    /// Base row `i` (`i < n_base`, paired with `eids[i]`) is
-    /// `seg.vector_at(i, dim)`. DEFAULTS to `None`; while it is `None` (nothing
-    /// sealed) the scan is byte-for-byte the
-    /// in-RAM `&data[i*dim..]` read.
-    seg: Option<std::sync::Arc<crate::segment::SegmentReader>>,
-    /// Stage 2 Phase 2k-1: number of BASE rows served from `seg` (the mmap).
-    /// Rows `[0..n_base)` are demand-paged off the segment; rows `[n_base..)`
-    /// are the live tail in `data` (`data[(i-n_base)*dim..]`). `0` when no
-    /// segment is attached (the freshly-built in-RAM buffer is all "tail").
+    seg: Option<Arc<crate::segment::SegmentReader>>,
     n_base: usize,
-    /// Stage 2 Phase 2k-1: tombstoned ROW indices (over `0..eids.len()`). A
-    /// removed row is skipped by the scan and excluded from `len`, mirroring the
-    /// in-RAM remove's effect on subsequent searches WITHOUT mutating the
-    /// immutable base segment. Empty when nothing was removed post-seal.
     tomb: roaring::RoaringBitmap,
-    /// Stage 2 Phase 2k-1: eid → row index, for O(1) `remove` (tombstone the row)
-    /// and tail de-dup (an overwrite of an existing eid). This is identity-level
-    /// state (`String`+`u32` per row), NOT the O(N*dim) vector payload — the
-    /// vectors stay on the mmap. Built when a segment is attached.
     eid_to_row: HashMap<String, u32>,
+    locations: Vec<Option<FlatLocation>>,
+    layers: Vec<FlatLayer>,
 }
 
 impl FlatVecs {
-    /// Row `i`'s `dim`-long vector slice. BASE rows (`i < n_base`) come off the
-    /// segment mmap (zero-copy); TAIL rows come from the in-RAM `data` buffer at
-    /// `data[(i-n_base)*dim..]`. With no segment attached `n_base == 0` so every
-    /// row reads `data` — byte-for-byte the old in-RAM path. The segment is built
-    /// from the exact base rows, so a base hit is bit-identical to what `data`
-    /// held; if a segment read ever misses (torn column) we have no in-RAM copy of
-    /// the base, so we fall through and panic-index `data` — that index is
-    /// out-of-range, surfacing the torn read loudly rather than returning garbage.
     #[inline]
-    fn row(&self, i: usize) -> &[f32] {
-        if i < self.n_base {
-            if let Some(seg) = &self.seg {
-                if let Some(v) = seg.vector_at(i as u32, self.dim) {
-                    return v;
-                }
-            }
-            // No in-RAM fallback exists for a base row (the payload is on the
-            // mmap); a miss here is a torn segment and must surface.
+    fn row(&self, slot: usize) -> &[f32] {
+        match self.locations[slot].expect("query selected a deleted vector slot") {
+            FlatLocation::Base(row) => self
+                .seg
+                .as_ref()
+                .and_then(|seg| seg.vector_at(row, self.dim))
+                .expect("base vector row is present"),
+            FlatLocation::Layer { layer, row } => self.layers[layer as usize]
+                .reader
+                .vector_at(row, self.dim)
+                .expect("delta vector row is present"),
+            FlatLocation::Ram => self
+                .data
+                .get(&(slot as u32))
+                .map(Vec::as_slice)
+                .expect("RAM vector slot is present"),
         }
-        let local = i - self.n_base;
-        &self.data[local * self.dim..(local + 1) * self.dim]
+    }
+
+    fn live_slots(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.eids.len())
+            .filter(|slot| !self.tomb.contains(*slot as u32) && self.locations[*slot].is_some())
     }
 }
 
@@ -919,279 +995,254 @@ impl FlatCpuIndex {
         }
     }
 
-    /// Restore from a snapshot (re-store the saved vectors).
     pub fn restore(
         spec: VectorSpec,
         vectors: Vec<(String, Vec<f32>)>,
         codebook: Option<ScalarCodebook>,
     ) -> Result<Self> {
         let idx = Self::new(spec);
-        {
-            let mut inner = idx
-                .inner
+        if codebook.is_some() {
+            idx.inner
                 .lock()
-                .map_err(|_| anyhow!("flat lock poisoned"))?;
-            if codebook.is_some() {
-                inner.store.codebook = codebook;
-            }
+                .map_err(|_| anyhow!("flat lock poisoned"))?
+                .store
+                .codebook = codebook;
         }
-        for (eid, v) in vectors {
-            idx.add(&eid, &v)?;
+        for (eid, value) in vectors {
+            idx.add(&eid, &value)?;
         }
         Ok(idx)
     }
 
-    /// Ensure the cached scan buffer exists.
-    ///
-    /// FIRST-TIME build (`flat == None`): materialize every stored vector into a
-    /// contiguous in-RAM `data` buffer (`n_base == 0`, no segment) — byte-for-byte
-    /// the original behavior, and the only path taken while no segment is attached.
-    ///
-    /// Phase 2k-1: when a segment is ALREADY attached, the base rows live ONLY on
-    /// the mmap and are NOT in `store`, so this MUST NOT rebuild from `store`
-    /// (that would either lose the base or — pre-fix — re-materialize it). The
-    /// mutation paths (`add`/`remove`) therefore keep the segment-backed `flat`
-    /// LIVE in place instead of invalidating it, so a segment-backed index never
-    /// re-enters this fn with `flat == None`. The `debug_assert` documents that.
     fn ensure_flat(inner: &mut FlatInner) {
         if inner.flat.is_some() {
             return;
         }
         let dim = inner.store.spec.dim as usize;
-        let mut data = Vec::with_capacity(inner.store.len() * dim);
+        let mut data = HashMap::with_capacity(inner.store.len());
         let mut eids = Vec::with_capacity(inner.store.len());
-        for (eid, v) in inner.store.iter_decoded() {
-            data.extend_from_slice(&v);
+        let mut eid_to_row = HashMap::with_capacity(inner.store.len());
+        for (slot, (eid, value)) in inner.store.iter_decoded().enumerate() {
+            let slot = slot as u32;
+            data.insert(slot, value);
+            eid_to_row.insert(eid.clone(), slot);
             eids.push(eid);
         }
+        let locations = (0..eids.len()).map(|_| Some(FlatLocation::Ram)).collect();
         inner.flat = Some(FlatVecs {
             data,
             eids,
             dim,
-            // A freshly built flat buffer is wholly in-RAM (all "tail", no base):
-            // sealing/reopen is what attaches a segment and sets `n_base`.
             seg: None,
             n_base: 0,
             tomb: roaring::RoaringBitmap::new(),
-            eid_to_row: HashMap::new(),
+            eid_to_row,
+            locations,
+            layers: Vec::new(),
         });
     }
 
-    /// Live vector count (Phase 2k-1). When a segment is attached the base rows
-    /// live on the mmap (NOT in `store`), so the count is `total rows − tombstoned`
-    /// off the composed `flat`. Otherwise it's `store.len()` — the original
-    /// in-RAM count, byte-for-byte unchanged while no segment is attached.
     #[inline]
     fn live_len(inner: &FlatInner) -> usize {
-        if let Some(flat) = inner.flat.as_ref() {
-            if flat.seg.is_some() {
-                return flat.eids.len() - flat.tomb.len() as usize;
-            }
-        }
-        inner.store.len()
+        inner
+            .flat
+            .as_ref()
+            .map(|flat| flat.live_slots().count())
+            .unwrap_or_else(|| inner.store.len())
     }
 
-    /// Whether row `i` of `flat` is tombstoned. `false` whenever no row has been
-    /// deleted after a seal (the tombstone bitmap is empty) so the scan is unchanged.
-    #[inline]
-    fn row_tombstoned(flat: &FlatVecs, i: usize) -> bool {
-        flat.tomb.contains(i as u32)
-    }
-
-    /// PRODUCTION seal (Phase 2f-1): build/reuse the cached flat buffer, write a
-    /// vector segment, attach it, and DROP the in-RAM `data`. Returns the eid of
-    /// each sealed row in segment-row order so the caller can persist the
-    /// row→eid mapping. Mirrors `__seal_flat_to_segment` but is reachable from
-    /// production code and surfaces the row eids.
-    fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
+    fn seal_checkpoint(
+        &self,
+        path: &std::path::Path,
+        sequence: Option<u64>,
+    ) -> Result<Option<Vec<String>>> {
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| anyhow!("flat lock poisoned"))?;
         Self::ensure_flat(&mut inner);
-        let flat = inner.flat.as_mut().expect("flat built");
-        let dim = flat.dim;
-        let total = flat.eids.len();
-        // RE-SEAL-CAPABLE, TOMBSTONE-AWARE gather (Phase 2f-2 + 2k-1): read each
-        // LIVE row through `flat.row(i)`, NOT raw `&flat.data[..]`. With the
-        // composed model a row is either a BASE row on the prior segment mmap
-        // (`i < n_base`) or a live TAIL row in `data` (`i >= n_base`); `row(i)`
-        // serves the right one. Tombstoned rows (deleted post-seal) are SKIPPED so
-        // the new segment bakes the deletes in (it never resurrects them) and the
-        // reopened index starts with an empty tombstone set. Copy each live row
-        // into an owned buffer so the new segment write does not alias the old
-        // mmap. A first-time seal has `n_base == 0`, an empty `tomb`, and `data`
-        // holding every row → `row(i)` reads `data` for all `i`, byte-identical to
-        // before.
-        let mut owned: Vec<Vec<f32>> = Vec::with_capacity(total);
-        let mut row_eids: Vec<String> = Vec::with_capacity(total);
-        for i in 0..total {
-            if flat.tomb.contains(i as u32) {
-                continue;
-            }
-            owned.push(flat.row(i).to_vec());
-            row_eids.push(flat.eids[i].clone());
-        }
-        let n = owned.len();
-        let vectors: Vec<Option<&[f32]>> = owned.iter().map(|v| Some(v.as_slice())).collect();
-        crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
-        let reader = crate::segment::SegmentReader::open(path)?;
-        debug_assert_eq!(reader.n_docs() as usize, n);
-        // Every sealed row is now a BASE row on the fresh mmap; the tail is empty
-        // and tombstones are cleared (the deletes were baked into the new segment).
-        let mut eid_to_row = HashMap::with_capacity(n);
-        for (row, eid) in row_eids.iter().enumerate() {
-            eid_to_row.insert(eid.clone(), row as u32);
-        }
-        flat.seg = Some(std::sync::Arc::new(reader)); // drops any prior segment Arc
-        flat.data = Vec::new(); // payload now on the mmap, drop the RAM copy
-        flat.eids = row_eids.clone();
-        flat.n_base = n;
-        flat.tomb = roaring::RoaringBitmap::new();
-        flat.eid_to_row = eid_to_row;
-        Ok(Some(row_eids))
+        let flat = inner.flat.as_mut().unwrap();
+        let rows: Vec<(String, Vec<f32>)> = flat
+            .live_slots()
+            .map(|slot| (flat.eids[slot].clone(), flat.row(slot).to_vec()))
+            .collect();
+        let refs: Vec<Option<&[f32]>> = rows
+            .iter()
+            .map(|(_, value)| Some(value.as_slice()))
+            .collect();
+        crate::segment::write_vector_segment(
+            path,
+            sequence.unwrap_or(rows.len() as u64),
+            flat.dim,
+            &refs,
+        )?;
+        let reader = Arc::new(crate::segment::SegmentReader::open(path)?);
+        let eids: Vec<String> = rows.into_iter().map(|(eid, _)| eid).collect();
+        flat.data.clear();
+        flat.eid_to_row = eids
+            .iter()
+            .enumerate()
+            .map(|(i, eid)| (eid.clone(), i as u32))
+            .collect();
+        flat.eids = eids;
+        flat.locations = (0..flat.eids.len())
+            .map(|row| Some(FlatLocation::Base(row as u32)))
+            .collect();
+        flat.tomb.clear();
+        flat.layers.clear();
+        flat.n_base = flat.eids.len();
+        flat.seg = Some(reader);
+        let eids = flat.eids.clone();
+        inner.store.raw.clear();
+        inner.store.encoded.clear();
+        Ok(Some(eids))
     }
 
-    /// Reopen a flat-cpu index DIRECTLY from a sealed vector segment plus its
-    /// row→eid mapping (Phase 2f-1), with NO snapshot. Row `i`'s vector is
-    /// `seg.vector_at(i, dim)` (demand-paged off the mmap) and its external_id is
-    /// `row_eids[i]`. The reconstructed `FlatVecs` keeps the segment attached and
-    /// leaves `data` empty, so the kNN scan still reads zero-copy off the page —
-    /// the vectors never re-enter RAM. Used by `Collection::open_from_segments`.
+    fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
+        self.seal_checkpoint(path, None)
+    }
+
     pub fn open_from_segment(
         spec: VectorSpec,
-        seg: std::sync::Arc<crate::segment::SegmentReader>,
+        seg: Arc<crate::segment::SegmentReader>,
         row_eids: Vec<String>,
     ) -> Result<Self> {
         let dim = spec.dim as usize;
-        let n = row_eids.len();
-        // Phase 2k-1: the base vectors live ONLY on the mmap. We do NOT `store.put`
-        // them — that O(N*dim) re-materialization is exactly the gap this phase
-        // closes (it made a reopened vector collection NOT bound RAM; the 2i scale
-        // proof showed the reopen delta growing ~1.5x when dim doubled). The store
-        // holds NO base vectors (only spec/codebook, and tail vectors once added);
-        // the kNN scan, snapshot, remove, and len all read the base off `seg`.
-        let idx = Self::new(spec);
-        {
-            let mut inner = idx
-                .inner
-                .lock()
-                .map_err(|_| anyhow!("flat lock poisoned"))?;
-            // Identity-level eid → base-row map (O(N) Strings + u32s, NOT vectors)
-            // for remove + tail de-dup. The actual `dim`-wide rows stay on the mmap.
-            let mut eid_to_row = HashMap::with_capacity(n);
-            for (i, eid) in row_eids.iter().enumerate() {
-                eid_to_row.insert(eid.clone(), i as u32);
-            }
-            // Attach the segment as the BASE (`n_base == n`), the exact row order it
-            // was sealed with, an EMPTY tail (`data`), and an empty tombstone set.
-            // `row(i)` serves rows `[0..n)` from the mmap.
-            inner.flat = Some(FlatVecs {
-                data: Vec::new(),
-                eids: row_eids,
-                dim,
-                seg: Some(seg),
-                n_base: n,
-                tomb: roaring::RoaringBitmap::new(),
-                eid_to_row,
-            });
+        if seg.n_docs() as usize != row_eids.len() {
+            bail!("vector sidecar row count does not match segment");
         }
-        debug_assert_eq!(idx.len(), n);
-        Ok(idx)
+        let eid_to_row = row_eids
+            .iter()
+            .enumerate()
+            .map(|(i, eid)| (eid.clone(), i as u32))
+            .collect();
+        let n = row_eids.len();
+        let absent: roaring::RoaringBitmap = (0..n as u32)
+            .filter(|row| seg.vector_at(*row, dim).is_none())
+            .collect();
+        let locations = (0..n as u32)
+            .map(|row| (!absent.contains(row)).then_some(FlatLocation::Base(row)))
+            .collect();
+        Ok(Self {
+            inner: Mutex::new(FlatInner {
+                store: VectorStore::new(spec),
+                flat: Some(FlatVecs {
+                    data: HashMap::new(),
+                    eids: row_eids,
+                    dim,
+                    seg: Some(seg),
+                    n_base: n,
+                    tomb: absent,
+                    eid_to_row,
+                    locations,
+                    layers: Vec::new(),
+                }),
+            }),
+        })
     }
 
-    /// top-k of (idx, score) by score-desc, returned as (eid, score).
-    fn topk(mut cand: Vec<(usize, f32)>, k: usize, eids: &[String]) -> Vec<(String, f32)> {
-        let want = k.min(cand.len());
-        if want > 0 && want < cand.len() {
-            cand.select_nth_unstable_by(want - 1, |a, b| {
+    fn topk(mut candidates: Vec<(usize, f32)>, k: usize, eids: &[String]) -> Vec<(String, f32)> {
+        let want = k.min(candidates.len());
+        if want > 0 && want < candidates.len() {
+            candidates.select_nth_unstable_by(want - 1, |a, b| {
                 b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
             });
-            cand.truncate(want);
+            candidates.truncate(want);
         }
-        cand.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        cand.into_iter()
-            .map(|(i, s)| (eids[i].clone(), s))
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        candidates
+            .into_iter()
+            .map(|(slot, score)| (eids[slot].clone(), score))
             .collect()
+    }
+
+    fn set_ram(inner: &mut FlatInner, eid: &str, vector: &[f32]) -> Result<()> {
+        let dim = inner.store.spec.dim as usize;
+        if vector.len() != dim {
+            bail!(
+                "vector dim mismatch: expected {}, got {}",
+                dim,
+                vector.len()
+            );
+        }
+        inner.store.put(eid, vector)?;
+        let decoded = inner
+            .store
+            .get_decoded(eid)
+            .unwrap_or_else(|| vector.to_vec());
+        Self::ensure_flat(inner);
+        let flat = inner.flat.as_mut().unwrap();
+        let slot = *flat.eid_to_row.entry(eid.to_owned()).or_insert_with(|| {
+            let slot = flat.eids.len() as u32;
+            flat.eids.push(eid.to_owned());
+            flat.locations.push(None);
+            slot
+        });
+        flat.data.insert(slot, decoded);
+        flat.locations[slot as usize] = Some(FlatLocation::Ram);
+        flat.tomb.remove(slot);
+        Ok(())
     }
 }
 
 impl VectorIndex for FlatCpuIndex {
-    fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
-        let mut inner = self
+    fn checkpoint_vector(&self, eid: &str) -> Result<Option<Vec<f32>>> {
+        let inner = self
             .inner
             .lock()
             .map_err(|_| anyhow!("flat lock poisoned"))?;
-        // Phase 2k-1: when a SEGMENT is attached the base rows live ONLY on the
-        // mmap (not in `store`), so we CANNOT invalidate `flat` and rebuild from
-        // `store` — that would drop the base. Instead append the new vector as a
-        // live TAIL row in place, keeping the segment. An overwrite of an existing
-        // eid (base or tail) tombstones the old row first, mirroring the in-RAM
-        // overwrite (the latest value wins). The vector also goes into `store` so
-        // a later snapshot/codebook stays consistent for the TAIL.
-        if inner.flat.as_ref().is_some_and(|f| f.seg.is_some()) {
-            let dim = inner.store.spec.dim as usize;
-            if vector.len() != dim {
-                bail!(
-                    "vector dim mismatch: expected {}, got {}",
-                    dim,
-                    vector.len()
-                );
-            }
-            // Decode-normalize through the store so SQ tail rows round-trip like
-            // the base did, then read the (possibly re-quantized) f32 view back.
-            inner.store.put(external_id, vector)?;
-            let v_dec = inner
-                .store
-                .get_decoded(external_id)
-                .unwrap_or_else(|| vector.to_vec());
-            let flat = inner.flat.as_mut().expect("segment-backed flat present");
-            // Overwrite: tombstone the prior row for this eid (it may be a base row
-            // on the mmap or an earlier tail row), then append the fresh row.
-            if let Some(&old_row) = flat.eid_to_row.get(external_id) {
-                flat.tomb.insert(old_row);
-            }
-            let new_row = flat.eids.len() as u32;
-            flat.data.extend_from_slice(&v_dec);
-            flat.eids.push(external_id.to_string());
-            flat.eid_to_row.insert(external_id.to_string(), new_row);
-            // The freshly-appended row is live even if a same-eid base row was
-            // tombstoned above.
-            flat.tomb.remove(new_row);
-            return Ok(());
-        }
-        inner.store.put(external_id, vector)?;
-        inner.flat = None; // invalidate the cached scan buffer (in-RAM path)
-        Ok(())
+        Ok(inner
+            .flat
+            .as_ref()
+            .and_then(|flat| {
+                flat.eid_to_row
+                    .get(eid)
+                    .copied()
+                    .filter(|slot| !flat.tomb.contains(*slot))
+                    .map(|slot| flat.row(slot as usize).to_vec())
+            })
+            .or_else(|| inner.store.get_decoded(eid)))
     }
 
-    fn remove(&self, external_id: &str) -> Result<bool> {
+    fn checkpoint_codebook_for_preparation(&self) -> Result<Option<ScalarCodebook>> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
+        Ok(inner.store.codebook)
+    }
+    fn restore_checkpoint_vector(&self, eid: &str, vector: &[f32]) -> Result<()> {
+        self.add(eid, vector)
+    }
+    fn add(&self, eid: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| anyhow!("flat lock poisoned"))?;
-        // Phase 2k-1: when a SEGMENT is attached, TOMBSTONE the row (look up via
-        // the eid → row map) so the scan skips it and `len` excludes it — WITHOUT
-        // mutating the immutable base segment or rebuilding from `store`. This is
-        // the same observable effect as the in-RAM remove on subsequent searches.
-        // Also drop any tail copy from `store` so a snapshot won't re-emit it.
-        if inner.flat.as_ref().is_some_and(|f| f.seg.is_some()) {
-            let _ = inner.store.drop(external_id);
-            let flat = inner.flat.as_mut().expect("segment-backed flat present");
-            return match flat.eid_to_row.remove(external_id) {
-                Some(row) if !flat.tomb.contains(row) => {
-                    flat.tomb.insert(row);
-                    Ok(true)
+        Self::set_ram(&mut inner, eid, vector)
+    }
+    fn remove(&self, eid: &str) -> Result<bool> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
+        if let Some(flat) = inner.flat.as_mut() {
+            if let Some(slot) = flat.eid_to_row.get(eid).copied() {
+                if !flat.tomb.contains(slot) {
+                    flat.tomb.insert(slot);
+                    flat.locations[slot as usize] = None;
+                    flat.data.remove(&slot);
+                    inner.store.drop(eid);
+                    return Ok(true);
                 }
-                // Already tombstoned (or never present) → no live row removed.
-                _ => Ok(false),
-            };
+            }
         }
-        let removed = inner.store.drop(external_id);
-        inner.flat = None;
+        let removed = inner.store.drop(eid);
+        if removed {
+            inner.flat = None;
+        }
         Ok(removed)
     }
-
     fn search_knn_filtered(
         &self,
         query: &[f32],
@@ -1211,140 +1262,422 @@ impl VectorIndex for FlatCpuIndex {
                 query.len()
             );
         }
-        if Self::live_len(&inner) == 0 || k == 0 {
+        if k == 0 {
             return Ok(Vec::new());
         }
         let metric = inner.store.spec.metric;
         Self::ensure_flat(&mut inner);
-        let flat = inner.flat.as_ref().expect("flat built");
-        let n = flat.eids.len();
-        // Parallel distance over every row (the expensive part). The filter is
-        // applied sequentially after, so `allow` need not be Send/Sync. Phase
-        // 2k-1: tombstoned rows are skipped so a deleted base/tail row never enters
-        // the candidate set. With no segment `tomb` is empty → the full scan as
-        // before. `row(i)` reads the base off the mmap, the tail off `data`.
-        let scores: Vec<f32> = (0..n)
+        let flat = inner.flat.as_ref().unwrap();
+        let slots: Vec<usize> = flat
+            .live_slots()
+            .filter(|slot| allow(&flat.eids[*slot]))
+            .collect();
+        let candidates = slots
             .into_par_iter()
-            .map(|i| -distance(metric, query, flat.row(i)))
+            .map(|slot| (slot, -distance(metric, query, flat.row(slot))))
             .collect();
-        let cand: Vec<(usize, f32)> = (0..n)
-            .filter(|&i| !Self::row_tombstoned(flat, i))
-            .filter(|&i| allow(&flat.eids[i]))
-            .map(|i| (i, scores[i]))
-            .collect();
-        Ok(Self::topk(cand, k, &flat.eids))
+        Ok(Self::topk(candidates, k, &flat.eids))
     }
-
     fn search_knn_batch(&self, queries: &[Vec<f32>], k: usize) -> Result<Vec<Vec<(String, f32)>>> {
-        use rayon::prelude::*;
+        for query in queries {
+            if query.len()
+                != self
+                    .inner
+                    .lock()
+                    .map_err(|_| anyhow!("flat lock poisoned"))?
+                    .store
+                    .spec
+                    .dim as usize
+            {
+                bail!("kNN query dim mismatch");
+            }
+        }
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| anyhow!("flat lock poisoned"))?;
-        let dim = inner.store.spec.dim as usize;
-        for q in queries {
-            if q.len() != dim {
-                bail!("kNN query dim mismatch: expected {}, got {}", dim, q.len());
-            }
-        }
-        if Self::live_len(&inner) == 0 || k == 0 {
-            return Ok(queries.iter().map(|_| Vec::new()).collect());
-        }
         let metric = inner.store.spec.metric;
         Self::ensure_flat(&mut inner);
-        let flat = inner.flat.as_ref().expect("flat built");
-        let n = flat.eids.len();
-        // Parallel across queries; each query scans the shared flat buffer.
-        // Tombstoned rows (Phase 2k-1) are skipped so a deleted vector never lands
-        // in any query's candidate set.
+        let flat = inner.flat.as_ref().unwrap();
+        let slots: Vec<usize> = flat.live_slots().collect();
         Ok(queries
-            .par_iter()
-            .map(|q| {
-                let cand: Vec<(usize, f32)> = (0..n)
-                    .filter(|&i| !Self::row_tombstoned(flat, i))
-                    .map(|i| (i, -distance(metric, q, flat.row(i))))
-                    .collect();
-                Self::topk(cand, k, &flat.eids)
+            .iter()
+            .map(|query| {
+                Self::topk(
+                    slots
+                        .iter()
+                        .map(|slot| (*slot, -distance(metric, query, flat.row(*slot))))
+                        .collect(),
+                    k,
+                    &flat.eids,
+                )
             })
             .collect())
     }
-
     fn len(&self) -> usize {
-        self.inner.lock().map(|i| Self::live_len(&i)).unwrap_or(0)
+        self.inner
+            .lock()
+            .map(|inner| Self::live_len(&inner))
+            .unwrap_or(0)
     }
-
     fn dump_for_snapshot(&self) -> Result<(Vec<(String, Vec<f32>)>, Option<ScalarCodebook>)> {
         let inner = self
             .inner
             .lock()
             .map_err(|_| anyhow!("flat lock poisoned"))?;
-        // Phase 2k-1: when a segment is attached the base vectors are NOT in
-        // `store` (they live on the mmap), so a CBOR snapshot must read every LIVE
-        // (non-tombstoned) row through the composed `flat` — base off the mmap,
-        // tail off `data` — instead of `store.iter_decoded()`. With no segment the
-        // store still holds everything; fall through to the original path.
         if let Some(flat) = inner.flat.as_ref() {
-            if flat.seg.is_some() {
-                let mut vectors: Vec<(String, Vec<f32>)> = Vec::with_capacity(flat.eids.len());
-                for i in 0..flat.eids.len() {
-                    if flat.tomb.contains(i as u32) {
-                        continue;
-                    }
-                    vectors.push((flat.eids[i].clone(), flat.row(i).to_vec()));
-                }
-                return Ok((vectors, inner.store.codebook.clone()));
-            }
+            Ok((
+                flat.live_slots()
+                    .map(|slot| (flat.eids[slot].clone(), flat.row(slot).to_vec()))
+                    .collect(),
+                inner.store.codebook.clone(),
+            ))
+        } else {
+            Ok((
+                inner.store.iter_decoded().collect(),
+                inner.store.codebook.clone(),
+            ))
         }
-        let vectors: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
-        Ok((vectors, inner.store.codebook.clone()))
     }
-
     fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
-        FlatCpuIndex::seal_to_segment_prod(self, path)
+        self.seal_to_segment_prod(path)
     }
-
-    /// The flat seal hands `data` to the mmap and keeps nothing: after it, the
-    /// segment is the field's only copy of the vectors, so the field's reported
-    /// resident footprint is zero.
+    fn seal_to_segment_prod_at(
+        &self,
+        path: &std::path::Path,
+        seq: u64,
+    ) -> Result<Option<Vec<String>>> {
+        self.seal_checkpoint(path, Some(seq))
+    }
     fn seal_releases_ram(&self) -> bool {
         true
     }
+    fn resident_vector_payload_rows(&self) -> usize {
+        self.inner
+            .lock()
+            .map(|inner| {
+                let mut ids: std::collections::HashSet<&str> = inner
+                    .store
+                    .raw
+                    .keys()
+                    .chain(inner.store.encoded.keys())
+                    .map(String::as_str)
+                    .collect();
+                if let Some(flat) = &inner.flat {
+                    ids.extend(
+                        flat.data
+                            .keys()
+                            .map(|slot| flat.eids[*slot as usize].as_str()),
+                    );
+                }
+                ids.len()
+            })
+            .unwrap_or(0)
+    }
+    fn has_checkpoint_mapping(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|inner| {
+                inner
+                    .flat
+                    .as_ref()
+                    .is_some_and(|flat| flat.seg.is_some() || !flat.layers.is_empty())
+            })
+            .unwrap_or(false)
+    }
 
+    fn checkpoint_resident_bytes(&self) -> Option<u64> {
+        let inner = self.inner.lock().expect("flat lock poisoned");
+        let row_bytes = |eid: &str| u64::from(inner.store.spec.dim) * 4 + eid.len() as u64;
+        let stored = inner.store.raw.keys().chain(inner.store.encoded.keys());
+        let mut bytes: u64 = stored.map(|eid| row_bytes(eid)).sum();
+        if let Some(flat) = &inner.flat {
+            for slot in flat.data.keys() {
+                let eid = &flat.eids[*slot as usize];
+                if !inner.store.raw.contains_key(eid) && !inner.store.encoded.contains_key(eid) {
+                    bytes += row_bytes(eid);
+                }
+            }
+        }
+        Some(bytes)
+    }
     #[cfg(test)]
     fn __seal_flat_to_segment(&self, path: &std::path::Path) -> Result<Option<u32>> {
+        self.seal_checkpoint(path, None)
+            .map(|rows| rows.map(|rows| rows.len() as u32))
+    }
+
+    fn install_checkpoint_base(
+        &self,
+        reader: Arc<crate::segment::SegmentReader>,
+        external_ids: &[String],
+        acknowledged: &HashMap<String, bool>,
+    ) -> Result<()> {
+        if reader.n_docs() as usize != external_ids.len() {
+            bail!("vector base row map does not match payload");
+        }
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| anyhow!("flat lock poisoned"))?;
-        // Build (or reuse) the cached flat buffer; this fixes the eid↔row order
-        // for the lifetime of the cache, so the sealed segment's row order and
-        // the live `eids` agree exactly.
         Self::ensure_flat(&mut inner);
-        let flat = inner.flat.as_mut().expect("flat built");
-        let dim = flat.dim;
-        let n = flat.eids.len();
-        // Dense, decoded f32[n*dim] in the SAME row order as `eids` — every row
-        // is present (the flat buffer holds only stored vectors).
-        let vectors: Vec<Option<&[f32]>> = (0..n)
-            .map(|i| Some(&flat.data[i * dim..(i + 1) * dim]))
+        let mut old = inner.flat.take().unwrap();
+        let mut eids = external_ids.to_vec();
+        let mut eid_to_row: HashMap<String, u32> = eids
+            .iter()
+            .enumerate()
+            .map(|(slot, eid)| (eid.clone(), slot as u32))
             .collect();
-        crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
-        let reader = crate::segment::SegmentReader::open(path)?;
-        debug_assert_eq!(reader.n_docs() as usize, n);
-        // Attach the segment and drop the in-RAM data so the scan provably reads
-        // the mmap; with `n_base = n` every row is a BASE row served from
-        // `seg.vector_at(i, dim)`. Phase 2k-1: also populate `eid_to_row` (so a
-        // post-seal remove/overwrite can find its row) and leave `tomb` empty.
-        let mut eid_to_row = HashMap::with_capacity(n);
-        for (row, eid) in flat.eids.iter().enumerate() {
-            eid_to_row.insert(eid.clone(), row as u32);
+        let mut tomb: roaring::RoaringBitmap = (0..eids.len() as u32)
+            .filter(|row| reader.vector_at(*row, old.dim).is_none())
+            .collect();
+        let mut locations: Vec<Option<FlatLocation>> = (0..eids.len() as u32)
+            .map(|row| (!tomb.contains(row)).then_some(FlatLocation::Base(row)))
+            .collect();
+        let mut data = HashMap::new();
+        // Move only newer RAM payloads. No captured vector payload is retained.
+        for (eid, keep_newer) in acknowledged {
+            if *keep_newer {
+                inner.store.drop(eid);
+                continue;
+            }
+            let Some(old_slot) = old.eid_to_row.get(eid).copied() else {
+                continue;
+            };
+            let slot = *eid_to_row.entry(eid.clone()).or_insert_with(|| {
+                let slot = eids.len() as u32;
+                eids.push(eid.clone());
+                locations.push(None);
+                slot
+            });
+            if old.tomb.contains(old_slot) {
+                tomb.insert(slot);
+                continue;
+            }
+            tomb.remove(slot);
+            let location = old.locations[old_slot as usize];
+            if let Some(FlatLocation::Ram) = location {
+                if let Some(value) = old.data.remove(&old_slot) {
+                    data.insert(slot, value);
+                }
+            }
+            locations[slot as usize] = location;
         }
-        flat.seg = Some(std::sync::Arc::new(reader));
-        flat.data = Vec::new();
-        flat.n_base = n;
-        flat.tomb = roaring::RoaringBitmap::new();
-        flat.eid_to_row = eid_to_row;
-        Ok(Some(n as u32))
+        inner.flat = Some(FlatVecs {
+            data,
+            eids,
+            dim: old.dim,
+            seg: Some(reader),
+            n_base: external_ids.len(),
+            tomb,
+            eid_to_row,
+            locations,
+            layers: old.layers,
+        });
+        Ok(())
+    }
+
+    fn checkpoint_delta_readers(&self) -> Vec<Arc<crate::segment::SegmentReader>> {
+        self.inner
+            .lock()
+            .expect("flat lock poisoned")
+            .flat
+            .as_ref()
+            .map(|flat| {
+                flat.layers
+                    .iter()
+                    .map(|layer| layer.reader.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn checkpoint_base_reader(&self) -> Option<Arc<crate::segment::SegmentReader>> {
+        self.inner
+            .lock()
+            .expect("flat lock poisoned")
+            .flat
+            .as_ref()
+            .and_then(|flat| flat.seg.clone())
+    }
+
+    fn replace_checkpoint_base(
+        &self,
+        base: &Arc<crate::segment::SegmentReader>,
+        inputs: &[Arc<crate::segment::SegmentReader>],
+        reader: Arc<crate::segment::SegmentReader>,
+        external_ids: &[String],
+    ) -> Result<()> {
+        if reader.n_docs() as usize != external_ids.len() {
+            bail!("compacted vector base row count mismatch");
+        }
+        let rows: HashMap<&str, u32> = external_ids
+            .iter()
+            .enumerate()
+            .map(|(row, eid)| (eid.as_str(), row as u32))
+            .collect();
+        if rows.len() != external_ids.len() {
+            bail!("duplicate compacted vector base ID");
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
+        let flat = inner
+            .flat
+            .as_mut()
+            .ok_or_else(|| anyhow!("vector base replacement has no live base"))?;
+        if !flat
+            .seg
+            .as_ref()
+            .is_some_and(|actual| Arc::ptr_eq(actual, base))
+            || inputs.len() > flat.layers.len()
+            || !flat
+                .layers
+                .iter()
+                .zip(inputs)
+                .all(|(layer, input)| Arc::ptr_eq(&layer.reader, input))
+        {
+            bail!("compacted vector base inputs no longer match live layers");
+        }
+        let retargets: Vec<(usize, u32)> = flat.locations.iter().enumerate().filter_map(|(slot, source)| {
+            (matches!(source, Some(FlatLocation::Base(_)))
+                || matches!(source, Some(FlatLocation::Layer { layer, .. }) if (*layer as usize) < inputs.len()))
+                .then_some(slot)
+        }).map(|slot| {
+            let row = *rows.get(flat.eids[slot].as_str()).ok_or_else(|| anyhow!("compacted vector base lost a live ID"))?;
+            if reader.vector_at(row, flat.dim).is_none() { bail!("compacted vector base lost a live row"); }
+            Ok((slot, row))
+        }).collect::<Result<_>>()?;
+        for source in &mut flat.locations {
+            if let Some(FlatLocation::Layer { layer, .. }) = source {
+                if (*layer as usize) >= inputs.len() {
+                    *layer -= u32::try_from(inputs.len())?;
+                }
+            }
+        }
+        for (slot, row) in retargets {
+            flat.locations[slot] = Some(FlatLocation::Base(row));
+        }
+        flat.layers.drain(..inputs.len());
+        flat.seg = Some(reader);
+        flat.n_base = external_ids.len();
+        Ok(())
+    }
+
+    fn replace_checkpoint_deltas(
+        &self,
+        inputs: &[Arc<crate::segment::SegmentReader>],
+        reader: Arc<crate::segment::SegmentReader>,
+        external_ids: &[String],
+    ) -> Result<()> {
+        if inputs.is_empty() || reader.n_docs() as usize != external_ids.len() {
+            bail!("invalid compacted vector inputs or row map");
+        }
+        let rows: HashMap<&str, u32> = external_ids
+            .iter()
+            .enumerate()
+            .map(|(row, eid)| (eid.as_str(), row as u32))
+            .collect();
+        if rows.len() != external_ids.len() {
+            bail!("duplicate compacted vector external ID");
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
+        let flat = inner
+            .flat
+            .as_mut()
+            .ok_or_else(|| anyhow!("vector compaction has no live layers"))?;
+        let start = flat
+            .layers
+            .windows(inputs.len())
+            .position(|window| {
+                window
+                    .iter()
+                    .zip(inputs)
+                    .all(|(layer, expected)| Arc::ptr_eq(&layer.reader, expected))
+            })
+            .ok_or_else(|| anyhow!("compacted vector inputs no longer match live layers"))?;
+        let end = start + inputs.len();
+        let output_layer = u32::try_from(start)?;
+        // Validate every retarget before changing a slot. RAM mutations and
+        // tombstones are newer than these immutable inputs and stay untouched.
+        let retargets: Vec<(usize, u32)> = flat.locations.iter().enumerate().filter_map(|(slot, source)| {
+            matches!(source, Some(FlatLocation::Layer { layer, .. }) if (start..end).contains(&(*layer as usize)))
+                .then_some(slot)
+        }).map(|slot| {
+            let row = *rows.get(flat.eids[slot].as_str())
+                .ok_or_else(|| anyhow!("compacted vector lost a live input ID"))?;
+            if reader.vector_at(row, flat.dim).is_none() {
+                bail!("compacted vector lost a live input row");
+            }
+            Ok((slot, row))
+        }).collect::<Result<_>>()?;
+        for source in &mut flat.locations {
+            if let Some(FlatLocation::Layer { layer, .. }) = source {
+                if (*layer as usize) >= end {
+                    *layer -= u32::try_from(inputs.len() - 1)?;
+                }
+            }
+        }
+        for (slot, row) in retargets {
+            flat.locations[slot] = Some(FlatLocation::Layer {
+                layer: output_layer,
+                row,
+            });
+        }
+        flat.layers.splice(start..end, [FlatLayer { reader }]);
+        Ok(())
+    }
+
+    fn attach_checkpoint_delta(
+        &self,
+        reader: Arc<crate::segment::SegmentReader>,
+        external_ids: &[String],
+        acknowledged: &[bool],
+    ) -> Result<()> {
+        if reader.n_docs() as usize != external_ids.len()
+            || external_ids.len() != acknowledged.len()
+        {
+            bail!("vector checkpoint row map does not match payload");
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
+        Self::ensure_flat(&mut inner);
+        let FlatInner { store, flat } = &mut *inner;
+        let flat = flat.as_mut().unwrap();
+        let layer = flat.layers.len() as u32;
+        flat.layers.push(FlatLayer {
+            reader: reader.clone(),
+        });
+        for (row, (eid, ack)) in external_ids.iter().zip(acknowledged).enumerate() {
+            if !ack {
+                continue;
+            };
+            let slot = *flat.eid_to_row.entry(eid.clone()).or_insert_with(|| {
+                let slot = flat.eids.len() as u32;
+                flat.eids.push(eid.clone());
+                flat.locations.push(None);
+                slot
+            });
+            flat.data.remove(&slot);
+            store.drop(eid);
+            if reader.vector_at(row as u32, flat.dim).is_some() {
+                flat.tomb.remove(slot);
+                flat.locations[slot as usize] = Some(FlatLocation::Layer {
+                    layer,
+                    row: row as u32,
+                });
+            } else {
+                flat.tomb.insert(slot);
+                flat.locations[slot as usize] = None;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1376,6 +1709,69 @@ pub fn open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preparation_codebook_snapshot_is_copy_sized_for_raw_and_sq_backends() {
+        for index in [
+            Box::new(HnswCpuIndex::new(spec(3, VectorMetric::L2, None))) as Box<dyn VectorIndex>,
+            Box::new(FlatCpuIndex::new(spec(3, VectorMetric::L2, None))) as Box<dyn VectorIndex>,
+        ] {
+            assert!(index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .is_none());
+        }
+        for index in [
+            Box::new(HnswCpuIndex::new(spec(
+                3,
+                VectorMetric::L2,
+                Some(VectorQuantize::Sq),
+            ))) as Box<dyn VectorIndex>,
+            Box::new(FlatCpuIndex::new(spec(
+                3,
+                VectorMetric::L2,
+                Some(VectorQuantize::Sq),
+            ))) as Box<dyn VectorIndex>,
+        ] {
+            let initial = index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .unwrap();
+            assert_eq!(initial.dim, 3);
+            assert!(initial.min.is_infinite() && initial.min.is_sign_positive());
+            assert!(initial.max.is_infinite() && initial.max.is_sign_negative());
+            index.add("first", &[-2.0, 0.0, 5.0]).unwrap();
+            let snapshot = index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .unwrap();
+            assert_eq!((snapshot.min, snapshot.max, snapshot.dim), (-2.0, 5.0, 3));
+            let mut widened = snapshot;
+            widened.widen(&[-20.0, 0.0, 20.0]);
+            assert_eq!(
+                index
+                    .checkpoint_codebook_for_preparation()
+                    .unwrap()
+                    .unwrap()
+                    .min,
+                -2.0
+            );
+            assert_eq!(
+                index
+                    .checkpoint_codebook_for_preparation()
+                    .unwrap()
+                    .unwrap()
+                    .max,
+                5.0
+            );
+            index.add("later", &[10.0, 0.0, 20.0]).unwrap();
+            let later = index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .unwrap();
+            assert_eq!((later.min, later.max, later.dim), (-2.0, 20.0, 3));
+        }
+    }
+
     use super::*;
 
     fn rand_vec(rng: &mut rand::rngs::StdRng, dim: usize) -> Vec<f32> {
@@ -1864,5 +2260,381 @@ mod tests {
             "removed eid {q_eid} still in {hits:?}"
         );
     }
+    #[test]
+    fn flat_base_publication_retires_both_payload_stores_and_keeps_newer_changes() {
+        let spec = VectorSpec {
+            dim: 2,
+            metric: VectorMetric::L2,
+            backend: crate::types::VectorBackend::FlatCpu,
+            quantize: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("base.lseg");
+        crate::segment::write_vector_segment(
+            &path,
+            1,
+            2,
+            &[Some(&[0.0, 0.0]), Some(&[1.0, 1.0]), Some(&[2.0, 2.0])],
+        )
+        .unwrap();
+        let index = FlatCpuIndex::new(spec);
+        for (eid, value) in [("ack", 0.0), ("updated", 1.0), ("deleted", 2.0)] {
+            index.add(eid, &[value, value]).unwrap();
+        }
+        index.add("updated", &[3.0, 3.0]).unwrap();
+        index.remove("deleted").unwrap();
+        index.add("new", &[4.0, 4.0]).unwrap();
+        index
+            .install_checkpoint_base(
+                Arc::new(crate::segment::SegmentReader::open(&path).unwrap()),
+                &["ack".into(), "updated".into(), "deleted".into()],
+                &HashMap::from([
+                    ("ack".into(), true),
+                    ("updated".into(), false),
+                    ("deleted".into(), false),
+                    ("new".into(), false),
+                ]),
+            )
+            .unwrap();
+        let inner = index.inner.lock().unwrap();
+        assert!(
+            !inner.store.raw.contains_key("ack"),
+            "acknowledged base vector must leave VectorStore"
+        );
+        assert_eq!(inner.store.len(), 2);
+        assert_eq!(inner.flat.as_ref().unwrap().data.len(), 2);
+        drop(inner);
+        assert_eq!(index.resident_vector_payload_rows(), 2);
+        assert_eq!(index.checkpoint_resident_bytes(), Some(26));
+        assert_eq!(
+            index.checkpoint_vector("ack").unwrap(),
+            Some(vec![0.0, 0.0])
+        );
+        assert_eq!(
+            index.checkpoint_vector("updated").unwrap(),
+            Some(vec![3.0, 3.0])
+        );
+        assert_eq!(index.checkpoint_vector("deleted").unwrap(), None);
+        assert_eq!(
+            index.checkpoint_vector("new").unwrap(),
+            Some(vec![4.0, 4.0])
+        );
+        index
+            .seal_to_segment_prod(&dir.path().join("next.lseg"))
+            .unwrap();
+        let inner = index.inner.lock().unwrap();
+        assert_eq!(
+            inner.store.len(),
+            0,
+            "sealing must release the VectorStore as well as decoded rows"
+        );
+        assert_eq!(inner.flat.as_ref().unwrap().data.len(), 0);
+    }
+
+    #[test]
+    fn flat_compacted_base_keeps_absent_rows_deleted_on_open_and_install() {
+        let spec = VectorSpec {
+            dim: 2,
+            metric: VectorMetric::L2,
+            backend: crate::types::VectorBackend::FlatCpu,
+            quantize: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mapped-base.lseg");
+        crate::segment::write_vector_segment(&path, 7, 2, &[None, Some(&[2., 2.]), None]).unwrap();
+        let reader = Arc::new(crate::segment::SegmentReader::open(&path).unwrap());
+        let ids = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+        let cold = FlatCpuIndex::open_from_segment(spec, reader.clone(), ids.clone()).unwrap();
+        assert_eq!(
+            cold.len(),
+            1,
+            "absent base rows cannot count as live vectors"
+        );
+        let oracle = FlatCpuIndex::new(spec);
+        oracle.add("b", &[2., 2.]).unwrap();
+        let expected = oracle.search_knn(&[0., 0.], 10).unwrap();
+        assert_eq!(cold.search_knn(&[0., 0.], 10).unwrap(), expected);
+        let live = FlatCpuIndex::new(spec);
+        live.add("a", &[9., 9.]).unwrap();
+        live.add("b", &[2., 2.]).unwrap();
+        live.install_checkpoint_base(
+            reader,
+            &ids,
+            &ids.iter().map(|id| (id.clone(), true)).collect(),
+        )
+        .unwrap();
+        assert_eq!(
+            live.len(),
+            1,
+            "install must apply the compacted base presence column"
+        );
+        assert_eq!(live.search_knn(&[0., 0.], 10).unwrap(), expected);
+    }
+
+    #[test]
+    fn flat_base_compaction_preserves_newer_layers_ram_and_deletions() {
+        let spec = VectorSpec {
+            dim: 2,
+            metric: VectorMetric::L2,
+            backend: crate::types::VectorBackend::FlatCpu,
+            quantize: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, rows: &[Option<&[f32]>]| {
+            let path = dir.path().join(name);
+            crate::segment::write_vector_segment(&path, 1, 2, rows).unwrap();
+            Arc::new(crate::segment::SegmentReader::open(&path).unwrap())
+        };
+        let base = write("base.lseg", &[Some(&[0., 0.]), Some(&[9., 9.])]);
+        let first = write("first.lseg", &[Some(&[1., 1.]), Some(&[2., 2.])]);
+        let second = write("second.lseg", &[None, Some(&[3., 3.])]);
+        let later = write("later.lseg", &[Some(&[4., 4.]), Some(&[5., 5.])]);
+        let index =
+            FlatCpuIndex::open_from_segment(spec, base.clone(), vec!["a".into(), "base".into()])
+                .unwrap();
+        index
+            .attach_checkpoint_delta(first.clone(), &["a".into(), "b".into()], &[true, true])
+            .unwrap();
+        index
+            .attach_checkpoint_delta(second.clone(), &["a".into(), "c".into()], &[true, true])
+            .unwrap();
+        index
+            .attach_checkpoint_delta(later.clone(), &["c".into(), "d".into()], &[true, true])
+            .unwrap();
+        index.add("b", &[6., 6.]).unwrap();
+        index.remove("d").unwrap();
+        let before = index.search_knn(&[0., 0.], 10).unwrap();
+        let compacted = write(
+            "compacted.lseg",
+            &[None, Some(&[2., 2.]), Some(&[9., 9.]), Some(&[3., 3.])],
+        );
+        let ids = ["a".into(), "b".into(), "base".into(), "c".into()];
+        index
+            .replace_checkpoint_base(
+                &base,
+                &[first.clone(), second.clone()],
+                compacted.clone(),
+                &ids,
+            )
+            .unwrap();
+        assert_eq!(index.search_knn(&[0., 0.], 10).unwrap(), before);
+        assert_eq!(index.resident_vector_payload_rows(), 1);
+        assert_eq!(index.checkpoint_vector("a").unwrap(), None);
+        assert_eq!(index.checkpoint_vector("d").unwrap(), None);
+        assert_eq!(index.checkpoint_vector("b").unwrap(), Some(vec![6., 6.]));
+        assert_eq!(index.checkpoint_vector("c").unwrap(), Some(vec![4., 4.]));
+        assert_eq!(Arc::strong_count(&base), 1, "old base must be released");
+        assert_eq!(
+            Arc::strong_count(&first),
+            1,
+            "first base input must be released"
+        );
+        assert_eq!(
+            Arc::strong_count(&second),
+            1,
+            "second base input must be released"
+        );
+        let remaining = index.checkpoint_delta_readers();
+        assert_eq!(remaining.len(), 1);
+        assert!(Arc::ptr_eq(&remaining[0], &later));
+        assert!(Arc::ptr_eq(
+            &index.checkpoint_base_reader().unwrap(),
+            &compacted
+        ));
+        assert!(index
+            .replace_checkpoint_base(&base, &[first, second], compacted, &ids)
+            .is_err());
+        assert_eq!(index.search_knn(&[0., 0.], 10).unwrap(), before);
+    }
+
+    #[test]
+    fn flat_compaction_retargets_only_selected_layers_and_releases_input_readers() {
+        let spec = VectorSpec {
+            dim: 2,
+            metric: VectorMetric::L2,
+            backend: crate::types::VectorBackend::FlatCpu,
+            quantize: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, values: &[Option<&[f32]>]| {
+            let path = dir.path().join(name);
+            crate::segment::write_vector_segment(&path, 1, 2, values).unwrap();
+            Arc::new(crate::segment::SegmentReader::open(&path).unwrap())
+        };
+        let index = FlatCpuIndex::open_from_segment(
+            spec,
+            write("base.lseg", &[Some(&[0., 0.]), Some(&[9., 9.])]),
+            vec!["a".into(), "base".into()],
+        )
+        .unwrap();
+        let first = write("first.lseg", &[Some(&[1., 1.]), Some(&[2., 2.])]);
+        let second = write("second.lseg", &[None, Some(&[3., 3.])]);
+        let third = write("third.lseg", &[Some(&[4., 4.]), Some(&[5., 5.])]);
+        index
+            .attach_checkpoint_delta(first.clone(), &["a".into(), "b".into()], &[true, true])
+            .unwrap();
+        index
+            .attach_checkpoint_delta(second.clone(), &["a".into(), "c".into()], &[true, true])
+            .unwrap();
+        index
+            .attach_checkpoint_delta(third.clone(), &["c".into(), "d".into()], &[true, true])
+            .unwrap();
+        index.add("b", &[6., 6.]).unwrap();
+        index.remove("d").unwrap();
+        let before = index.search_knn(&[0., 0.], 10).unwrap();
+        let compacted = write("compacted.lseg", &[None, Some(&[2., 2.]), Some(&[3., 3.])]);
+        index
+            .replace_checkpoint_deltas(
+                &[first.clone(), second.clone()],
+                compacted.clone(),
+                &["a".into(), "b".into(), "c".into()],
+            )
+            .expect("replace the exact selected vector delta range");
+        assert_eq!(index.search_knn(&[0., 0.], 10).unwrap(), before);
+        assert_eq!(
+            index.resident_vector_payload_rows(),
+            1,
+            "newer RAM update survives compaction"
+        );
+        assert_eq!(
+            Arc::strong_count(&first),
+            1,
+            "first input must be released by the live index"
+        );
+        assert_eq!(
+            Arc::strong_count(&second),
+            1,
+            "second input must be released by the live index"
+        );
+        let readers = index.checkpoint_delta_readers();
+        assert_eq!(readers.len(), 2);
+        assert!(Arc::ptr_eq(&readers[0], &compacted));
+        assert!(Arc::ptr_eq(&readers[1], &third));
+        assert!(
+            index
+                .replace_checkpoint_deltas(
+                    &[first, second],
+                    compacted,
+                    &["a".into(), "b".into(), "c".into()],
+                )
+                .is_err(),
+            "stale input identities must not match the current layers"
+        );
+        assert_eq!(index.search_knn(&[0., 0.], 10).unwrap(), before);
+    }
+
+    #[test]
+    fn flat_mmap_deltas_release_acknowledged_payload_and_preserve_newer_ram() {
+        let spec = VectorSpec {
+            dim: 2,
+            metric: VectorMetric::L2,
+            backend: crate::types::VectorBackend::FlatCpu,
+            quantize: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.lseg");
+        crate::segment::write_vector_segment(&base, 1, 2, &[Some(&[0.0, 0.0]), Some(&[4.0, 4.0])])
+            .unwrap();
+        let index = FlatCpuIndex::open_from_segment(
+            spec,
+            Arc::new(crate::segment::SegmentReader::open(&base).unwrap()),
+            vec!["a".into(), "b".into()],
+        )
+        .unwrap();
+        let oracle = FlatCpuIndex::new(spec);
+        oracle.add("a", &[0.0, 0.0]).unwrap();
+        oracle.add("b", &[4.0, 4.0]).unwrap();
+        let first = dir.path().join("one.lseg");
+        crate::segment::write_vector_segment(&first, 2, 2, &[Some(&[1.0, 1.0]), Some(&[9.0, 9.0])])
+            .unwrap();
+        index
+            .attach_checkpoint_delta(
+                Arc::new(crate::segment::SegmentReader::open(&first).unwrap()),
+                &["a".into(), "c".into()],
+                &[true, true],
+            )
+            .unwrap();
+        oracle.add("a", &[1.0, 1.0]).unwrap();
+        oracle.add("c", &[9.0, 9.0]).unwrap();
+        assert_eq!(index.resident_vector_payload_rows(), 0);
+        assert_eq!(index.checkpoint_resident_bytes(), Some(0));
+        let second = dir.path().join("two.lseg");
+        crate::segment::write_vector_segment(&second, 3, 2, &[Some(&[2.0, 2.0]), None]).unwrap();
+        index
+            .attach_checkpoint_delta(
+                Arc::new(crate::segment::SegmentReader::open(&second).unwrap()),
+                &["a".into(), "b".into()],
+                &[true, true],
+            )
+            .unwrap();
+        oracle.add("a", &[2.0, 2.0]).unwrap();
+        oracle.remove("b").unwrap();
+        index.add("a", &[3.0, 3.0]).unwrap();
+        oracle.add("a", &[3.0, 3.0]).unwrap();
+        assert_eq!(index.resident_vector_payload_rows(), 1);
+        assert_eq!(index.checkpoint_resident_bytes(), Some(9));
+        for query in [[0.0, 0.0], [3.0, 3.0], [10.0, 10.0]] {
+            assert_eq!(
+                index.search_knn(&query, 8).unwrap(),
+                oracle.search_knn(&query, 8).unwrap()
+            );
+        }
+        assert!(index
+            .search_knn(&[4.0, 4.0], 8)
+            .unwrap()
+            .iter()
+            .all(|(eid, _)| eid != "b"));
+    }
 }
 // CODEGEN-END
+
+impl HnswCpuIndex {
+    fn seal_checkpoint(
+        &self,
+        path: &std::path::Path,
+        sequence: Option<u64>,
+    ) -> Result<Option<Vec<String>>> {
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let dim = inner.store.spec.dim as usize;
+        #[cfg(test)]
+        HNSW_CHECKPOINT_FULL_SCANS.with(|count| count.set(count.get() + 1));
+        let rows: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
+        drop(inner);
+        let n = rows.len();
+        // Split the pairs into the two shapes the writer and the caller each
+        // need, without cloning the eids: the vectors are borrowed for the
+        // duration of the write and the Strings are moved straight out.
+        let mut row_eids: Vec<String> = Vec::with_capacity(n);
+        let mut row_vecs: Vec<Vec<f32>> = Vec::with_capacity(n);
+        for (eid, v) in rows {
+            row_eids.push(eid);
+            row_vecs.push(v);
+        }
+        let vectors: Vec<Option<&[f32]>> = row_vecs.iter().map(|v| Some(v.as_slice())).collect();
+        crate::segment::write_vector_segment(path, sequence.unwrap_or(n as u64), dim, &vectors)?;
+        // Reopen what was just written, in every build. Once the caller commits
+        // this checkpoint it drops the in-RAM store, so these bytes become the
+        // only copy of the vectors; a segment that cannot be read back has to
+        // fail HERE, while the RAM copy is still there to retry from, rather
+        // than at the next restart with nothing left to recover. The reopen is
+        // one header read against a file the page cache still holds — it is not
+        // the cost that would justify compiling it out.
+        let reader = crate::segment::SegmentReader::open(path).map_err(|e| {
+            anyhow!(
+                "vector segment written to {} could not be read back: {e}",
+                path.display()
+            )
+        })?;
+        if reader.n_docs() as usize != n {
+            bail!(
+                "vector segment written to {} reopened with {} rows, expected {n}",
+                path.display(),
+                reader.n_docs()
+            );
+        }
+        Ok(Some(row_eids))
+    }
+}

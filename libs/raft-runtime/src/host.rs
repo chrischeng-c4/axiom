@@ -4,11 +4,11 @@
 //!
 //! Generalizes the per-service drivers (relay/lumen/keep each hand-rolled this):
 //! the host is the **sole applier** — committed entries are fed to the state
-//! machine in index order under the node lock, so `propose` can return after the
+//! machine in index order on a separate worker, so `propose` can return after the
 //! command *applies* (not just commits), and `compact(applied, snapshot)` is
 //! always sound.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
@@ -27,14 +27,17 @@ use raft_core::{
 };
 use serde::{Deserialize, Serialize};
 use server_lifecycle::ShutdownDeadline;
-use tokio::sync::{watch, Mutex, Notify};
+use tokio::sync::{watch, Mutex, Notify, OwnedMutexGuard};
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::config::{HostConfig, SnapshotPolicy};
 use crate::group::{GroupId, LEGACY_GROUP_ID};
 use crate::peer_transport::PeerTransport;
-use crate::state_machine::{Command, RaftStateMachine};
+use crate::state_machine::{AdmissionPermit, Command, RaftStateMachine, SnapshotPreparation};
 use crate::store::RaftStore;
+
+#[path = "host/ordered_apply.rs"]
+mod ordered_apply;
 
 /// The maximum size of a snapshot chunk streamed during snapshot generation.
 pub const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
@@ -286,6 +289,60 @@ pub enum ProposalOutcome {
     },
 }
 
+/// A leader has no capacity for a proposal before it allocated a Raft index.
+/// Callers can downcast the error returned by [`RaftHost::propose`] to select a
+/// retry policy without treating an uncertain append as safely retryable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposalBackpressure {
+    pub reason: String,
+    pub retry_after_seconds: u64,
+}
+
+impl std::fmt::Display for ProposalBackpressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}; retry after {} seconds",
+            self.reason, self.retry_after_seconds
+        )
+    }
+}
+
+impl std::error::Error for ProposalBackpressure {}
+
+const BACKPRESSURE_REASON_PREFIX: &str = "\u{1e}raft-proposal-backpressure:";
+
+fn encode_backpressure(backpressure: &ProposalBackpressure) -> String {
+    format!(
+        "{BACKPRESSURE_REASON_PREFIX}{}",
+        serde_json::json!({
+            "reason": backpressure.reason,
+            "retry_after_seconds": backpressure.retry_after_seconds,
+        })
+    )
+}
+
+fn decode_backpressure(reason: &str) -> Option<ProposalBackpressure> {
+    let body = reason.strip_prefix(BACKPRESSURE_REASON_PREFIX)?;
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    Some(ProposalBackpressure {
+        reason: value.get("reason")?.as_str()?.to_owned(),
+        retry_after_seconds: value.get("retry_after_seconds")?.as_u64()?,
+    })
+}
+
+fn rejected_admission(error: anyhow::Error) -> ProposalOutcome {
+    if let Some(backpressure) = error.downcast_ref::<ProposalBackpressure>() {
+        ProposalOutcome::RejectedBeforeAdmission {
+            reason: encode_backpressure(backpressure),
+        }
+    } else {
+        ProposalOutcome::RejectedBeforeAdmission {
+            reason: error.to_string(),
+        }
+    }
+}
+
 /// The outcome of an attempt to hand off leadership before shutdown (#3664).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LeadershipHandoff {
@@ -407,6 +464,10 @@ pub(crate) struct Shared {
     pub(crate) node: Mutex<RaftNode>,
     pub(crate) store: RaftStore,
     pub(crate) sm: Arc<dyn RaftStateMachine>,
+    /// Application permits become host-owned immediately after Raft assigned
+    /// their index. They are keyed by index, never command content, so a caller
+    /// cancellation cannot release a live appended command.
+    pub(crate) pending_admission: StdMutex<BTreeMap<(Index, u64), AdmissionPermit>>,
     pub(crate) peers: StdRwLock<HashMap<NodeId, String>>,
     /// One coalescing RPC lane per peer. Raft's latest AppendEntries contains
     /// the complete missing suffix, so retaining every intermediate request
@@ -426,7 +487,10 @@ pub(crate) struct Shared {
     pub(crate) lifecycle_generation: AtomicU64,
     pub(crate) snapshot_nonce: AtomicU64,
     pub(crate) snapshot_rpc_timeout: Duration,
-    pub(crate) snapshot_install: Mutex<()>,
+    pub(crate) snapshot_install: Arc<Mutex<()>>,
+    pub(crate) apply_running: AtomicBool,
+    pub(crate) apply_stopped: AtomicBool,
+    pub(crate) apply_tracker: Arc<RpcTracker>,
     pub(crate) max_resident_log_bytes: usize,
     pub(crate) shutdown_started: AtomicBool,
     pub(crate) shutdown_tx: watch::Sender<Option<HostShutdownReport>>,
@@ -486,31 +550,46 @@ pub(crate) fn apply_ready(
     snapshot_policy: SnapshotPolicy,
     strict: bool,
 ) -> anyhow::Result<()> {
+    apply_ready_with_admission(node, sm, applied_tx, snapshot_policy, strict, None)
+}
+
+fn apply_ready_with_admission(
+    node: &mut RaftNode,
+    sm: &dyn RaftStateMachine,
+    applied_tx: Option<&watch::Sender<Index>>,
+    snapshot_policy: SnapshotPolicy,
+    strict: bool,
+    pending_admission: Option<&StdMutex<BTreeMap<(Index, u64), AdmissionPermit>>>,
+) -> anyhow::Result<()> {
     if let Some(bytes) = node.take_installed_snapshot() {
-        let mut reader = std::io::Cursor::new(bytes);
-        if let Err(e) = sm.restore(&mut reader) {
-            if strict {
-                return Err(e);
-            }
-            tracing::error!(error = %e, "raft: state-machine restore from snapshot failed");
-        }
+        sm.restore(&mut std::io::Cursor::new(bytes))?;
     }
     let mut advanced = false;
-    for entry in node.take_committed() {
-        if entry.index <= sm.applied_index() {
-            continue;
-        }
-        if let Err(err) = sm.apply(entry.index, &entry.command) {
-            if strict {
-                return Err(err);
+    while let Some((index, term, kind)) = node.peek_next_committed_identity() {
+        let permit = pending_admission.and_then(|pending| {
+            let mut pending = pending.lock().unwrap_or_else(|p| p.into_inner());
+            pending.retain(|(at, entry_term), _| *at != index || *entry_term == term);
+            pending.remove(&(index, term))
+        });
+        if kind == raft_core::EntryKind::Command && index > sm.applied_index() {
+            // Cold start and deterministic conformance own the node directly.
+            // Borrow exactly this command; never materialize a committed batch.
+            let persisted = node.persisted_ref();
+            let offset = (index - persisted.snapshot_index - 1) as usize;
+            let entry = &persisted.log[offset];
+            sm.apply_admitted(index, &entry.command, permit)?;
+            if sm.applied_index() < index {
+                anyhow::bail!("state machine returned success without applying index {index}");
             }
-            tracing::warn!(index = entry.index, error = %err, "raft: apply error (entry no-ops)");
+            advanced = true;
         }
-        advanced = true;
+        if !node.finish_committed_identity(index, term) {
+            anyhow::bail!("committed identity changed while applying index {index}");
+        }
     }
     if advanced {
         if let Some(tx) = applied_tx {
-            let _ = tx.send_replace(sm.applied_index());
+            tx.send_replace(sm.applied_index());
         }
     }
     let SnapshotPolicy::EveryEntries(every) = snapshot_policy else {
@@ -545,7 +624,31 @@ pub(crate) fn cold_start(
 /// latched-failure policy; deterministic conformance returns this error to the
 /// scheduler.  Both therefore save identical bytes at identical step points.
 pub(crate) fn persist_node(store: &RaftStore, node: &RaftNode) -> std::io::Result<()> {
-    store.save(&node.persisted())
+    store.save_ref(&node.persisted_ref())
+}
+
+/// Advance one periodic tick without revalidating an unchanged durable image.
+/// `RaftNode::tick` currently changes durable state only when it advances the
+/// term to start an election. The first tick persists a fresh node because a
+/// learner may otherwise never elect and would leave its membership unsaved.
+fn tick_then_maybe_persist<P, L>(
+    node: &mut RaftNode,
+    first_tick: &mut bool,
+    persist: P,
+    is_latched: L,
+) -> bool
+where
+    P: FnOnce(&RaftNode) -> bool,
+    L: FnOnce() -> bool,
+{
+    let term_before = node.current_term();
+    node.tick();
+    let must_persist = std::mem::replace(first_tick, false)
+        || node.current_term() != term_before;
+    if must_persist && !persist(node) {
+        return false;
+    }
+    !is_latched()
 }
 
 #[derive(Default)]
@@ -578,7 +681,42 @@ impl Drop for RpcGuard {
     }
 }
 
+async fn preflight_snapshot_with_serial(
+    sm: Arc<dyn RaftStateMachine>,
+    snapshot_install: Arc<Mutex<()>>,
+    operation: Arc<RpcGuard>,
+) -> Result<(Option<Box<dyn SnapshotPreparation>>, OwnedMutexGuard<()>)> {
+    loop {
+        let sm = Arc::clone(&sm);
+        let preflight_operation = Arc::clone(&operation);
+        let preparation = tokio::task::spawn_blocking(move || {
+            // The caller can be cancelled while a product waits for checkpoint
+            // capacity. Keep the drain lease until that worker releases it.
+            let _operation = preflight_operation;
+            sm.preflight_snapshot()
+        })
+        .await??;
+        match Arc::clone(&snapshot_install).try_lock_owned() {
+            Ok(state_machine_lease) => return Ok((preparation, state_machine_lease)),
+            Err(_) => {
+                // A preparation can own a product save permit. Do not retain
+                // it while an incoming restore owns this serial lease.
+                drop(preparation);
+                let state_machine_lease = Arc::clone(&snapshot_install).lock_owned().await;
+                drop(state_machine_lease);
+            }
+        }
+    }
+}
+
 impl Shared {
+    /// A public applied head requires both a completed callback and the current
+    /// state machine's durable floor. A consumer reporting a lower floor must
+    /// still be treated as lagging by all-voter safety barriers.
+    fn completed_applied_index(&self) -> Index {
+        (*self.applied_tx.borrow()).min(self.sm.applied_index())
+    }
+
     /// Register direct peer work before checking the shutdown gate. The shared
     /// ordering with shutdown and wait_idle means an admitted operation cannot
     /// be missed by the drain. Proposal quiesce alone still allows final flush.
@@ -620,18 +758,10 @@ impl Shared {
         }
     }
 
-    /// The single applier. Called under the node lock everywhere committed
-    /// entries can appear (tick, inbound append, reply feedback, propose).
-    /// Installs any received snapshot, applies newly committed entries to the
-    /// state machine in order, bumps `applied_tx`, then maybe compacts.
-    fn apply_ready(&self, node: &mut RaftNode) {
-        let _ = apply_ready(
-            node,
-            self.sm.as_ref(),
-            Some(&self.applied_tx),
-            self.cfg.snapshot,
-            false,
-        );
+    /// Schedule the sole ordered worker after the selected core state is durable.
+    /// The caller holds node only for this metadata-only scheduling boundary.
+    fn apply_ready(self: &Arc<Self>, node: &mut RaftNode) {
+        self.schedule_apply(node);
     }
 
     fn leader_url(&self, node: &RaftNode) -> (Option<NodeId>, Option<String>) {
@@ -918,8 +1048,23 @@ impl Shared {
                 reason: "raft: proposal admission closed".to_string(),
             });
         }
+        let permit = match self.sm.admit_proposal(&command) {
+            Ok(permit) => permit,
+            Err(error) => {
+                self.proposal_rejected_before_append
+                    .fetch_add(1, Ordering::Relaxed);
+                return Some(rejected_admission(error));
+            }
+        };
         let index = {
             let mut n = self.node.lock().await;
+            if self.lifecycle_generation.load(Ordering::Acquire) > 0 {
+                self.proposal_rejected_before_append
+                    .fetch_add(1, Ordering::Relaxed);
+                return Some(ProposalOutcome::RejectedBeforeAdmission {
+                    reason: "raft: proposal admission closed".to_string(),
+                });
+            }
             if n.resident_log_bytes().saturating_add(command.len()) > self.max_resident_log_bytes {
                 return Some(ProposalOutcome::RejectedBeforeAdmission {
                     reason: format!(
@@ -931,18 +1076,33 @@ impl Shared {
             let Some(idx) = n.propose(command) else {
                 return None;
             };
+            let term = n.current_term();
+            if let Some(permit) = permit {
+                let previous = self
+                    .pending_admission
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert((idx, term), permit);
+                debug_assert!(previous.is_none(), "Raft index permit was replaced");
+            }
             if let Err(e) = self.persist(&n) {
                 return Some(ProposalOutcome::DurabilityFailure {
                     index: Some(idx),
                     failure: e,
                 });
             }
-            self.apply_ready(&mut n); // sole voter commits+applies here
+            self.apply_ready(&mut n); // sole voter queues its committed apply here
             idx
         };
         self.flush().await;
 
-        if self.sm.applied_index() >= index {
+        if let Some(failure) = self.latched_failure.lock().unwrap().clone() {
+            return Some(ProposalOutcome::DurabilityFailure {
+                index: Some(index),
+                failure,
+            });
+        }
+        if self.completed_applied_index() >= index {
             return Some(ProposalOutcome::Completed { index });
         }
         let mut rx = self.applied_tx.subscribe();
@@ -951,7 +1111,13 @@ impl Shared {
             {
                 let mut n = self.node.lock().await;
                 self.apply_ready(&mut n);
-                if self.sm.applied_index() >= index {
+                if let Some(failure) = self.latched_failure.lock().unwrap().clone() {
+                    return Some(ProposalOutcome::DurabilityFailure {
+                        index: Some(index),
+                        failure,
+                    });
+                }
+                if self.completed_applied_index() >= index {
                     return Some(ProposalOutcome::Completed { index });
                 }
             }
@@ -977,6 +1143,7 @@ pub struct RaftHost {
 
 impl Drop for RaftHost {
     fn drop(&mut self) {
+        self.shared.apply_stopped.store(true, Ordering::Release);
         if let Some((tick, pump)) = self.tasks.lock().expect("raft task mutex poisoned").take() {
             tick.abort();
             pump.abort();
@@ -1090,9 +1257,9 @@ impl RaftHost {
             Some(state) => RaftNode::from_persisted(id, &membership, state),
             None => RaftNode::new(id, &membership),
         };
-        // Keep the historical best-effort store-load behavior here.  The
-        // shared cold-start primitive only handles the recovered Raft state.
-        let _ = cold_start(&mut node, sm.as_ref(), false);
+        cold_start(&mut node, sm.as_ref(), true).unwrap_or_else(|error| {
+            panic!("raft: refuse to start node {id}; committed replay failed: {error}")
+        });
 
         let client =
             transport_h2c::h2c_client_with(Some(cfg.rpc_timeout), None).expect("h2c client");
@@ -1135,6 +1302,7 @@ impl RaftHost {
             node: Mutex::new(node),
             store,
             sm,
+            pending_admission: StdMutex::new(BTreeMap::new()),
             peers: StdRwLock::new(peers),
             peer_lanes: StdRwLock::new(peer_lanes),
             client,
@@ -1150,7 +1318,10 @@ impl RaftHost {
             lifecycle_generation: AtomicU64::new(0),
             snapshot_nonce: AtomicU64::new(1),
             snapshot_rpc_timeout,
-            snapshot_install: Mutex::new(()),
+            snapshot_install: Arc::new(Mutex::new(())),
+            apply_running: AtomicBool::new(false),
+            apply_stopped: AtomicBool::new(false),
+            apply_tracker: Arc::new(RpcTracker::default()),
             max_resident_log_bytes,
             shutdown_started: AtomicBool::new(false),
             shutdown_tx,
@@ -1158,12 +1329,17 @@ impl RaftHost {
 
         let s = Arc::clone(&shared);
         let tick = tokio::spawn(async move {
+            let mut first_tick = true;
             loop {
                 tokio::time::sleep(s.cfg.tick).await;
                 {
                     let mut n = s.node.lock().await;
-                    n.tick();
-                    if s.persist(&n).is_ok() {
+                    if tick_then_maybe_persist(
+                        &mut n,
+                        &mut first_tick,
+                        |node| s.persist(node).is_ok(),
+                        || s.latched_failure.lock().unwrap().is_some(),
+                    ) {
                         s.apply_ready(&mut n);
                     }
                 }
@@ -1340,9 +1516,15 @@ impl RaftHost {
             if let Some((tick, pump)) = tasks {
                 tick.abort();
                 pump.abort();
+                let shared = Arc::clone(&self.shared);
                 let join_all = async move {
                     let _ = tick.await;
                     let _ = pump.await;
+                    {
+                        let _node = shared.node.lock().await;
+                        shared.apply_stopped.store(true, Ordering::Release);
+                    }
+                    shared.apply_tracker.wait_idle().await;
                 };
                 tokio::time::timeout_at(phase_cutoffs[2], join_all)
                     .await
@@ -1577,7 +1759,13 @@ impl RaftHost {
     pub async fn propose(&self, command: Command) -> Result<Index> {
         match self.propose_outcome(command).await {
             ProposalOutcome::Completed { index } => Ok(index),
-            ProposalOutcome::RejectedBeforeAdmission { reason } => Err(anyhow!(reason)),
+            ProposalOutcome::RejectedBeforeAdmission { reason } => {
+                if let Some(backpressure) = decode_backpressure(&reason) {
+                    Err(anyhow::Error::new(backpressure))
+                } else {
+                    Err(anyhow!(reason))
+                }
+            }
             ProposalOutcome::Ambiguous { reason, .. } => Err(anyhow!(reason)),
             ProposalOutcome::DurabilityFailure { failure, .. } => Err(anyhow!(failure)),
         }
@@ -1688,6 +1876,39 @@ impl RaftHost {
             }
         };
         let status = resp.status();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            let value: serde_json::Value = match resp.json().await {
+                Ok(value) => value,
+                Err(error) => {
+                    return ProposalOutcome::Ambiguous {
+                        index: None,
+                        reason: error.to_string(),
+                    }
+                }
+            };
+            let Some(reason) = value.get("error").and_then(|value| value.as_str()) else {
+                return ProposalOutcome::Ambiguous {
+                    index: None,
+                    reason: "raft: leader backpressure reply missing error".to_string(),
+                };
+            };
+            let Some(retry_after_seconds) = value
+                .get("retry_after_seconds")
+                .and_then(|value| value.as_u64())
+            else {
+                return ProposalOutcome::Ambiguous {
+                    index: None,
+                    reason: "raft: leader backpressure reply missing retry_after_seconds"
+                        .to_string(),
+                };
+            };
+            return ProposalOutcome::RejectedBeforeAdmission {
+                reason: encode_backpressure(&ProposalBackpressure {
+                    reason: reason.to_string(),
+                    retry_after_seconds,
+                }),
+            };
+        }
         if status == StatusCode::SERVICE_UNAVAILABLE {
             let v: serde_json::Value = match resp.json().await {
                 Ok(v) => v,
@@ -1739,7 +1960,7 @@ impl RaftHost {
         // Wait for our own apply (the leader's commit propagates via AppendEntries).
         let mut rx = self.shared.applied_tx.subscribe();
         let deadline = Instant::now() + self.shared.cfg.propose_timeout;
-        while self.shared.sm.applied_index() < seq {
+        while self.shared.completed_applied_index() < seq {
             tokio::select! {
                 _ = rx.changed() => {}
                 _ = tokio::time::sleep(Duration::from_millis(5)) => {}
@@ -1757,11 +1978,10 @@ impl RaftHost {
     /// Capture a state-machine snapshot and compact the log up to the applied
     /// index (for `SnapshotPolicy::External` consumers driving their own cadence).
     pub async fn snapshot_and_compact(&self) -> Result<Index> {
-        let applied = self.shared.sm.applied_index();
-        if applied == 0 {
-            return Ok(0);
-        }
-        self.snapshot_and_compact_through(applied).await
+        Ok(self
+            .snapshot_and_compact_with_policy(None, true)
+            .await?
+            .snapshot_index)
     }
 
     /// Return the durable local snapshot index without changing Raft state.
@@ -1827,7 +2047,7 @@ impl RaftHost {
                     "only the Raft leader can verify voter applied indexes"
                 ));
             }
-            let local_applied = self.shared.sm.applied_index();
+            let local_applied = self.shared.completed_applied_index();
             if local_applied < index {
                 return Err(anyhow!(
                     "raft: local voter {} has applied index {local_applied}, below required index {index}",
@@ -1883,7 +2103,8 @@ impl RaftHost {
         &self,
         up_to: Index,
     ) -> Result<SnapshotCompactionOutcome> {
-        self.snapshot_and_compact_with_policy(up_to, true).await
+        self.snapshot_and_compact_with_policy(Some(up_to), true)
+            .await
     }
 
     /// Compact after a voting quorum installs a self-contained snapshot.
@@ -1896,18 +2117,30 @@ impl RaftHost {
         &self,
         up_to: Index,
     ) -> Result<SnapshotCompactionOutcome> {
-        self.snapshot_and_compact_with_policy(up_to, false).await
+        self.snapshot_and_compact_with_policy(Some(up_to), false)
+            .await
     }
 
     async fn snapshot_and_compact_with_policy(
         &self,
-        up_to: Index,
+        requested_index: Option<Index>,
         require_every_voter: bool,
     ) -> Result<SnapshotCompactionOutcome> {
         let operation = self.shared.begin_coordinated_peer_work()?;
-        let (term, snapshot_term, voters, bytes, checkpoint_index, already_compacted) = {
+        let (preparation, state_machine_lease) = preflight_snapshot_with_serial(
+            Arc::clone(&self.shared.sm),
+            Arc::clone(&self.shared.snapshot_install),
+            Arc::clone(&operation),
+        )
+        .await?;
+        let mut state_machine_lease = Some(state_machine_lease);
+        let (term, snapshot_term, voters, checkpoint_index, existing_bytes) = {
             let n = self.shared.node.lock().await;
-            let applied = self.shared.sm.applied_index();
+            if let Some(failure) = self.shared.latched_failure.lock().unwrap().clone() {
+                return Err(failure.into());
+            }
+            let applied = self.shared.completed_applied_index();
+            let up_to = requested_index.unwrap_or(applied);
             if up_to == 0 {
                 return Ok(SnapshotCompactionOutcome {
                     snapshot_index: n.snapshot_index(),
@@ -1933,32 +2166,67 @@ impl RaftHost {
                 ));
             }
             if up_to <= n.snapshot_index() {
+                drop(state_machine_lease.take());
                 let persisted = n.persisted_ref();
                 (
                     n.current_term(),
                     persisted.snapshot_term,
                     n.conf_state().membership.voters.clone(),
-                    persisted.snapshot.to_vec(),
                     persisted.snapshot_index,
-                    true,
+                    Some(persisted.snapshot.to_vec()),
                 )
             } else {
                 let snapshot_term = n.term_at_index(up_to).ok_or_else(|| {
                     anyhow!("Raft prefix {up_to} has no term and cannot be compacted")
                 })?;
-                let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
-                self.shared.sm.snapshot_at(up_to, &mut sink)?;
-                (
-                    n.current_term(),
-                    snapshot_term,
-                    n.conf_state().membership.voters.clone(),
-                    sink.into_bytes(),
-                    up_to,
-                    false,
-                )
+                let term = n.current_term();
+                let voters = n.conf_state().membership.voters.clone();
+                drop(n);
+                (term, snapshot_term, voters, up_to, None)
             }
         };
         let up_to = checkpoint_index;
+        let already_compacted = existing_bytes.is_some();
+        let bytes = if let Some(bytes) = existing_bytes {
+            // A prepared product handle can retain a save permit. There is no
+            // new capture to make after loading persisted bytes, so release it
+            // before status checks and snapshot resend work begin.
+            drop(preparation);
+            bytes
+        } else if let Some(preparation) = preparation {
+            let capture_operation = Arc::clone(&operation);
+            let prepared = tokio::task::spawn_blocking(move || {
+                let _operation = capture_operation;
+                let _serial = state_machine_lease
+                    .take()
+                    .expect("new snapshot must retain its state-machine lease");
+                preparation.capture_at(up_to)
+            })
+            .await??;
+            let export_operation = Arc::clone(&operation);
+            tokio::task::spawn_blocking(move || {
+                // The immutable capture is safe to encode while ordered apply
+                // proceeds. Retain peer-work ownership until output ends.
+                let _operation = export_operation;
+                let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
+                prepared.write_to(&mut sink)?;
+                Ok::<_, anyhow::Error>(sink.into_bytes())
+            })
+            .await??
+        } else {
+            let legacy_operation = Arc::clone(&operation);
+            let sm = Arc::clone(&self.shared.sm);
+            tokio::task::spawn_blocking(move || {
+                let _operation = legacy_operation;
+                let _serial = state_machine_lease
+                    .take()
+                    .expect("legacy snapshot must retain its state-machine lease");
+                let mut sink = ChunkSink::new(SNAPSHOT_CHUNK_SIZE);
+                sm.snapshot_at(up_to, &mut sink)?;
+                Ok::<_, anyhow::Error>(sink.into_bytes())
+            })
+            .await??
+        };
 
         let mut replies = Vec::new();
         let required_capability = self.shared.sm.snapshot_capability();
@@ -2225,86 +2493,29 @@ async fn install_snapshot_response(
     from: NodeId,
     req: InstallSnapshotReq,
 ) -> InstallSnapshotResp {
-    let _snapshot_install = s.snapshot_install.lock().await;
-    let validation_required = {
-        let n = s.node.lock().await;
-        req.term >= n.current_term() && req.snapshot_index > n.snapshot_index()
-    };
-    if validation_required {
-        let mut reader = std::io::Cursor::new(req.data.as_slice());
-        if let Err(error) = s.sm.validate_snapshot(&mut reader) {
-            tracing::warn!(
-                %error,
-                snapshot_index = req.snapshot_index,
-                "raft: state-machine rejected incoming snapshot before durable install"
-            );
-            let mut n = s.node.lock().await;
-            n.reject_install_snapshot(req);
-            if s.persist(&n).is_err() {
-                return InstallSnapshotResp {
-                    term: 0,
-                    accepted: false,
-                    snapshot_index: 0,
-                };
-            }
-            return match take_reply(&mut n, from) {
-                Some(RaftMsg::InstallSnapshotResp(response)) => response,
-                _ => InstallSnapshotResp {
-                    term: n.current_term(),
-                    accepted: false,
-                    snapshot_index: n.snapshot_index(),
-                },
-            };
-        }
-    }
-    let mut n = s.node.lock().await;
-    let restore_required = req.term >= n.current_term() && req.snapshot_index > n.snapshot_index();
-    n.handle(from, RaftMsg::InstallSnapshot(req));
-    if s.persist(&n).is_err() {
-        let _ = take_reply(&mut n, from);
-        return InstallSnapshotResp {
-            term: 0,
-            accepted: false,
-            snapshot_index: 0,
-        };
-    }
-    if restore_required {
-        let Some(bytes) = n.take_installed_snapshot() else {
-            return InstallSnapshotResp {
-                term: n.current_term(),
-                accepted: false,
-                snapshot_index: n.snapshot_index(),
-            };
-        };
-        let mut reader = std::io::Cursor::new(bytes);
-        if let Err(error) = s.sm.restore(&mut reader) {
-            tracing::error!(
-                %error,
-                snapshot_index = n.snapshot_index(),
-                "raft: durable snapshot restore failed; latch node until restart"
-            );
+    let serial = Arc::clone(&s.snapshot_install).lock_owned().await;
+    let shared = Arc::clone(s);
+    match tokio::task::spawn_blocking(move || {
+        let _serial = serial;
+        shared.install_snapshot_serial(from, req)
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::error!(%error, "raft: snapshot install worker failed");
             *s.latched_failure.lock().unwrap() = Some(StorageFailed {
                 node_id: s.id,
-                operation: "state-machine-restore",
+                operation: "state-machine-restore-panic",
                 path: s.store.path().to_path_buf(),
                 kind: std::io::ErrorKind::InvalidData,
             });
-            let _ = take_reply(&mut n, from);
-            return InstallSnapshotResp {
-                term: n.current_term(),
+            InstallSnapshotResp {
+                term: 0,
                 accepted: false,
-                snapshot_index: n.snapshot_index(),
-            };
+                snapshot_index: 0,
+            }
         }
-    }
-    s.apply_ready(&mut n);
-    match take_reply(&mut n, from) {
-        Some(RaftMsg::InstallSnapshotResp(r)) => r,
-        _ => InstallSnapshotResp {
-            term: 0,
-            accepted: false,
-            snapshot_index: 0,
-        },
     }
 }
 
@@ -2394,14 +2605,32 @@ pub(crate) async fn publish_handler(
             )
                 .into_response()
         }
-        Some(ProposalOutcome::RejectedBeforeAdmission { reason }) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "outcome": "rejected_before_admission",
-                "error": reason,
-            })),
-        )
-            .into_response(),
+        Some(ProposalOutcome::RejectedBeforeAdmission { reason }) => {
+            if let Some(backpressure) = decode_backpressure(&reason) {
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(
+                        axum::http::header::RETRY_AFTER,
+                        backpressure.retry_after_seconds.to_string(),
+                    )],
+                    Json(serde_json::json!({
+                        "outcome": "rejected_before_admission",
+                        "error": backpressure.reason,
+                        "retry_after_seconds": backpressure.retry_after_seconds,
+                    })),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "outcome": "rejected_before_admission",
+                        "error": reason,
+                    })),
+                )
+                    .into_response()
+            }
+        }
         Some(ProposalOutcome::Ambiguous { reason, .. }) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": reason })),
@@ -2450,7 +2679,7 @@ pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
         commit_index: n.commit_index(),
         last_index: n.last_index(),
         snapshot_index: n.snapshot_index(),
-        applied_index: s.sm.applied_index(),
+        applied_index: s.completed_applied_index(),
         leader: n.leader(),
         is_leader: n.is_leader(),
         durability_error,
@@ -2479,6 +2708,488 @@ pub(crate) async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use tokio::sync::oneshot;
+
+    struct PermitPreparation {
+        released: StdMutex<Option<oneshot::Sender<()>>>,
+    }
+
+    impl Drop for PermitPreparation {
+        fn drop(&mut self) {
+            if let Some(released) = self
+                .released
+                .lock()
+                .expect("test preparation release mutex poisoned")
+                .take()
+            {
+                let _ = released.send(());
+            }
+        }
+    }
+
+    struct PermitCapture;
+
+    impl crate::PreparedSnapshot for PermitCapture {
+        fn write_to(self: Box<Self>, _writer: &mut dyn Write) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::SnapshotPreparation for PermitPreparation {
+        fn capture_at(self: Box<Self>, _index: Index) -> Result<Box<dyn crate::PreparedSnapshot>> {
+            Ok(Box::new(PermitCapture))
+        }
+    }
+
+    struct PermitPreflightSm {
+        preflight_entered: AtomicBool,
+        released: StdMutex<Option<oneshot::Sender<()>>>,
+    }
+
+    impl RaftStateMachine for PermitPreflightSm {
+        fn apply(&self, _index: Index, _command: &[u8]) -> Result<()> {
+            Ok(())
+        }
+
+        fn snapshot(&self, _writer: &mut dyn Write) -> Result<()> {
+            Ok(())
+        }
+
+        fn preflight_snapshot(&self) -> Result<Option<Box<dyn SnapshotPreparation>>> {
+            self.preflight_entered.store(true, Ordering::Release);
+            let released = self
+                .released
+                .lock()
+                .expect("test preflight release mutex poisoned")
+                .take();
+            Ok(Some(Box::new(PermitPreparation {
+                released: StdMutex::new(released),
+            })))
+        }
+
+        fn restore(&self, _reader: &mut dyn Read) -> Result<()> {
+            Ok(())
+        }
+
+        fn applied_index(&self) -> Index {
+            0
+        }
+    }
+
+    #[tokio::test]
+    async fn preflight_preparation_releases_product_permit_before_waiting_for_snapshot_lease() {
+        let (released_tx, mut released_rx) = oneshot::channel();
+        let state_machine = Arc::new(PermitPreflightSm {
+            preflight_entered: AtomicBool::new(false),
+            released: StdMutex::new(Some(released_tx)),
+        });
+        let snapshot_install = Arc::new(Mutex::new(()));
+        let held_lease = Arc::clone(&snapshot_install).lock_owned().await;
+        let tracker = Arc::new(RpcTracker::default());
+        tracker.active.fetch_add(1, Ordering::SeqCst);
+        let operation = Arc::new(RpcGuard { tracker });
+        let waiting = tokio::spawn(preflight_snapshot_with_serial(
+            state_machine.clone() as Arc<dyn RaftStateMachine>,
+            Arc::clone(&snapshot_install),
+            operation,
+        ));
+
+        let entered = tokio::time::timeout(Duration::from_secs(1), async {
+            while !state_machine.preflight_entered.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let released_while_host_lease_is_held =
+            tokio::time::timeout(Duration::from_millis(100), &mut released_rx)
+                .await
+                .is_ok();
+
+        waiting.abort();
+        let _ = waiting.await;
+        drop(held_lease);
+        if !released_while_host_lease_is_held {
+            let _ = released_rx.await;
+        }
+
+        assert!(
+            entered.is_ok(),
+            "preflight must start before lease acquisition"
+        );
+        assert!(
+            released_while_host_lease_is_held,
+            "preflight preparation must release its product permit before awaiting snapshot_install"
+        );
+    }
+
+    struct TestPermit {
+        id: u64,
+        drops: Arc<AtomicU64>,
+    }
+
+    impl Drop for TestPermit {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct AdmissionSm {
+        reject: Option<ProposalBackpressure>,
+        next_permit: AtomicU64,
+        admitted: AtomicU64,
+        applied: AtomicU64,
+        drops: Arc<AtomicU64>,
+        gate_entered: AtomicBool,
+        gate_release: AtomicBool,
+        early_watermark_then_fail: AtomicBool,
+    }
+
+    impl AdmissionSm {
+        fn accepting() -> Arc<Self> {
+            Arc::new(Self {
+                reject: None,
+                next_permit: AtomicU64::new(0),
+                admitted: AtomicU64::new(0),
+                applied: AtomicU64::new(0),
+                drops: Arc::new(AtomicU64::new(0)),
+                gate_entered: AtomicBool::new(false),
+                gate_release: AtomicBool::new(true),
+                early_watermark_then_fail: AtomicBool::new(false),
+            })
+        }
+
+        fn rejecting(reason: &str, retry_after_seconds: u64) -> Arc<Self> {
+            Arc::new(Self {
+                reject: Some(ProposalBackpressure {
+                    reason: reason.to_string(),
+                    retry_after_seconds,
+                }),
+                next_permit: AtomicU64::new(0),
+                admitted: AtomicU64::new(0),
+                applied: AtomicU64::new(0),
+                drops: Arc::new(AtomicU64::new(0)),
+                gate_entered: AtomicBool::new(false),
+                gate_release: AtomicBool::new(true),
+                early_watermark_then_fail: AtomicBool::new(false),
+            })
+        }
+    }
+
+    impl RaftStateMachine for AdmissionSm {
+        fn admit_proposal(&self, _command: &[u8]) -> anyhow::Result<Option<AdmissionPermit>> {
+            if let Some(backpressure) = &self.reject {
+                return Err(anyhow::Error::new(backpressure.clone()));
+            }
+            let id = self.next_permit.fetch_add(1, Ordering::SeqCst) + 1;
+            self.admitted.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(Box::new(TestPermit {
+                id,
+                drops: self.drops.clone(),
+            })))
+        }
+
+        fn apply_admitted(
+            &self,
+            index: Index,
+            _command: &[u8],
+            permit: Option<AdmissionPermit>,
+        ) -> anyhow::Result<()> {
+            let permit =
+                permit.map(|permit| permit.downcast::<TestPermit>().expect("test permit type"));
+            if let Some(permit) = &permit {
+                assert_eq!(permit.id, index, "permit identity follows Raft index");
+            }
+            if self.early_watermark_then_fail.load(Ordering::SeqCst) {
+                self.applied.store(index, Ordering::SeqCst);
+            }
+            self.gate_entered.store(true, Ordering::SeqCst);
+            while !self.gate_release.load(Ordering::SeqCst) {
+                std::thread::yield_now();
+            }
+            if self.early_watermark_then_fail.load(Ordering::SeqCst) {
+                anyhow::bail!("injected error after an early state-machine watermark");
+            }
+            self.applied.store(index, Ordering::SeqCst);
+            drop(permit);
+            Ok(())
+        }
+
+        fn apply(&self, index: Index, _command: &[u8]) -> anyhow::Result<()> {
+            self.applied.store(index, Ordering::SeqCst);
+            Ok(())
+        }
+        fn snapshot(&self, _writer: &mut dyn Write) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn restore(&self, _reader: &mut dyn Read) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn applied_index(&self) -> Index {
+            self.applied.load(Ordering::SeqCst)
+        }
+    }
+
+    struct AdmissionTestHost {
+        host: RaftHost,
+        _directory: tempfile::TempDir,
+    }
+    impl std::ops::Deref for AdmissionTestHost {
+        type Target = RaftHost;
+        fn deref(&self) -> &Self::Target {
+            &self.host
+        }
+    }
+    async fn elected_single_host(sm: Arc<AdmissionSm>) -> AdmissionTestHost {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let host = RaftHost::spawn(
+            0,
+            Membership {
+                voters: vec![0],
+                learners: vec![],
+            },
+            HashMap::new(),
+            RaftStore::open(path.to_str().unwrap(), 0, crate::store::FsyncPolicy::Os).unwrap(),
+            sm as Arc<dyn RaftStateMachine>,
+            HostConfig::default(),
+        );
+        {
+            let mut node = host.shared.node.lock().await;
+            for _ in 0..raft_core::ELECTION_TIMEOUT_FLOOR_TICKS {
+                node.tick();
+            }
+        }
+        AdmissionTestHost {
+            host,
+            _directory: dir,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn proposal_ack_waits_for_callback_completion_not_an_early_watermark() {
+        struct ReleaseGate(Arc<AdmissionSm>);
+        impl Drop for ReleaseGate {
+            fn drop(&mut self) {
+                self.0.gate_release.store(true, Ordering::SeqCst);
+            }
+        }
+        let sm = AdmissionSm::accepting();
+        let host = Arc::new(elected_single_host(sm.clone()).await);
+        sm.early_watermark_then_fail.store(true, Ordering::SeqCst);
+        sm.gate_release.store(false, Ordering::SeqCst);
+        let release = ReleaseGate(sm.clone());
+        let submitting = host.clone();
+        let submit =
+            tokio::spawn(async move { submitting.propose_outcome(b"early".to_vec()).await });
+        let entered = tokio::time::timeout(Duration::from_secs(2), async {
+            while !sm.gate_entered.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let before = tokio::time::timeout(Duration::from_secs(2), host_status(&host.shared)).await;
+        // Give the public waiter a chance to observe the premature SM watermark.
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let acknowledged_while_callback_blocked = submit.is_finished();
+        drop(release);
+        let joined = tokio::time::timeout(Duration::from_secs(2), submit).await;
+        let after = tokio::time::timeout(Duration::from_secs(2), host_status(&host.shared)).await;
+        assert!(
+            entered.is_ok(),
+            "apply callback must reach the early watermark gate"
+        );
+        assert!(
+            !acknowledged_while_callback_blocked,
+            "public proposal returned before apply callback completed"
+        );
+        assert_eq!(
+            before.unwrap().applied_index,
+            0,
+            "public applied head requires callback completion"
+        );
+        assert!(matches!(
+            joined.unwrap().unwrap(),
+            ProposalOutcome::DurabilityFailure { index: Some(1), .. }
+        ));
+        assert_eq!(
+            after.unwrap().applied_index,
+            0,
+            "failed callback must not publish an applied head"
+        );
+    }
+
+    #[tokio::test]
+    async fn proposal_admission_rejects_before_raft_append() {
+        let sm = AdmissionSm::rejecting("test budget full", 7);
+        let host = elected_single_host(sm).await;
+        let error = host.propose(b"full".to_vec()).await.unwrap_err();
+        let backpressure = error.downcast_ref::<ProposalBackpressure>().unwrap();
+        assert_eq!(backpressure.retry_after_seconds, 7);
+        assert_eq!(host.shared.node.lock().await.last_index(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn indexed_permit_survives_cancelled_producer_until_apply_returns() {
+        struct ReleaseGate(Arc<AdmissionSm>);
+        impl Drop for ReleaseGate {
+            fn drop(&mut self) {
+                self.0.gate_release.store(true, Ordering::SeqCst);
+            }
+        }
+        let sm = AdmissionSm::accepting();
+        sm.gate_release.store(false, Ordering::SeqCst);
+        let release = ReleaseGate(sm.clone());
+        let host = Arc::new(elected_single_host(sm.clone()).await);
+        let mut submit = tokio::spawn({
+            let host = host.clone();
+            async move { host.propose(vec![1]).await }
+        });
+        let entered = tokio::time::timeout(Duration::from_secs(2), async {
+            while !sm.gate_entered.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let before_cancel = sm.drops.load(Ordering::SeqCst);
+        submit.abort();
+        let after_cancel = sm.drops.load(Ordering::SeqCst);
+        // Release the worker before any assertion or join, including failures.
+        drop(release);
+        let joined = tokio::time::timeout(Duration::from_secs(2), &mut submit).await;
+        let applied = tokio::time::timeout(Duration::from_secs(2), async {
+            // The SM floor can precede callback return and permit drop.
+            // Observe the host publication, which follows both.
+            while host.shared.completed_applied_index() < 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(entered.is_ok(), "apply did not reach the gate");
+        assert!(
+            joined.is_ok(),
+            "cancelled producer did not finish after release"
+        );
+        assert!(
+            applied.is_ok(),
+            "committed apply did not finish after release"
+        );
+        assert_eq!(before_cancel, 0, "permit must reach the apply callback");
+        assert_eq!(after_cancel, 0, "cancellation cannot drop the apply permit");
+        assert_eq!(sm.drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn identical_commands_get_distinct_index_permits() {
+        let sm = AdmissionSm::accepting();
+        let host = elected_single_host(sm.clone()).await;
+        assert_eq!(host.propose(vec![9]).await.unwrap(), 1);
+        assert_eq!(host.propose(vec![9]).await.unwrap(), 2);
+        assert_eq!(sm.admitted.load(Ordering::SeqCst), 2);
+        assert_eq!(sm.drops.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn persistence_failure_after_index_keeps_the_host_owned_permit() {
+        let sm = AdmissionSm::accepting();
+        let host = elected_single_host(sm.clone()).await;
+        host.shared
+            .store
+            .inject_next_save_failure_with_kind(std::io::ErrorKind::Other);
+        assert!(host.propose(vec![4]).await.is_err());
+        assert_eq!(host.shared.node.lock().await.last_index(), 1);
+        assert_eq!(
+            host.shared.pending_admission.lock().unwrap().len(),
+            1,
+            "the appended index still owns its permit after uncertain persistence"
+        );
+        assert_eq!(sm.drops.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn forwarded_backpressure_reply_restores_typed_error_data() {
+        let leader = elected_single_host(AdmissionSm::rejecting("leader full", 11)).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, leader.router()).await.unwrap();
+        });
+        let client = elected_single_host(AdmissionSm::accepting()).await;
+        let outcome = client
+            .forward(&format!("http://{address}"), b"forwarded")
+            .await;
+        server.abort();
+        let ProposalOutcome::RejectedBeforeAdmission { reason } = outcome else {
+            panic!("forwarded 429 must remain a pre-append rejection");
+        };
+        assert_eq!(
+            decode_backpressure(&reason),
+            Some(ProposalBackpressure {
+                reason: "leader full".to_string(),
+                retry_after_seconds: 11,
+            })
+        );
+    }
+
+    #[test]
+    fn conflicting_term_at_same_index_drops_only_replaced_uncommitted_permit() {
+        let membership = Membership {
+            voters: vec![0, 1],
+            learners: vec![],
+        };
+        let mut node = RaftNode::new(0, &membership);
+        for _ in 0..raft_core::ELECTION_TIMEOUT_FLOOR_TICKS {
+            node.tick();
+        }
+        node.handle(
+            1,
+            RaftMsg::VoteResp(VoteResp {
+                term: 1,
+                granted: true,
+            }),
+        );
+        let index = node.propose(vec![1]).unwrap();
+        let old_term = node.current_term();
+        assert_eq!(index, 1);
+        node.handle(
+            1,
+            RaftMsg::Append(AppendReq {
+                term: old_term + 1,
+                leader: 1,
+                prev_log_index: 0,
+                prev_log_term: 0,
+                entries: vec![raft_core::RaftEntry {
+                    term: old_term + 1,
+                    index,
+                    command: vec![2],
+                    kind: raft_core::EntryKind::Command,
+                }],
+                leader_commit: index,
+            }),
+        );
+        let sm = AdmissionSm::accepting();
+        let drops = Arc::new(AtomicU64::new(0));
+        let pending = StdMutex::new(BTreeMap::from([(
+            (index, old_term),
+            Box::new(TestPermit {
+                id: 99,
+                drops: drops.clone(),
+            }) as AdmissionPermit,
+        )]));
+        apply_ready_with_admission(
+            &mut node,
+            sm.as_ref(),
+            None,
+            SnapshotPolicy::Disabled,
+            true,
+            Some(&pending),
+        )
+        .unwrap();
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(pending.lock().unwrap().is_empty());
+        assert_eq!(sm.applied_index(), index);
+    }
 
     #[test]
     fn shutdown_phase_cutoffs_are_cumulative_and_ordered() {
@@ -2715,6 +3426,163 @@ mod tests {
             assert_same_message(actual, expected_message);
         }
         assert!(queue.dequeue().is_none());
+    }
+
+    fn fresh_node(membership: Membership) -> RaftNode {
+        RaftNode::new(0, &membership)
+    }
+
+    #[test]
+    fn tick_persists_initial_learner_image_then_skips_unchanged_tick() {
+        let mut node = fresh_node(Membership {
+            voters: vec![],
+            learners: vec![0],
+        });
+        let initial = node.persisted();
+        let mut first_tick = true;
+        let mut calls = 0;
+
+        assert!(tick_then_maybe_persist(
+            &mut node,
+            &mut first_tick,
+            |persisted| {
+                calls += 1;
+                assert_eq!(persisted.persisted(), initial);
+                true
+            },
+            || false,
+        ));
+        assert_eq!(calls, 1, "first learner tick persists fresh membership");
+        assert_eq!(node.persisted(), initial, "timers are not durable state");
+
+        assert!(tick_then_maybe_persist(
+            &mut node,
+            &mut first_tick,
+            |_| panic!("unchanged learner tick must not persist"),
+            || false,
+        ));
+        assert_eq!(node.persisted(), initial, "unchanged tick keeps full image");
+    }
+
+    #[test]
+    fn tick_persists_election_image_and_failure_blocks_apply_and_stays_latched() {
+        let mut node = fresh_node(Membership {
+            voters: vec![0],
+            learners: vec![],
+        });
+        let mut first_tick = true;
+        let mut calls = 0;
+        for _ in 0..raft_core::ELECTION_TIMEOUT_FLOOR_TICKS - 1 {
+            assert!(tick_then_maybe_persist(
+                &mut node,
+                &mut first_tick,
+                |_| {
+                    calls += 1;
+                    true
+                },
+                || false,
+            ));
+        }
+        assert_eq!(calls, 1, "only startup has persisted before election");
+
+        let latched = std::cell::Cell::new(false);
+        assert!(!tick_then_maybe_persist(
+            &mut node,
+            &mut first_tick,
+            |persisted| {
+                calls += 1;
+                let image = persisted.persisted();
+                assert_eq!(image.term, 1);
+                assert_eq!(image.voted_for, Some(0));
+                latched.set(true);
+                false
+            },
+            || latched.get(),
+        ));
+        assert_eq!(calls, 2, "term-changing election persists");
+        assert!(!tick_then_maybe_persist(
+            &mut node,
+            &mut first_tick,
+            |_| panic!("latched unchanged tick must not persist"),
+            || true,
+        ));
+    }
+
+    #[test]
+    fn tick_persists_joint_election_with_leave_joint_entry() {
+        let membership = Membership {
+            voters: vec![0],
+            learners: vec![],
+        };
+        let mut node = fresh_node(membership.clone());
+        assert!(node.adopt_conf(raft_core::ConfState {
+            membership,
+            outgoing: Some(vec![0]),
+            generation: 1,
+        }));
+        let mut first_tick = true;
+        for _ in 0..raft_core::ELECTION_TIMEOUT_FLOOR_TICKS - 1 {
+            assert!(tick_then_maybe_persist(
+                &mut node,
+                &mut first_tick,
+                |_| true,
+                || false,
+            ));
+        }
+        assert!(tick_then_maybe_persist(
+            &mut node,
+            &mut first_tick,
+            |persisted| {
+                let image = persisted.persisted();
+                assert_eq!(image.term, 1);
+                assert!(image.conf.as_ref().is_some_and(|conf| conf.outgoing.is_some()));
+                assert!(matches!(
+                    image.log.last().map(|entry| entry.kind),
+                    Some(raft_core::EntryKind::Config)
+                ));
+                true
+            },
+            || false,
+        ));
+    }
+
+    #[test]
+    fn elected_leader_heartbeat_ticks_skip_persistence_and_keep_full_image() {
+        let mut node = fresh_node(Membership {
+            voters: vec![0],
+            learners: vec![],
+        });
+        let mut first_tick = true;
+        for _ in 0..raft_core::ELECTION_TIMEOUT_FLOOR_TICKS - 1 {
+            assert!(tick_then_maybe_persist(
+                &mut node,
+                &mut first_tick,
+                |_| true,
+                || false,
+            ));
+        }
+        assert!(tick_then_maybe_persist(
+            &mut node,
+            &mut first_tick,
+            |_| true,
+            || false,
+        ));
+        assert!(node.is_leader());
+        let leader_image = node.persisted();
+
+        for _ in 0..raft_core::HEARTBEAT_INTERVAL_TICKS * 2 {
+            assert!(tick_then_maybe_persist(
+                &mut node,
+                &mut first_tick,
+                |_| panic!("idle leader heartbeat tick must not persist"),
+                || false,
+            ));
+            assert_eq!(
+                node.persisted(),
+                leader_image,
+                "heartbeat timers and outbox must not alter the durable image"
+            );
+        }
     }
 }
 

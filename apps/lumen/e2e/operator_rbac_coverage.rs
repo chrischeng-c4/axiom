@@ -221,11 +221,7 @@ const DECLARED_CALLS: &[DeclaredCall] = &[
 fn render_operator_manifest() -> String {
     let binary = env!("CARGO_BIN_EXE_lumen");
     let output = Command::new(binary)
-        .args([
-            "k8s",
-            "operator",
-            "render",
-        ])
+        .args(["k8s", "operator", "render"])
         .output()
         .expect("failed to execute lumen CLI");
 

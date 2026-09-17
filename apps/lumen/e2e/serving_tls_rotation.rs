@@ -17,7 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+    BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair,
 };
 
 /// The Service DNS names the leaf answers to — both forms, because the operator
@@ -41,9 +42,13 @@ fn authority(name: &str) -> Authority {
 
 /// Issue a serving leaf for [`SERVICE_DNS`], signed by `ca`.
 fn leaf(ca: &Authority) -> (String, String) {
-    let mut params =
-        CertificateParams::new(SERVICE_DNS.iter().map(|n| (*n).to_string()).collect::<Vec<_>>())
-            .unwrap();
+    let mut params = CertificateParams::new(
+        SERVICE_DNS
+            .iter()
+            .map(|n| (*n).to_string())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
     params
         .distinguished_name
         .push(DnType::CommonName, SERVICE_DNS[0]);
@@ -78,10 +83,7 @@ fn client(ca_pem: &str, port: u16) -> reqwest::Client {
     reqwest::Client::builder()
         .tls_built_in_root_certs(false)
         .add_root_certificate(reqwest::Certificate::from_pem(ca_pem.as_bytes()).unwrap())
-        .resolve(
-            SERVICE_DNS[0],
-            format!("127.0.0.1:{port}").parse().unwrap(),
-        )
+        .resolve(SERVICE_DNS[0], format!("127.0.0.1:{port}").parse().unwrap())
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap()
@@ -161,7 +163,11 @@ async fn a_serving_tls_rotation_keeps_every_request_in_a_bounded_stream() {
         failures.is_empty(),
         "a routine renewal must cost no request: {failures:?}"
     );
-    assert_eq!(served.load(Ordering::SeqCst), 40, "every request reached the router");
+    assert_eq!(
+        served.load(Ordering::SeqCst),
+        40,
+        "every request reached the router"
+    );
     assert_eq!(rotated_at, Some(2), "the rotation must have activated");
     let second = tls.fingerprint().expect("a leaf is active after rotation");
     assert_ne!(

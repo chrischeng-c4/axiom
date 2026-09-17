@@ -41,8 +41,8 @@ fn lumen_from(spec_overrides: Value) -> Lumen {
     for (k, v) in spec_overrides.as_object().unwrap() {
         base.insert(k.clone(), v.clone());
     }
-    let spec: LumenSpec = serde_json::from_value(spec)
-        .unwrap_or_else(|e| panic!("spec does not deserialize: {e}"));
+    let spec: LumenSpec =
+        serde_json::from_value(spec).unwrap_or_else(|e| panic!("spec does not deserialize: {e}"));
     let mut l = Lumen::new("acct", spec);
     l.metadata = ObjectMeta {
         name: Some("acct".into()),
@@ -76,7 +76,12 @@ fn workload(objs: &[Value]) -> &Value {
             (o["kind"] == "StatefulSet" || o["kind"] == "Deployment")
                 && o["metadata"]["name"] == "acct"
         })
-        .unwrap_or_else(|| panic!("no serving workload named acct; rendered: {:?}", kinds(objs)))
+        .unwrap_or_else(|| {
+            panic!(
+                "no serving workload named acct; rendered: {:?}",
+                kinds(objs)
+            )
+        })
 }
 
 fn serving_container(objs: &[Value]) -> &Value {

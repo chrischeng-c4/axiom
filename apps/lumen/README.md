@@ -349,8 +349,8 @@ contract. Each source below states its direct contribution.
     durable state transitions at reshard and restart boundaries.
   - `external:kubernetes` runs the declared members and networking contracts.
 - Gate: `cargo test -p lumen --test reshard_admin_e2e --test reshard_driver_e2e --test routed_shard_e2e`
-- Gate: `cargo test -p lumen --test wal_nats_e2e --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
-- Gate: `cargo test -p lumen --features raft-wal --test raft_shutdown_failover`
+- Gate: `cargo test -p lumen --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
+- Gate: `cargo test -p lumen --features raft-wal --test raft_shutdown_failover --test raft_segment_snapshot_archive --test raft_segment_snapshot_archive_wiring --test raft_oversized_committed_apply`
 - Gate: `apps/lumen/scripts/kind-e2e.sh`
 
 ### Durability and recovery
@@ -369,7 +369,7 @@ contract. Each source below states its direct contribution.
     writes inside a shard group.
   - [`libs/raft-runtime`](../../libs/raft-runtime/README.md) installs replica
     snapshots and manages the replicated log lifecycle.
-- Gate: `cargo test -p lumen --test backup_restore_e2e --test wal_nats_e2e`
+- Gate: `cargo test -p lumen --test backup_restore_e2e --test indexing_durable_oracle`
 - Gate: `acceptance/gcp/scripts/run.sh`
 
 ### Operations and observability
@@ -429,6 +429,7 @@ contract. Each source below states its direct contribution.
 | [Protocol](docs/protocol.md) | Canonical source map, connection paths, operation families, and current protocol boundaries |
 | [Generated clients](clients/README.md) | Client generation, language matrix, connection inputs, and current limits |
 | [Indexing](docs/indexing.md) | Current and target schema, write, durability, rebuild, and activation contracts |
+| [Product areas](docs/product/README.md) | Current indexing limits and the planned incremental checkpoint outcome alongside other product promises |
 | [Querying](docs/querying.md) | Source hydration plus current and target query, result, facet, metric, and limit contracts |
 | [GKE](docs/gke.md) | Local and GKE support tiers, runtime topology, placement, security, and production verification |
 | [Client integration](docs/client-integration.md) | Generated-client, workload-template, retry, and source-hydration responsibilities |

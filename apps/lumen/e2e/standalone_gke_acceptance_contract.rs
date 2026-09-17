@@ -50,7 +50,10 @@ struct RequiredRuntimeOracleResult {
     receipt: Option<String>,
 }
 
-fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> RequiredRuntimeOracleResult {
+fn run_required_runtime_oracle(
+    source: &str,
+    mutation: Option<&str>,
+) -> RequiredRuntimeOracleResult {
     let fixture = tempfile::Builder::new()
         .prefix("lumen-required-runtime-oracle-")
         .tempdir()
@@ -93,12 +96,12 @@ fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> Required
                 Value::String("example.invalid/lumen@sha256:changed".to_owned());
         }
         Some("cpu") => {
-            after["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]
-                ["cpu"] = Value::String("2".to_owned());
+            after["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["cpu"] =
+                Value::String("2".to_owned());
         }
         Some("memory") => {
-            after["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]
-                ["memory"] = Value::String("2Gi".to_owned());
+            after["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["memory"] =
+                Value::String("2Gi".to_owned());
         }
         Some("other-env") => {
             after["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] =
@@ -111,10 +114,16 @@ fn run_required_runtime_oracle(source: &str, mutation: Option<&str>) -> Required
     let script_path = fixture.path().join("run.sh");
     let evidence = fixture.path().join("evidence");
     fs::create_dir(&evidence).expect("required-runtime private evidence directory");
-    fs::write(&live_path, serde_json::to_vec(&live).expect("live fixture JSON"))
-        .expect("write live fixture");
-    fs::write(&after_path, serde_json::to_vec(&after).expect("after fixture JSON"))
-        .expect("write after fixture");
+    fs::write(
+        &live_path,
+        serde_json::to_vec(&live).expect("live fixture JSON"),
+    )
+    .expect("write live fixture");
+    fs::write(
+        &after_path,
+        serde_json::to_vec(&after).expect("after fixture JSON"),
+    )
+    .expect("write after fixture");
     let harness = [
         r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -162,10 +171,9 @@ v2_required_runtime
         .output()
         .expect("run required-runtime harness");
     let statefulset = fs::read_to_string(fixture.path().join("v2-required-statefulset.json")).ok();
-    let diagnostic = fs::read_to_string(
-        evidence.join("lumen-standalone-gke-required-continuity-diff.json"),
-    )
-    .ok();
+    let diagnostic =
+        fs::read_to_string(evidence.join("lumen-standalone-gke-required-continuity-diff.json"))
+            .ok();
     let receipt = fs::read_to_string(evidence.join("lumen-standalone-gke-receipt.json")).ok();
     RequiredRuntimeOracleResult {
         output,
@@ -196,10 +204,16 @@ fn run_required_continuity_diff_oracle(
         fs::set_permissions(&diagnostic_path, fs::Permissions::from_mode(0o644))
             .expect("set pre-existing private diagnostic mode");
     }
-    fs::write(&before_path, serde_json::to_vec(before).expect("before fixture JSON"))
-        .expect("write before fixture");
-    fs::write(&after_path, serde_json::to_vec(after).expect("after fixture JSON"))
-        .expect("write after fixture");
+    fs::write(
+        &before_path,
+        serde_json::to_vec(before).expect("before fixture JSON"),
+    )
+    .expect("write before fixture");
+    fs::write(
+        &after_path,
+        serde_json::to_vec(after).expect("after fixture JSON"),
+    )
+    .expect("write after fixture");
     let harness = [
         r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -220,10 +234,9 @@ v2_write_required_continuity_diff "$BEFORE_FIXTURE" "$AFTER_FIXTURE"
         .env("LUMEN_STANDALONE_GKE_EVIDENCE_DIR", &evidence)
         .output()
         .expect("run required-continuity diff harness");
-    let diagnostic = fs::read_to_string(
-        evidence.join("lumen-standalone-gke-required-continuity-diff.json"),
-    )
-    .ok();
+    let diagnostic =
+        fs::read_to_string(evidence.join("lumen-standalone-gke-required-continuity-diff.json"))
+            .ok();
     let files = collect_files(&evidence);
     let mode = fs::metadata(evidence.join("lumen-standalone-gke-required-continuity-diff.json"))
         .map(|metadata| metadata.permissions().mode() & 0o777)
@@ -271,7 +284,11 @@ fn run_service_link_wait(
     .replace("STATUS_IMAGE", status_image)
     .replace(
         "SERVICE_LINKS",
-        if enable_service_links { "true" } else { "false" },
+        if enable_service_links {
+            "true"
+        } else {
+            "false"
+        },
     );
     let pod_path = fixture.path().join("pod.json");
     fs::write(&pod_path, pod).expect("service-link pod fixture");
@@ -570,7 +587,11 @@ fn shared_renderer_findings(source: &str) -> Vec<&'static str> {
         || log_reader.contains("wait")
         || log_reader.contains("create")
         || source.contains("LUMEN_STANDALONE_GKE_TEST_NO_SLEEP")
-        || !appears_before(source, "grep -Fq -- 'No agent available'", "[[ \"$attempt\" -lt 6 ]]")
+        || !appears_before(
+            source,
+            "grep -Fq -- 'No agent available'",
+            "[[ \"$attempt\" -lt 6 ]]",
+        )
     {
         bad.push("CLIENT");
     }
@@ -1215,18 +1236,51 @@ fn findings(source: &str) -> Vec<&'static str> {
             bad.push("METRICS");
         }
     }
-    if !appears_before(run, "v2_wait_pod \"$replacement_uid\" in-cluster 1 1Gi", "v2_run_metrics_job metrics-before-incluster")
-        || !appears_before(run, "v2_run_metrics_job metrics-before-incluster", "v2_run_api_job marker-after-resize")
-        || !appears_before(run, "v2_run_api_job marker-after-resize", "v2_run_api_job metrics-denied-after-resize")
-        || !appears_before(run, "v2_run_api_job metrics-denied-after-resize", "v2_run_metrics_job metrics-after-incluster")
-        || !appears_before(run, "v2_run_metrics_job metrics-after-incluster", "v2_metric_deltas in-cluster")
-        || !appears_before(run, "v2_wait_pod \"$resized_uid\" required 1 1Gi", "v2_run_metrics_job metrics-before-required")
-        || !appears_before(run, "v2_run_metrics_job metrics-before-required", "v2_run_api_job required-projected-app")
-        || !appears_before(run, "v2_run_api_job required-projected-app", "v2_run_api_job required-default-app")
-        || !appears_before(run, "v2_run_api_job required-default-app", "v2_run_api_job required-projected-unlisted")
-        || !appears_before(run, "v2_run_api_job required-projected-unlisted", "v2_run_metrics_job metrics-after-required")
-        || !appears_before(run, "v2_run_metrics_job metrics-after-required", "v2_metric_deltas required")
-    {
+    if !appears_before(
+        run,
+        "v2_wait_pod \"$replacement_uid\" in-cluster 1 1Gi",
+        "v2_run_metrics_job metrics-before-incluster",
+    ) || !appears_before(
+        run,
+        "v2_run_metrics_job metrics-before-incluster",
+        "v2_run_api_job marker-after-resize",
+    ) || !appears_before(
+        run,
+        "v2_run_api_job marker-after-resize",
+        "v2_run_api_job metrics-denied-after-resize",
+    ) || !appears_before(
+        run,
+        "v2_run_api_job metrics-denied-after-resize",
+        "v2_run_metrics_job metrics-after-incluster",
+    ) || !appears_before(
+        run,
+        "v2_run_metrics_job metrics-after-incluster",
+        "v2_metric_deltas in-cluster",
+    ) || !appears_before(
+        run,
+        "v2_wait_pod \"$resized_uid\" required 1 1Gi",
+        "v2_run_metrics_job metrics-before-required",
+    ) || !appears_before(
+        run,
+        "v2_run_metrics_job metrics-before-required",
+        "v2_run_api_job required-projected-app",
+    ) || !appears_before(
+        run,
+        "v2_run_api_job required-projected-app",
+        "v2_run_api_job required-default-app",
+    ) || !appears_before(
+        run,
+        "v2_run_api_job required-default-app",
+        "v2_run_api_job required-projected-unlisted",
+    ) || !appears_before(
+        run,
+        "v2_run_api_job required-projected-unlisted",
+        "v2_run_metrics_job metrics-after-required",
+    ) || !appears_before(
+        run,
+        "v2_run_metrics_job metrics-after-required",
+        "v2_metric_deltas required",
+    ) {
         bad.push("METRICS");
     }
     if source.contains("--selector") || source.contains("get all,") {
@@ -1647,7 +1701,12 @@ fn preflight_findings(source: &str) -> Vec<&'static str> {
     {
         bad.push("PREFLIGHT");
     }
-    for variable in ["HOME=", "XDG_CACHE_HOME=", "XDG_CONFIG_HOME=", "CLOUDSDK_CONFIG="] {
+    for variable in [
+        "HOME=",
+        "XDG_CACHE_HOME=",
+        "XDG_CONFIG_HOME=",
+        "CLOUDSDK_CONFIG=",
+    ] {
         if source.lines().any(|line| line.contains(variable)) {
             bad.push("PREFLIGHT");
         }
@@ -1706,7 +1765,10 @@ fn collect_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
             if entry.file_type().expect("fixture entry type").is_dir() {
                 walk(base, &path, files);
             } else {
-                files.insert(relative.to_owned(), fs::read(path).expect("read fixture file"));
+                files.insert(
+                    relative.to_owned(),
+                    fs::read(path).expect("read fixture file"),
+                );
             }
         }
     }
@@ -1731,7 +1793,9 @@ struct GkeOracleFixture {
 }
 
 fn executable(path: &Path) {
-    let mut permissions = fs::metadata(path).expect("executable metadata").permissions();
+    let mut permissions = fs::metadata(path)
+        .expect("executable metadata")
+        .permissions();
     permissions.set_mode(0o700);
     fs::set_permissions(path, permissions).expect("make executable");
 }
@@ -1743,7 +1807,10 @@ fn install_fake(path: &Path, body: &str) {
 
 fn make_gke_oracle_fixture() -> GkeOracleFixture {
     let physical_root = fs::canonicalize("/tmp").expect("canonical physical /tmp");
-    assert!(matches!(physical_root.to_str(), Some("/tmp" | "/private/tmp")));
+    assert!(matches!(
+        physical_root.to_str(),
+        Some("/tmp" | "/private/tmp")
+    ));
     let root = tempfile::Builder::new()
         .prefix("lumen-gke-physical-oracle-")
         .tempdir_in(&physical_root)
@@ -1907,12 +1974,17 @@ fn required_runtime_accepts_only_serializer_metadata_and_auth_change() {
     )
     .expect("required StatefulSet JSON");
     assert_eq!(
-        statefulset["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"],
-        "required",
+        statefulset["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"], "required",
         "required transition must retain the exact auth profile"
     );
-    assert!(accepted.diagnostic.is_none(), "accepted transition wrote a diagnostic");
-    assert!(accepted.receipt.is_none(), "required-runtime oracle wrote a receipt");
+    assert!(
+        accepted.diagnostic.is_none(),
+        "accepted transition wrote a diagnostic"
+    );
+    assert!(
+        accepted.receipt.is_none(),
+        "required-runtime oracle wrote a receipt"
+    );
     assert!(
         accepted.output.stdout.is_empty(),
         "accepted transition wrote unexpected stdout: {:?}",
@@ -1921,8 +1993,14 @@ fn required_runtime_accepts_only_serializer_metadata_and_auth_change() {
 
     for (mutation, expected_path) in [
         ("image", "/spec/template/spec/containers/0/image"),
-        ("cpu", "/spec/template/spec/containers/0/resources/requests/cpu"),
-        ("memory", "/spec/template/spec/containers/0/resources/requests/memory"),
+        (
+            "cpu",
+            "/spec/template/spec/containers/0/resources/requests/cpu",
+        ),
+        (
+            "memory",
+            "/spec/template/spec/containers/0/resources/requests/memory",
+        ),
         ("other-env", "/spec/template/spec/containers/0/env/0/value"),
     ] {
         let rejected = run_required_runtime_oracle(&source, Some(mutation));
@@ -1933,15 +2011,19 @@ fn required_runtime_accepts_only_serializer_metadata_and_auth_change() {
             String::from_utf8_lossy(&rejected.output.stderr)
         );
         assert!(
-            String::from_utf8_lossy(&rejected.output.stderr)
-                .contains("required continuity patch changed live desired fields other than LUMEN_AUTH"),
+            String::from_utf8_lossy(&rejected.output.stderr).contains(
+                "required continuity patch changed live desired fields other than LUMEN_AUTH"
+            ),
             "business-field mutation did not fail at continuity comparator: {mutation}"
         );
         assert!(
             rejected.statefulset.is_none(),
             "business-field mutation wrote the required StatefulSet: {mutation}"
         );
-        assert!(rejected.receipt.is_none(), "business-field mutation wrote a receipt: {mutation}");
+        assert!(
+            rejected.receipt.is_none(),
+            "business-field mutation wrote a receipt: {mutation}"
+        );
         assert!(
             rejected.output.stdout.is_empty(),
             "business-field mutation wrote stdout: {mutation}; stdout={:?}",
@@ -1984,14 +2066,23 @@ fn required_runtime_accepts_only_serializer_metadata_and_auth_change() {
         "required continuity diagnostic could not be written\n",
         "injected target race must fail only with the generic diagnostic error"
     );
-    assert!(raced.output.stdout.is_empty(), "injected target race wrote stdout");
+    assert!(
+        raced.output.stdout.is_empty(),
+        "injected target race wrote stdout"
+    );
     assert_eq!(
         raced.diagnostic.as_deref(),
         Some("injected-target-bytes\n"),
         "injected target bytes must not be overwritten or altered"
     );
-    assert!(raced.statefulset.is_none(), "injected target race wrote required StatefulSet");
-    assert!(raced.receipt.is_none(), "injected target race wrote a public receipt");
+    assert!(
+        raced.statefulset.is_none(),
+        "injected target race wrote required StatefulSet"
+    );
+    assert!(
+        raced.receipt.is_none(),
+        "injected target race wrote a public receipt"
+    );
 }
 
 #[test]
@@ -2060,9 +2151,15 @@ fn required_continuity_diff_reports_only_sorted_rfc6901_paths() {
             "diagnostic retained a private value: {private_value}"
         );
     }
-    assert_eq!(files.len(), 1, "diagnostic writer retained only one private artifact");
+    assert_eq!(
+        files.len(),
+        1,
+        "diagnostic writer retained only one private artifact"
+    );
     assert!(
-        files.contains_key(&PathBuf::from("lumen-standalone-gke-required-continuity-diff.json")),
+        files.contains_key(&PathBuf::from(
+            "lumen-standalone-gke-required-continuity-diff.json"
+        )),
         "diagnostic writer used the exact private file name"
     );
     assert_eq!(mode, 0o600, "diagnostic mode must be 0600");
@@ -2079,16 +2176,32 @@ fn required_continuity_diff_fails_closed_without_replacing_existing_private_arti
         &after,
         Some("pre-existing-private-artifact\n"),
     );
-    assert!(!output.status.success(), "existing diagnostic path must fail closed");
-    assert!(output.stdout.is_empty(), "failed diagnostic writer emitted stdout");
-    assert!(output.stderr.is_empty(), "failed diagnostic writer emitted private diagnostics");
+    assert!(
+        !output.status.success(),
+        "existing diagnostic path must fail closed"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "failed diagnostic writer emitted stdout"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "failed diagnostic writer emitted private diagnostics"
+    );
     assert_eq!(
         diagnostic.as_deref(),
         Some("pre-existing-private-artifact\n"),
         "failed writer must not replace the pre-existing private artifact"
     );
-    assert_eq!(files.len(), 1, "failed writer must not leave a temporary artifact");
-    assert_eq!(mode, 0o644, "failed writer must not change the existing artifact mode");
+    assert_eq!(
+        files.len(),
+        1,
+        "failed writer must not leave a temporary artifact"
+    );
+    assert_eq!(
+        mode, 0o644,
+        "failed writer must not change the existing artifact mode"
+    );
 }
 
 #[test]
@@ -2243,18 +2356,15 @@ fn job_log_reader_retries_only_konnectivity_transients() {
             "Konnectivity agent unavailable while reading job log",
         ),
         ("permanent", 2, 1, 0, "", "job log read failed"),
-        (
-            "transient5permanent",
-            2,
-            6,
-            5,
-            "",
-            "job log read failed",
-        ),
+        ("transient5permanent", 2, 6, 5, "", "job log read failed"),
     ] {
         let result = run_job_log_reader(&source, mode);
         let stderr = String::from_utf8_lossy(&result.output.stderr);
-        assert_eq!(result.output.status.code(), Some(code), "mode={mode}: {stderr}");
+        assert_eq!(
+            result.output.status.code(),
+            Some(code),
+            "mode={mode}: {stderr}"
+        );
         assert_eq!(result.calls, calls, "mode={mode}: wrong call count");
         assert_eq!(result.sleeps, sleeps, "mode={mode}: wrong sleep count");
         assert_eq!(result.log, log, "mode={mode}: wrong log bytes");
@@ -2270,7 +2380,12 @@ fn job_log_reader_retries_only_konnectivity_transients() {
 fn api_job_status_contract_accepts_only_a_single_concrete_2xx_log_line() {
     let source = full_script();
     for status in ["200", "201", "299"] {
-        let result = run_api_status_oracle(&source, "create", "2xx", &format!("row=create status={status}\n"));
+        let result = run_api_status_oracle(
+            &source,
+            "create",
+            "2xx",
+            &format!("row=create status={status}\n"),
+        );
         assert!(
             result.status.success(),
             "concrete 2xx status {status} was rejected: {}",
@@ -2288,7 +2403,10 @@ fn api_job_status_contract_accepts_only_a_single_concrete_2xx_log_line() {
         ("prefix", "note row=create status=200\n"),
         ("suffix", "row=create status=200 note\n"),
         ("wrong-label", "row=other status=200\n"),
-        ("extra-line", "row=create status=200\nrow=create status=201\n"),
+        (
+            "extra-line",
+            "row=create status=200\nrow=create status=201\n",
+        ),
     ] {
         let result = run_api_status_oracle(&source, "create", "2xx", log);
         assert!(
@@ -2299,7 +2417,11 @@ fn api_job_status_contract_accepts_only_a_single_concrete_2xx_log_line() {
     }
     let exact = run_api_status_oracle(&source, "unlisted", "403", "row=unlisted status=403\n");
     assert!(exact.status.success(), "exact status was rejected");
-    for log in ["row=unlisted status=2xx\n", "row=unlisted status=401\n", "row=unlisted status=403\nextra\n"] {
+    for log in [
+        "row=unlisted status=2xx\n",
+        "row=unlisted status=401\n",
+        "row=unlisted status=403\nextra\n",
+    ] {
         assert!(
             !run_api_status_oracle(&source, "unlisted", "403", log)
                 .status
@@ -2310,15 +2432,25 @@ fn api_job_status_contract_accepts_only_a_single_concrete_2xx_log_line() {
 
     let literal_mutation = replace_once(&source, "status=2[0-9][0-9]", "status=2xx");
     assert!(
-        !run_api_status_oracle(&literal_mutation, "create", "2xx", "row=create status=200\n")
-            .status
-            .success(),
+        !run_api_status_oracle(
+            &literal_mutation,
+            "create",
+            "2xx",
+            "row=create status=200\n"
+        )
+        .status
+        .success(),
         "literal-status mutation still accepted a concrete 2xx response"
     );
     assert!(
-        run_api_status_oracle(&literal_mutation, "create", "2xx", "row=create status=2xx\n")
-            .status
-            .success(),
+        run_api_status_oracle(
+            &literal_mutation,
+            "create",
+            "2xx",
+            "row=create status=2xx\n"
+        )
+        .status
+        .success(),
         "literal-status mutation fixture did not expose the bypass"
     );
 }
@@ -2360,7 +2492,10 @@ fn metric_delta_failures_retain_only_redacted_shape_evidence() {
         "failure artifact must not retain raw metric rows: {missing_body}"
     );
     let missing_json: Value = serde_json::from_str(missing_body).expect("missing-metric JSON");
-    assert_eq!(missing_json["schema"], "lumen.standalone-gke-metric-shape/v1");
+    assert_eq!(
+        missing_json["schema"],
+        "lumen.standalone-gke-metric-shape/v1"
+    );
     assert_eq!(missing_json["failure"]["profile"], "in-cluster");
     assert_eq!(missing_json["failure"]["reason"], "missing_metric");
     assert_eq!(
@@ -2368,11 +2503,15 @@ fn metric_delta_failures_retain_only_redacted_shape_evidence() {
         "absent"
     );
     assert_eq!(
-        missing_json["observations"][1]["metrics"]["delegated_auth_token_reviews_total"]["value_class"],
+        missing_json["observations"][1]["metrics"]["delegated_auth_token_reviews_total"]
+            ["value_class"],
         "positive"
     );
     assert_eq!(missing_json["redaction"]["metric_values_retained"], false);
-    assert_eq!(missing_json["redaction"]["metric_label_values_retained"], false);
+    assert_eq!(
+        missing_json["redaction"]["metric_label_values_retained"],
+        false
+    );
 
     let labeled_zero = concat!(
         "delegated_auth_token_reviews_total{private_label=\"secret-value\"} 0\n",
@@ -2382,10 +2521,8 @@ fn metric_delta_failures_retain_only_redacted_shape_evidence() {
     );
     let non_positive = run_metric_delta_oracle(&source, "required", labeled_zero, labeled_zero);
     assert_eq!(non_positive.output.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&non_positive.output.stderr)
-            .contains("measured auth metric deltas are not positive")
-    );
+    assert!(String::from_utf8_lossy(&non_positive.output.stderr)
+        .contains("measured auth metric deltas are not positive"));
     assert_eq!(non_positive.evidence.len(), 1);
     let non_positive_body = non_positive
         .evidence
@@ -2401,11 +2538,13 @@ fn metric_delta_failures_retain_only_redacted_shape_evidence() {
     assert_eq!(non_positive_json["failure"]["reason"], "non_positive_delta");
     for phase in [0, 1] {
         assert_eq!(
-            non_positive_json["observations"][phase]["metrics"]["delegated_auth_denied_total"]["shape"],
+            non_positive_json["observations"][phase]["metrics"]["delegated_auth_denied_total"]
+                ["shape"],
             "labeled"
         );
         assert_eq!(
-            non_positive_json["observations"][phase]["metrics"]["delegated_auth_denied_total"]["value_class"],
+            non_positive_json["observations"][phase]["metrics"]["delegated_auth_denied_total"]
+                ["value_class"],
             "zero"
         );
     }
@@ -2463,7 +2602,10 @@ fn metric_shape_and_restart_window_mutations_fail_the_static_contract() {
             findings(&changed)
         );
     }
-    let changed = source.replace("metric_values_retained:false", "metric_values_retained:true");
+    let changed = source.replace(
+        "metric_values_retained:false",
+        "metric_values_retained:true",
+    );
     assert_ne!(source, changed, "redaction mutation changes bytes");
     assert!(
         findings(&changed).contains(&"REDACTION"),
@@ -2580,7 +2722,10 @@ fn runtime_image_identity_binds_root_or_scheduled_child_inside_pod_wait_predicat
 
     for (name, image_id) in [
         ("wrong repo", config),
-        ("wrong repo with root digest", "ghcr.io/chrischeng-c4/other@sha256:root"),
+        (
+            "wrong repo with root digest",
+            "ghcr.io/chrischeng-c4/other@sha256:root",
+        ),
         (
             "wrong repo with scheduled child digest",
             "ghcr.io/chrischeng-c4/other@sha256:amd64-child",
@@ -2613,7 +2758,10 @@ fn runtime_image_identity_binds_root_or_scheduled_child_inside_pod_wait_predicat
     }
 
     for (name, pod_image) in [
-        ("wrong repository", "ghcr.io/chrischeng-c4/other@sha256:root"),
+        (
+            "wrong repository",
+            "ghcr.io/chrischeng-c4/other@sha256:root",
+        ),
         ("child instead of root", amd64_child),
     ] {
         let result = run_service_link_wait(
@@ -3391,16 +3539,26 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
         stderr.contains("standalone GKE acceptance: could not describe the requested GKE cluster"),
         "positive canonical path did not reach the expected gcloud error: {stderr}"
     );
-    assert!(fixture.kubectl_marker.exists(), "fake kubectl was not reached");
+    assert!(
+        fixture.kubectl_marker.exists(),
+        "fake kubectl was not reached"
+    );
     let calls = fs::read_to_string(&fixture.kubectl_calls).expect("read kubectl calls");
     let call_paths: Vec<_> = calls.lines().collect();
-    assert_eq!(call_paths.len(), 4, "expected four config kubectl calls: {calls}");
+    assert_eq!(
+        call_paths.len(),
+        4,
+        "expected four config kubectl calls: {calls}"
+    );
     assert!(call_paths.windows(2).all(|pair| pair[0] == pair[1]));
     let cache = Path::new(call_paths[0]);
     assert!(cache.ends_with("kubectl-cache"));
     let run_root = cache.parent().expect("cache run root");
     assert_eq!(run_root.parent(), Some(fixture.physical_root.as_path()));
-    assert!(!run_root.exists(), "cleanup did not remove the acceptance run root");
+    assert!(
+        !run_root.exists(),
+        "cleanup did not remove the acceptance run root"
+    );
     let marker = fs::read_to_string(&fixture.kubectl_marker).expect("read fake kubectl marker");
     let mut marker_lines = marker.lines();
     let observed_run_root = PathBuf::from(marker_lines.next().expect("marker run root"));
@@ -3421,7 +3579,11 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
         fs::read_to_string(&fixture.gcloud_marker).expect("read gcloud marker"),
         "home-unset\n"
     );
-    assert_eq!(collect_files(&harness), harness_before, "checked-in harness changed");
+    assert_eq!(
+        collect_files(&harness),
+        harness_before,
+        "checked-in harness changed"
+    );
     assert!(
         !fixture.cwd.join(".kube").exists(),
         "kubectl wrote its default cache below the isolated current directory"
@@ -3458,11 +3620,27 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
             "{label} returned the wrong error: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(!fixture.kubectl_marker.exists(), "{label} reached fake kubectl");
-        assert!(!fixture.kubectl_calls.exists(), "{label} reached fake kubectl");
-        assert!(!fixture.gcloud_marker.exists(), "{label} reached fake gcloud");
-        assert_eq!(collect_files(&harness), harness_before, "{label} changed checked-in harness");
-        assert!(!fixture.cwd.join(".kube").exists(), "{label} wrote a default kubectl cache");
+        assert!(
+            !fixture.kubectl_marker.exists(),
+            "{label} reached fake kubectl"
+        );
+        assert!(
+            !fixture.kubectl_calls.exists(),
+            "{label} reached fake kubectl"
+        );
+        assert!(
+            !fixture.gcloud_marker.exists(),
+            "{label} reached fake gcloud"
+        );
+        assert_eq!(
+            collect_files(&harness),
+            harness_before,
+            "{label} changed checked-in harness"
+        );
+        assert!(
+            !fixture.cwd.join(".kube").exists(),
+            "{label} wrote a default kubectl cache"
+        );
     }
 
     let real_parent = fixture._root.path().join("real-parent");
@@ -3510,11 +3688,27 @@ fn physical_temp_root_and_path_validation_are_executable_contracts() {
             "{label} returned the wrong error: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(!fixture.kubectl_marker.exists(), "{label} reached fake kubectl");
-        assert!(!fixture.kubectl_calls.exists(), "{label} reached fake kubectl");
-        assert!(!fixture.gcloud_marker.exists(), "{label} reached fake gcloud");
-        assert_eq!(collect_files(&harness), harness_before, "{label} changed checked-in harness");
-        assert!(!fixture.cwd.join(".kube").exists(), "{label} wrote a default kubectl cache");
+        assert!(
+            !fixture.kubectl_marker.exists(),
+            "{label} reached fake kubectl"
+        );
+        assert!(
+            !fixture.kubectl_calls.exists(),
+            "{label} reached fake kubectl"
+        );
+        assert!(
+            !fixture.gcloud_marker.exists(),
+            "{label} reached fake gcloud"
+        );
+        assert_eq!(
+            collect_files(&harness),
+            harness_before,
+            "{label} changed checked-in harness"
+        );
+        assert!(
+            !fixture.cwd.join(".kube").exists(),
+            "{label} wrote a default kubectl cache"
+        );
     }
 }
 
@@ -3557,11 +3751,7 @@ fn physical_temp_root_mutations_fail_closed() {
         preflight_findings(&changed).contains(&"PREFLIGHT"),
         "TMPDIR-derived mktemp did not fail preflight"
     );
-    let changed = replace_once(
-        &full,
-        "safe_private_file \"$KUBECONFIG\" ||",
-        "true ||",
-    );
+    let changed = replace_once(&full, "safe_private_file \"$KUBECONFIG\" ||", "true ||");
     assert!(
         preflight_findings(&changed).contains(&"PREFLIGHT"),
         "kubeconfig safe_private_file bypass did not fail preflight"
@@ -3627,7 +3817,12 @@ fn physical_temp_root_mutations_fail_closed() {
         preflight_findings(&changed).contains(&"PREFLIGHT"),
         "a later uncached raw kubectl invocation did not fail preflight"
     );
-    for variable in ["HOME=", "XDG_CACHE_HOME=", "XDG_CONFIG_HOME=", "CLOUDSDK_CONFIG="] {
+    for variable in [
+        "HOME=",
+        "XDG_CACHE_HOME=",
+        "XDG_CONFIG_HOME=",
+        "CLOUDSDK_CONFIG=",
+    ] {
         let changed = replace_once(&full, "CDPATH=", &format!("CDPATH=\n{variable}/tmp"));
         assert!(
             preflight_findings(&changed).contains(&"PREFLIGHT"),

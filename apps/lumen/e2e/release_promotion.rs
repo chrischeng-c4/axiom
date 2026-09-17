@@ -489,11 +489,7 @@ fn run_gke_receipt_fixture(fixture: &GkeReceiptFixture) -> Output {
     let mut command = Command::new("bash");
     command
         .arg(release_script())
-        .args([
-            "--repo",
-            "chrischeng-c4/axiom",
-            "--tag",
-        ])
+        .args(["--repo", "chrischeng-c4/axiom", "--tag"])
         .arg(&fixture.tag)
         .args([
             "--commit",
@@ -817,7 +813,10 @@ fn execute_public_release_note_binding(verifier: &str, release_json: &serde_json
         "  return 0\n  expected_assets=\"$({ while IFS= read -r target; do",
         1,
     );
-    assert_ne!(bounded, verifier, "public release note guard must be present");
+    assert_ne!(
+        bounded, verifier,
+        "public release note guard must be present"
+    );
     fs::write(&script_path, bounded).unwrap();
     fs::write(
         &gh_path,
@@ -830,12 +829,18 @@ fn execute_public_release_note_binding(verifier: &str, release_json: &serde_json
         .arg("bash")
         .arg(&script_path)
         .current_dir(&temp.0)
-        .env("PATH", format!("{}:{}", temp.0.display(), std::env::var("PATH").unwrap()))
+        .env(
+            "PATH",
+            format!("{}:{}", temp.0.display(), std::env::var("PATH").unwrap()),
+        )
         .env("REPO", "chrischeng-c4/axiom")
         .env("TAG", "lumen@0.4.29")
         .env("COMMIT", COMMIT)
         .env("CANDIDATE_RECEIPT_DIR", candidate)
-        .env("STANDALONE_GKE_RECEIPT_SHA256", RECOVERY_0429_RECEIPT_SHA256)
+        .env(
+            "STANDALONE_GKE_RECEIPT_SHA256",
+            RECOVERY_0429_RECEIPT_SHA256,
+        )
         .output()
         .unwrap()
 }
@@ -1826,7 +1831,11 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         yaml_field(top, "on", "0.4.29 recovery workflow")?,
         "0.4.29 recovery workflow.on",
     )?;
-    exact_keys(trigger, &["workflow_dispatch"], "0.4.29 recovery workflow.on")?;
+    exact_keys(
+        trigger,
+        &["workflow_dispatch"],
+        "0.4.29 recovery workflow.on",
+    )?;
     if !yaml_field(trigger, "workflow_dispatch", "0.4.29 recovery workflow.on")?.is_null() {
         return Err("0.4.29 recovery workflow_dispatch must have no inputs".to_owned());
     }
@@ -1893,7 +1902,10 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         "0.4.29 recovery workflow.jobs.recover.steps",
     )?;
     if steps.len() != 13 {
-        return Err(format!("0.4.29 recovery step count changed: {}", steps.len()));
+        return Err(format!(
+            "0.4.29 recovery step count changed: {}",
+            steps.len()
+        ));
     }
     validate_action_step(
         &steps[0],
@@ -1924,7 +1936,13 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         &[("cosign-release", "v3.1.3")],
         None,
     )?;
-    validate_action_step(&steps[3], "0.4.29 recovery.steps[3]", SETUP_BUILDX, &[], None)?;
+    validate_action_step(
+        &steps[3],
+        "0.4.29 recovery.steps[3]",
+        SETUP_BUILDX,
+        &[],
+        None,
+    )?;
     validate_action_step(
         &steps[4],
         "0.4.29 recovery.steps[4]",
@@ -1948,7 +1966,12 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         "Decode and bind frozen standalone GKE receipt",
         "0.4.29 recovery.steps[5]",
     )?;
-    expect_text(receipt_step, "id", "gke_receipt", "0.4.29 recovery.steps[5]")?;
+    expect_text(
+        receipt_step,
+        "id",
+        "gke_receipt",
+        "0.4.29 recovery.steps[5]",
+    )?;
     let receipt_env = yaml_mapping(
         yaml_field(receipt_step, "env", "0.4.29 recovery.steps[5]")?,
         "0.4.29 recovery.steps[5].env",
@@ -1975,19 +1998,41 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
     if sha256_bytes(&receipt_bytes) != RECOVERY_0429_RECEIPT_SHA256
         || sha256_bytes(&sidecar_bytes) != RECOVERY_0429_SIDECAR_SHA256
         || sidecar_bytes
-            != format!("{RECOVERY_0429_RECEIPT_SHA256}  lumen-standalone-gke-receipt.json\n").as_bytes()
+            != format!("{RECOVERY_0429_RECEIPT_SHA256}  lumen-standalone-gke-receipt.json\n")
+                .as_bytes()
     {
         return Err("frozen 0.4.29 receipt bytes do not bind the public snapshot".to_owned());
     }
     let receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
         .map_err(|error| format!("frozen receipt JSON is invalid: {error}"))?;
-    if receipt.pointer("/candidate/commit").and_then(|value| value.as_str()) != Some(RECOVERY_0429_COMMIT)
-        || receipt.pointer("/candidate/run_id").and_then(|value| value.as_str()) != Some(RECOVERY_0429_RUN)
-        || receipt.pointer("/candidate/run_attempt").and_then(|value| value.as_str()) != Some("1")
-        || receipt.pointer("/candidate/manifest_sha256").and_then(|value| value.as_str()) != Some(RECOVERY_0429_MANIFEST_SHA256)
-        || receipt.pointer("/candidate/root_digest").and_then(|value| value.as_str()) != Some(RECOVERY_0429_ROOT)
-        || receipt.pointer("/candidate/amd64_digest").and_then(|value| value.as_str()) != Some(RECOVERY_0429_AMD64)
-        || receipt.pointer("/candidate/arm64_digest").and_then(|value| value.as_str()) != Some(RECOVERY_0429_ARM64)
+    if receipt
+        .pointer("/candidate/commit")
+        .and_then(|value| value.as_str())
+        != Some(RECOVERY_0429_COMMIT)
+        || receipt
+            .pointer("/candidate/run_id")
+            .and_then(|value| value.as_str())
+            != Some(RECOVERY_0429_RUN)
+        || receipt
+            .pointer("/candidate/run_attempt")
+            .and_then(|value| value.as_str())
+            != Some("1")
+        || receipt
+            .pointer("/candidate/manifest_sha256")
+            .and_then(|value| value.as_str())
+            != Some(RECOVERY_0429_MANIFEST_SHA256)
+        || receipt
+            .pointer("/candidate/root_digest")
+            .and_then(|value| value.as_str())
+            != Some(RECOVERY_0429_ROOT)
+        || receipt
+            .pointer("/candidate/amd64_digest")
+            .and_then(|value| value.as_str())
+            != Some(RECOVERY_0429_AMD64)
+        || receipt
+            .pointer("/candidate/arm64_digest")
+            .and_then(|value| value.as_str())
+            != Some(RECOVERY_0429_ARM64)
     {
         return Err("frozen receipt does not bind the 0.4.29 candidate identity".to_owned());
     }
@@ -2003,7 +2048,9 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         "lumen-standalone-gke-receipt.json.sha256",
     ] {
         if !decoder.contains(required) {
-            return Err(format!("0.4.29 receipt decoder lost required binding: {required}"));
+            return Err(format!(
+                "0.4.29 receipt decoder lost required binding: {required}"
+            ));
         }
     }
     validate_run_step(
@@ -2038,7 +2085,11 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         "0.4.29 recovery.steps[8]",
         "Public-verify existing release only",
         &["name", "if", "env", "shell", "run"],
-        &["verify-release-artifacts.sh", "--mode public", "--standalone-gke-receipt"],
+        &[
+            "verify-release-artifacts.sh",
+            "--mode public",
+            "--standalone-gke-receipt",
+        ],
         Some("steps.state.outputs.exists == 'true'"),
         None,
         true,
@@ -2048,7 +2099,11 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         "0.4.29 recovery.steps[9]",
         "Download exact candidate release bytes",
         &["name", "if", "env", "shell", "run"],
-        &["gh run download", "lumen-release-candidate-33277878629-1", "candidate/spdx-arm64.json"],
+        &[
+            "gh run download",
+            "lumen-release-candidate-33277878629-1",
+            "candidate/spdx-arm64.json",
+        ],
         Some("steps.state.outputs.exists == 'false'"),
         None,
         true,
@@ -2100,7 +2155,11 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         "0.4.29 recovery.steps[12]",
         "Publicly verify recovered release",
         &["name", "if", "env", "shell", "run"],
-        &["verify-release-artifacts.sh", "--mode public", "--standalone-gke-receipt-sidecar"],
+        &[
+            "verify-release-artifacts.sh",
+            "--mode public",
+            "--standalone-gke-receipt-sidecar",
+        ],
         Some("steps.state.outputs.exists == 'false'"),
         None,
         true,
@@ -2126,7 +2185,9 @@ fn validate_recovery_0429_workflow(workflow: &str) -> Result<(), String> {
         "actions/upload-artifact",
     ] {
         if lower.contains(forbidden) {
-            return Err(format!("0.4.29 recovery has forbidden control: {forbidden}"));
+            return Err(format!(
+                "0.4.29 recovery has forbidden control: {forbidden}"
+            ));
         }
     }
     for exact in [
@@ -2176,8 +2237,15 @@ fn validate_recovery_0430_workflow(workflow: &str) -> Result<(), String> {
         context,
     )?;
     expect_text(top, "name", "lumen-release-0.4.30-recovery", context)?;
-    let trigger = yaml_mapping(yaml_field(top, "on", context)?, "0.4.30 recovery workflow.on")?;
-    exact_keys(trigger, &["workflow_dispatch"], "0.4.30 recovery workflow.on")?;
+    let trigger = yaml_mapping(
+        yaml_field(top, "on", context)?,
+        "0.4.30 recovery workflow.on",
+    )?;
+    exact_keys(
+        trigger,
+        &["workflow_dispatch"],
+        "0.4.30 recovery workflow.on",
+    )?;
     if !yaml_field(trigger, "workflow_dispatch", "0.4.30 recovery workflow.on")?.is_null() {
         return Err("0.4.30 recovery workflow_dispatch must have no inputs".to_owned());
     }
@@ -2213,7 +2281,10 @@ fn validate_recovery_0430_workflow(workflow: &str) -> Result<(), String> {
         ],
         context,
     )?;
-    let jobs = yaml_mapping(yaml_field(top, "jobs", context)?, "0.4.30 recovery workflow.jobs")?;
+    let jobs = yaml_mapping(
+        yaml_field(top, "jobs", context)?,
+        "0.4.30 recovery workflow.jobs",
+    )?;
     exact_keys(jobs, &["recover"], "0.4.30 recovery workflow.jobs")?;
     let job = yaml_mapping(
         yaml_field(jobs, "recover", "0.4.30 recovery workflow.jobs")?,
@@ -2241,7 +2312,10 @@ fn validate_recovery_0430_workflow(workflow: &str) -> Result<(), String> {
         "0.4.30 recovery workflow.jobs.recover.steps",
     )?;
     if steps.len() != 13 {
-        return Err(format!("0.4.30 recovery step count changed: {}", steps.len()));
+        return Err(format!(
+            "0.4.30 recovery step count changed: {}",
+            steps.len()
+        ));
     }
     validate_action_step(
         &steps[0],
@@ -2302,7 +2376,12 @@ fn validate_recovery_0430_workflow(workflow: &str) -> Result<(), String> {
         "Decode and bind frozen standalone GKE receipt",
         "0.4.30 recovery.steps[5]",
     )?;
-    expect_text(receipt_step, "id", "gke_receipt", "0.4.30 recovery.steps[5]")?;
+    expect_text(
+        receipt_step,
+        "id",
+        "gke_receipt",
+        "0.4.30 recovery.steps[5]",
+    )?;
     let receipt_env = yaml_mapping(
         yaml_field(receipt_step, "env", "0.4.30 recovery.steps[5]")?,
         "0.4.30 recovery.steps[5].env",
@@ -2329,20 +2408,24 @@ fn validate_recovery_0430_workflow(workflow: &str) -> Result<(), String> {
     if sha256_bytes(&receipt_bytes) != RECOVERY_0430_RECEIPT_SHA256
         || sha256_bytes(&sidecar_bytes) != RECOVERY_0430_SIDECAR_SHA256
         || sidecar_bytes
-            != format!(
-                "{RECOVERY_0430_RECEIPT_SHA256}  lumen-standalone-gke-receipt.json\n"
-            )
-            .as_bytes()
+            != format!("{RECOVERY_0430_RECEIPT_SHA256}  lumen-standalone-gke-receipt.json\n")
+                .as_bytes()
     {
         return Err("frozen 0.4.30 receipt bytes do not bind the public snapshot".to_owned());
     }
     let receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
         .map_err(|error| format!("frozen 0.4.30 receipt JSON is invalid: {error}"))?;
-    if receipt.pointer("/candidate/version").and_then(|value| value.as_str())
+    if receipt
+        .pointer("/candidate/version")
+        .and_then(|value| value.as_str())
         != Some(RECOVERY_0430_VERSION)
-        || receipt.pointer("/candidate/commit").and_then(|value| value.as_str())
+        || receipt
+            .pointer("/candidate/commit")
+            .and_then(|value| value.as_str())
             != Some(RECOVERY_0430_COMMIT)
-        || receipt.pointer("/candidate/run_id").and_then(|value| value.as_str())
+        || receipt
+            .pointer("/candidate/run_id")
+            .and_then(|value| value.as_str())
             != Some(RECOVERY_0430_RUN)
         || receipt
             .pointer("/candidate/run_attempt")
@@ -2379,7 +2462,9 @@ fn validate_recovery_0430_workflow(workflow: &str) -> Result<(), String> {
         "lumen-standalone-gke-receipt.json.sha256",
     ] {
         if !decoder.contains(required) {
-            return Err(format!("0.4.30 receipt decoder lost required binding: {required}"));
+            return Err(format!(
+                "0.4.30 receipt decoder lost required binding: {required}"
+            ));
         }
     }
     validate_run_step(
@@ -2516,7 +2601,9 @@ fn validate_recovery_0430_workflow(workflow: &str) -> Result<(), String> {
         "actions/upload-artifact",
     ] {
         if lower.contains(forbidden) {
-            return Err(format!("0.4.30 recovery has forbidden control: {forbidden}"));
+            return Err(format!(
+                "0.4.30 recovery has forbidden control: {forbidden}"
+            ));
         }
     }
     for exact in [
@@ -2559,31 +2646,156 @@ fn validate_public_verify_0429_workflow(workflow: &str) -> Result<(), String> {
     let document: Value = serde_yaml::from_str(workflow)
         .map_err(|error| format!("0.4.29 public verify workflow is not valid YAML: {error}"))?;
     let top = yaml_mapping(&document, "0.4.29 public verify workflow")?;
-    exact_keys(top, &["name", "on", "permissions", "jobs"], "0.4.29 public verify workflow")?;
-    expect_text(top, "name", "lumen-release-0.4.29-public-verify", "0.4.29 public verify workflow")?;
-    let trigger = yaml_mapping(yaml_field(top, "on", "0.4.29 public verify workflow")?, "0.4.29 public verify workflow.on")?;
-    exact_keys(trigger, &["workflow_dispatch"], "0.4.29 public verify workflow.on")?;
-    if !yaml_field(trigger, "workflow_dispatch", "0.4.29 public verify workflow.on")?.is_null() {
+    exact_keys(
+        top,
+        &["name", "on", "permissions", "jobs"],
+        "0.4.29 public verify workflow",
+    )?;
+    expect_text(
+        top,
+        "name",
+        "lumen-release-0.4.29-public-verify",
+        "0.4.29 public verify workflow",
+    )?;
+    let trigger = yaml_mapping(
+        yaml_field(top, "on", "0.4.29 public verify workflow")?,
+        "0.4.29 public verify workflow.on",
+    )?;
+    exact_keys(
+        trigger,
+        &["workflow_dispatch"],
+        "0.4.29 public verify workflow.on",
+    )?;
+    if !yaml_field(
+        trigger,
+        "workflow_dispatch",
+        "0.4.29 public verify workflow.on",
+    )?
+    .is_null()
+    {
         return Err("0.4.29 public verify workflow_dispatch must have no inputs".to_owned());
     }
-    validate_permissions(top, &[("actions", "read"), ("attestations", "read"), ("contents", "read"), ("packages", "read"), ("pull-requests", "read")], "0.4.29 public verify workflow")?;
-    let jobs = yaml_mapping(yaml_field(top, "jobs", "0.4.29 public verify workflow")?, "0.4.29 public verify workflow.jobs")?;
+    validate_permissions(
+        top,
+        &[
+            ("actions", "read"),
+            ("attestations", "read"),
+            ("contents", "read"),
+            ("packages", "read"),
+            ("pull-requests", "read"),
+        ],
+        "0.4.29 public verify workflow",
+    )?;
+    let jobs = yaml_mapping(
+        yaml_field(top, "jobs", "0.4.29 public verify workflow")?,
+        "0.4.29 public verify workflow.jobs",
+    )?;
     exact_keys(jobs, &["verify"], "0.4.29 public verify workflow.jobs")?;
-    let job = yaml_mapping(yaml_field(jobs, "verify", "0.4.29 public verify workflow.jobs")?, "0.4.29 public verify workflow.jobs.verify")?;
-    exact_keys(job, &["name", "runs-on", "steps"], "0.4.29 public verify workflow.jobs.verify")?;
-    expect_text(job, "name", "public verify lumen@0.4.29 from frozen candidate", "0.4.29 public verify workflow.jobs.verify")?;
-    expect_text(job, "runs-on", "ubuntu-latest", "0.4.29 public verify workflow.jobs.verify")?;
-    let steps = yaml_sequence(yaml_field(job, "steps", "0.4.29 public verify workflow.jobs.verify")?, "0.4.29 public verify workflow.jobs.verify.steps")?;
-    if steps.len() != 9 { return Err(format!("0.4.29 public verify step count changed: {}", steps.len())); }
-    validate_action_step(&steps[0], "0.4.29 public verify.steps[0]", CHECKOUT, &[("ref", "${{ github.sha }}"), ("path", "controller")], Some(("fetch-depth", 1)))?;
-    validate_action_step(&steps[1], "0.4.29 public verify.steps[1]", CHECKOUT, &[("ref", RECOVERY_0429_COMMIT), ("path", "product")], Some(("fetch-depth", 1)))?;
-    validate_action_step(&steps[3], "0.4.29 public verify.steps[3]", COSIGN_INSTALLER, &[("cosign-release", "v3.1.3")], None)?;
-    validate_action_step(&steps[4], "0.4.29 public verify.steps[4]", SETUP_BUILDX, &[], None)?;
-    validate_action_step(&steps[5], "0.4.29 public verify.steps[5]", DOCKER_LOGIN, &[("registry", "ghcr.io"), ("username", "${{ github.actor }}"), ("password", "${{ github.token }}")], None)?;
+    let job = yaml_mapping(
+        yaml_field(jobs, "verify", "0.4.29 public verify workflow.jobs")?,
+        "0.4.29 public verify workflow.jobs.verify",
+    )?;
+    exact_keys(
+        job,
+        &["name", "runs-on", "steps"],
+        "0.4.29 public verify workflow.jobs.verify",
+    )?;
+    expect_text(
+        job,
+        "name",
+        "public verify lumen@0.4.29 from frozen candidate",
+        "0.4.29 public verify workflow.jobs.verify",
+    )?;
+    expect_text(
+        job,
+        "runs-on",
+        "ubuntu-latest",
+        "0.4.29 public verify workflow.jobs.verify",
+    )?;
+    let steps = yaml_sequence(
+        yaml_field(job, "steps", "0.4.29 public verify workflow.jobs.verify")?,
+        "0.4.29 public verify workflow.jobs.verify.steps",
+    )?;
+    if steps.len() != 9 {
+        return Err(format!(
+            "0.4.29 public verify step count changed: {}",
+            steps.len()
+        ));
+    }
+    validate_action_step(
+        &steps[0],
+        "0.4.29 public verify.steps[0]",
+        CHECKOUT,
+        &[("ref", "${{ github.sha }}"), ("path", "controller")],
+        Some(("fetch-depth", 1)),
+    )?;
+    validate_action_step(
+        &steps[1],
+        "0.4.29 public verify.steps[1]",
+        CHECKOUT,
+        &[("ref", RECOVERY_0429_COMMIT), ("path", "product")],
+        Some(("fetch-depth", 1)),
+    )?;
+    validate_action_step(
+        &steps[3],
+        "0.4.29 public verify.steps[3]",
+        COSIGN_INSTALLER,
+        &[("cosign-release", "v3.1.3")],
+        None,
+    )?;
+    validate_action_step(
+        &steps[4],
+        "0.4.29 public verify.steps[4]",
+        SETUP_BUILDX,
+        &[],
+        None,
+    )?;
+    validate_action_step(
+        &steps[5],
+        "0.4.29 public verify.steps[5]",
+        DOCKER_LOGIN,
+        &[
+            ("registry", "ghcr.io"),
+            ("username", "${{ github.actor }}"),
+            ("password", "${{ github.token }}"),
+        ],
+        None,
+    )?;
     validate_run_step(&steps[6], "0.4.29 public verify.steps[6]", "Bind controller and frozen product candidate verifier bytes", &["name", "shell", "run"], &["verify-release-candidate.sh", "4fa31b498bab56f7d46e1f7b630893cf509607c8444b5b498e38438fd54529f7", "cmp -s controller/apps/lumen/scripts/verify-release-candidate.sh product/apps/lumen/scripts/verify-release-candidate.sh"], None, None, false)?;
-    validate_run_step(&steps[7], "0.4.29 public verify.steps[7]", "Download and bind the sanitized public receipt", &["name", "working-directory", "env", "shell", "run"], &["gh release download lumen@0.4.29", RECOVERY_0429_RECEIPT_SHA256, RECOVERY_0429_SIDECAR_SHA256], None, None, true)?;
-    validate_run_step(&steps[8], "0.4.29 public verify.steps[8]", "Publicly verify the frozen release from the product checkout", &["name", "working-directory", "env", "shell", "run"], &["../controller/apps/lumen/scripts/verify-release-artifacts.sh", "--mode public", RECOVERY_0429_ROOT, RECOVERY_0429_AMD64, RECOVERY_0429_ARM64], None, None, true)?;
-    for (index, path) in [(7, "0.4.29 public verify.steps[7]"), (8, "0.4.29 public verify.steps[8]")] {
+    validate_run_step(
+        &steps[7],
+        "0.4.29 public verify.steps[7]",
+        "Download and bind the sanitized public receipt",
+        &["name", "working-directory", "env", "shell", "run"],
+        &[
+            "gh release download lumen@0.4.29",
+            RECOVERY_0429_RECEIPT_SHA256,
+            RECOVERY_0429_SIDECAR_SHA256,
+        ],
+        None,
+        None,
+        true,
+    )?;
+    validate_run_step(
+        &steps[8],
+        "0.4.29 public verify.steps[8]",
+        "Publicly verify the frozen release from the product checkout",
+        &["name", "working-directory", "env", "shell", "run"],
+        &[
+            "../controller/apps/lumen/scripts/verify-release-artifacts.sh",
+            "--mode public",
+            RECOVERY_0429_ROOT,
+            RECOVERY_0429_AMD64,
+            RECOVERY_0429_ARM64,
+        ],
+        None,
+        None,
+        true,
+    )?;
+    for (index, path) in [
+        (7, "0.4.29 public verify.steps[7]"),
+        (8, "0.4.29 public verify.steps[8]"),
+    ] {
         let step = yaml_mapping(&steps[index], path)?;
         expect_text(step, "working-directory", "product", path)?;
     }
@@ -2607,11 +2819,36 @@ fn validate_public_verify_0429_workflow(workflow: &str) -> Result<(), String> {
         "--standalone-gke-receipt-sidecar public-receipt/lumen-standalone-gke-receipt.json.sha256",
         "--output public-contract.json",
     ] {
-        if !workflow.contains(required) { return Err(format!("0.4.29 public verify lost required binding: {required}")); }
+        if !workflow.contains(required) {
+            return Err(format!(
+                "0.4.29 public verify lost required binding: {required}"
+            ));
+        }
     }
     let lower = workflow.to_ascii_lowercase();
-    for forbidden in ["contents: write", "packages: write", "id-token: write", "git tag", "git push", "git update-ref", "git/refs", "--method patch", "gh release create", "gh release edit", "docker buildx imagetools create", "gcloud", "kubectl", "kind", "actions/upload-artifact", "gh run upload"] {
-        if lower.contains(forbidden) { return Err(format!("0.4.29 public verify contains forbidden write: {forbidden}")); }
+    for forbidden in [
+        "contents: write",
+        "packages: write",
+        "id-token: write",
+        "git tag",
+        "git push",
+        "git update-ref",
+        "git/refs",
+        "--method patch",
+        "gh release create",
+        "gh release edit",
+        "docker buildx imagetools create",
+        "gcloud",
+        "kubectl",
+        "kind",
+        "actions/upload-artifact",
+        "gh run upload",
+    ] {
+        if lower.contains(forbidden) {
+            return Err(format!(
+                "0.4.29 public verify contains forbidden write: {forbidden}"
+            ));
+        }
     }
     Ok(())
 }
@@ -2641,12 +2878,7 @@ fn promotion_latest_run_script() -> String {
     )
     .unwrap();
     let steps = yaml_sequence(
-        yaml_field(
-            publish,
-            "steps",
-            "promotion workflow.jobs.publish-release",
-        )
-        .unwrap(),
+        yaml_field(publish, "steps", "promotion workflow.jobs.publish-release").unwrap(),
         "promotion workflow.jobs.publish-release.steps",
     )
     .unwrap();
@@ -2690,9 +2922,7 @@ fn run_promotion_latest_case(
     let latest_ref = "ghcr.io/chrischeng-c4/lumen:latest";
     let mut registry = String::new();
     for (version, digest) in published {
-        registry.push_str(&format!(
-            "ghcr.io/chrischeng-c4/lumen:{version} {digest}\n"
-        ));
+        registry.push_str(&format!("ghcr.io/chrischeng-c4/lumen:{version} {digest}\n"));
     }
     if let Some(digest) = latest {
         registry.push_str(&format!("{latest_ref} {digest}\n"));
@@ -2777,7 +3007,10 @@ esac
         .env("GITHUB_REPOSITORY", "chrischeng-c4/axiom")
         .env("FAKE_DOCKER_STATE", &state)
         .env("FAKE_DOCKER_WRITES", &writes)
-        .env("FAKE_RELEASES_JSON", serde_json::to_string(&releases).unwrap());
+        .env(
+            "FAKE_RELEASES_JSON",
+            serde_json::to_string(&releases).unwrap(),
+        );
     if let Some(digest) = latest_race_digest {
         command.env("FAKE_LATEST_RACE_DIGEST", digest);
     }
@@ -2812,7 +3045,10 @@ fn promotion_latest_policy_executes_fail_closed_registry_cases() {
     );
     assert_eq!(registry_digest(&state, &semver), Some(RECOVERY_0430_ROOT));
     assert_eq!(registry_digest(&state, &latest), Some(RECOVERY_0430_ROOT));
-    assert_eq!(writes.lines().collect::<Vec<_>>(), [semver.as_str(), latest.as_str()]);
+    assert_eq!(
+        writes.lines().collect::<Vec<_>>(),
+        [semver.as_str(), latest.as_str()]
+    );
 
     let newer = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let (output, state, writes) =
@@ -2827,11 +3063,8 @@ fn promotion_latest_policy_executes_fail_closed_registry_cases() {
     assert_eq!(writes.lines().collect::<Vec<_>>(), [semver.as_str()]);
 
     let unknown = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    let (output, state, writes) = run_promotion_latest_case(
-        Some(unknown),
-        &[("0.4.29", RECOVERY_0430_OLD_LATEST)],
-        None,
-    );
+    let (output, state, writes) =
+        run_promotion_latest_case(Some(unknown), &[("0.4.29", RECOVERY_0430_OLD_LATEST)], None);
     assert!(!output.status.success(), "unknown latest was accepted");
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("latest does not match an older published semver root"));
@@ -3431,7 +3664,8 @@ fn recovery_0430_workflow_is_frozen_and_rejects_high_risk_mutations() {
 
 #[test]
 fn public_verify_0429_workflow_is_frozen_and_rejects_write_or_identity_mutations() {
-    let workflow = include_str!("../../../.github/workflows/lumen-release-0.4.29-public-verify.yml");
+    let workflow =
+        include_str!("../../../.github/workflows/lumen-release-0.4.29-public-verify.yml");
     validate_public_verify_0429_workflow(workflow)
         .expect("0.4.29 public verifier workflow must satisfy its frozen read-only contract");
     assert_eq!(
@@ -3679,7 +3913,10 @@ fn public_release_note_binding_passes_and_missing_tag_argument_fails() {
         "--arg commit \"$COMMIT\" --arg pr_url",
         1,
     );
-    assert_ne!(mutated, verifier, "tag-argument mutation must change source");
+    assert_ne!(
+        mutated, verifier,
+        "tag-argument mutation must change source"
+    );
     let output = execute_public_release_note_binding(&mutated, &release_json);
     assert!(!output.status.success(), "missing tag argument passed");
     assert!(
@@ -3901,10 +4138,9 @@ fn fixture_mode_accepts_root_or_matching_scheduled_child_in_the_0_4_29_receipt()
     );
 
     let arm64_fixture = gke_receipt_fixture();
-    let mut arm64_receipt = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(&arm64_fixture.receipt).unwrap(),
-    )
-    .unwrap();
+    let mut arm64_receipt =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&arm64_fixture.receipt).unwrap())
+            .unwrap();
     let arm64 = arm64_receipt["candidate"]["arm64_digest"].clone();
     arm64_receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("arm64");
     arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] =
@@ -3930,10 +4166,9 @@ fn fixture_mode_accepts_0_4_30_and_rejects_manifest_or_receipt_version_drift() {
     );
 
     let receipt_drift = gke_receipt_fixture_for("0.4.30");
-    let mut receipt = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(&receipt_drift.receipt).unwrap(),
-    )
-    .unwrap();
+    let mut receipt =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&receipt_drift.receipt).unwrap())
+            .unwrap();
     receipt["candidate"]["version"] = json!("0.4.29");
     rewrite_receipt(&receipt_drift, &receipt);
     assert!(
@@ -3946,17 +4181,14 @@ fn fixture_mode_accepts_0_4_30_and_rejects_manifest_or_receipt_version_drift() {
         .release
         .candidate
         .join("final-candidate-manifest.json");
-    let mut manifest = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(&manifest_path).unwrap(),
-    )
-    .unwrap();
+    let mut manifest =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&manifest_path).unwrap()).unwrap();
     manifest["version"] = json!("0.4.29");
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     refresh_sha256_sidecar(&manifest_path);
-    let mut receipt = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(&manifest_drift.receipt).unwrap(),
-    )
-    .unwrap();
+    let mut receipt =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&manifest_drift.receipt).unwrap())
+            .unwrap();
     receipt["candidate"]["manifest_sha256"] = json!(sha256(&manifest_path));
     rewrite_receipt(&manifest_drift, &receipt);
     assert!(
@@ -4134,30 +4366,37 @@ fn fixture_mode_rejects_standalone_gke_receipt_schema_and_candidate_binding_drif
                 json!(format!("sha256:{}", "4".repeat(64)));
         }
     );
-    assert_receipt_rejected!("amd64 observed arm64 child", |receipt: &mut serde_json::Value| {
-        let arm64 = receipt["candidate"]["arm64_digest"].clone();
-        receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] = arm64;
-    });
-    assert_receipt_rejected!("wrong scheduled child", |receipt: &mut serde_json::Value| {
-        let arm64 = receipt["candidate"]["arm64_digest"].clone();
-        receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = arm64;
-    });
-    assert_receipt_rejected!("unknown scheduled arch", |receipt: &mut serde_json::Value| {
-        receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("s390x");
-    });
+    assert_receipt_rejected!(
+        "amd64 observed arm64 child",
+        |receipt: &mut serde_json::Value| {
+            let arm64 = receipt["candidate"]["arm64_digest"].clone();
+            receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] = arm64;
+        }
+    );
+    assert_receipt_rejected!(
+        "wrong scheduled child",
+        |receipt: &mut serde_json::Value| {
+            let arm64 = receipt["candidate"]["arm64_digest"].clone();
+            receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] = arm64;
+        }
+    );
+    assert_receipt_rejected!(
+        "unknown scheduled arch",
+        |receipt: &mut serde_json::Value| {
+            receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("s390x");
+        }
+    );
 
     let arm64_fixture = gke_receipt_fixture();
-    let mut arm64_receipt = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(&arm64_fixture.receipt).unwrap(),
-    )
-    .unwrap();
+    let mut arm64_receipt =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&arm64_fixture.receipt).unwrap())
+            .unwrap();
     let arm64 = arm64_receipt["candidate"]["arm64_digest"].clone();
     let amd64 = arm64_receipt["candidate"]["amd64_digest"].clone();
     arm64_receipt["matrix"]["required_continuity"]["scheduled_node_arch"] = json!("arm64");
     arm64_receipt["matrix"]["required_continuity"]["scheduled_runtime_child_digest"] =
         arm64.clone();
-    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] =
-        arm64;
+    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] = arm64;
     rewrite_receipt(&arm64_fixture, &arm64_receipt);
     let arm64_output = run_gke_receipt_fixture(&arm64_fixture);
     assert!(
@@ -4165,8 +4404,7 @@ fn fixture_mode_rejects_standalone_gke_receipt_schema_and_candidate_binding_drif
         "valid arm64 scheduled child receipt was rejected: {}",
         String::from_utf8_lossy(&arm64_output.stderr)
     );
-    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] =
-        amd64.clone();
+    arm64_receipt["matrix"]["required_continuity"]["observed_runtime_image_digest"] = amd64.clone();
     rewrite_receipt(&arm64_fixture, &arm64_receipt);
     assert!(
         !run_gke_receipt_fixture(&arm64_fixture).status.success(),

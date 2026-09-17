@@ -19,6 +19,94 @@ gains no new feature in this release. Its existing bind smoke remains a
 regression gate. Search v2 is outside this release, and its activation remains
 `lumen@0.37.0`.
 
+### Incremental segment checkpoint
+
+- ID: `incremental-segment-checkpoint`
+- Outcome: A scheduled checkpoint writes only changed segments for `text`,
+  `keyword`, `number`, `set`, `hash`, and Flat and HNSW `vector` fields. It
+  retains unchanged base segments without rebuilding their collection data.
+  Queries merge layers from newest to oldest, so updates and deletes hide all
+  older values. Text hits, document lengths, and BM25 statistics use one
+  captured version. Flat uses effective vector rows; HNSW keeps the online
+  graph and saves vector changes, then rebuilds its existing backend from
+  effective rows on cold start.
+- Boundary: A v2 manifest lists its data version, every collection, schema,
+  collection epoch, checkpoint sequence, and ordered segment. Sparse delta
+  segments use local rows plus stable external-ID mappings. Empty or recreated
+  collections get a new epoch. Each retained checkpoint is a complete file
+  set: unchanged files are hard-linked on the same file system, with no
+  full-copy fallback. The runtime reads a 0.6.0 checkpoint as its first base
+  layer.
+
+  `CaptureBarrier` is Lumen's short internal apply boundary. WAL apply, Raft
+  apply, direct state mutation, and restore use it. One record's state change,
+  applied watermark update, and existing AOF persistence occur in one apply
+  interval. Checkpoint capture exchanges active and frozen change layers
+  between complete records, then releases the barrier. It must not acquire the
+  coordinator's exclusive `MutationGate`. Capacity waiting happens before an
+  apply lease. Manual and periodic checkpoints use this one pipeline. A restore
+  changes the engine epoch. Restore and publication serialize epoch validation
+  with `CURRENT` publication, so a restore cannot interleave between a check
+  and publication; a result captured before the changed epoch is rejected.
+
+  Files validate and sync before atomic `CURRENT` publication. Only then may
+  Lumen trim AOF through the published sequence; replay starts after it. A
+  pre-publication failure retains the frozen change layer and AOF. A trim
+  failure retains extra AOF. A failed first v2 checkpoint leaves the earlier
+  checkpoint usable. After v2 publication, downgrade requires a pre-upgrade
+  backup. This internal persistence work retains request shapes and batch
+  limits.
+
+  Pending active, frozen, and reserved changes have a 256 MiB total budget.
+  At 128 MiB, the runtime requests an early checkpoint. A request that cannot
+  reserve capacity before submission returns `429` with `Retry-After: 1`.
+  At committed submission, apply takes ownership of reserved bytes and converts
+  them to active accounting. Active and frozen bytes remain charged until a
+  durable checkpoint publication covers their changes and memory is safe to
+  release. An AOF append alone does not release pending budget. Client
+  cancellation transfers that active reservation to apply work; submitted,
+  externally delivered, and replayed records are never discarded. Checkpoint
+  and merge work must still progress at the full budget so it can release
+  capacity. The timer waits after a completed checkpoint rather than catching
+  up missed intervals.
+
+  One background merge runs per process. Four delta segments request a merge;
+  no field may retain more than 16. It selects the field with the most deltas,
+  then adjacent deltas with the smallest combined bytes. It merges a base only
+  when delta bytes reach base bytes, streams postings, preserves needed delete
+  markers, and rechecks segment input and collection epoch before publication.
+  A reader or retained checkpoint keeps its files from reclamation.
+- Completion evidence: Correctness tests cover every field type; concurrent
+  create, update, delete, truncate, schema change, collection deletion,
+  restart, backup, restore, and restore-versus-capture races. Fault injection
+  covers writing, syncing, publishing, AOF trimming, and reclaiming. Tests
+  prove that a v2 checkpoint reopens without AOF; 0.6.0 opens as its base;
+  unchanged data is hard-linked rather than re-encoded; no stale value or
+  deleted value returns; and missing, corrupt, or unknown manifests refuse
+  recovery. They prove the 128/256 MiB admission behavior, `429` plus
+  `Retry-After: 1` before submission, and preservation of submitted,
+  externally delivered, and replayed records.
+
+  Batch-limit cases use `/index` with 1, 100, and 1,000 field items;
+  `docs:replace` with 1 and 32 documents; and `docs:unindex` with 1, 100, and
+  1,000 IDs. A request above a limit fails before applying an item. Workload
+  reports requests, field items, and complete document operations separately;
+  an `/index` document counts only after all of its fields complete.
+
+  With a fixed seed, 500,000 documents, 14 fields, three ngram text subfields,
+  182 collections, and separate Flat and HNSW vector cases, each batch-size
+  and vector-backend workload case runs independently for 30 minutes on 2.5
+  CPU and 16 GiB. It includes checkpoint and merge while serving 10 query QPS
+  and 100 complete document operations per second across create, update, and
+  delete. Results cannot aggregate separate matrix cases. Query p99 is at most
+  1 second, each query is at most 5 seconds, and there are zero errors and
+  timeouts. Completed document-operation throughput is at least 95% of target,
+  submitted writes drain within 60 seconds after input stops, and RSS stays at
+  or below 12 GiB. The run records capture time, checkpoint and merge I/O,
+  pending bytes, disk use, and restart time. A run without its input rate,
+  checkpoint, or merge is invalid.
+- Tracking: Not assigned.
+
 ### Durable write contract
 
 - ID: `durable-write-contract`

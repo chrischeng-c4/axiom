@@ -490,9 +490,14 @@ mod tests {
         // well-formed URL for a host that does not exist.
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_lumen_peers();
-        let g =
-            RaftGroup::from_config(&cfg(1, 2, 2, "quorum-0"), "lumen", "quorum-headless", 7374, 7373)
-                .unwrap();
+        let g = RaftGroup::from_config(
+            &cfg(1, 2, 2, "quorum-0"),
+            "lumen",
+            "quorum-headless",
+            7374,
+            7373,
+        )
+        .unwrap();
         assert_eq!(g.peers[0].pod_name, "quorum-0");
         assert_eq!(g.peers[1].pod_name, "quorum-1");
         assert_eq!(g.peers[1].host, "quorum-1.quorum-headless");

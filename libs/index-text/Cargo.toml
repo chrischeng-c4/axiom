@@ -14,7 +14,7 @@ default = []
 jieba = ["dep:jieba-rs"]
 
 [dependencies]
-jieba-rs = { version = "0.7", optional = true }
+jieba-rs = { version = "=0.7.4", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

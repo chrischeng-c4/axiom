@@ -22,8 +22,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum_test::TestServer;
@@ -373,7 +373,9 @@ fn bad_material_fails_before_the_request_and_never_prints_itself() {
     // default `/var/run/secrets/kubernetes.io/serviceaccount` token, and
     // presenting it to Lumen is the single most likely wiring mistake.
     mount.write(&mint(OPERATOR, "https://kubernetes.default.svc", 600));
-    let wrong_audience = source.read().expect_err("a foreign audience cannot succeed");
+    let wrong_audience = source
+        .read()
+        .expect_err("a foreign audience cannot succeed");
 
     // Expired: the pod outlived its token, which is what happens when a client
     // caches one. Ten minutes past, comfortably outside the reader's small

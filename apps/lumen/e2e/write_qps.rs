@@ -1,7 +1,5 @@
 // CODEGEN-BEGIN
-//! Write-path QPS bench. Default runs are report-only; `LUMEN_PERF_STRICT=1`
-//! (or `LUMEN_WRITE_GATE=1` for this test only) turns the historical
-//! NATS-vs-peer 100-worker index row into a strict competitive gate.
+//! Write-path QPS bench. Default runs are report-only.
 //!
 //! This complements the read/search competitive gate. It measures the HTTP
 //! write handlers that matter operationally:
@@ -10,20 +8,13 @@
 //!     coordinator.
 //!
 //! The embedded leg uses the in-process WAL. The sharded leg splits one HTTP
-//! request across multiple local coordinators. The NATS legs use real `NatsWal
-//! -> WriteCoordinator -> local apply` paths: `nats` is the historical strict
-//! JetStream row, while `natssharded` uses one JetStream stream/subject per
-//! write shard as an exploratory trend row. They skip gracefully when no
-//! JetStream broker is reachable.
+//! request across multiple local coordinators. PostgreSQL and OpenSearch rows
+//! remain optional comparison probes.
 //!
 //! Run:
 //!   cargo test --release -p lumen --test write_qps -- --ignored --nocapture
 //!   LUMEN_WRITE_MODES=embedded,sharded LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=0.3 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
-//!   LUMEN_WRITE_MODES=nats,natssharded LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=1.0 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
-//!   LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
-//!
-//! Strict mode defaults to `LUMEN_WRITE_MODES=nats,pg,os`. Explicitly include
-//! `natssharded` only when collecting the partitioned JetStream trend row.
+//!   LUMEN_WRITE_MODES=pg,os LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=1.0 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
 
 use std::collections::BTreeMap;
 use std::sync::{
@@ -32,12 +23,11 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::json;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use lumen::api::{router, AppState};
-use lumen::auth::AuthConfig;
 use lumen::coordinator::WriteCoordinator;
 use lumen::log_entry::RaftLogEntry;
 use lumen::routing::EngineShardWrite;
@@ -45,9 +35,7 @@ use lumen::storage::Engine;
 use lumen::types::{
     Analyzer, CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
 };
-use lumen::wal::WalRecord;
-use lumen::wal::{MemWal, SharedWal};
-use lumen::wal_nats::{NatsWal, NatsWalConfig};
+use lumen::wal::{MemWal, WalRecord};
 
 const DEFAULT_WARMUP_S: f64 = 2.0;
 const PUT_WORKERS: &[usize] = &[1, 10];
@@ -58,10 +46,6 @@ const DEFAULT_REQ_TIMEOUT_MS: u64 = 2_000;
 const PG_DSN: &str = "host=/tmp dbname=lumenbench";
 const OS_URL: &str = "http://localhost:9200";
 const PG_MAX_POOL: usize = 90;
-
-fn nats_url() -> String {
-    std::env::var("LUMEN_TEST_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into())
-}
 
 fn window_s() -> f64 {
     std::env::var("LUMEN_WRITE_WINDOW_S")
@@ -86,9 +70,6 @@ fn batch_docs() -> usize {
 
 fn write_mode_enabled(name: &str) -> bool {
     let Some(raw) = std::env::var("LUMEN_WRITE_MODES").ok() else {
-        if write_gate_enabled() {
-            return matches!(name, "nats" | "pg" | "os");
-        }
         return true;
     };
     let mut saw_any = false;
@@ -96,14 +77,14 @@ fn write_mode_enabled(name: &str) -> bool {
         saw_any = true;
         let mode = mode.to_ascii_lowercase();
         let normalized = match mode.as_str() {
-            "nats-sharded" | "nats_sharded" | "natsshard" => "natssharded",
+            "opensearch" => "os",
             other => other,
         };
         match normalized {
-            "embedded" | "sharded" | "nats" | "natssharded" | "pg" | "os" | "opensearch" => {}
+            "embedded" | "sharded" | "pg" | "os" => {}
             _ => panic!("unknown LUMEN_WRITE_MODES entry `{mode}`"),
         }
-        if normalized == name || (name == "os" && normalized == "opensearch") {
+        if normalized == name {
             return true;
         }
     }
@@ -111,13 +92,7 @@ fn write_mode_enabled(name: &str) -> bool {
 }
 
 fn write_modes_label() -> String {
-    std::env::var("LUMEN_WRITE_MODES").unwrap_or_else(|_| {
-        if write_gate_enabled() {
-            "nats,pg,os".into()
-        } else {
-            "embedded,sharded,nats,natssharded,pg,os".into()
-        }
-    })
+    std::env::var("LUMEN_WRITE_MODES").unwrap_or_else(|_| "embedded,sharded,pg,os".into())
 }
 
 fn write_shards() -> usize {
@@ -175,24 +150,6 @@ fn docs_schema() -> CreateCollectionRequest {
         },
     );
     CreateCollectionRequest { fields }
-}
-
-async fn reset_nats_stream_config(config: &NatsWalConfig) -> Option<()> {
-    let client = async_nats::connect(&nats_url()).await.ok()?;
-    let js = async_nats::jetstream::new(client);
-    let _ = js.delete_stream(config.stream_name.clone()).await;
-    js.get_or_create_stream(async_nats::jetstream::stream::Config {
-        name: config.stream_name.clone(),
-        subjects: vec![config.subject.clone()],
-        ..Default::default()
-    })
-    .await
-    .ok()?;
-    Some(())
-}
-
-async fn reset_nats_stream() -> Option<()> {
-    reset_nats_stream_config(&NatsWalConfig::default()).await
 }
 
 struct Server {
@@ -254,40 +211,10 @@ async fn serve_sharded_embedded() -> Server {
     serve(state).await
 }
 
-async fn serve_nats() -> Option<Server> {
-    reset_nats_stream().await?;
-    let engine = Arc::new(Engine::new());
-    let wal: SharedWal = Arc::new(NatsWal::connect(&nats_url()).await.ok()?);
-    let state = AppState::with_wal(engine, Arc::new(AuthConfig::open()), wal);
-    Some(serve(state).await)
-}
-
-async fn serve_sharded_nats() -> Option<Server> {
-    let shards = write_shards().max(1);
-    for shard in 0..shards {
-        reset_nats_stream_config(&NatsWalConfig::shard(shard)).await?;
-    }
-    let mut writers = Vec::with_capacity(shards);
-    for shard in 0..shards {
-        let engine = Arc::new(Engine::new());
-        let wal: SharedWal = Arc::new(
-            NatsWal::connect_with_config(&nats_url(), NatsWalConfig::shard(shard))
-                .await
-                .ok()?,
-        );
-        writers.push(WriteCoordinator::start(wal, engine));
-    }
-    let state = AppState::open(Arc::new(Engine::new()))
-        .with_write_backend(Arc::new(EngineShardWrite::new(writers)));
-    Some(serve(state).await)
-}
-
 #[derive(Clone, Copy)]
 enum Mode {
     Embedded,
     Sharded,
-    Nats,
-    NatsSharded,
 }
 
 impl Mode {
@@ -295,17 +222,13 @@ impl Mode {
         match self {
             Self::Embedded => "embedded",
             Self::Sharded => "sharded",
-            Self::Nats => "nats",
-            Self::NatsSharded => "natssharded",
         }
     }
 
-    async fn serve(self) -> Option<Server> {
+    async fn serve(self) -> Server {
         match self {
-            Self::Embedded => Some(serve_embedded().await),
-            Self::Sharded => Some(serve_sharded_embedded().await),
-            Self::Nats => serve_nats().await,
-            Self::NatsSharded => serve_sharded_nats().await,
+            Self::Embedded => serve_embedded().await,
+            Self::Sharded => serve_sharded_embedded().await,
         }
     }
 }
@@ -977,9 +900,7 @@ async fn run_http_write_mode(mode: Mode) -> Option<BTreeMap<usize, Load>> {
     let batch_docs = batch_docs();
     let timeout = req_timeout();
     let label = mode.label();
-    let Some(server) = mode.serve().await else {
-        return None;
-    };
+    let server = mode.serve().await;
     println!(
         "\n# {label} write QPS (window={}s warmup={}s timeout={}ms)",
         window_s(),
@@ -1094,186 +1015,11 @@ async fn run_os_write_mode() -> Option<BTreeMap<usize, Load>> {
     Some(index_loads)
 }
 
-fn write_gate_enabled() -> bool {
-    env_flag_enabled("LUMEN_WRITE_GATE") || env_flag_enabled("LUMEN_PERF_STRICT")
-}
-
-fn env_flag_enabled(name: &str) -> bool {
-    matches!(
-        std::env::var(name).ok().as_deref(),
-        Some("1" | "true" | "TRUE" | "yes" | "YES")
-    )
-}
-
-fn write_gate_threshold(cell: &str, peer: &str) -> Option<f64> {
-    let baseline: Value = serde_json::from_str(include_str!("perf-baseline.json"))
-        .expect("perf-baseline.json parses");
-    let ratchet = baseline["ratchet"].as_f64().unwrap_or(0.8);
-    let gate = &baseline["write_cells"][cell][peer];
-    if gate["gate"].as_str() != Some("win") {
-        return None;
-    }
-    let baseline_ratio = gate["baseline"].as_f64().unwrap_or(1.0);
-    Some((baseline_ratio * ratchet).max(1.0))
-}
-
-fn gate_load<'a>(
-    label: &str,
-    loads: Option<&'a BTreeMap<usize, Load>>,
-    strict: bool,
-    failures: &mut Vec<String>,
-) -> Option<&'a Load> {
-    let Some(loads) = loads else {
-        let msg = format!("{label} write row missing; peer service unavailable or skipped");
-        if strict {
-            failures.push(msg);
-        } else {
-            eprintln!("skipping write gate for {label}: peer service unavailable or skipped");
-        }
-        return None;
-    };
-    let Some(load) = loads.get(&100) else {
-        let msg = format!("{label} write workers=100 row missing");
-        if strict {
-            failures.push(msg);
-        } else {
-            eprintln!("skipping write gate for {label}: workers=100 row missing");
-        }
-        return None;
-    };
-    Some(load)
-}
-
-fn judge_write_peer(
-    cell: &str,
-    lumen_label: &str,
-    peer_key: &str,
-    peer_label: &str,
-    lumen100: &Load,
-    peer100: &Load,
-    strict: bool,
-    failures: &mut Vec<String>,
-) {
-    if lumen100.errors.total() > 0 || peer100.errors.total() > 0 || peer100.docs_per_s <= 0.0 {
-        let msg = format!(
-            "write gate {cell} vs {peer_label}: unusable row ({lumen_label}_errors={} peer_errors={} peer_docs_s={:.0})",
-            lumen100.errors.total(),
-            peer100.errors.total(),
-            peer100.docs_per_s
-        );
-        if strict {
-            failures.push(msg);
-        } else {
-            eprintln!("skipping {msg}");
-        }
-        return;
-    }
-    let ratio = lumen100.docs_per_s / peer100.docs_per_s;
-    let threshold = write_gate_threshold(cell, peer_key).unwrap_or(1.0);
-    let verdict = if ratio >= threshold { "WIN" } else { "RED" };
-    println!(
-        "write_gate {cell} vs {peer_label}: ratio={ratio:.2} threshold={threshold:.2} verdict={verdict}"
-    );
-    if ratio < threshold {
-        let msg = format!(
-            "write gate {cell} vs {peer_label}: ratio {ratio:.2} below threshold {threshold:.2}"
-        );
-        if strict {
-            failures.push(msg);
-        } else {
-            eprintln!("WRITE TARGET: {msg}");
-        }
-    }
-}
-
-fn check_write_gate_cell(
-    cell: &str,
-    lumen_label: &str,
-    lumen: Option<&BTreeMap<usize, Load>>,
-    pg: Option<&BTreeMap<usize, Load>>,
-    os: Option<&BTreeMap<usize, Load>>,
-    strict: bool,
-    failures: &mut Vec<String>,
-) {
-    let Some(lumen100) = gate_load(lumen_label, lumen, strict, failures) else {
-        return;
-    };
-    let pg100 = gate_load("pg", pg, strict, failures);
-    let os100 = gate_load("opensearch", os, strict, failures);
-    if let Some(pg100) = pg100 {
-        judge_write_peer(
-            cell,
-            lumen_label,
-            "pg",
-            "pg",
-            lumen100,
-            pg100,
-            strict,
-            failures,
-        );
-    }
-    if let Some(os100) = os100 {
-        judge_write_peer(
-            cell,
-            lumen_label,
-            "os",
-            "opensearch",
-            lumen100,
-            os100,
-            strict,
-            failures,
-        );
-    }
-}
-
-fn check_write_gate(
-    nats: Option<&BTreeMap<usize, Load>>,
-    natssharded: Option<&BTreeMap<usize, Load>>,
-    pg: Option<&BTreeMap<usize, Load>>,
-    os: Option<&BTreeMap<usize, Load>>,
-) {
-    let strict = write_gate_enabled();
-    let mut failures = Vec::new();
-    if strict || nats.is_some() || write_mode_enabled("nats") {
-        check_write_gate_cell(
-            "nats_index_100",
-            "nats",
-            nats,
-            pg,
-            os,
-            strict,
-            &mut failures,
-        );
-    }
-    // `nats` is the historical JetStream write gate. `natssharded` is an
-    // exploratory partitioned-stream trend row: report it, but do not let it
-    // block the official gate until it is stable under the same timeout/error
-    // envelope.
-    if natssharded.is_some() || write_mode_enabled("natssharded") {
-        check_write_gate_cell(
-            "natssharded_index_100",
-            "natssharded",
-            natssharded,
-            pg,
-            os,
-            false,
-            &mut failures,
-        );
-    }
-    if strict && !failures.is_empty() {
-        panic!(
-            "write competitive gate: {} WIN-cell regression(s): {}",
-            failures.len(),
-            failures.join("; ")
-        );
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "write-path QPS bench; strict gate requires LUMEN_PERF_STRICT=1 and JetStream"]
+#[ignore = "report-only write-path QPS bench"]
 async fn write_qps_bench() {
     println!(
-        "# lumen write-path QPS bench; modes={} batch_docs={} sharded_write_shards={} env: LUMEN_WRITE_MODES LUMEN_WRITE_WARMUP_S LUMEN_WRITE_WINDOW_S LUMEN_WRITE_BATCH_DOCS LUMEN_WRITE_SHARDS LUMEN_TEST_NATS_URL",
+        "# lumen write-path QPS bench; modes={} batch_docs={} sharded_write_shards={} env: LUMEN_WRITE_MODES LUMEN_WRITE_WARMUP_S LUMEN_WRITE_WINDOW_S LUMEN_WRITE_BATCH_DOCS LUMEN_WRITE_SHARDS",
         write_modes_label(),
         batch_docs(),
         write_shards()
@@ -1288,48 +1034,16 @@ async fn write_qps_bench() {
     } else {
         None
     };
-    let nats = if write_mode_enabled("nats") {
-        run_http_write_mode(Mode::Nats).await
-    } else {
-        None
-    };
-    if write_mode_enabled("nats") && nats.is_none() {
-        eprintln!(
-            "skipping nats write QPS: no JetStream NATS at {}",
-            nats_url()
-        );
-    }
-    let natssharded = if write_mode_enabled("natssharded") {
-        let result = run_http_write_mode(Mode::NatsSharded).await;
-        if result.is_none() {
-            eprintln!(
-                "skipping natssharded write QPS: no JetStream NATS at {}",
-                nats_url()
-            );
-        }
-        result
-    } else {
-        None
-    };
-
-    let pg = if write_mode_enabled("pg") {
+    let _pg = if write_mode_enabled("pg") {
         run_pg_write_mode().await
     } else {
         None
     };
-    let os = if write_mode_enabled("os") {
+    let _os = if write_mode_enabled("os") {
         run_os_write_mode().await
     } else {
         None
     };
-    if write_gate_enabled() || write_mode_enabled("nats") || write_mode_enabled("natssharded") {
-        check_write_gate(
-            nats.as_ref(),
-            natssharded.as_ref(),
-            pg.as_ref(),
-            os.as_ref(),
-        );
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -1351,98 +1065,6 @@ async fn engine_index_qps_probe() {
         let load = run_engine_index_load(engine.clone(), coll, workers).await;
         print_row("engine", "index", workers, batch_docs, &load);
     }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "direct NATS WriteCoordinator latency probe; requires JetStream"]
-async fn nats_submit_latency_probe() {
-    let Some(()) = reset_nats_stream().await else {
-        eprintln!(
-            "skipping nats submit probe: no JetStream NATS at {}",
-            nats_url()
-        );
-        return;
-    };
-    let engine = Arc::new(Engine::new());
-    let wal: SharedWal = Arc::new(NatsWal::connect(&nats_url()).await.expect("connect nats"));
-    let coord = WriteCoordinator::start(wal, engine);
-    let timeout = req_timeout();
-
-    let mut put_lat = Vec::new();
-    let mut put_timeouts = 0u64;
-    for i in 0..500u64 {
-        let started = Instant::now();
-        let result = tokio::time::timeout(
-            timeout,
-            coord.submit(RaftLogEntry::CreateCollection {
-                collection_id: "probe_put".into(),
-                req: docs_schema(),
-            }),
-        )
-        .await;
-        match result {
-            Ok(Ok(_)) => put_lat.push(started.elapsed().as_secs_f64() * 1000.0),
-            Ok(Err(e)) => panic!("put submit failed at {i}: {e}"),
-            Err(_) => {
-                put_timeouts += 1;
-                eprintln!("put submit timeout at i={i}");
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }
-    }
-
-    coord
-        .submit(RaftLogEntry::CreateCollection {
-            collection_id: "probe_docs".into(),
-            req: docs_schema(),
-        })
-        .await
-        .expect("create probe docs");
-    let seq = Arc::new(AtomicU64::new(0));
-    let mut index_lat = Vec::new();
-    let mut index_timeouts = 0u64;
-    for i in 0..500u64 {
-        let start_doc = seq.fetch_add(batch_docs() as u64, Ordering::Relaxed);
-        let started = Instant::now();
-        let result = tokio::time::timeout(
-            timeout,
-            coord.submit(RaftLogEntry::Index {
-                collection_id: "probe_docs".into(),
-                req: index_request(start_doc, batch_docs()),
-            }),
-        )
-        .await;
-        match result {
-            Ok(Ok(_)) => index_lat.push(started.elapsed().as_secs_f64() * 1000.0),
-            Ok(Err(e)) => panic!("index submit failed at {i}: {e}"),
-            Err(_) => {
-                index_timeouts += 1;
-                eprintln!("index submit timeout at i={i}");
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }
-    }
-
-    put_lat.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    index_lat.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let pct = |v: &[f64], q: f64| {
-        if v.is_empty() {
-            0.0
-        } else {
-            v[(((v.len() - 1) as f64) * q).round() as usize]
-        }
-    };
-    println!(
-        "direct nats submit: put ok={} timeout={} p50={:.3}ms p99={:.3}ms; index ok={} timeout={} p50={:.3}ms p99={:.3}ms",
-        put_lat.len(),
-        put_timeouts,
-        pct(&put_lat, 0.50),
-        pct(&put_lat, 0.99),
-        index_lat.len(),
-        index_timeouts,
-        pct(&index_lat, 0.50),
-        pct(&index_lat, 0.99),
-    );
 }
 
 #[test]
@@ -1521,3 +1143,510 @@ fn wal_codec_probe() {
     );
 }
 // CODEGEN-END
+
+mod committed_publish_cancellation {
+    //! # Facets
+    //!
+    //! - Behavior: `apps/lumen/e2e/write_qps.rs:1305`, `:1313`, `:1321`,
+    //!   and `:1337` require a committed write to remain in the recovery cut
+    //!   through caller cancellation and delayed publish return. `:1355` and
+    //!   `:1361` require the record to apply once, then reopen the fence.
+    //! - Security: `apps/lumen/e2e/write_qps.rs:1313`, `:1321`, and
+    //!   `:1337` cover the `WalLog` trust boundary. A cancelled caller must
+    //!   not make the recovery fence honour a record the WAL already accepted.
+    //!   This is the fail-closed path in `apps/lumen/src/coordinator.rs:555-577`.
+    //! - Performance: gap carried by the separate capacity case. The current
+    //!   promise is `apps/lumen/ROADMAP.md:60-70`; this case's 150 ms waits are
+    //!   test bounds, not a product latency budget. That capacity case needs the
+    //!   pending-budget probe before it can assert the 128/256 MiB promise.
+
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use futures::StreamExt;
+    use tokio::sync::{watch, Notify};
+
+    use lumen::coordinator::WriteCoordinator;
+    use lumen::log_entry::RaftLogEntry;
+    use lumen::storage::Engine;
+    use lumen::types::CreateCollectionRequest;
+    use lumen::wal::{MemWal, SharedWal, WalLog, WalRecord, WalStream};
+
+    /// A test WAL whose `publish` enqueues the record in its ordered store and
+    /// makes it available to subscribers, but holds its successful return.
+    /// `submit` has already crossed this WAL commit boundary when the caller
+    /// cancels it.
+    ///
+    /// Delivery has a second gate. That lets the test prove the restore fence
+    /// stays closed after cancellation and before the committed record applies.
+    #[derive(Clone)]
+    struct CommitThenBlockWal {
+        inner: MemWal,
+        committed: Arc<Notify>,
+        release_publish: Arc<Notify>,
+        publish_returned: Arc<Notify>,
+        delivery_open: watch::Sender<bool>,
+        publish_called: Arc<AtomicBool>,
+        publish_returned_called: Arc<AtomicBool>,
+    }
+
+    impl CommitThenBlockWal {
+        fn new() -> Self {
+            let (delivery_open, _delivery_rx) = watch::channel(false);
+            Self {
+                inner: MemWal::new(),
+                committed: Arc::new(Notify::new()),
+                release_publish: Arc::new(Notify::new()),
+                publish_returned: Arc::new(Notify::new()),
+                delivery_open,
+                publish_called: Arc::new(AtomicBool::new(false)),
+                publish_returned_called: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        async fn wait_until_committed(&self) {
+            loop {
+                if self
+                    .inner
+                    .latest_seq()
+                    .await
+                    .expect("read committed WAL head")
+                    != 0
+                {
+                    return;
+                }
+                // `notify_one` stores a permit if the producer crossed the
+                // commit boundary just after the head check.
+                self.committed.notified().await;
+            }
+        }
+
+        async fn wait_until_publish_returned(&self) {
+            loop {
+                if self.publish_returned_called.load(Ordering::SeqCst) {
+                    return;
+                }
+                self.publish_returned.notified().await;
+            }
+        }
+
+        fn release_publish(&self) {
+            self.release_publish.notify_one();
+        }
+
+        fn release_delivery(&self) {
+            self.delivery_open.send_replace(true);
+        }
+    }
+
+    #[async_trait]
+    impl WalLog for CommitThenBlockWal {
+        async fn publish(&self, record: WalRecord) -> Result<u64> {
+            let seq = self.inner.publish(record).await?;
+            self.publish_called.store(true, Ordering::SeqCst);
+            self.committed.notify_one();
+
+            self.release_publish.notified().await;
+            self.publish_returned_called.store(true, Ordering::SeqCst);
+            self.publish_returned.notify_one();
+            Ok(seq)
+        }
+
+        async fn subscribe(&self, from_seq: u64) -> Result<WalStream> {
+            let stream = self.inner.subscribe(from_seq).await?;
+            let delivery_open = self.delivery_open.subscribe();
+            Ok(Box::pin(stream.then(move |item| {
+                let mut delivery_open = delivery_open.clone();
+                async move {
+                    while !*delivery_open.borrow_and_update() {
+                        delivery_open
+                            .changed()
+                            .await
+                            .map_err(|_| anyhow::anyhow!("test WAL delivery gate closed"))?;
+                    }
+                    item
+                }
+            })))
+        }
+
+        async fn latest_seq(&self) -> Result<u64> {
+            self.inner.latest_seq().await
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_committed_submit_keeps_restore_fence_closed_until_apply() {
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(CommitThenBlockWal::new());
+        let shared_wal: SharedWal = wal.clone();
+        let coordinator = WriteCoordinator::start(shared_wal, engine.clone());
+
+        let submit = {
+            let coordinator = coordinator.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .submit(RaftLogEntry::CreateCollection {
+                        collection_id: "cancelled-commit".into(),
+                        req: CreateCollectionRequest {
+                            fields: BTreeMap::new(),
+                        },
+                    })
+                    .await
+            })
+        };
+
+        tokio::time::timeout(Duration::from_secs(1), wal.wait_until_committed())
+            .await
+            .expect("custom WAL must enqueue the record before submit cancellation");
+        assert!(wal.publish_called.load(Ordering::SeqCst));
+        assert_eq!(
+            wal.latest_seq().await.expect("read WAL head"),
+            1,
+            "the case must not pass because no record was committed"
+        );
+
+        submit.abort();
+        assert!(
+            submit
+                .await
+                .expect_err("cancelling submit must cancel its caller task")
+                .is_cancelled(),
+            "the submit caller must actually be cancelled after WAL commit"
+        );
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), coordinator.fence_mutations())
+                .await
+                .is_err(),
+            "a cancelled caller must not open the restore fence while its committed record waits to apply"
+        );
+
+        // A correct coordinator leaves a detached publication task alive after
+        // caller cancellation. Let it receive its sequence and hand the permit
+        // into sequence ownership, but keep delivery closed.
+        wal.release_publish();
+        tokio::time::timeout(Duration::from_secs(1), wal.wait_until_publish_returned())
+            .await
+            .expect(
+                "detached publication must receive the committed sequence after caller cancellation",
+            );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), coordinator.fence_mutations())
+                .await
+                .is_err(),
+            "the restore fence must remain closed after publish returns and before the committed record applies"
+        );
+
+        wal.release_delivery();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if coordinator.applied_seq() == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the committed record must apply after delivery opens");
+        assert_eq!(
+            engine.list_collections().expect("list applied collections"),
+            vec!["cancelled-commit"],
+            "the committed record must apply exactly once after cancellation"
+        );
+
+        let _restore_fence =
+            tokio::time::timeout(Duration::from_secs(1), coordinator.fence_mutations())
+                .await
+                .expect("restore fence must open after the sequence completes")
+                .expect("restore fence remains usable after the sequence completes");
+    }
+}
+
+mod local_oversized_record_capacity {
+    //! # Facets
+    //!
+    //! - Behavior: write_qps.rs:1583, :1589, :1594, :1599, :1604, :1609,
+    //!   :1625, :1626, :1631, and :1636 require a valid oversized local index request
+    //!   to return the capacity refusal, leave state unchanged, and then accept
+    //!   a small request. Change points: apps/lumen/src/coordinator.rs:776-800
+    //!   and apps/lumen/src/api.rs:3170-3178.
+    //! - Security: write_qps.rs:1583, :1599, :1604, and :1609 keep the
+    //!   caller-controlled 100 MiB Keyword body outside WAL and the collection.
+    //!   The closed HTTP input boundary is apps/lumen/src/coordinator.rs:776-800
+    //!   through apps/lumen/src/api.rs:3170-3178.
+    //! - Performance: apps/lumen/docs/indexing.md:264-270 promises the 256 MiB
+    //!   pending budget and its pre-submit 429 response. write_qps.rs:1516 and
+    //!   :1522 measure a real body below its child-only HTTP allowance and above
+    //!   one third of that budget. Child and request timeouts are cleanup bounds,
+    //!   not latency claims.
+
+    use std::fs::{self, File};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use axum::http::{header::RETRY_AFTER, StatusCode};
+    use axum_test::TestServer;
+    use serde_json::{json, Value};
+
+    use lumen::api::{router, AppState};
+    use lumen::auth::AuthConfig;
+    use lumen::coordinator::{WriteCoordinator, WriteSink};
+    use lumen::storage::Engine;
+    use lumen::wal::{MemWal, SharedWal, WalLog};
+
+    const COLLECTION: &str = "oversized-local-record";
+    const PENDING_HARD_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+    const OVERSIZED_KEYWORD_BYTES: usize = 100 * 1024 * 1024;
+    const CHILD_BODY_LIMIT_BYTES: usize = OVERSIZED_KEYWORD_BYTES + 2 * 1024 * 1024;
+    const CHILD_CASE_ENV: &str = "LUMEN_OVERSIZED_LOCAL_RECORD_CHILD";
+    const CHILD_HANDSHAKE_ENV: &str = "LUMEN_OVERSIZED_LOCAL_RECORD_HANDSHAKE";
+    const CHILD_CASE: &str = "oversized-local-record";
+    const TEST_NAME: &str =
+        "local_oversized_record_capacity::oversized_local_index_refuses_before_wal_publish";
+    const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+    const CHILD_TIMEOUT: Duration = Duration::from_secs(90);
+
+    /// Owns a child until it has exited. A test timeout therefore cannot leave
+    /// the isolated process or its process-wide budget alive for later tests.
+    struct ChildCleanup(Option<Child>);
+
+    impl Drop for ChildCleanup {
+        fn drop(&mut self) {
+            let Some(child) = self.0.as_mut() else {
+                return;
+            };
+            if !matches!(child.try_wait(), Ok(Some(_))) {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+        }
+    }
+
+    fn child_enters() -> bool {
+        if std::env::var(CHILD_CASE_ENV).ok().as_deref() != Some(CHILD_CASE) {
+            return false;
+        }
+        let handshake = std::env::var_os(CHILD_HANDSHAKE_ENV)
+            .expect("oversized capacity child needs a handshake path");
+        fs::write(handshake, CHILD_CASE).expect("write oversized capacity child handshake");
+        true
+    }
+
+    async fn run_isolated_child() {
+        let dir = tempfile::tempdir().expect("oversized capacity child directory");
+        let handshake = dir.path().join("entered-case");
+        let stdout_path = dir.path().join("child.stdout");
+        let stderr_path = dir.path().join("child.stderr");
+        let executable = std::env::current_exe().expect("current write_qps test executable");
+        let stdout = File::create(&stdout_path).expect("create oversized child stdout");
+        let stderr = File::create(&stderr_path).expect("create oversized child stderr");
+        let child = Command::new(executable)
+            .env(CHILD_CASE_ENV, CHILD_CASE)
+            .env(CHILD_HANDSHAKE_ENV, &handshake)
+            .env("LUMEN_BODY_LIMIT_BYTES", CHILD_BODY_LIMIT_BYTES.to_string())
+            .arg(TEST_NAME)
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .spawn()
+            .expect("spawn isolated oversized capacity child");
+        let mut child = ChildCleanup(Some(child));
+        let deadline = Instant::now() + CHILD_TIMEOUT;
+        let status = loop {
+            match child
+                .0
+                .as_mut()
+                .expect("child remains owned until it exits")
+                .try_wait()
+            {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Ok(None) => panic!(
+                    "isolated oversized capacity child exceeded {:?}",
+                    CHILD_TIMEOUT
+                ),
+                Err(error) => panic!("poll isolated oversized capacity child: {error}"),
+            }
+        };
+        let stdout = fs::read_to_string(&stdout_path).expect("read oversized child stdout");
+        let stderr = fs::read_to_string(&stderr_path).expect("read oversized child stderr");
+        let entered = fs::read_to_string(&handshake).unwrap_or_else(|error| {
+            panic!(
+                "oversized capacity child did not reach {TEST_NAME}: {error}; stdout={stdout}; stderr={stderr}"
+            )
+        });
+        assert_eq!(
+            entered, CHILD_CASE,
+            "child must enter the exact oversized-capacity body before it can pass"
+        );
+        assert!(
+            status.success(),
+            "isolated oversized capacity child failed: status={status}; stdout={stdout}; stderr={stderr}"
+        );
+        child.0.take();
+    }
+
+    fn oversized_index_body() -> Vec<u8> {
+        let mut value = vec![b'x'; OVERSIZED_KEYWORD_BYTES];
+        let marker = b"oversized-local-keyword-";
+        value[..marker.len()].copy_from_slice(marker);
+        let request = json!({
+            "items": [{
+                "external_id": "oversized",
+                "field": "kw",
+                "value": String::from_utf8(value).expect("ASCII oversized Keyword value"),
+            }]
+        });
+        assert_eq!(
+            request["items"].as_array().map(Vec::len),
+            Some(1),
+            "the capacity request uses one valid index item"
+        );
+        let body = serde_json::to_vec(&request).expect("serialize oversized Keyword request");
+        drop(request);
+        assert!(
+            body.len() < CHILD_BODY_LIMIT_BYTES,
+            "the real request body must stay below its child-only HTTP allowance: {} >= {}",
+            body.len(),
+            CHILD_BODY_LIMIT_BYTES
+        );
+        assert!(
+            body.len() > PENDING_HARD_LIMIT_BYTES / 3,
+            "the real body must make the local raw plus two transport copies exceed the approved 256 MiB budget: {} <= {}",
+            body.len(),
+            PENDING_HARD_LIMIT_BYTES / 3
+        );
+        body
+    }
+
+    async fn indexed_total(server: &TestServer) -> u64 {
+        let response = server
+            .post(&format!("/collections/{COLLECTION}/search"))
+            .json(&json!({
+                "query": { "exists": { "field": "kw" } },
+                "limit": 10,
+            }))
+            .await;
+        response.assert_status_ok();
+        response.json::<Value>()["total"]
+            .as_u64()
+            .expect("keyword exists response has a total")
+    }
+
+    async fn oversized_local_index_refuses_before_wal_publish_body() {
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let shared_wal: SharedWal = wal.clone();
+        let writer = WriteCoordinator::start(shared_wal, engine.clone());
+        let sink: Arc<dyn WriteSink> = writer.clone();
+        let server = TestServer::new(router(AppState::with_components(
+            engine,
+            Arc::new(AuthConfig::open()),
+            sink,
+        )))
+        .expect("oversized capacity HTTP server");
+
+        server
+            .put(&format!("/collections/{COLLECTION}"))
+            .json(&json!({ "fields": { "kw": { "type": "keyword" } } }))
+            .await
+            .assert_status_ok();
+        let applied_before = writer.applied_seq();
+        let wal_before = wal.latest_seq().await.expect("read MemWal before refusal");
+        assert_eq!(
+            indexed_total(&server).await,
+            0,
+            "the new collection must start without indexed Keyword values"
+        );
+
+        let response = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            server
+                .post(&format!("/collections/{COLLECTION}/index"))
+                .bytes(oversized_index_body().into())
+                .content_type("application/json"),
+        )
+        .await
+        .expect("oversized local index request must finish");
+        let retry_after = response
+            .maybe_header(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok().map(ToOwned::to_owned));
+        assert_eq!(
+            response.status_code(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "a valid local record that cannot fit the 256 MiB pending budget must refuse before WAL publication"
+        );
+        let envelope = response.json::<Value>();
+        assert_eq!(
+            envelope["error"], "pending_change_capacity",
+            "the valid oversized request must reach the capacity refusal, not a validation error"
+        );
+        assert_eq!(
+            retry_after.as_deref(),
+            Some("1"),
+            "pre-publication capacity refusal must expose Retry-After: 1"
+        );
+        assert_eq!(
+            wal.latest_seq().await.expect("read MemWal after refusal"),
+            wal_before,
+            "the refused caller body must not allocate a WAL sequence"
+        );
+        assert_eq!(
+            writer.applied_seq(),
+            applied_before,
+            "the refused caller body must not advance the applied sequence"
+        );
+        assert_eq!(
+            indexed_total(&server).await,
+            0,
+            "the refused caller body must not index a document"
+        );
+
+        server
+            .post(&format!("/collections/{COLLECTION}/index"))
+            .json(&json!({
+                "items": [{
+                    "external_id": "small-after-refusal",
+                    "field": "kw",
+                    "value": "small",
+                }]
+            }))
+            .await
+            .assert_status_ok();
+        assert_eq!(
+            wal.latest_seq()
+                .await
+                .expect("read MemWal after small request"),
+            wal_before + 1,
+            "only the later small request may allocate the next WAL sequence"
+        );
+        assert_eq!(
+            writer.applied_seq(),
+            applied_before + 1,
+            "only the later small request may advance the applied sequence"
+        );
+        assert_eq!(
+            indexed_total(&server).await,
+            1,
+            "the later small request must remain usable after a capacity refusal"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oversized_local_index_refuses_before_wal_publish() {
+        if child_enters() {
+            oversized_local_index_refuses_before_wal_publish_body().await;
+        } else {
+            run_isolated_child().await;
+        }
+    }
+}

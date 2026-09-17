@@ -331,7 +331,9 @@ async fn fetch_capacity_catalog_missing_catalog_json_key_rejected() {
     let client = stub_client(StatusCode::OK, cm_response);
     let rejection = fetch_capacity_catalog(&client, "badkey-ns", "badkey-cm")
         .await
-        .expect_err("fetch_capacity_catalog should fail when configmap is missing catalog.json key");
+        .expect_err(
+            "fetch_capacity_catalog should fail when configmap is missing catalog.json key",
+        );
 
     assert_eq!(rejection.reason, RejectionReason::CatalogIncompatible);
     assert_eq!(rejection.field_path, "catalog");

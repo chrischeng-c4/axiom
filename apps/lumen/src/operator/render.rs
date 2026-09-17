@@ -372,7 +372,7 @@ fn serving_network_policy(cx: &RenderCtx<'_>, name: &str) -> Value {
         component: COMPONENT,
         client_ports: vec![CLIENT_PORT],
         peer_ports: vec![RAFT_PORT],
-        // Lumen's operator path never configures the NATS WAL relay; backups
+        // Lumen's operator path never configures an external WAL relay; backups
         // reach object storage over TLS, which the shared baseline already
         // allows.
         extra_egress: vec![],

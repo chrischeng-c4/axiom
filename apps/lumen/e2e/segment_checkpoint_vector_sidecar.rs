@@ -110,27 +110,34 @@ fn fixture() -> Fixture {
     }
 }
 
-/// Recursively collect every file name (not directory) under `dir`, sorted.
-/// Used to inspect exactly what a checkpoint generation wrote on disk without
-/// depending on the store's internal generation-naming scheme.
-fn list_file_names(dir: &std::path::Path) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                names.push(name.to_string());
-            }
-        }
-    }
-    names.sort();
-    names
+fn catalogued_vector_base_path(
+    manifest: &serde_json::Value,
+    collection_id: &str,
+    role: &str,
+) -> String {
+    let collection = manifest["collections"]
+        .as_array()
+        .expect("v2 manifest collections array")
+        .iter()
+        .find(|collection| collection["collection_id"] == collection_id)
+        .expect("v2 manifest must catalogue vecdocs");
+    let matching: Vec<&serde_json::Value> = collection["segments"]
+        .as_array()
+        .expect("v2 manifest collection segments array")
+        .iter()
+        .filter(|segment| {
+            segment["role"] == role && segment["field"] == "v" && segment["kind"] == "base"
+        })
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "v2 manifest must catalogue exactly one base {role} segment for vector field `v`; got {matching:?}"
+    );
+    matching[0]["path"]
+        .as_str()
+        .expect("v2 vector segment path string")
+        .to_owned()
 }
 
 fn term_query(field: &str, value: &str) -> SearchRequest {
@@ -210,28 +217,45 @@ async fn checkpoint_persists_vector_field_and_survives_recovery() {
     // the ONLY durable copy of everything indexed above.
     checkpoint(&fixture.server).await;
 
-    // #3951, part 1: the saved generation must contain at least one file for
-    // the vector field `v` (its sealed `.lseg` segment, or at minimum the
-    // `.eids.lseg` row->eid sidecar reopen unconditionally requires). Today
-    // it contains none — only `_schema.json`, `_collection.lmeta.lseg`, and
-    // `kw.lseg` are written for the `vecdocs` collection.
-    let saved_files = list_file_names(&fixture.checkpoint_root);
-    let vector_field_files: Vec<&String> =
-        saved_files.iter().filter(|name| name.starts_with("v.")).collect();
-    assert!(
-        !vector_field_files.is_empty(),
-        "checkpoint must persist at least one file for vector field `v`, \
-         but the saved generation only contains: {saved_files:?}"
-    );
+    // #3951, part 1: the v2 catalog is the physical contract. Field names
+    // are encoded in the generation layout, so a filename prefix such as
+    // `v.` is neither required nor reliable. The catalog must instead name
+    // both the vector's base segment and its row->external-ID sidecar, and
+    // both paths must name real files in the committed generation.
+    let current = std::fs::read_to_string(fixture.checkpoint_root.join("CURRENT"))
+        .expect("read committed generation pointer");
+    let generation_name = current
+        .strip_prefix("generation:")
+        .expect("CURRENT names a generation")
+        .trim();
+    let generation = fixture.checkpoint_root.join(generation_name);
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(generation.join("_generation.json"))
+            .expect("read committed v2 generation manifest"),
+    )
+    .expect("decode committed v2 generation manifest");
+    for (role, path) in [
+        (
+            "field",
+            catalogued_vector_base_path(&manifest, "vecdocs", "field"),
+        ),
+        (
+            "vector_eids",
+            catalogued_vector_base_path(&manifest, "vecdocs", "vector_eids"),
+        ),
+    ] {
+        assert!(
+            generation.join(&path).is_file(),
+            "v2 catalogued {role} base for vector field `v` must exist at {path:?}"
+        );
+    }
 
     // #3951, part 2: recovery — reopen the checkpoint's active generation and
     // replay the (now-truncated, effectively empty) AOF tail, exactly as a
     // cold restart does. This is the step that actually loses the data: it
     // must succeed, since the checkpoint above is the only durable record.
     let recovered = match fixture.store.load_current_generation() {
-        Ok(loaded) => {
-            loaded.expect("a checkpoint generation must exist after /admin/checkpoint")
-        }
+        Ok(loaded) => loaded.expect("a checkpoint generation must exist after /admin/checkpoint"),
         Err(err) => panic!(
             "recovery from a checkpoint that included a default-backend vector \
              field failed to reopen (issue #3951): {err:#}"
