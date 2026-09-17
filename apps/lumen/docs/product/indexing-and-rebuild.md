@@ -30,13 +30,13 @@
 - Open: Define retention and conflict reporting.
 - Neighbours: Durable writes and generated-client resilience.
 
-## Incremental segment checkpoint
+## Incremental segment checkpoint (Milestone #132)
 
 - Problem: A full checkpoint can rebuild a large collection while holding the global engine write lock and delay requests to every collection.
 - Who: Teams that keep a persistent Lumen index while serving reads and writes.
 - Promise: A completed v2 checkpoint retains hard-linked unchanged segments, captures sparse changes through `CaptureBarrier`, and publishes a complete validated manifest with its data version before it trims AOF data.
 - Status row: `incremental-segment-checkpoint` is Limited until the outcome completes.
-- Outcome: `incremental-segment-checkpoint`. Tracking: Not assigned.
+- Outcome: `incremental-segment-checkpoint`. Tracking: [Milestone #132](https://github.com/chrischeng-c4/axiom/milestone/132).
 - Non-goals: New request shapes, changed batch limits, source-record storage, a coordinator `MutationGate` checkpoint lock, a full-copy fallback, and a performance claim before the required workload passes.
 - Open: Validate all-field layer correctness; v2 data-version and 0.6.0 compatibility; `CaptureBarrier` plus serialized restore/publication epoch validation; 128/256 MiB admission and reservation release; four/16 segment merge rules; failure recovery; batch limits; and each independent 30-minute workload case in the roadmap.
 - Neighbours: Durable acknowledgement defines the publish and AOF boundary; recovery owns reopen, backup, and restore.
