@@ -105,6 +105,11 @@ struct CheckpointSchedule {
     next_deadline: Instant,
     early_attempted: bool,
     immediate_successor: Option<u64>,
+    /// The latest explicit capacity request that has been scheduled. A newer
+    /// request must be allowed to bypass the pressure-epoch coalescing: the
+    /// earlier checkpoint may have completed while the process remained near
+    /// its hard limit.
+    last_request_revision: Option<u64>,
 }
 
 // Do not re-arm on a brief dip below the 128 MiB trigger. A real drain must
@@ -119,10 +124,27 @@ impl CheckpointSchedule {
             next_deadline: now + period,
             early_attempted: false,
             immediate_successor: None,
+            last_request_revision: None,
         }
     }
 
     fn should_attempt(&mut self, now: Instant, pending: Snapshot, _work_revision: u64) -> bool {
+        let newer_capacity_request = pending
+            .checkpoint_request_revision
+            .filter(|revision| {
+                self.last_request_revision
+                    .is_none_or(|last| *revision > last)
+            })
+            .is_some_and(|revision| {
+                pending.checkpoint_needed()
+                    && {
+                        self.last_request_revision = Some(revision);
+                        true
+                    }
+            });
+        if newer_capacity_request {
+            return true;
+        }
         if pending.total < CHECKPOINT_REARM_THRESHOLD {
             self.early_attempted = false;
         }
@@ -1141,31 +1163,37 @@ mod tests {
     }
 
     #[test]
-    fn request_revisions_do_not_bypass_high_water_or_period() {
+    fn newer_request_revision_bypasses_high_water_period_once() {
         let now = Instant::now();
         let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
         let first = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 10, Some(10));
         assert!(schedule.should_attempt(now, first, 10));
         schedule.completed(now + Duration::from_secs(1), first);
 
-        // Request revisions are wake hints only after the completed attempt.
-        assert!(!schedule.should_attempt(
+        // A newer blocked-admission request proves that the prior checkpoint
+        // did not create enough headroom. It must trigger one more attempt
+        // without waiting for the normal period.
+        assert!(schedule.should_attempt(
             now + Duration::from_secs(1),
             snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 11, Some(11)),
             11,
         ));
-        assert!(schedule.should_attempt(
+        schedule.completed(
+            now + Duration::from_secs(2),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 11, Some(11)),
+        );
+        assert!(!schedule.should_attempt(
             now + Duration::from_secs(31),
-            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 12, Some(12)),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 12, Some(11)),
             12,
         ));
         schedule.completed(
             now + Duration::from_secs(32),
-            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 12, Some(12)),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 12, Some(11)),
         );
         assert!(!schedule.should_attempt(
             now + Duration::from_secs(32),
-            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 13, Some(13)),
+            snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 13, Some(11)),
             13,
         ));
 

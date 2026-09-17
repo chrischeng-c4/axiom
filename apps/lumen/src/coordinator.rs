@@ -1219,6 +1219,18 @@ impl WriteCoordinator {
                     error,
                     RecordAdmissionError::Capacity(AdmissionError::Full { .. })
                 ) {
+                    // A local pre-publication refusal does not create a
+                    // committed capacity waiter. Start the same independent
+                    // checkpoint owner used by committed/replayed records,
+                    // otherwise request_pending_checkpoint() only signals a
+                    // driver that may not exist and repeated 429s can make
+                    // no progress through active or frozen changes.
+                    if let Err(owner_error) = self.ensure_capacity_owner() {
+                        tracing::warn!(
+                            error = %owner_error,
+                            "could not start local capacity maintenance"
+                        );
+                    }
                     self.engine.request_pending_checkpoint();
                     self.capacity_relief_requested
                         .store(true, Ordering::Release);
@@ -2115,6 +2127,35 @@ mod tests {
             budget.snapshot().total,
             baseline,
             "dropping a capacity-relief map entry must release apply and transient halves"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_capacity_refusal_starts_checkpoint_owner_without_committed_waiter() {
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let coord = WriteCoordinator::start(Arc::new(MemWal::new()), engine);
+        let filler_owner = budget.owner();
+        let _filler = filler_owner
+            .try_reserve(1024 * 1024 - budget.snapshot().total)
+            .unwrap();
+
+        let error = match coord.try_admit_local_record(&admitted_index_entry()) {
+            Ok(_) => panic!("full local admission must be refused"),
+            Err(error) => error,
+        };
+        assert!(
+            error.downcast_ref::<PendingChangeCapacity>().is_some(),
+            "a full local admission remains a typed retryable refusal"
+        );
+        assert!(
+            coord
+                .layer_capacity_owner
+                .lock()
+                .expect("capacity owner poisoned")
+                .is_some(),
+            "a local refusal must create independent checkpoint maintenance"
         );
     }
 
