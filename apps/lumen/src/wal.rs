@@ -44,10 +44,10 @@ use crate::wal_source_stage::{
     MappedFastIndexPayload, MappedGenericCborPayload, StagedWalRecord, WalSourceStager,
 };
 
-pub(crate) mod bounded_generic;
-pub(crate) mod fast_index_scanner;
 pub(crate) mod borrowed_replace_scanner;
 pub(crate) mod borrowed_replace_spool;
+pub(crate) mod bounded_generic;
+pub(crate) mod fast_index_scanner;
 
 /// Legacy on-the-wire record format version.  Existing writable operations
 /// keep emitting this byte so a 0.4.30 reader sees their exact old wire form.

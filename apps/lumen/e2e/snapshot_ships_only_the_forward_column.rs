@@ -266,9 +266,12 @@ async fn a_v1_snapshot_that_still_carries_terms_is_still_restorable() {
          trust it — `forward` never held that value"
     );
     assert!(
-        hits(&s2, json!({ "term": { "field": "tags", "value": "ghost" } }))
-            .await
-            .is_empty(),
+        hits(
+            &s2,
+            json!({ "term": { "field": "tags", "value": "ghost" } })
+        )
+        .await
+        .is_empty(),
         "same for the Set arm's `elements`"
     );
 }

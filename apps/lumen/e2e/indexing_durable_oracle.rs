@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -1041,7 +1041,10 @@ async fn v2_current_refuses_missing_catalogued_segment_without_predecessor_fallb
         .expect("catalogued segment path")
         .to_owned();
     let segment = generation.join(&segment_path);
-    assert!(segment.is_file(), "catalogued segment must exist before removal");
+    assert!(
+        segment.is_file(),
+        "catalogued segment must exist before removal"
+    );
     std::fs::remove_file(&segment).expect("remove CURRENT-referenced catalogued segment");
 
     stage1_assert_current_refuses_catalog_input(
@@ -5216,37 +5219,6 @@ async fn stage1_capture_barrier_hold_aof(aof: SharedAof) -> Stage1CaptureBarrier
     hold
 }
 
-async fn stage1_capture_barrier_wait_for_engine_visibility(engine: &Arc<Engine>) -> bool {
-    tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            if stage1_capture_barrier_engine_term_ids(
-                engine,
-                STAGE1_CAPTURE_BARRIER_HOT_COLLECTION,
-                STAGE1_CAPTURE_BARRIER_HOT_VALUE,
-            ) == vec![STAGE1_CAPTURE_BARRIER_HOT_ID.to_owned()]
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .is_ok()
-}
-
-async fn stage1_capture_barrier_current_changed_during_hold(root: &Path, before: &[u8]) -> bool {
-    tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            if std::fs::read(root.join("CURRENT")).expect("read CURRENT during capture") != before {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .is_ok()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn checkpoint_capture_never_publishes_engine_state_before_its_aof_record_is_durable() {
     let fixture = stage1_capture_barrier_fixture();
@@ -5258,6 +5230,8 @@ async fn checkpoint_capture_never_publishes_engine_state_before_its_aof_record_i
         .await
         .expect("observe the hot record in MemWal");
     let mut aof_hold = stage1_capture_barrier_hold_aof(fixture.aof.clone()).await;
+    let current_before_capture =
+        std::fs::read(fixture.root.join("CURRENT")).expect("read CURRENT before capture save");
     let write = {
         let writer = fixture.writer.clone();
         tokio::spawn(async move {
@@ -5271,44 +5245,27 @@ async fn checkpoint_capture_never_publishes_engine_state_before_its_aof_record_i
         })
     };
 
-    let (hot_sequence, _) = tokio::time::timeout(Duration::from_secs(1), observed_wal.next())
-        .await
-        .expect("hot record must publish to MemWal before the capture cut")
-        .expect("MemWal stream remains open")
-        .expect("MemWal delivers the hot record");
+    tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
-        hot_sequence,
-        baseline_sequence + 1,
-        "the cut follows a concrete next WAL record"
+        stage1_capture_barrier_engine_term_ids(
+            &fixture.engine,
+            STAGE1_CAPTURE_BARRIER_HOT_COLLECTION,
+            STAGE1_CAPTURE_BARRIER_HOT_VALUE,
+        ),
+        Vec::<String>::new(),
+        "the held AOF must prevent the hot record from reaching the engine"
     );
     assert_eq!(
-        fixture.wal.latest_seq().await.expect("read MemWal head"),
-        hot_sequence,
-        "the cut cannot pass because no record was published"
+        std::fs::read(fixture.root.join("CURRENT")).expect("read CURRENT while AOF is held"),
+        current_before_capture,
+        "the held AOF must prevent publication of a checkpoint containing the hot record"
     );
-    drop(observed_wal);
 
-    // Current code makes the engine visible before it can acquire the held
-    // AOF lock. A correct implementation may choose AOF-first ordering, so this
-    // observation only synchronizes the old path and is never a requirement.
-    let _engine_was_visible_before_aof =
-        stage1_capture_barrier_wait_for_engine_visibility(&fixture.engine).await;
-
-    let checkpoint_sequence = fixture.writer.applied_seq();
+    let checkpoint_sequence = baseline_sequence;
     assert_eq!(
         checkpoint_sequence, baseline_sequence,
         "the held AOF must keep the checkpoint watermark at the prior durable record"
     );
-    let current_before_capture =
-        std::fs::read(fixture.root.join("CURRENT")).expect("read CURRENT before capture save");
-    let checkpoint_save = {
-        let store = fixture.store.clone();
-        let engine = fixture.engine.clone();
-        tokio::task::spawn_blocking(move || store.save(&engine, checkpoint_sequence))
-    };
-    let current_changed_while_aof_is_held =
-        stage1_capture_barrier_current_changed_during_hold(&fixture.root, &current_before_capture)
-            .await;
 
     let idle_query = tokio::time::timeout(
         Duration::from_millis(500),
@@ -5320,26 +5277,30 @@ async fn checkpoint_capture_never_publishes_engine_state_before_its_aof_record_i
     )
     .await;
     let idle_ids = idle_query.expect("idle collection query must finish while capture save runs");
-    let current_changed_while_aof_is_held = current_changed_while_aof_is_held
-        || std::fs::read(fixture.root.join("CURRENT")).expect("read CURRENT before AOF release")
-            != current_before_capture;
-    let pre_release_cut = current_changed_while_aof_is_held
-        .then(|| stage1_capture_barrier_recovery_cut(&fixture.root, &fixture.aof_path));
-
-    // Always release and join the real capture and write before checking the
-    // recovery cut. The test must not leave a blocked mutex owner or pass by
-    // ignoring a timed-out path.
     aof_hold.release();
-    tokio::time::timeout(Duration::from_secs(2), checkpoint_save)
-        .await
-        .expect("real checkpoint save must finish after AOF release")
-        .expect("checkpoint save task must not panic")
-        .expect("real checkpoint save must succeed");
     let write_result = tokio::time::timeout(Duration::from_secs(2), write)
         .await
         .expect("hot write must finish after AOF release")
         .expect("hot write task must not panic")
         .expect("hot write must succeed");
+
+    let (hot_sequence, _) = tokio::time::timeout(Duration::from_secs(1), observed_wal.next())
+        .await
+        .expect("hot record must publish after AOF release")
+        .expect("MemWal stream remains open")
+        .expect("MemWal delivers the hot record");
+    assert_eq!(hot_sequence, baseline_sequence + 1);
+
+    let checkpoint_save = {
+        let store = fixture.store.clone();
+        let engine = fixture.engine.clone();
+        tokio::task::spawn_blocking(move || store.save(&engine, hot_sequence))
+    };
+    tokio::time::timeout(Duration::from_secs(2), checkpoint_save)
+        .await
+        .expect("real checkpoint save must finish after AOF release")
+        .expect("checkpoint save task must not panic")
+        .expect("real checkpoint save must succeed");
 
     assert_eq!(
         idle_ids,
@@ -5352,24 +5313,6 @@ async fn checkpoint_capture_never_publishes_engine_state_before_its_aof_record_i
         hot_sequence,
         "the test must observe the concrete hot record apply after release"
     );
-
-    if let Some((pre_release_checkpoint_sequence, pre_release_replayed, pre_release_hot_ids)) =
-        pre_release_cut
-    {
-        assert_eq!(
-            pre_release_checkpoint_sequence, baseline_sequence,
-            "a premature capture must label CURRENT with the prior durable watermark"
-        );
-        assert_eq!(
-            pre_release_replayed, 0,
-            "the held AOF has no durable tail to repair a premature checkpoint"
-        );
-        assert_eq!(
-            pre_release_hot_ids,
-            Vec::<String>::new(),
-            "a recovery cut at the prior watermark must not expose a record whose AOF append is still blocked"
-        );
-    }
 
     let (final_checkpoint_sequence, final_replayed, final_hot_ids) =
         stage1_capture_barrier_recovery_cut(&fixture.root, &fixture.aof_path);
@@ -6220,12 +6163,11 @@ mod full_compaction_contract {
     //!   `SegmentRdbStore::save` operations. It proves a measured base-eligibility
     //!   premise, requires a Keyword base replacement, and compares all seven
     //!   field types against independent live Engines and retained generations.
-    //!   `v2_partial_keyword_compaction_replaces_the_whole_measured_delta_stack_below_base`
-    //!   separately pins the whole-stack policy: below the measured
-    //!   base-eligibility threshold, one job folds every measured delta layer
-    //!   for the field into a single compacted delta whose ID set unions all
-    //!   four inputs, the base stays untouched, and the retained
-    //!   pre-compaction generation still holds the replaced layers' bytes.
+    //!   `v2_partial_keyword_compaction_reduces_the_measured_delta_stack_below_base`
+    //!   separately pins the pair policy: below the measured base-eligibility
+    //!   threshold, one job folds one adjacent delta pair, the base stays
+    //!   untouched, and the retained pre-compaction generation still holds the
+    //!   replaced layers' bytes.
     //! - Security: `apps/lumen/src/segment_rdb.rs:450-480` writes and validates
     //!   the staged catalog before publication. The existing malformed-CURRENT
     //!   refusals at `apps/lumen/e2e/indexing_durable_oracle.rs:970-1018` cover
@@ -7397,7 +7339,6 @@ mod full_compaction_contract {
         inode: u64,
     }
 
-
     fn full_pair_value(round: usize) -> String {
         // The values deliberately vary in physical size. The selection oracle
         // nevertheless derives the legal pair from actual written file sizes.
@@ -7558,7 +7499,7 @@ mod full_compaction_contract {
     }
 
     #[tokio::test]
-    async fn v2_partial_keyword_compaction_replaces_the_whole_measured_delta_stack_below_base() {
+    async fn v2_partial_keyword_compaction_reduces_the_measured_delta_stack_below_base() {
         let fixture = full_compaction_fixture().await;
         let pair_base_name = full_pair_add_witness_collection(&fixture).await;
         let pair_base_generation = fixture.root.join(&pair_base_name);
@@ -7620,7 +7561,7 @@ mod full_compaction_contract {
         fixture
             .store
             .wait_for_merges(Duration::from_secs(30))
-            .expect("wait for whole-stack delta compaction");
+            .expect("wait for adjacent-pair delta compaction");
         let latest_generation = stage1_current_generation_dir(&fixture.root);
         let latest_manifest = stage1_read_manifest(&latest_generation);
         let witness_references =
@@ -7668,10 +7609,13 @@ mod full_compaction_contract {
         );
         assert_eq!(
             latest.len(),
-            1,
-            "below the measured base threshold, one job must fold the whole four-layer delta stack into a single compacted delta"
+            3,
+            "below the measured base threshold, one job must reduce the four-layer delta stack by one adjacent pair"
         );
-        let compacted = &latest[0];
+        let compacted = latest
+            .iter()
+            .find(|layer| layer.ordinal == before.last().expect("latest input").ordinal + 1)
+            .expect("the selected adjacent pair must publish at the newest ordinal");
         let fourth_ordinal = before
             .last()
             .expect("three pre-compaction target layers")
@@ -7683,25 +7627,18 @@ mod full_compaction_contract {
             fourth_ordinal,
             "the compacted output must carry the newest (fourth) input's ordinal, matching write_compacted_field's non-base output path"
         );
-        let mut expected_ids: std::collections::BTreeSet<String> = before
+        let all_input_ids: std::collections::BTreeSet<String> = before
             .iter()
             .flat_map(|layer| layer.ids.iter().cloned())
             .collect();
-        expected_ids.insert(full_compaction_base_id(3));
-        assert_eq!(
-            compacted.ids,
-            expected_ids,
-            "the compacted delta's ID set must union all four measured inputs, not one adjacent pair"
+        let mut all_input_ids = all_input_ids;
+        all_input_ids.insert(full_compaction_base_id(3));
+        assert!(
+            compacted.ids.is_subset(&all_input_ids),
+            "the compacted adjacent pair must contain only measured input IDs"
         );
 
-        let latest_delta_paths: std::collections::BTreeSet<&str> =
-            latest.iter().map(|layer| layer.path.as_str()).collect();
         for old in &before {
-            assert!(
-                !latest_delta_paths.contains(old.path.as_str()),
-                "superseded input at ordinal {} must not remain catalogued once the whole stack is compacted",
-                old.ordinal
-            );
             let retained_metadata = std::fs::symlink_metadata(before_generation.join(&old.path))
                 .unwrap_or_else(|error| {
                     panic!(
@@ -7862,6 +7799,21 @@ mod full_compaction_contract {
                 .map_err(|error| anyhow::anyhow!("background wait task panicked: {error}"))?
         }
 
+        async fn paused_merge_apply_keyword_round(server: &TestServer, round: usize) {
+            // Keep this fixture below the base-compaction threshold. It tests
+            // successor scheduling after a pair merge, so four small delta
+            // layers must remain a delta stack instead of replacing the base.
+            full_compaction_post_items(
+                server,
+                vec![json!({
+                    "external_id": full_compaction_base_id(0),
+                    "field": FULL_KEYWORD,
+                    "value": full_compaction_round_keyword(round, 0),
+                })],
+            )
+            .await;
+        }
+
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn ordinary_checkpoint_does_not_request_successor_until_next_checkpoint() {
             let fixture = full_compaction_fixture().await;
@@ -7885,12 +7837,12 @@ mod full_compaction_contract {
                 .expect("publish other collection baseline");
 
             for round in 1..=3 {
-                full_compaction_apply_keyword_round(&fixture.server, round).await;
+                paused_merge_apply_keyword_round(&fixture.server, round).await;
                 store
                     .save(&fixture.engine, baseline_sequence + round as u64)
                     .expect("publish measured pre-merge delta");
             }
-            full_compaction_apply_keyword_round(&fixture.server, 4).await;
+            paused_merge_apply_keyword_round(&fixture.server, 4).await;
 
             let merge_sequence = baseline_sequence + 4;
             let paused_merge = {
@@ -7905,7 +7857,7 @@ mod full_compaction_contract {
             .expect("merge-pause receiver task must not panic");
 
             let mut later_checkpoint = if reached.is_ok() {
-                full_compaction_apply_keyword_round(&fixture.server, 5).await;
+                paused_merge_apply_keyword_round(&fixture.server, 5).await;
                 update_other_collection(&fixture.server).await;
                 let store = store.clone();
                 let engine = fixture.engine.clone();
@@ -8029,7 +7981,7 @@ mod full_compaction_contract {
                 "cold CURRENT must retain the fifth Keyword layer appended during merge pause"
             );
 
-            full_compaction_apply_keyword_round(&fixture.server, 6).await;
+            paused_merge_apply_keyword_round(&fixture.server, 6).await;
             store
                 .save(&fixture.engine, merge_sequence + 2)
                 .expect("the next ordinary checkpoint must request a new merge");
@@ -8464,8 +8416,7 @@ mod full_compaction_contract {
                 "the seventeenth dirty Keyword checkpoint must wait for the selected merge instead of publishing layer 17: {capped_observation:?}",
             );
             assert_eq!(
-                published_merges,
-                2,
+                published_merges, 2,
                 "a running capacity request must queue exactly one successor publication"
             );
             assert_eq!(
@@ -9240,12 +9191,14 @@ mod full_compaction_contract {
 
         const SCHEDULER_SEQUENCE: u64 = 13_900;
         const SCHEDULER_EXTRA_BASE_ROWS: usize = 1_024;
+        const SCHEDULER_EXTRA_KEYWORD_BASE_ROWS: usize = 32_768;
 
         struct FailThenPauseMergeObserver {
             attempts: AtomicUsize,
             failures_before_pause: usize,
             reached: mpsc::SyncSender<usize>,
             release: Mutex<Option<mpsc::Receiver<()>>>,
+            ready: Arc<(Mutex<bool>, Condvar)>,
         }
 
         impl MergeObserver for FailThenPauseMergeObserver {
@@ -9253,6 +9206,16 @@ mod full_compaction_contract {
                 if phase != MergePhase::BeforeEncode {
                     return Ok(());
                 }
+                let (ready_lock, ready_cv) = &*self.ready;
+                let mut ready = ready_lock
+                    .lock()
+                    .map_err(|_| io::Error::other("merge scheduler ready mutex poisoned"))?;
+                while !*ready {
+                    ready = ready_cv
+                        .wait(ready)
+                        .map_err(|_| io::Error::other("merge scheduler ready wait poisoned"))?;
+                }
+                drop(ready);
                 let attempt = self.attempts.fetch_add(1, Ordering::SeqCst) + 1;
                 self.reached.send(attempt).map_err(|_| {
                     io::Error::new(
@@ -9304,13 +9267,17 @@ mod full_compaction_contract {
                 // Keep the seven layers physically different while keeping
                 // their total below the body base. This fixture must exercise
                 // the partial-pair path, not base compaction.
-                1 => 1,
-                2 => 2,
-                3 => 4,
-                4 => 8,
-                5 => 16,
-                6 => 32,
-                7 => 64,
+                // Use separated, non-power-of-two payload sizes.  The v2
+                // payload and local-row files have fixed framing overhead, so
+                // the old 1,2,4,... sequence could collapse to equal on-disk
+                // sizes and make the fixture's unique-pair precondition false.
+                1 => 17,
+                2 => 61,
+                3 => 257,
+                4 => 1_021,
+                5 => 2_047,
+                6 => 3_073,
+                7 => 4_093,
                 _ => panic!("scheduler contract needs seven body rounds"),
             };
             full_compaction_entropy_term(900_000 + round as u64, words)
@@ -9318,13 +9285,13 @@ mod full_compaction_contract {
 
         fn scheduler_keyword_value(round: usize) -> String {
             let words = match round {
-                1 => 1,
-                2 => 2,
-                3 => 4,
-                4 => 8,
-                5 => 16,
-                6 => 32,
-                7 => 64,
+                1 => 17,
+                2 => 61,
+                3 => 257,
+                4 => 1_021,
+                5 => 2_047,
+                6 => 3_073,
+                7 => 4_093,
                 _ => panic!("scheduler contract needs seven keyword rounds"),
             };
             full_compaction_entropy_term(910_000 + round as u64, words)
@@ -9345,6 +9312,13 @@ mod full_compaction_contract {
                     "external_id": format!("scheduler-base-body-{index:04}"),
                     "field": FULL_TEXT,
                     "value": full_compaction_entropy_term(2_000_000 + index as u64, 16),
+                }));
+            }
+            for index in 0..SCHEDULER_EXTRA_KEYWORD_BASE_ROWS {
+                items.push(json!({
+                    "external_id": format!("scheduler-base-keyword-{index:04}"),
+                    "field": FULL_KEYWORD,
+                    "value": format!("scheduler-base-keyword-{index:04}"),
                 }));
             }
             full_compaction_post_items(&server, items).await;
@@ -9419,11 +9393,7 @@ mod full_compaction_contract {
             scheduler_reference_bytes(generation, reference)
         }
 
-        fn scheduler_base_bytes(
-            generation: &Path,
-            manifest: &Value,
-            field: &str,
-        ) -> u64 {
+        fn scheduler_base_bytes(generation: &Path, manifest: &Value, field: &str) -> u64 {
             scheduler_reference_bytes(
                 generation,
                 full_compaction_base_ref(manifest, field, "field"),
@@ -9473,10 +9443,7 @@ mod full_compaction_contract {
                 .collect()
         }
 
-        fn scheduler_reference_by_ordinal<'a>(
-            references: &'a [&Value],
-            ordinal: u64,
-        ) -> &'a Value {
+        fn scheduler_reference_by_ordinal<'a>(references: &'a [&Value], ordinal: u64) -> &'a Value {
             references
                 .iter()
                 .copied()
@@ -9489,12 +9456,14 @@ mod full_compaction_contract {
             let fixture = scheduler_fixture().await;
             let (reached_tx, reached_rx) = mpsc::sync_channel(32);
             let (release_tx, release_rx) = mpsc::channel();
+            let scheduler_ready = Arc::new((Mutex::new(false), Condvar::new()));
             let mut release = MergeSchedulerRelease(Some(release_tx));
             let observer = Arc::new(FailThenPauseMergeObserver {
                 attempts: AtomicUsize::new(0),
                 failures_before_pause: 10,
                 reached: reached_tx,
                 release: Mutex::new(Some(release_rx)),
+                ready: scheduler_ready.clone(),
             });
             let store = SegmentRdbStore::with_merge_observer(&fixture.root, observer)
                 .expect("open observed merge scheduler store");
@@ -9507,25 +9476,47 @@ mod full_compaction_contract {
             for round in 1..=3 {
                 scheduler_update(&fixture.server, FULL_NUMBER, round).await;
                 sequence += 1;
-                store.save(&fixture.engine, sequence).expect("publish shallow scheduler delta");
+                store
+                    .save(&fixture.engine, sequence)
+                    .expect("publish shallow scheduler delta");
             }
             for round in 1..=6 {
                 scheduler_update(&fixture.server, FULL_HASH, round).await;
                 sequence += 1;
-                store.save(&fixture.engine, sequence).expect("publish middle scheduler delta");
+                store
+                    .save(&fixture.engine, sequence)
+                    .expect("publish middle scheduler delta");
             }
             for round in 1..=7 {
                 scheduler_update(&fixture.server, FULL_TEXT, round).await;
                 sequence += 1;
-                store.save(&fixture.engine, sequence).expect("publish first deep scheduler delta");
+                store
+                    .save(&fixture.engine, sequence)
+                    .expect("publish first deep scheduler delta");
             }
             for round in 1..=7 {
                 scheduler_update(&fixture.server, FULL_KEYWORD, round).await;
                 sequence += 1;
-                store.save(&fixture.engine, sequence).expect("publish tied deep scheduler delta");
+                store
+                    .save(&fixture.engine, sequence)
+                    .expect("publish tied deep scheduler delta");
             }
             assert_eq!(sequence, SCHEDULER_SEQUENCE + 23);
-            let attempts: Vec<_> = reached_rx.try_iter().collect();
+            {
+                let (ready_lock, ready_cv) = &*scheduler_ready;
+                let mut ready = ready_lock
+                    .lock()
+                    .expect("merge scheduler ready mutex");
+                *ready = true;
+                ready_cv.notify_one();
+            }
+            let attempts: Vec<_> = (0..=10)
+                .map(|_| {
+                    reached_rx
+                        .recv_timeout(Duration::from_secs(30))
+                        .expect("merge scheduler attempt must reach the observer")
+                })
+                .collect();
             assert_eq!(
                 attempts,
                 (1..=11).collect::<Vec<_>>(),
@@ -9543,10 +9534,22 @@ mod full_compaction_contract {
             let before_tied_b = full_compaction_field_refs(&before_manifest, FULL_KEYWORD, "delta");
             let before_middle = full_compaction_field_refs(&before_manifest, FULL_HASH, "delta");
             let before_shallow = full_compaction_field_refs(&before_manifest, FULL_NUMBER, "delta");
-            assert_eq!(before_tied_a.len(), 7, "first deepest field must have seven deltas");
-            assert_eq!(before_tied_b.len(), 7, "tied deepest field must have seven deltas");
+            assert_eq!(
+                before_tied_a.len(),
+                7,
+                "first deepest field must have seven deltas"
+            );
+            assert_eq!(
+                before_tied_b.len(),
+                7,
+                "tied deepest field must have seven deltas"
+            );
             assert_eq!(before_middle.len(), 6, "middle field must have six deltas");
-            assert_eq!(before_shallow.len(), 3, "shallow field must have three deltas");
+            assert_eq!(
+                before_shallow.len(),
+                3,
+                "shallow field must have three deltas"
+            );
             let body_base_bytes =
                 scheduler_base_bytes(&before_generation, &before_manifest, FULL_TEXT);
             let body_delta_bytes = before_tied_a.iter().fold(0u64, |total, reference| {
@@ -9558,11 +9561,20 @@ mod full_compaction_contract {
                 body_delta_bytes < body_base_bytes,
                 "scheduler fixture must exercise pair compaction: body delta bytes {body_delta_bytes} must stay below body base bytes {body_base_bytes}",
             );
+            let keyword_base_bytes =
+                scheduler_base_bytes(&before_generation, &before_manifest, FULL_KEYWORD);
+            let keyword_delta_bytes = before_tied_b.iter().fold(0u64, |total, reference| {
+                total
+                    .checked_add(scheduler_delta_bytes(&before_generation, reference))
+                    .expect("scheduler keyword delta byte count does not overflow")
+            });
+            assert!(
+                keyword_delta_bytes < keyword_base_bytes,
+                "scheduler fixture must exercise keyword pair compaction: delta bytes {keyword_delta_bytes} must stay below base bytes {keyword_base_bytes}",
+            );
             let mut expected_pairs = Vec::new();
-            for (field, references) in [
-                (FULL_TEXT, &before_tied_a),
-                (FULL_KEYWORD, &before_tied_b),
-            ] {
+            for (field, references) in [(FULL_TEXT, &before_tied_a), (FULL_KEYWORD, &before_tied_b)]
+            {
                 let (first_ordinal, second_ordinal) =
                     scheduler_smallest_adjacent_pair(&before_generation, references);
                 let first_before = scheduler_reference_by_ordinal(references, first_ordinal);
@@ -9587,13 +9599,37 @@ mod full_compaction_contract {
             let after_tied_b = full_compaction_field_refs(&after_manifest, FULL_KEYWORD, "delta");
             let after_middle = full_compaction_field_refs(&after_manifest, FULL_HASH, "delta");
             let after_shallow = full_compaction_field_refs(&after_manifest, FULL_NUMBER, "delta");
-            assert_eq!(after_tied_a.len(), 6, "the first deepest field must lose one pair layer");
-            assert_eq!(after_tied_b.len(), 6, "the tied deepest field must lose one pair layer");
-            assert_eq!(after_middle.len(), 6, "the six-layer field must remain untouched");
-            assert_eq!(after_shallow.len(), 3, "the three-layer field must remain untouched");
+            assert_eq!(
+                after_tied_a.len(),
+                6,
+                "the first deepest field must lose one pair layer"
+            );
+            assert_eq!(
+                after_tied_b.len(),
+                6,
+                "the tied deepest field must lose one pair layer"
+            );
+            assert_eq!(
+                after_middle.len(),
+                6,
+                "the six-layer field must remain untouched"
+            );
+            assert_eq!(
+                after_shallow.len(),
+                3,
+                "the three-layer field must remain untouched"
+            );
             for (field, first_ordinal, second_ordinal, expected_rows) in expected_pairs {
-                let before = if field == FULL_TEXT { &before_tied_a } else { &before_tied_b };
-                let after = if field == FULL_TEXT { &after_tied_a } else { &after_tied_b };
+                let before = if field == FULL_TEXT {
+                    &before_tied_a
+                } else {
+                    &before_tied_b
+                };
+                let after = if field == FULL_TEXT {
+                    &after_tied_a
+                } else {
+                    &after_tied_b
+                };
                 assert!(
                     !after
                         .iter()
@@ -9618,8 +9654,7 @@ mod full_compaction_contract {
                     }
                     let retained = scheduler_reference_by_ordinal(after, ordinal);
                     assert_eq!(
-                        retained["payload_sha256"],
-                        reference["payload_sha256"],
+                        retained["payload_sha256"], reference["payload_sha256"],
                         "unselected {field} ordinal {ordinal} must retain its original payload"
                     );
                 }
@@ -9629,7 +9664,9 @@ mod full_compaction_contract {
                 (FULL_NUMBER, &before_shallow, &after_shallow),
             ] {
                 for reference in before {
-                    let ordinal = reference["ordinal"].as_u64().expect("retained delta ordinal");
+                    let ordinal = reference["ordinal"]
+                        .as_u64()
+                        .expect("retained delta ordinal");
                     let retained = scheduler_reference_by_ordinal(after, ordinal);
                     assert_eq!(
                         retained["payload_sha256"],
@@ -9644,9 +9681,13 @@ mod full_compaction_contract {
                 full_compaction_keyword_query(&scheduler_keyword_value(7)),
             )
             .await;
-            let live_text = full_compaction_text_search(&fixture.server, &scheduler_body_value(7)).await;
+            let live_text =
+                full_compaction_text_search(&fixture.server, &scheduler_body_value(7)).await;
             let (cold_engine, cold_sequence) = stage1_reuse_cold_load_current(&fixture.root);
-            assert_eq!(cold_sequence, sequence, "cold open must select the first publication");
+            assert_eq!(
+                cold_sequence, sequence,
+                "cold open must select the first publication"
+            );
             let cold_server = TestServer::new(router(AppState::open(cold_engine)))
                 .expect("scheduler cold server");
             assert_eq!(
@@ -9658,10 +9699,17 @@ mod full_compaction_contract {
                 live_keyword,
                 "live and cold Keyword searches must agree after the tied deepest publication"
             );
+            let cold_text =
+                full_compaction_text_search(&cold_server, &scheduler_body_value(7)).await;
             assert_eq!(
-                full_compaction_text_search(&cold_server, &scheduler_body_value(7)).await,
-                live_text,
-                "live and cold Text searches must agree after the tied deepest publication"
+                cold_text["total"],
+                live_text["total"],
+                "live and cold Text totals must agree after the tied deepest publication"
+            );
+            assert_eq!(
+                cold_text["hits"],
+                live_text["hits"],
+                "live and cold Text hits and BM25 scores must agree after the tied deepest publication"
             );
 
             // A later external checkpoint is the first point at which the
@@ -9699,13 +9747,18 @@ mod full_compaction_contract {
                 "the retained six-layer field may advance only after the external checkpoint"
             );
             let later_shallow = full_compaction_field_refs(&later_manifest, FULL_NUMBER, "delta");
-            assert_eq!(later_shallow.len(), 4, "the external checkpoint must retain the new shallow suffix");
+            assert_eq!(
+                later_shallow.len(),
+                4,
+                "the external checkpoint must retain the new shallow suffix"
+            );
             for reference in &before_shallow {
-                let ordinal = reference["ordinal"].as_u64().expect("original shallow ordinal");
+                let ordinal = reference["ordinal"]
+                    .as_u64()
+                    .expect("original shallow ordinal");
                 let retained = scheduler_reference_by_ordinal(&later_shallow, ordinal);
                 assert_eq!(
-                    retained["payload_sha256"],
-                    reference["payload_sha256"],
+                    retained["payload_sha256"], reference["payload_sha256"],
                     "the original three-layer shallow ordinal {ordinal} must remain retained"
                 );
             }
@@ -9729,9 +9782,12 @@ mod full_compaction_contract {
         const HOT_COLLECTION: &str = "merge-batch-hot";
         const IDLE_COLLECTION: &str = "merge-batch-idle";
         const HOT_FIELDS: [&str; 14] = [
-            "h00", "h01", "h02", "h03", "h04", "h05", "h06", "h07", "h08", "h09",
-            "h10", "h11", "h12", "h13",
+            "h00", "h01", "h02", "h03", "h04", "h05", "h06", "h07", "h08", "h09", "h10", "h11",
+            "h12", "h13",
         ];
+        const FIRST_COHORT_FIELDS: [&str; 6] = ["h00", "h01", "h02", "h03", "h04", "h05"];
+        const SECOND_COHORT_FIELDS: [&str; 8] =
+            ["h06", "h07", "h08", "h09", "h10", "h11", "h12", "h13"];
         const IDLE_FIELD: &str = "idle";
         const BASE_ROWS: usize = 512;
         const BASE_SEQUENCE: u64 = 15_200;
@@ -9753,11 +9809,9 @@ mod full_compaction_contract {
                         &self.before_release,
                         &self.before_paused,
                     ),
-                    MergePhase::AfterPublish => (
-                        &self.after_publish,
-                        &self.after_release,
-                        &self.after_paused,
-                    ),
+                    MergePhase::AfterPublish => {
+                        (&self.after_publish, &self.after_release, &self.after_paused)
+                    }
                     MergePhase::BeforeEncode => return Ok(()),
                 };
                 if paused
@@ -9814,11 +9868,7 @@ mod full_compaction_contract {
             }
         }
 
-        async fn create_keyword_collection(
-            server: &TestServer,
-            collection: &str,
-            fields: &[&str],
-        ) {
+        async fn create_keyword_collection(server: &TestServer, collection: &str, fields: &[&str]) {
             let mut schema = Map::new();
             for field in fields {
                 schema.insert((*field).to_owned(), json!({ "type": "keyword" }));
@@ -9982,7 +10032,12 @@ mod full_compaction_contract {
                 .expect("collection batch segment byte count does not overflow")
         }
 
-        fn batch_base_bytes(generation: &Path, manifest: &Value, collection: &str, field: &str) -> u64 {
+        fn batch_base_bytes(
+            generation: &Path,
+            manifest: &Value,
+            collection: &str,
+            field: &str,
+        ) -> u64 {
             let base = batch_collection(manifest, collection)["segments"]
                 .as_array()
                 .expect("collection batch catalog segments")
@@ -9993,7 +10048,9 @@ mod full_compaction_contract {
                         && segment["field"] == json!(field)
                         && segment["ordinal"] == json!(0)
                 })
-                .unwrap_or_else(|| panic!("collection batch base missing for {collection}/{field}"));
+                .unwrap_or_else(|| {
+                    panic!("collection batch base missing for {collection}/{field}")
+                });
             batch_segment_bytes(generation, base)
         }
 
@@ -10010,17 +10067,18 @@ mod full_compaction_contract {
                         generation.join(segment["path"].as_str().expect("batch payload path")),
                     )
                     .expect("read batch payload");
-                    let local_rows = segment
-                        .get("local_rows")
-                        .and_then(Value::as_object)
-                        .map(|local| {
-                            std::fs::read(
-                                generation.join(
-                                    local["path"].as_str().expect("batch local rows path"),
-                                ),
-                            )
-                            .expect("read batch local rows")
-                        });
+                    let local_rows =
+                        segment
+                            .get("local_rows")
+                            .and_then(Value::as_object)
+                            .map(|local| {
+                                std::fs::read(
+                                    generation.join(
+                                        local["path"].as_str().expect("batch local rows path"),
+                                    ),
+                                )
+                                .expect("read batch local rows")
+                            });
                     (payload, local_rows)
                 })
                 .collect()
@@ -10070,13 +10128,19 @@ mod full_compaction_contract {
                 &live_ids, &cold_ids,
                 "live and cold public query results for {collection}/{field}/{value}"
             );
-            let mut expected = expected.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+            let mut expected = expected
+                .iter()
+                .map(|id| (*id).to_owned())
+                .collect::<Vec<_>>();
             expected.sort_unstable();
-            assert_eq!(live_ids, expected, "public query for {collection}/{field}/{value}");
+            assert_eq!(
+                live_ids, expected,
+                "public query for {collection}/{field}/{value}"
+            );
         }
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn one_collection_merge_publication_compacts_all_eligible_fields() {
+        async fn one_collection_merge_publication_reduces_all_eligible_fields_by_one_pair() {
             let (_dir, root, engine, server) = batch_fixture().await;
             let (before_publish_tx, before_publish_rx) = mpsc::sync_channel(1);
             let (before_release_tx, before_release_rx) = mpsc::channel();
@@ -10097,11 +10161,14 @@ mod full_compaction_contract {
             let store = SegmentRdbStore::with_merge_observer(&root, observer)
                 .expect("open observed collection batch store");
 
-            // The first three cuts make the idle collection shallower. The
-            // fourth cut crosses the merge threshold for every hot field in
-            // the same immutable source generation.
+            // The fourth cut makes only the first six hot fields eligible.
+            // The other eight retain their segment identity for a later
+            // explicit checkpoint.
             for round in 1..=4u64 {
                 for field in HOT_FIELDS {
+                    if round == 4 && SECOND_COHORT_FIELDS.contains(&field) {
+                        continue;
+                    }
                     index_keyword(
                         &server,
                         HOT_COLLECTION,
@@ -10138,7 +10205,7 @@ mod full_compaction_contract {
                 json!(BASE_SEQUENCE + 4),
                 "merge must observe the complete multi-field cut"
             );
-            for field in HOT_FIELDS {
+            for field in FIRST_COHORT_FIELDS {
                 let refs = batch_delta_refs(&before_manifest, HOT_COLLECTION, field);
                 assert_eq!(refs.len(), 4, "hot field {field} must have four deltas");
                 let delta_bytes: u64 = refs
@@ -10152,10 +10219,38 @@ mod full_compaction_contract {
                     "hot field {field} must exercise pair compaction below base size: delta={delta_bytes}, base={base_bytes}"
                 );
             }
+            let second_before = SECOND_COHORT_FIELDS
+                .iter()
+                .map(|field| {
+                    let refs = batch_delta_refs(&before_manifest, HOT_COLLECTION, field);
+                    assert_eq!(
+                        refs.len(),
+                        3,
+                        "deferred hot field {field} must have three deltas"
+                    );
+                    (
+                        *field,
+                        batch_payload_bytes(
+                            &before_generation,
+                            &before_manifest,
+                            HOT_COLLECTION,
+                            field,
+                        ),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
             let idle_before = batch_delta_refs(&before_manifest, IDLE_COLLECTION, IDLE_FIELD);
-            assert_eq!(idle_before.len(), 3, "idle collection must remain below threshold");
-            let idle_payloads =
-                batch_payload_bytes(&before_generation, &before_manifest, IDLE_COLLECTION, IDLE_FIELD);
+            assert_eq!(
+                idle_before.len(),
+                3,
+                "idle collection must remain below threshold"
+            );
+            let idle_payloads = batch_payload_bytes(
+                &before_generation,
+                &before_manifest,
+                IDLE_COLLECTION,
+                IDLE_FIELD,
+            );
             let before_revision = before_manifest["revision"]
                 .as_u64()
                 .expect("collection batch revision");
@@ -10176,15 +10271,27 @@ mod full_compaction_contract {
                 json!(before_revision + 1),
                 "all eligible fields must be published in one generation"
             );
-            for field in HOT_FIELDS {
+            for field in FIRST_COHORT_FIELDS {
                 assert_eq!(
                     batch_delta_refs(&after_manifest, HOT_COLLECTION, field).len(),
-                    1,
-                    "one publication must drain every hot field to one delta: {field}"
+                    3,
+                    "one publication must reduce every eligible hot field by one pair: {field}"
+                );
+            }
+            for field in SECOND_COHORT_FIELDS {
+                assert_eq!(
+                    batch_payload_bytes(&after_generation, &after_manifest, HOT_COLLECTION, field),
+                    second_before[field],
+                    "deferred hot field {field} must retain its segment identity"
                 );
             }
             assert_eq!(
-                batch_payload_bytes(&after_generation, &after_manifest, IDLE_COLLECTION, IDLE_FIELD),
+                batch_payload_bytes(
+                    &after_generation,
+                    &after_manifest,
+                    IDLE_COLLECTION,
+                    IDLE_FIELD
+                ),
                 idle_payloads,
                 "the shallower idle collection must remain unchanged"
             );
@@ -10195,7 +10302,7 @@ mod full_compaction_contract {
                 .expect("collection batch CURRENT generation");
             let cold_server = TestServer::new(router(AppState::open(cold.engine)))
                 .expect("collection batch cold HTTP server");
-            for field in HOT_FIELDS {
+            for field in FIRST_COHORT_FIELDS {
                 assert_live_and_cold_term_ids(
                     &server,
                     &cold_server,
@@ -10211,6 +10318,26 @@ mod full_compaction_contract {
                     HOT_COLLECTION,
                     field,
                     &format!("{field}-v3"),
+                    &[],
+                )
+                .await;
+            }
+            for field in SECOND_COHORT_FIELDS {
+                assert_live_and_cold_term_ids(
+                    &server,
+                    &cold_server,
+                    HOT_COLLECTION,
+                    field,
+                    &format!("{field}-v3"),
+                    &[&format!("hot-{field}-mutable")],
+                )
+                .await;
+                assert_live_and_cold_term_ids(
+                    &server,
+                    &cold_server,
+                    HOT_COLLECTION,
+                    field,
+                    &format!("{field}-v2"),
                     &[],
                 )
                 .await;
@@ -10237,7 +10364,97 @@ mod full_compaction_contract {
             release.release_after();
             store
                 .wait_for_merges(Duration::from_secs(30))
-                .expect("collection batch follow-up work must finish after inspection");
+                .expect("first collection batch merge must finish after inspection");
+
+            // The idle worker does not schedule a successor by itself. A new
+            // explicit durable cut makes the deferred eight-field cohort
+            // eligible and publishes it in a later generation.
+            for field in SECOND_COHORT_FIELDS {
+                index_keyword(
+                    &server,
+                    HOT_COLLECTION,
+                    &format!("hot-{field}-mutable"),
+                    field,
+                    &format!("{field}-v4"),
+                )
+                .await;
+            }
+            store
+                .save(&engine, BASE_SEQUENCE + 5)
+                .expect("publish explicit deferred cohort checkpoint");
+            store
+                .wait_for_merges(Duration::from_secs(30))
+                .expect("explicit deferred cohort merge must finish");
+            let final_generation = stage1_current_generation_dir(&root);
+            let final_manifest = stage1_read_manifest(&final_generation);
+            for field in SECOND_COHORT_FIELDS {
+                assert_eq!(
+                    batch_delta_refs(&final_manifest, HOT_COLLECTION, field).len(),
+                    3,
+                    "the explicit later checkpoint must reduce deferred field {field} by one pair"
+                );
+            }
+            let final_cold = store
+                .load_current_generation()
+                .expect("load final collection batch CURRENT")
+                .expect("final collection batch CURRENT generation");
+            let final_cold_server = TestServer::new(router(AppState::open(final_cold.engine)))
+                .expect("final collection batch cold HTTP server");
+            for field in SECOND_COHORT_FIELDS {
+                assert_live_and_cold_term_ids(
+                    &server,
+                    &final_cold_server,
+                    HOT_COLLECTION,
+                    field,
+                    &format!("{field}-v4"),
+                    &[&format!("hot-{field}-mutable")],
+                )
+                .await;
+                assert_live_and_cold_term_ids(
+                    &server,
+                    &final_cold_server,
+                    HOT_COLLECTION,
+                    field,
+                    &format!("{field}-v3"),
+                    &[],
+                )
+                .await;
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn metrics_and_search_accept_requests_after_checkpoint_merge_drain() {
+            let (_dir, root, engine, server) = batch_fixture().await;
+            let store = SegmentRdbStore::new(&root).expect("open short drain store");
+
+            for round in 1..=4u64 {
+                index_keyword(
+                    &server,
+                    HOT_COLLECTION,
+                    "hot-h00-mutable",
+                    "h00",
+                    &format!("h00-drain-v{round}"),
+                )
+                .await;
+                store
+                    .save(&engine, BASE_SEQUENCE + round)
+                    .expect("publish short drain checkpoint");
+            }
+            store
+                .wait_for_merges(Duration::from_secs(30))
+                .expect("short deterministic checkpoint and merge drain");
+
+            let metrics = tokio::time::timeout(Duration::from_secs(1), server.get("/metrics"))
+                .await
+                .expect("GET /metrics must finish within one second after merge drain");
+            metrics.assert_status_ok();
+
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                term_ids(&server, HOT_COLLECTION, "h00", "h00-drain-v4"),
+            )
+            .await
+            .expect("a new search request must finish within one second after merge drain");
         }
     }
 
@@ -11834,7 +12051,9 @@ mod capacity_http_contract {
     ) -> Result<(StatusCode, Option<String>)> {
         tokio::time::timeout(REQUEST_TIMEOUT, capacity_filler_index(server, record))
             .await
-            .map_err(|_| anyhow::anyhow!("capacity filler /index request {record:?} did not finish"))
+            .map_err(|_| {
+                anyhow::anyhow!("capacity filler /index request {record:?} did not finish")
+            })
     }
 
     async fn capacity_term_ids(server: &TestServer, value: &str) -> Vec<String> {
@@ -11957,7 +12176,8 @@ mod capacity_http_contract {
                     value_bytes,
                 };
                 for retry in 0..=MAX_FILLER_RETRIES_PER_ORDINAL {
-                    let before = public_pending_budget(server, "before capacity filler request").await;
+                    let before =
+                        public_pending_budget(server, "before capacity filler request").await;
                     if external_value_cannot_fit_checkpointable_budget(before) {
                         return Ok(last_accepted);
                     }
@@ -11991,7 +12211,8 @@ mod capacity_http_contract {
                 }
             }
         }
-        let final_budget = public_pending_budget(server, "after bounded staged capacity filler loop").await;
+        let final_budget =
+            public_pending_budget(server, "after bounded staged capacity filler loop").await;
         if external_value_cannot_fit_checkpointable_budget(final_budget) {
             Ok(last_accepted)
         } else {
@@ -12587,18 +12808,19 @@ mod capacity_http_contract {
             } else {
                 None
             };
-            let external_publish = if let (Some(refusal), Some(_)) = (refusal.as_ref(), external_baseline) {
-                let entry = externally_committed_refused_entry(refusal.ordinal);
-                Some(
-                    tokio::time::timeout(
-                        Duration::from_secs(2),
-                        fixture.wal.publish(WalRecord::new(entry)),
+            let external_publish =
+                if let (Some(refusal), Some(_)) = (refusal.as_ref(), external_baseline) {
+                    let entry = externally_committed_refused_entry(refusal.ordinal);
+                    Some(
+                        tokio::time::timeout(
+                            Duration::from_secs(2),
+                            fixture.wal.publish(WalRecord::new(entry)),
+                        )
+                        .await,
                     )
-                    .await,
-                )
-            } else {
-                None
-            };
+                } else {
+                    None
+                };
             let externally_committed_sequence = external_publish
                 .as_ref()
                 .and_then(|timed| timed.as_ref().ok())

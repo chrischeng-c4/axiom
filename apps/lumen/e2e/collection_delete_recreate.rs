@@ -131,7 +131,10 @@ async fn tombstone_does_not_survive_restart() {
         .await
         .assert_status_ok();
 
-    let del = fixture.server.delete(&format!("/collections/{COLLECTION}")).await;
+    let del = fixture
+        .server
+        .delete(&format!("/collections/{COLLECTION}"))
+        .await;
     del.assert_status(StatusCode::ACCEPTED);
 
     fixture

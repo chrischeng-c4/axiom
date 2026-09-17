@@ -19,29 +19,32 @@
 //! re-indexing the same `(eid, field)` cleanly evicts the old postings
 //! before appending the new ones.
 
-mod committed_scalar_files;
-mod committed_index_plan;
 mod committed_index_apply;
-mod committed_text_apply;
+mod committed_index_plan;
 mod committed_replace_apply;
 mod committed_replace_plan;
 mod committed_replace_view;
+mod committed_scalar_files;
+mod committed_text_apply;
+#[cfg(feature = "jieba")]
+mod jieba_disk_route;
+mod large_text_row;
 mod record_admission;
 mod record_apply;
 mod record_charges;
 mod record_ram;
-#[cfg(feature = "jieba")]
-mod jieba_disk_route;
+mod scalar_projection;
 mod staged_text_row;
-mod unicode_lower_stream;
-mod large_text_row;
 mod staged_vector_row;
 mod text_preparation;
 mod text_projection;
-mod scalar_projection;
-pub(crate) use text_projection::write_checkpoint_rows as write_text_checkpoint_rows;
+mod unicode_lower_stream;
+pub(crate) use record_admission::{
+    RecordAdmissionError, RecordApplyGuard, RecordReservation, RecordTransientReservation,
+    RepriceRecord,
+};
 pub(crate) use scalar_projection::write_checkpoint_rows as write_scalar_checkpoint_rows;
-pub(crate) use record_admission::{RecordAdmissionError, RecordReservation, RecordApplyGuard, RepriceRecord};
+pub(crate) use text_projection::write_checkpoint_rows as write_text_checkpoint_rows;
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -60,8 +63,8 @@ use thiserror::Error;
 
 use crate::composed_segment::TextPostingAt;
 use crate::metrics::Metrics;
-use crate::segment::SortedIdCursor;
 use crate::routing::VirtualBucketShardMap;
+use crate::segment::SortedIdCursor;
 use crate::tokenize;
 use crate::types::{
     validate_batch_unindex_docs_request, Analyzer, BatchUnindexDocsRequest, CacheStats,
@@ -1137,21 +1140,34 @@ impl TextIndex {
             }
         }
         let older = self.unstaged_tok_postings(tok);
-        if incoming.is_empty() { return older; }
+        if incoming.is_empty() {
+            return older;
+        }
         let old_ids = older.as_ref().map_or(&[][..], |p| p.docids());
         let old_tfs = older.as_ref().map_or(&[][..], |p| p.tfs());
         let mut docids = Vec::with_capacity(old_ids.len() + incoming.len());
         let mut tfs = Vec::with_capacity(old_ids.len() + incoming.len());
-        let mut prior = old_ids.iter().copied().zip(old_tfs.iter().copied()).peekable();
+        let mut prior = old_ids
+            .iter()
+            .copied()
+            .zip(old_tfs.iter().copied())
+            .peekable();
         for (id, tf) in incoming {
             while prior.peek().is_some_and(|(older, _)| *older < id) {
                 let (id, tf) = prior.next().unwrap();
-                docids.push(id); tfs.push(tf);
+                docids.push(id);
+                tfs.push(tf);
             }
-            if prior.peek().is_some_and(|(older, _)| *older == id) { prior.next(); }
-            docids.push(id); tfs.push(tf);
+            if prior.peek().is_some_and(|(older, _)| *older == id) {
+                prior.next();
+            }
+            docids.push(id);
+            tfs.push(tf);
         }
-        for (id, tf) in prior { docids.push(id); tfs.push(tf); }
+        for (id, tf) in prior {
+            docids.push(id);
+            tfs.push(tf);
+        }
         Some(TokPostings::Combined { docids, tfs })
     }
 
@@ -1219,7 +1235,8 @@ impl TextIndex {
                 None => return self.tok_postings(tok),
             }
         };
-        let df = staged.len() + (live_ids.len() - count_common_sorted(live_ids, &staged_ids)) + seg_df;
+        let df =
+            staged.len() + (live_ids.len() - count_common_sorted(live_ids, &staged_ids)) + seg_df;
         if df == 0 {
             return None;
         }
@@ -1245,7 +1262,11 @@ impl TextIndex {
                 tfs.push(tf);
             }
         }
-        Some(TokPostings::Sparse(std::sync::Arc::new(SparsePosting { df, docids, tfs })))
+        Some(TokPostings::Sparse(std::sync::Arc::new(SparsePosting {
+            df,
+            docids,
+            tfs,
+        })))
     }
 
     fn unstaged_tok_postings(&self, tok: &str) -> Option<TokPostings<'_>> {
@@ -3473,7 +3494,10 @@ impl TokenSet {
             Self::Inline(tokens) => (Some(tokens), None),
             Self::Indexed(tokens) => (None, Some(tokens)),
         };
-        inline.into_iter().flatten().chain(indexed.into_iter().flatten())
+        inline
+            .into_iter()
+            .flatten()
+            .chain(indexed.into_iter().flatten())
     }
 
     fn from_btree_set(set: BTreeSet<String>) -> Self {
@@ -3503,7 +3527,11 @@ mod token_set_tests {
         }
         assert!(matches!(&tokens, TokenSet::Indexed(_)));
         assert_eq!(
-            tokens.iter().find(|s| s.as_str() == "term-0000").unwrap().as_ptr(),
+            tokens
+                .iter()
+                .find(|s| s.as_str() == "term-0000")
+                .unwrap()
+                .as_ptr(),
             original,
             "promotion must move existing token allocations"
         );
@@ -4389,7 +4417,10 @@ pub(crate) enum CheckpointValue {
     StagedVector(Arc<staged_vector_row::StagedVectorRow>),
     /// File-backed value kept by the immutable dirty journal. The reader owns
     /// its private directory until every live reader and checkpoint releases it.
-    StagedScalar { reader: Arc<crate::segment::SegmentReader>, row: u32 },
+    StagedScalar {
+        reader: Arc<crate::segment::SegmentReader>,
+        row: u32,
+    },
     Keyword(String),
     Number(f64),
     Set(Vec<String>),
@@ -4438,8 +4469,10 @@ pub(crate) struct CheckpointCapture {
     pub prepared_compactions: BTreeMap<String, Vec<PreparedCheckpointCompaction>>,
     /// Immutable scalar views pinned at the capture barrier. Preparation turns
     /// these into catalog-only replacements before publication can advance.
-    pub scalar_cuts: BTreeMap<String, BTreeMap<String, crate::composed_segment::ScalarCheckpointCut>>,
-    pub scalar_publications: BTreeMap<String, BTreeMap<String, crate::composed_segment::PreparedScalarPublication>>,
+    pub scalar_cuts:
+        BTreeMap<String, BTreeMap<String, crate::composed_segment::ScalarCheckpointCut>>,
+    pub scalar_publications:
+        BTreeMap<String, BTreeMap<String, crate::composed_segment::PreparedScalarPublication>>,
     /// Stable runtime IDs and dirty-match bits computed outside the apply lease.
     pub scalar_retire: BTreeMap<String, BTreeMap<String, Vec<(u32, String, u64)>>>,
     pub live_delta_inputs:
@@ -4618,9 +4651,16 @@ impl FrozenCheckpoint {
             // No live index or HNSW graph is inspected or replaced.
             let empty = if let FrozenCollectionFiles::EmptyBase { schema, version } = files {
                 let collection = Collection::new(schema.clone())?;
-                let fields = collection.fields.iter().map(|(field, index)| {
-                    Ok((field.clone(), FrozenField::capture(index, &collection, field)?))
-                }).collect::<Result<_>>()?;
+                let fields = collection
+                    .fields
+                    .iter()
+                    .map(|(field, index)| {
+                        Ok((
+                            field.clone(),
+                            FrozenField::capture(index, &collection, field)?,
+                        ))
+                    })
+                    .collect::<Result<_>>()?;
                 Some(FrozenCollectionFiles::Base {
                     schema: schema.clone(),
                     version: *version,
@@ -4634,7 +4674,9 @@ impl FrozenCheckpoint {
             let files = empty.as_ref().unwrap_or(files);
             match files {
                 FrozenCollectionFiles::Linked(origin) => hard_link_checkpoint_tree(origin, &dir)?,
-                FrozenCollectionFiles::EmptyBase { .. } => unreachable!("empty codec inputs were prepared above"),
+                FrozenCollectionFiles::EmptyBase { .. } => {
+                    unreachable!("empty codec inputs were prepared above")
+                }
                 FrozenCollectionFiles::Base {
                     schema,
                     version,
@@ -4838,10 +4880,7 @@ fn install_scalar_checkpoint_publication(
     Ok(())
 }
 
-fn checkpoint_scalar_retire_matches(
-    current: Option<&u64>,
-    captured_revision: u64,
-) -> bool {
+fn checkpoint_scalar_retire_matches(current: Option<&u64>, captured_revision: u64) -> bool {
     current == Some(&captured_revision)
 }
 
@@ -5284,7 +5323,10 @@ impl Engine {
                         idx.delta_docs.insert(id, (doc_len, distinct));
                         idx.clear_match_rank_cache();
                     }
-                    (FieldIndex::Vector { idx, bytes, .. }, CheckpointValue::StagedVector(value)) => {
+                    (
+                        FieldIndex::Vector { idx, bytes, .. },
+                        CheckpointValue::StagedVector(value),
+                    ) => {
                         idx.restore_checkpoint_vector(&eid, value.as_f32_slice())?;
                         *bytes += (value.dim() * 4 + eid.len()) as u64;
                     }
@@ -5407,9 +5449,14 @@ impl Engine {
         &self,
         root_guard: crate::segment_rdb::CheckpointRootGuard,
     ) {
-        let mut guards = self.checkpoint_root_guards.lock()
+        let mut guards = self
+            .checkpoint_root_guards
+            .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !guards.iter().any(|existing| Arc::ptr_eq(existing, &root_guard)) {
+        if !guards
+            .iter()
+            .any(|existing| Arc::ptr_eq(existing, &root_guard))
+        {
             guards.push(root_guard);
         }
     }
@@ -5733,7 +5780,14 @@ impl Engine {
                 .collections
                 .get_mut(collection_id)
                 .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-            Self::index_collection(&self.metrics, collection_id, coll, req, charge, prepared_text)
+            Self::index_collection(
+                &self.metrics,
+                collection_id,
+                coll,
+                req,
+                charge,
+                prepared_text,
+            )
         };
         // Keep the live gauge correct even when a malformed batch partially
         // applied before returning its error: it must describe the real local
@@ -5864,7 +5918,14 @@ impl Engine {
                     if field_already_indexed {
                         fi.drop_eid(id, eid);
                     }
-                    match apply_prepared_value(fi, id, eid, &items[pos].value, field, prepared_text.and_then(|rows| rows.get(pos, field))) {
+                    match apply_prepared_value(
+                        fi,
+                        id,
+                        eid,
+                        &items[pos].value,
+                        field,
+                        prepared_text.and_then(|rows| rows.get(pos, field)),
+                    ) {
                         Ok(bytes) => bytes,
                         Err(e) => {
                             // `drop_eid` above already made the old value
@@ -6137,7 +6198,14 @@ impl Engine {
                 .collections
                 .get_mut(collection_id)
                 .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-            Self::replace_docs_collection(&self.metrics, collection_id, coll, req, charge, prepared_text)
+            Self::replace_docs_collection(
+                &self.metrics,
+                collection_id,
+                coll,
+                req,
+                charge,
+                prepared_text,
+            )
         };
         self.publish_storage_bytes(&state);
         outcome
@@ -6171,7 +6239,8 @@ impl Engine {
         let mut total_bytes = 0u64;
         let mut any_written = false;
         for (ordinal, item) in req.docs.into_iter().enumerate() {
-            let (result, bytes) = Self::replace_one_doc(collection_id, coll, item, ordinal, charge, prepared_text);
+            let (result, bytes) =
+                Self::replace_one_doc(collection_id, coll, item, ordinal, charge, prepared_text);
             if let ReplaceDocResult::Ok {
                 fields_written,
                 fields_skipped,
@@ -6321,7 +6390,14 @@ impl Engine {
             if is_delta {
                 fi.drop_eid(id, &eid);
             }
-            let bytes = match apply_prepared_value(fi, id, &eid, value, field_name, prepared_text.and_then(|rows| rows.get(ordinal, field_name))) {
+            let bytes = match apply_prepared_value(
+                fi,
+                id,
+                &eid,
+                value,
+                field_name,
+                prepared_text.and_then(|rows| rows.get(ordinal, field_name)),
+            ) {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     // Validation normally makes this unreachable, but an
@@ -7361,8 +7437,10 @@ impl Engine {
             .owner
             .freeze()
             .map_err(|error| anyhow!("candidate pending budget: {error:?}"))?;
-        for guard in replacement_root_guards.into_inner()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) {
+        for guard in replacement_root_guards
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
             self.retain_checkpoint_root(guard);
         }
         _apply.replace_epoch();
@@ -7738,8 +7816,7 @@ impl Engine {
     pub fn stats(&self, collection_id: &str) -> Result<StatsResponse> {
         #[cfg(test)]
         {
-            *STATS_THREAD.lock().expect("stats thread record") =
-                Some(std::thread::current().id());
+            *STATS_THREAD.lock().expect("stats thread record") = Some(std::thread::current().id());
         }
         let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
@@ -7827,12 +7904,15 @@ impl Engine {
             RaftLogEntry::CreateCollection { collection_id, req } => {
                 ApplyOutcome::Created(self.create_collection_inner(&collection_id, req)?)
             }
-            RaftLogEntry::Index { collection_id, req } => {
-                ApplyOutcome::Indexed(self.index_inner(&collection_id, req, charge, prepared_text)?)
-            }
-            RaftLogEntry::ReplaceDocs { collection_id, req } => {
-                ApplyOutcome::Replaced(self.replace_docs_inner(&collection_id, req, charge, prepared_text)?)
-            }
+            RaftLogEntry::Index { collection_id, req } => ApplyOutcome::Indexed(self.index_inner(
+                &collection_id,
+                req,
+                charge,
+                prepared_text,
+            )?),
+            RaftLogEntry::ReplaceDocs { collection_id, req } => ApplyOutcome::Replaced(
+                self.replace_docs_inner(&collection_id, req, charge, prepared_text)?,
+            ),
             RaftLogEntry::TruncateDocs { collection_id } => {
                 self.truncate_docs_inner(&collection_id)?;
                 ApplyOutcome::DocsTruncated
@@ -7932,11 +8012,19 @@ fn validate_schema(schema: &BTreeMap<String, FieldSpec>) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn apply_prepared_value(
-    fi: &mut FieldIndex, id: u32, eid: &str, value: &FieldValue, field: &str,
+    fi: &mut FieldIndex,
+    id: u32,
+    eid: &str,
+    value: &FieldValue,
+    field: &str,
     prepared: Option<&Arc<staged_text_row::StagedTextRow>>,
 ) -> Result<u64> {
-    let Some(row) = prepared else { return apply_value(fi, id, eid, value, field); };
-    let FieldIndex::Text { idx, .. } = fi else { bail!("prepared Text field changed after validation"); };
+    let Some(row) = prepared else {
+        return apply_value(fi, id, eid, value, field);
+    };
+    let FieldIndex::Text { idx, .. } = fi else {
+        bail!("prepared Text field changed after validation");
+    };
     let bytes = row.indexed_bytes(eid);
     idx.staged_rows.insert(id, row.clone());
     idx.doc_count += 1;
@@ -9744,7 +9832,9 @@ mod match_rank_cache_tests {
             let interner = interner_with(n_ids);
             // Scores drawn from a small set so many entries tie and the
             // external-id tie-break actually gets exercised.
-            let entries: Vec<(u32, f32)> = (0..n_ids).map(|id| (id, rng.below(5) as f32 * 0.25)).collect();
+            let entries: Vec<(u32, f32)> = (0..n_ids)
+                .map(|id| (id, rng.below(5) as f32 * 0.25))
+                .collect();
             let reference = reference_full_sort(&entries, &interner);
             let mut state = MatchRankCache {
                 entries: entries.clone(),
@@ -9847,7 +9937,9 @@ mod match_rank_cache_tests {
             let dense = trial % 2 == 0;
             let mk_ids = |rng: &mut Rng, dense: bool| -> Vec<u32> {
                 let threshold = if dense { 1 } else { 6 };
-                let mut ids: Vec<u32> = (0..universe).filter(|_| rng.below(threshold) == 0).collect();
+                let mut ids: Vec<u32> = (0..universe)
+                    .filter(|_| rng.below(threshold) == 0)
+                    .collect();
                 ids.sort_unstable();
                 ids.dedup();
                 ids
@@ -10088,7 +10180,8 @@ mod match_rank_cache_tests {
             let want = reference_and_scores(&idx, &effective, &idfs, avgdl);
             let got: BTreeMap<u32, f32> = entries.into_iter().collect();
             assert_eq!(
-                got, want,
+                got,
+                want,
                 "trial {trial} (dense={dense}, zipper={}): general lane diverged",
                 should_use_zipper(&posts, drive, drive_len)
             );
@@ -10134,7 +10227,9 @@ mod match_rank_cache_tests {
 
         let n = N_DOCS as f32;
         let avgdl = idx.total_doc_len as f32 / idx.doc_count as f32;
-        let posts: Vec<TokProbe<'_>> = (0..N_TOKENS).map(|i| idx.tok_probe(&format!("tok{i}"))).collect();
+        let posts: Vec<TokProbe<'_>> = (0..N_TOKENS)
+            .map(|i| idx.tok_probe(&format!("tok{i}")))
+            .collect();
         let dfs: Vec<usize> = posts.iter().map(|p| p.iter_active().count()).collect();
         let idfs: Vec<f32> = dfs
             .iter()
@@ -13840,9 +13935,15 @@ impl FieldIndex {
                 token_names.extend(idx.tokens.keys().cloned());
                 for row in idx.staged_rows.values() {
                     let reader = row.reader();
-                    let count = reader.keyword_ordinal_count().ok_or_else(|| anyhow!("staged dictionary missing"))?;
+                    let count = reader
+                        .keyword_ordinal_count()
+                        .ok_or_else(|| anyhow!("staged dictionary missing"))?;
                     for ordinal in 0..count {
-                        token_names.insert(reader.keyword_term_at_ordinal(ordinal).ok_or_else(|| anyhow!("staged dictionary torn"))?);
+                        token_names.insert(
+                            reader
+                                .keyword_term_at_ordinal(ordinal)
+                                .ok_or_else(|| anyhow!("staged dictionary torn"))?,
+                        );
                     }
                 }
                 let active: BTreeMap<String, (Vec<u32>, Vec<u32>)> = token_names
@@ -15451,21 +15552,38 @@ impl Engine {
         {
             let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
             for (name, cuts) in &capture.scalar_cuts {
-                let identity = capture.collections.get(name)
+                let identity = capture
+                    .collections
+                    .get(name)
                     .ok_or_else(|| anyhow!("scalar checkpoint collection identity missing"))?;
                 let Some(coll) = state.collections.get(name).filter(|coll| {
                     coll.collection_generation == identity.generation
                         && coll.version == identity.schema_version
                         && coll.deleted_at.is_none()
-                }) else { continue; };
+                }) else {
+                    continue;
+                };
                 for (field, cut) in cuts {
-                    let retire = capture.field_dirty.get(name).and_then(|fields| fields.get(field))
-                        .into_iter().flatten().map(|(eid, revision)| {
-                            let id = coll.interner.id(eid)
-                                .ok_or_else(|| anyhow!("captured scalar external ID is absent from live collection"))?;
+                    let retire = capture
+                        .field_dirty
+                        .get(name)
+                        .and_then(|fields| fields.get(field))
+                        .into_iter()
+                        .flatten()
+                        .map(|(eid, revision)| {
+                            let id = coll.interner.id(eid).ok_or_else(|| {
+                                anyhow!(
+                                    "captured scalar external ID is absent from live collection"
+                                )
+                            })?;
                             Ok((id, eid.clone(), *revision))
-                        }).collect::<Result<Vec<_>>>()?;
-                    let base = capture.prepared.get(name).into_iter().flatten()
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let base = capture
+                        .prepared
+                        .get(name)
+                        .into_iter()
+                        .flatten()
                         .find(|prepared| prepared.name == *field)
                         .and_then(|prepared| scalar_prepared_segment(&prepared.index));
                     let deltas: Vec<_> = capture.prepared_deltas.get(name).into_iter().flatten()
@@ -15477,7 +15595,14 @@ impl Engine {
                             Ok((delta.reader.clone(), ids))
                         }).collect::<Result<Vec<_>>>()?;
                     if base.is_some() || !deltas.is_empty() {
-                        plans.push((name.clone(), field.clone(), cut.clone(), base, deltas, retire));
+                        plans.push((
+                            name.clone(),
+                            field.clone(),
+                            cut.clone(),
+                            base,
+                            deltas,
+                            retire,
+                        ));
                     }
                 }
             }
@@ -15490,27 +15615,43 @@ impl Engine {
                 }
                 cut.prepare_full(catalog)?
             } else {
-                if deltas.len() != 1 { bail!("scalar delta checkpoint has no full catalog base"); }
+                if deltas.len() != 1 {
+                    bail!("scalar delta checkpoint has no full catalog base");
+                }
                 let (reader, ids) = deltas.first().expect("checked one delta");
                 cut.prepare_delta(reader.clone(), ids.clone())?
             };
-            capture.scalar_publications.entry(name.clone()).or_default().insert(field.clone(), publication);
-            capture.scalar_retire.entry(name).or_default().insert(field, retire);
+            capture
+                .scalar_publications
+                .entry(name.clone())
+                .or_default()
+                .insert(field.clone(), publication);
+            capture
+                .scalar_retire
+                .entry(name)
+                .or_default()
+                .insert(field, retire);
         }
         // This is the final dry prefix check before the generation caller may
         // validate its staged layout and advance CURRENT. A later mutation may
         // append only a private layer; a changed catalog prefix refuses here.
         let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
         for (name, publications) in &capture.scalar_publications {
-            let identity = capture.collections.get(name)
+            let identity = capture
+                .collections
+                .get(name)
                 .ok_or_else(|| anyhow!("scalar checkpoint identity missing before publication"))?;
             let Some(coll) = state.collections.get(name).filter(|coll| {
                 coll.collection_generation == identity.generation
-                    && coll.version == identity.schema_version && coll.deleted_at.is_none()
-            }) else { continue; };
+                    && coll.version == identity.schema_version
+                    && coll.deleted_at.is_none()
+            }) else {
+                continue;
+            };
             for (field, publication) in publications {
-                let index = coll.fields.get(field)
-                    .ok_or_else(|| anyhow!("scalar checkpoint field disappeared before publication"))?;
+                let index = coll.fields.get(field).ok_or_else(|| {
+                    anyhow!("scalar checkpoint field disappeared before publication")
+                })?;
                 let live = match index {
                     FieldIndex::Keyword(index) => index.segment.as_ref(),
                     FieldIndex::Number(index) => index.segment.as_ref(),
@@ -15519,7 +15660,9 @@ impl Engine {
                 };
                 match live {
                     Some(live) => publication.validate_live(live)?,
-                    None => { let _ = publication.install_without_composition()?; }
+                    None => {
+                        let _ = publication.install_without_composition()?;
+                    }
                 }
             }
         }
@@ -15566,12 +15709,15 @@ impl Engine {
                         FieldIndex::Text { idx, .. } => &idx.segment,
                         FieldIndex::Vector { .. } => continue,
                     };
-                    let view = if let Some(publication) = capture.scalar_publications.get(name)
+                    let view = if let Some(publication) = capture
+                        .scalar_publications
+                        .get(name)
                         .and_then(|fields| fields.get(&compaction.field))
                     {
                         std::sync::Arc::new(publication.catalog_view())
                     } else {
-                        segment.as_ref()
+                        segment
+                            .as_ref()
                             .ok_or_else(|| anyhow!("compacted field has no live base"))?
                             .clone()
                     };
@@ -15589,7 +15735,9 @@ impl Engine {
                 let mut deltas = Vec::new();
                 for delta in capture.prepared_deltas.get(name).into_iter().flatten() {
                     if views.contains_key(&delta.field)
-                        && !capture.scalar_publications.get(name)
+                        && !capture
+                            .scalar_publications
+                            .get(name)
                             .is_some_and(|fields| fields.contains_key(&delta.field))
                     {
                         deltas.push((
@@ -15666,46 +15814,79 @@ impl Engine {
                     let scalar_retire = capture.scalar_retire.remove(name).unwrap_or_default();
                     if let Some(publications) = capture.scalar_publications.remove(name) {
                         for (field, publication) in publications {
-                            let index = coll.fields.get_mut(&field)
-                                .ok_or_else(|| anyhow!("checkpoint scalar field is absent from live collection"))?;
+                            let index = coll.fields.get_mut(&field).ok_or_else(|| {
+                                anyhow!("checkpoint scalar field is absent from live collection")
+                            })?;
                             install_scalar_checkpoint_publication(index, &publication)?;
                             // An ordinary mutation made before the first reader
                             // existed could not mark that reader's tombstones.
                             // Mask the newly published catalog row now. A newer
                             // private winner already masks it and must stay visible.
-                            for (eid, revision) in coll.field_dirty.get(&field).into_iter().flatten() {
-                                if capture.field_dirty.get(name).and_then(|fields| fields.get(&field))
-                                    .and_then(|rows| rows.get(eid)) == Some(revision) { continue; }
-                                let Some(id) = coll.interner.id(eid) else { continue; };
+                            for (eid, revision) in
+                                coll.field_dirty.get(&field).into_iter().flatten()
+                            {
+                                if capture
+                                    .field_dirty
+                                    .get(name)
+                                    .and_then(|fields| fields.get(&field))
+                                    .and_then(|rows| rows.get(eid))
+                                    == Some(revision)
+                                {
+                                    continue;
+                                }
+                                let Some(id) = coll.interner.id(eid) else {
+                                    continue;
+                                };
                                 match index {
                                     FieldIndex::Keyword(k) => {
-                                        let overlay = k.dense_forward.get(id as usize).is_some_and(Option::is_some)
+                                        let overlay = k
+                                            .dense_forward
+                                            .get(id as usize)
+                                            .is_some_and(Option::is_some)
                                             || k.forward.contains_key(&id);
-                                        if overlay || !k.segment.as_ref().is_some_and(|view| view.has_private_winner(id)) {
+                                        if overlay
+                                            || !k
+                                                .segment
+                                                .as_ref()
+                                                .is_some_and(|view| view.has_private_winner(id))
+                                        {
                                             k.tombstones.insert(id);
                                         }
                                     }
                                     FieldIndex::Number(n) => {
-                                        let overlay = n.dense_forward.get(id as usize).is_some_and(|value| *value != MISSING_SORTABLE_F64_BITS)
-                                            || n.forward.contains_key(&id);
-                                        if overlay || !n.segment.as_ref().is_some_and(|view| view.has_private_winner(id)) {
+                                        let overlay =
+                                            n.dense_forward.get(id as usize).is_some_and(|value| {
+                                                *value != MISSING_SORTABLE_F64_BITS
+                                            }) || n.forward.contains_key(&id);
+                                        if overlay
+                                            || !n
+                                                .segment
+                                                .as_ref()
+                                                .is_some_and(|view| view.has_private_winner(id))
+                                        {
                                             n.tombstones.insert(id);
                                         }
                                     }
                                     FieldIndex::Set(s) => {
-                                        if s.forward.contains_key(&id) || !s.segment.as_ref().is_some_and(|view| view.has_private_winner(id)) {
+                                        if s.forward.contains_key(&id)
+                                            || !s
+                                                .segment
+                                                .as_ref()
+                                                .is_some_and(|view| view.has_private_winner(id))
+                                        {
                                             s.tombstones.insert(id);
                                         }
                                     }
                                     _ => unreachable!("prepared scalar kind"),
                                 }
                             }
-                            for (id, eid, captured_revision) in scalar_retire.get(&field).into_iter().flatten() {
+                            for (id, eid, captured_revision) in
+                                scalar_retire.get(&field).into_iter().flatten()
+                            {
                                 if checkpoint_scalar_retire_matches(
                                     coll.field_dirty.get(&field).and_then(|rows| rows.get(eid)),
                                     *captured_revision,
-                                )
-                                {
+                                ) {
                                     retire_live_delta_overlay(index, *id);
                                 }
                             }
@@ -15719,8 +15900,12 @@ impl Engine {
                         if let Some(fields) = capture.prepared.remove(name) {
                             let dirty = capture.field_dirty.get(name).cloned().unwrap_or_default();
                             for field in fields {
-                                if scalar_fields.contains(&field.name) { continue; }
-                                if field.vector_base.is_some() || capture.initial_sparse.contains(name) {
+                                if scalar_fields.contains(&field.name) {
+                                    continue;
+                                }
+                                if field.vector_base.is_some()
+                                    || capture.initial_sparse.contains(name)
+                                {
                                     install_concurrent_prepared_base(coll, field, &dirty)?;
                                 } else {
                                     coll.fields.insert(field.name, field.index);
@@ -15730,14 +15915,18 @@ impl Engine {
                     } else if let Some(fields) = capture.prepared.remove(name) {
                         let dirty = capture.field_dirty.get(name).cloned().unwrap_or_default();
                         for field in fields {
-                            if scalar_fields.contains(&field.name) { continue; }
+                            if scalar_fields.contains(&field.name) {
+                                continue;
+                            }
                             install_concurrent_prepared_base(coll, field, &dirty)?;
                         }
                     }
                     if let Some(deltas) = capture.prepared_deltas.remove(name) {
                         let dirty = capture.field_dirty.get(name).cloned().unwrap_or_default();
                         for delta in deltas {
-                            if scalar_fields.contains(&delta.field) { continue; }
+                            if scalar_fields.contains(&delta.field) {
+                                continue;
+                            }
                             attach_live_checkpoint_delta(coll, delta, &dirty)?;
                         }
                     }
@@ -19678,35 +19867,79 @@ mod segment_text_diff_tests {
         let subject = Arc::new(Engine::new());
         subject.create_collection("c", schema()).unwrap();
         // Sealed base: d0..d3.
-        index_doc(&subject, "d0", &body_from(&[("alpha", 3), ("beta", 1)]), Some(10.0));
-        index_doc(&subject, "d1", &body_from(&[("alpha", 1), ("beta", 2)]), Some(20.0));
+        index_doc(
+            &subject,
+            "d0",
+            &body_from(&[("alpha", 3), ("beta", 1)]),
+            Some(10.0),
+        );
+        index_doc(
+            &subject,
+            "d1",
+            &body_from(&[("alpha", 1), ("beta", 2)]),
+            Some(20.0),
+        );
         index_doc(&subject, "d2", &body_from(&[("alpha", 2)]), Some(30.0));
         index_doc(&subject, "d3", &body_from(&[("beta", 3)]), Some(40.0));
         let dir = tempfile::tempdir().unwrap();
-        subject.__seal_text_field_to_segment("c", "body", dir.path()).unwrap();
+        subject
+            .__seal_text_field_to_segment("c", "body", dir.path())
+            .unwrap();
         // Live tail, added AFTER the seal (never sealed — pure live overlay).
-        index_doc(&subject, "d4", &body_from(&[("alpha", 4), ("beta", 1)]), Some(50.0));
-        index_doc(&subject, "d5", &body_from(&[("alpha", 1), ("beta", 4)]), Some(60.0));
+        index_doc(
+            &subject,
+            "d4",
+            &body_from(&[("alpha", 4), ("beta", 1)]),
+            Some(50.0),
+        );
+        index_doc(
+            &subject,
+            "d5",
+            &body_from(&[("alpha", 1), ("beta", 4)]),
+            Some(60.0),
+        );
         // Tombstone a sealed base doc that carries BOTH query tokens.
         subject.delete("c", "d1", None).unwrap();
 
         let oracle = Arc::new(Engine::new());
         oracle.create_collection("c", schema()).unwrap();
-        index_doc(&oracle, "d0", &body_from(&[("alpha", 3), ("beta", 1)]), Some(10.0));
+        index_doc(
+            &oracle,
+            "d0",
+            &body_from(&[("alpha", 3), ("beta", 1)]),
+            Some(10.0),
+        );
         index_doc(&oracle, "d2", &body_from(&[("alpha", 2)]), Some(30.0));
         index_doc(&oracle, "d3", &body_from(&[("beta", 3)]), Some(40.0));
-        index_doc(&oracle, "d4", &body_from(&[("alpha", 4), ("beta", 1)]), Some(50.0));
-        index_doc(&oracle, "d5", &body_from(&[("alpha", 1), ("beta", 4)]), Some(60.0));
+        index_doc(
+            &oracle,
+            "d4",
+            &body_from(&[("alpha", 4), ("beta", 1)]),
+            Some(50.0),
+        );
+        index_doc(
+            &oracle,
+            "d5",
+            &body_from(&[("alpha", 1), ("beta", 4)]),
+            Some(60.0),
+        );
 
         // The `eval_match_topk` hot path (through `search`, top-level Match).
         let s_topk = run(&subject, text_and("alpha", "beta"));
         let o_topk = run(&oracle, text_and("alpha", "beta"));
         assert_eq!(set_of(&s_topk), set_of(&o_topk), "topk AND set diverged");
-        assert_eq!(scores_of(&s_topk), scores_of(&o_topk), "topk AND scores diverged");
+        assert_eq!(
+            scores_of(&s_topk),
+            scores_of(&o_topk),
+            "topk AND scores diverged"
+        );
         // d1 is gone (tombstoned); d0/d4/d5 carry both tokens, d2/d3 carry only one.
         assert_eq!(
             set_of(&s_topk),
-            ["d0", "d4", "d5"].into_iter().map(String::from).collect::<BTreeSet<_>>(),
+            ["d0", "d4", "d5"]
+                .into_iter()
+                .map(String::from)
+                .collect::<BTreeSet<_>>(),
             "AND must keep exactly the docs carrying both surviving tokens"
         );
 
@@ -19718,7 +19951,11 @@ mod segment_text_diff_tests {
         let s_map = run(&subject, wrapped.clone());
         let o_map = run(&oracle, wrapped);
         assert_eq!(set_of(&s_map), set_of(&o_map), "map-path AND set diverged");
-        assert_eq!(scores_of(&s_map), scores_of(&o_map), "map-path AND scores diverged");
+        assert_eq!(
+            scores_of(&s_map),
+            scores_of(&o_map),
+            "map-path AND scores diverged"
+        );
     }
 
     /// RE-SEAL after delete (Phase 2h-4): once re-sealed the deletes are BAKED into
@@ -19975,7 +20212,9 @@ mod segment_text_diff_tests {
             assert!(idx.tok_postings("new").is_none());
             assert_eq!(idx.tok_df("latest"), Some(1));
             assert_eq!(idx.bm25_corpus(), (1, 1));
-            assert!(idx.distinct_at(0).is_some_and(|tokens| tokens.iter().next().is_some()));
+            assert!(idx
+                .distinct_at(0)
+                .is_some_and(|tokens| tokens.iter().next().is_some()));
             assert_eq!(idx.doc_len(0), 1);
             assert!(idx.tombstones.contains(0));
         }
@@ -20591,7 +20830,10 @@ mod tok_probe_tests {
                 &tombstones,
             );
             let got: BTreeMap<u32, u32> = p.iter_active().collect();
-            assert_eq!(got, want, "trial {trial}: iter_active diverged from reference");
+            assert_eq!(
+                got, want,
+                "trial {trial}: iter_active diverged from reference"
+            );
             assert_eq!(
                 p.active_len(),
                 want.len(),
@@ -20642,12 +20884,18 @@ mod tok_probe_tests {
             );
             let live = if rng.below(3) == 0 { None } else { Some(live) };
             let staged_ids: Vec<u32> = (0..universe).filter(|_| rng.below(131) == 0).collect();
-            let staged: Vec<(u32, u32)> =
-                staged_ids.iter().map(|&id| (id, 1 + rng.below(9))).collect();
+            let staged: Vec<(u32, u32)> = staged_ids
+                .iter()
+                .map(|&id| (id, 1 + rng.below(9)))
+                .collect();
             let heavy = rng.below(2) == 0;
             let mut tombstones = RoaringBitmap::new();
             for id in 0..universe {
-                let hit = if heavy { rng.below(2) == 0 } else { rng.below(53) == 0 };
+                let hit = if heavy {
+                    rng.below(2) == 0
+                } else {
+                    rng.below(53) == 0
+                };
                 if hit {
                     tombstones.insert(id);
                 }
@@ -20660,8 +20908,16 @@ mod tok_probe_tests {
                 &tombstones,
             );
             let want = reference_active(&seg, &live, &staged, &tombstones).len();
-            assert_eq!(p.iter_active().count(), want, "trial {trial}: streaming count");
-            assert_eq!(p.active_len(), want, "trial {trial}: galloping count (heavy={heavy})");
+            assert_eq!(
+                p.iter_active().count(),
+                want,
+                "trial {trial}: streaming count"
+            );
+            assert_eq!(
+                p.active_len(),
+                want,
+                "trial {trial}: galloping count (heavy={heavy})"
+            );
         }
         // Degenerate lanes: empty segment, and a segment fully tombstoned.
         let empty = RoaringBitmap::new();
@@ -20723,8 +20979,10 @@ mod tok_probe_tests {
         let doc_count = present.iter().filter(|p| **p).count() as u64;
         let total_len: u64 = lens.iter().map(|&l| u64::from(l)).sum();
         let path = dir.join(format!("f{seed}.lseg"));
-        crate::segment::write_text_segment(&path, 7, &sealed, &lens, &present, doc_count, total_len)
-            .expect("seal fixture");
+        crate::segment::write_text_segment(
+            &path, 7, &sealed, &lens, &present, doc_count, total_len,
+        )
+        .expect("seal fixture");
         let reader = crate::segment::SegmentReader::open(&path).expect("open fixture");
         if resident {
             for tok in &tokens {
@@ -20735,7 +20993,9 @@ mod tok_probe_tests {
             doc_count: u64::from(universe),
             total_doc_len: total_len + u64::from(universe),
             segment: Some(std::sync::Arc::new(
-                crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(reader)),
+                crate::composed_segment::ComposedSegmentReader::from_base(std::sync::Arc::new(
+                    reader,
+                )),
             )),
             ..Default::default()
         };
@@ -20783,7 +21043,11 @@ mod tok_probe_tests {
                 idx.tombstones.insert(id);
             }
         }
-        SparseFixture { idx, tokens, universe }
+        SparseFixture {
+            idx,
+            tokens,
+            universe,
+        }
     }
 
     fn sparse_candidates(universe: u32, seed: u64) -> Vec<u32> {
@@ -20821,22 +21085,57 @@ mod tok_probe_tests {
                         assert_eq!(sparse.df(), full.df(), "{label}: df");
                         if let TokPostings::Sparse(p) = sparse {
                             sparse_seen += 1;
-                            assert!(p.docids.iter().all(|id| candidates.binary_search(id).is_ok()), "{label}: projection ⊆ candidates");
-                            assert!(p.docids.windows(2).all(|w| w[0] < w[1]), "{label}: projection ascending");
-                        } else if fx.idx.segment.as_ref().unwrap().text_postings_arc(tok).is_some() {
+                            assert!(
+                                p.docids
+                                    .iter()
+                                    .all(|id| candidates.binary_search(id).is_ok()),
+                                "{label}: projection ⊆ candidates"
+                            );
+                            assert!(
+                                p.docids.windows(2).all(|w| w[0] < w[1]),
+                                "{label}: projection ascending"
+                            );
+                        } else if fx
+                            .idx
+                            .segment
+                            .as_ref()
+                            .unwrap()
+                            .text_postings_arc(tok)
+                            .is_some()
+                        {
                             panic!("{label}: expected the Sparse projection");
                         }
                         for &id in &candidates {
                             assert_eq!(sparse.tf(id), full.tf(id), "{label}: tf({id})");
                         }
-                        let projected: Vec<u32> = candidates.iter().copied().filter(|&id| full.tf(id).is_some()).collect();
-                        assert_eq!(sparse.docids().iter().copied().filter(|id| candidates.binary_search(id).is_ok()).collect::<Vec<_>>(), projected, "{label}: docids ∩ candidates");
+                        let projected: Vec<u32> = candidates
+                            .iter()
+                            .copied()
+                            .filter(|&id| full.tf(id).is_some())
+                            .collect();
+                        assert_eq!(
+                            sparse
+                                .docids()
+                                .iter()
+                                .copied()
+                                .filter(|id| candidates.binary_search(id).is_ok())
+                                .collect::<Vec<_>>(),
+                            projected,
+                            "{label}: docids ∩ candidates"
+                        );
                     }
-                    (full, sparse) => panic!("{label}: presence diverged: full {:?} sparse {:?}", full.as_ref().map(|p| p.df()), sparse.as_ref().map(|p| p.df())),
+                    (full, sparse) => panic!(
+                        "{label}: presence diverged: full {:?} sparse {:?}",
+                        full.as_ref().map(|p| p.df()),
+                        sparse.as_ref().map(|p| p.df())
+                    ),
                 }
             }
         }
-        assert!(sparse_seen > 60, "the fixture must exercise the sparse route ({sparse_seen})");
+        assert!(
+            sparse_seen > 60,
+            "the fixture must exercise the sparse route ({sparse_seen})"
+        );
     }
 
     /// `resolve_at` yields bit-identical BM25 scores to `resolve` for every
@@ -20848,11 +21147,13 @@ mod tok_probe_tests {
         for trial in 0..30u64 {
             let fx = sparse_fixture(dir.path(), 0x4246_1000 + trial, trial % 3 == 0);
             let candidates = sparse_candidates(fx.universe, trial * 104729 + 3);
-            let tokens: Vec<String> = ["alpha", "beta", "alpha", "gamma", "missing", "beta", "delta", "alpha"]
-                .iter()
-                .take(2 + (trial % 7) as usize)
-                .map(|t| t.to_string())
-                .collect();
+            let tokens: Vec<String> = [
+                "alpha", "beta", "alpha", "gamma", "missing", "beta", "delta", "alpha",
+            ]
+            .iter()
+            .take(2 + (trial % 7) as usize)
+            .map(|t| t.to_string())
+            .collect();
             for op in [MatchOp::And, MatchOp::Or] {
                 let full = PreparedMatch::resolve(&fx.idx, &tokens, op);
                 let sparse = PreparedMatch::resolve_at(&fx.idx, &tokens, op, &candidates);
@@ -20876,7 +21177,11 @@ mod tok_probe_tests {
                 for (tok, entry) in tokens.iter().zip(&sparse.per_token) {
                     if let Some((TokPostings::Sparse(p), _)) = entry {
                         let ptr = std::sync::Arc::as_ptr(p);
-                        assert_eq!(*arcs.entry(tok.as_str()).or_insert(ptr), ptr, "{label}: {tok} memoized");
+                        assert_eq!(
+                            *arcs.entry(tok.as_str()).or_insert(ptr),
+                            ptr,
+                            "{label}: {tok} memoized"
+                        );
                     }
                 }
                 for &id in &candidates {
@@ -21290,8 +21595,14 @@ mod exact_hamming_filter_tests {
                 &e,
                 QueryNode::Or(vec![QueryNode::And(vec![matchq(&full), hamming(i, 1)])]),
             );
-            assert_eq!(general, general_fallback, "eval_query filter path vs fallback for d{i}");
-            assert_eq!(general, fallback, "conjunct order must not change the score for d{i}");
+            assert_eq!(
+                general, general_fallback,
+                "eval_query filter path vs fallback for d{i}"
+            );
+            assert_eq!(
+                general, fallback,
+                "conjunct order must not change the score for d{i}"
+            );
 
             // A wrong-field text under the same hash misses on every path.
             let wrong = format!("readback mismatch window {i} body");
@@ -21310,7 +21621,10 @@ mod exact_hamming_filter_tests {
         let bm25 = run(&e, matchq("tok"));
         let got = run(&e, QueryNode::And(vec![hamming_raw(0, 1), matchq("tok")]));
         assert_eq!(got.len(), 2);
-        assert_eq!(got["near"], (1.0f32 + f32::from_bits(bm25["near"])).to_bits());
+        assert_eq!(
+            got["near"],
+            (1.0f32 + f32::from_bits(bm25["near"])).to_bits()
+        );
         assert_eq!(
             got["far"],
             ((64 - 1) as f32 / 64.0 + f32::from_bits(bm25["far"])).to_bits()
@@ -21915,22 +22229,47 @@ mod tests {
     fn initial_sparse_capture_requires_complete_journal_provenance() {
         let engine = Engine::new();
         engine.create_collection("c", build_users_schema()).unwrap();
-        engine.index("c", IndexRequest {
-            items: vec![item("legacy", "email", FieldValue::String("legacy-value".into()))],
-            request_id: None,
-        }).unwrap();
+        engine
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![item(
+                        "legacy",
+                        "email",
+                        FieldValue::String("legacy-value".into()),
+                    )],
+                    request_id: None,
+                },
+            )
+            .unwrap();
         engine.restore(engine.snapshot().unwrap()).unwrap();
-        engine.prepare_checkpoint_namespace(std::path::Path::new("/unused-test-checkpoint-namespace"), 1).unwrap();
+        engine
+            .prepare_checkpoint_namespace(
+                std::path::Path::new("/unused-test-checkpoint-namespace"),
+                1,
+            )
+            .unwrap();
         let frozen = engine.freeze_checkpoint_collections(None).unwrap();
-        assert!(frozen.capture.initial_sparse.is_empty(), "a missing origin must not imply journal completeness");
-        assert!(matches!(&frozen.files[0].1, FrozenCollectionFiles::Base { eids, .. } if !eids.is_empty()));
+        assert!(
+            frozen.capture.initial_sparse.is_empty(),
+            "a missing origin must not imply journal completeness"
+        );
+        assert!(
+            matches!(&frozen.files[0].1, FrozenCollectionFiles::Base { eids, .. } if !eids.is_empty())
+        );
 
         let fresh = Engine::new();
         fresh.create_collection("c", build_users_schema()).unwrap();
         fresh.drop_field("c", "age").unwrap();
         let frozen = fresh.freeze_checkpoint_collections(None).unwrap();
-        assert!(frozen.capture.initial_sparse.is_empty(), "schema changes must invalidate initial journal provenance");
-        assert!(matches!(&frozen.files[0].1, FrozenCollectionFiles::Base { .. }));
+        assert!(
+            frozen.capture.initial_sparse.is_empty(),
+            "schema changes must invalidate initial journal provenance"
+        );
+        assert!(matches!(
+            &frozen.files[0].1,
+            FrozenCollectionFiles::Base { .. }
+        ));
     }
 
     #[test]
@@ -21942,7 +22281,9 @@ mod tests {
             let engine = Engine::new();
             let mut schema = build_users_schema();
             let mut vector = record_cost_schema(Some(backend));
-            schema.fields.insert("vector".into(), vector.fields.remove("vector").unwrap());
+            schema
+                .fields
+                .insert("vector".into(), vector.fields.remove("vector").unwrap());
             let mut hash = schema.fields["email"].clone();
             hash.field_type = FieldType::Hash;
             schema.fields.insert("sig".into(), hash);
@@ -21950,18 +22291,35 @@ mod tests {
             let fields = [
                 ("email", FieldValue::String("captured".into())),
                 ("bio", FieldValue::String("captured captured text".into())),
-                ("tags", serde_json::from_value(serde_json::json!(["one", "two"])).unwrap()),
+                (
+                    "tags",
+                    serde_json::from_value(serde_json::json!(["one", "two"])).unwrap(),
+                ),
                 ("age", FieldValue::Number(42.0)),
                 ("sig", FieldValue::String("000000000000002a".into())),
-                ("vector", serde_json::from_value(serde_json::json!([1.0, 0.0, 0.0])).unwrap()),
+                (
+                    "vector",
+                    serde_json::from_value(serde_json::json!([1.0, 0.0, 0.0])).unwrap(),
+                ),
             ];
-            engine.index("c", IndexRequest {
-                items: fields.iter().map(|(field, value)| item("sparse-first", field, value.clone())).collect(),
-                request_id: None,
-            }).unwrap();
+            engine
+                .index(
+                    "c",
+                    IndexRequest {
+                        items: fields
+                            .iter()
+                            .map(|(field, value)| item("sparse-first", field, value.clone()))
+                            .collect(),
+                        request_id: None,
+                    },
+                )
+                .unwrap();
             let frozen = engine.freeze_checkpoint_collections(None).unwrap();
             assert!(
-                frozen.files.iter().all(|(_, files)| !matches!(files, FrozenCollectionFiles::Base { .. })),
+                frozen
+                    .files
+                    .iter()
+                    .all(|(_, files)| !matches!(files, FrozenCollectionFiles::Base { .. })),
                 "fresh checkpoint must freeze journal handles instead of cloning live field rows"
             );
             engine.delete("c", "sparse-first", None).unwrap();
@@ -21969,8 +22327,13 @@ mod tests {
             let capture = frozen.write(output.path(), 0).unwrap();
             for (field, _) in fields {
                 let saved = capture.field_deltas["c"][field][0].1.as_ref().unwrap();
-                let row = capture.frozen_changes["c"].row(field, "sparse-first").unwrap();
-                assert!(saved.same_identity(row.value().unwrap()), "first checkpoint must retain the captured row handle for {field}");
+                let row = capture.frozen_changes["c"]
+                    .row(field, "sparse-first")
+                    .unwrap();
+                assert!(
+                    saved.same_identity(row.value().unwrap()),
+                    "first checkpoint must retain the captured row handle for {field}"
+                );
             }
         }
     }
@@ -28013,18 +28376,23 @@ mod scalar_checkpoint_cut_tests {
             ("number", FieldType::Number),
             ("set", FieldType::Set),
         ] {
-            fields.insert(name.into(), FieldSpec {
-                field_type,
-                analyzer: None,
-                multi: None,
-                dim: None,
-                metric: None,
-                backend: None,
-                quantize: None,
-            });
+            fields.insert(
+                name.into(),
+                FieldSpec {
+                    field_type,
+                    analyzer: None,
+                    multi: None,
+                    dim: None,
+                    metric: None,
+                    backend: None,
+                    quantize: None,
+                },
+            );
         }
         let engine = Engine::new();
-        engine.create_collection("c", CreateCollectionRequest { fields }).unwrap();
+        engine
+            .create_collection("c", CreateCollectionRequest { fields })
+            .unwrap();
         let frozen = engine.freeze_checkpoint_collections(None).unwrap();
         let cuts = frozen.capture.scalar_cuts.get("c").unwrap();
         assert_eq!(cuts.len(), 3);
@@ -28035,45 +28403,99 @@ mod scalar_checkpoint_cut_tests {
 
     #[test]
     fn scalar_checkpoint_retirement_keeps_a_mutation_after_preparation() {
-        let engine = Engine::with_change_budget(crate::change_budget::ChangeBudget::with_hard_limit(32 * 1024 * 1024));
-        engine.create_collection_inner("c", CreateCollectionRequest {
-            fields: serde_json::from_value(serde_json::json!({
-                "keyword":{"type":"keyword"}, "number":{"type":"number"}
-            })).unwrap(),
-        }).unwrap();
+        let engine = Engine::with_change_budget(
+            crate::change_budget::ChangeBudget::with_hard_limit(32 * 1024 * 1024),
+        );
+        engine
+            .create_collection_inner(
+                "c",
+                CreateCollectionRequest {
+                    fields: serde_json::from_value(serde_json::json!({
+                        "keyword":{"type":"keyword"}, "number":{"type":"number"}
+                    }))
+                    .unwrap(),
+                },
+            )
+            .unwrap();
         let write = |value: &str, include_number: bool| {
             let mut items = vec![crate::types::IndexItem {
-                external_id:"e".into(), field:"keyword".into(),
-                value:FieldValue::String(value.into()), version:None,
+                external_id: "e".into(),
+                field: "keyword".into(),
+                value: FieldValue::String(value.into()),
+                version: None,
             }];
             if include_number {
-                items.push(crate::types::IndexItem { external_id:"e".into(), field:"number".into(),
-                    value:FieldValue::Number(3.0), version:None });
+                items.push(crate::types::IndexItem {
+                    external_id: "e".into(),
+                    field: "number".into(),
+                    value: FieldValue::Number(3.0),
+                    version: None,
+                });
             }
-            engine.index_inner("c", IndexRequest {items, request_id:None}, None, None).unwrap();
+            engine
+                .index_inner(
+                    "c",
+                    IndexRequest {
+                        items,
+                        request_id: None,
+                    },
+                    None,
+                    None,
+                )
+                .unwrap();
         };
         write("captured", true);
         // Select the full-base branch so both ordinary overlay retirement and
         // a newer ordinary overlay cross the real Engine publication seam.
-        engine.state.write().unwrap().collections.get_mut("c").unwrap().requires_full_checkpoint = true;
+        engine
+            .state
+            .write()
+            .unwrap()
+            .collections
+            .get_mut("c")
+            .unwrap()
+            .requires_full_checkpoint = true;
         let root = tempfile::tempdir().unwrap();
         let frozen = engine.freeze_checkpoint_collections(None).unwrap();
         let mut capture = frozen.write(root.path(), 0).unwrap();
-        engine.prepare_scalar_checkpoint_publications(&mut capture).unwrap();
+        engine
+            .prepare_scalar_checkpoint_publications(&mut capture)
+            .unwrap();
         write("later", false);
-        engine.bind_checkpoint_origins(root.path(), &mut capture).unwrap();
+        engine
+            .bind_checkpoint_origins(root.path(), &mut capture)
+            .unwrap();
         let state = engine.state.read().unwrap();
         let coll = &state.collections["c"];
         let id = coll.interner.id("e").unwrap();
-        let FieldIndex::Keyword(keyword) = &coll.fields["keyword"] else { unreachable!() };
-        assert_eq!(keyword.keyword_at(id).as_deref(), Some("later"),
-            "publication must preserve the ordinary write made after preparation");
-        assert!(keyword.dense_forward.get(id as usize).and_then(Option::as_ref).is_some()
-            || keyword.forward.contains_key(&id));
-        let FieldIndex::Number(number) = &coll.fields["number"] else { unreachable!() };
+        let FieldIndex::Keyword(keyword) = &coll.fields["keyword"] else {
+            unreachable!()
+        };
+        assert_eq!(
+            keyword.keyword_at(id).as_deref(),
+            Some("later"),
+            "publication must preserve the ordinary write made after preparation"
+        );
+        assert!(
+            keyword
+                .dense_forward
+                .get(id as usize)
+                .and_then(Option::as_ref)
+                .is_some()
+                || keyword.forward.contains_key(&id)
+        );
+        let FieldIndex::Number(number) = &coll.fields["number"] else {
+            unreachable!()
+        };
         assert_eq!(number.number_at(id).unwrap().to_f64(), 3.0);
-        assert!(number.forward.is_empty(), "unchanged captured overlays must be retired");
-        assert!(number.dense_forward.get(id as usize).is_none_or(|value| *value == MISSING_SORTABLE_F64_BITS));
+        assert!(
+            number.forward.is_empty(),
+            "unchanged captured overlays must be retired"
+        );
+        assert!(number
+            .dense_forward
+            .get(id as usize)
+            .is_none_or(|value| *value == MISSING_SORTABLE_F64_BITS));
         assert!(number.segment.is_some());
     }
 }

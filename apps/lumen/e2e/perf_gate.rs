@@ -637,6 +637,10 @@ fn median_statistic_and_ignored_inventory() {
             ),
             ("number_read_costs_on_100k_documents", true),
             ("median_statistic_and_ignored_inventory", false),
+            (
+                "restart_command_timeout_kills_and_reaps_a_stuck_child",
+                false,
+            ),
             ("approved_30_minute_durable_workload", true),
             (
                 "fingerprint_only_readback_cannot_pass_an_ignored_field_predicate",
@@ -666,7 +670,24 @@ fn median_statistic_and_ignored_inventory() {
                 "warmup_retry_policy_accepts_only_the_one_second_backpressure_hint",
                 false,
             ),
+            ("seed_backpressure_retry_honors_absolute_setup_deadline", false),
             ("request_deadline_is_the_approved_five_seconds", false),
+            (
+                "post_input_workload_drain_deadline_returns_promptly",
+                false,
+            ),
+            (
+                "input_window_deadline_returns_promptly_with_the_timed_out_stage",
+                false,
+            ),
+            (
+                "input_window_timeout_aborts_sampler_before_drive_finalization",
+                false,
+            ),
+            (
+                "request_pump_capacity_wait_honors_input_window_deadline",
+                false,
+            ),
             (
                 "post_restart_backend_residency_rejects_flat_and_hnsw_coercion",
                 false,
@@ -789,9 +810,9 @@ mod durable_workload {
     use async_trait::async_trait;
     use futures::StreamExt;
     use serde_json::{json, Map, Value};
-    use tokio::io::{AsyncRead, AsyncReadExt};
     #[cfg(test)]
     use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncRead, AsyncReadExt};
     use tokio::sync::Mutex;
     use tokio::task::{AbortHandle, JoinSet};
 
@@ -1006,7 +1027,11 @@ mod durable_workload {
                 }
                 Self::Http(detail) => write!(formatter, "HTTP workload request failed: {detail}"),
                 Self::RequestFailure(detail) => {
-                    write!(formatter, "HTTP workload request failed: {}", detail.display)
+                    write!(
+                        formatter,
+                        "HTTP workload request failed: {}",
+                        detail.display
+                    )
                 }
                 Self::MissingRuntimeMetric(name) => {
                     write!(formatter, "required runtime metric is absent: {name}")
@@ -1028,7 +1053,10 @@ mod durable_workload {
                     write!(formatter, "workload fixture invariant failed: {detail}")
                 }
                 Self::SetupTimeout { stage } => {
-                    write!(formatter, "setup stage {stage} exceeded its absolute deadline")
+                    write!(
+                        formatter,
+                        "setup stage {stage} exceeded its absolute deadline"
+                    )
                 }
                 Self::InputWindowTimeout { stage, timeout } => write!(
                     formatter,
@@ -1337,11 +1365,7 @@ mod durable_workload {
 
     impl CleanupCommandRunner for DockerCleanupCommandRunner {
         fn run_cleanup(&mut self, args: Vec<String>) {
-            if let Err(error) = run_command_with_timeout_blocking(
-                "docker",
-                args,
-                REQUEST_TIMEOUT,
-            ) {
+            if let Err(error) = run_command_with_timeout_blocking("docker", args, REQUEST_TIMEOUT) {
                 eprintln!("PERF_FAILURE_CLEANUP_ERROR {error}");
             }
         }
@@ -1502,7 +1526,9 @@ mod durable_workload {
         if succeeded {
             Ok(streams)
         } else {
-            Err(format!("docker {rendered} exited with {status}:\n{streams}"))
+            Err(format!(
+                "docker {rendered} exited with {status}:\n{streams}"
+            ))
         }
     }
 
@@ -1668,7 +1694,9 @@ mod durable_workload {
             );
             self.record_result(
                 "docker-inspect.json",
-                runner.run(vec!["inspect".to_owned(), container.to_owned()]).await,
+                runner
+                    .run(vec!["inspect".to_owned(), container.to_owned()])
+                    .await,
             );
         }
     }
@@ -1924,14 +1952,14 @@ mod durable_workload {
         }
 
         async fn finish_failure(&mut self, error: &HarnessError) {
-            let evidence = match FailureEvidenceDirectory::create(&self.container, &self.volume, error)
-            {
-                Ok(evidence) => evidence,
-                Err(capture_error) => {
-                    eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
-                    return;
-                }
-            };
+            let evidence =
+                match FailureEvidenceDirectory::create(&self.container, &self.volume, error) {
+                    Ok(evidence) => evidence,
+                    Err(capture_error) => {
+                        eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
+                        return;
+                    }
+                };
             let mut runner = DockerEvidenceCommandRunner;
             let mut probe = UnavailableFailureProbe;
             let mut cleanup_runner = DockerCleanupCommandRunner;
@@ -2137,14 +2165,14 @@ mod durable_workload {
         }
 
         async fn finish_failure(&mut self, error: &HarnessError) {
-            let evidence = match FailureEvidenceDirectory::create(&self.container, &self.volume, error)
-            {
-                Ok(evidence) => evidence,
-                Err(capture_error) => {
-                    eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
-                    return;
-                }
-            };
+            let evidence =
+                match FailureEvidenceDirectory::create(&self.container, &self.volume, error) {
+                    Ok(evidence) => evidence,
+                    Err(capture_error) => {
+                        eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
+                        return;
+                    }
+                };
             let mut evidence_runner = DockerEvidenceCommandRunner;
             let mut probe = DockerFailureProbe { server: self };
             let mut cleanup_runner = DockerCleanupCommandRunner;
@@ -2208,10 +2236,7 @@ mod durable_workload {
         args: &[&str],
         timeout: Duration,
     ) -> Result<String> {
-        let args = args
-            .iter()
-            .map(|arg| (*arg).to_owned())
-            .collect::<Vec<_>>();
+        let args = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
         tokio::task::spawn_blocking(move || {
             run_command_with_timeout_blocking(program, args, timeout)
         })
@@ -2742,12 +2767,15 @@ mod durable_workload {
                     body: Some(truncate_evidence_body(&body)),
                 });
             }
-            response.json::<Value>().await.map_err(|error| PostJsonFailure {
-                error: RequestFailure::from_reqwest(error),
-                outcome: Outcome::Failed,
-                status: Some(status.as_u16()),
-                body: None,
-            })
+            response
+                .json::<Value>()
+                .await
+                .map_err(|error| PostJsonFailure {
+                    error: RequestFailure::from_reqwest(error),
+                    outcome: Outcome::Failed,
+                    status: Some(status.as_u16()),
+                    body: None,
+                })
         })
         .await
         {
@@ -4168,8 +4196,9 @@ mod durable_workload {
                     .to_owned(),
             ));
         }
-        let post_input_deadline =
-            tokio::time::Instant::now().checked_add(POST_INPUT_TIMEOUT).ok_or_else(|| {
+        let post_input_deadline = tokio::time::Instant::now()
+            .checked_add(POST_INPUT_TIMEOUT)
+            .ok_or_else(|| {
                 HarnessError::DataInvariant(
                     "post-input deadline overflowed the Tokio instant range".to_owned(),
                 )
@@ -4234,7 +4263,10 @@ mod durable_workload {
         .await;
         if matches!(
             &workload_drain,
-            Err(HarnessError::PostInputTimeout { stage: "workload_drain", .. })
+            Err(HarnessError::PostInputTimeout {
+                stage: "workload_drain",
+                ..
+            })
         ) {
             sampler_abort.abort();
         }
@@ -4957,8 +4989,9 @@ mod durable_workload {
         }
         let (report, counter_delta, observed_input_duration) =
             drive_workload(&server, config).await?;
-        let post_input_deadline =
-            tokio::time::Instant::now().checked_add(POST_INPUT_TIMEOUT).ok_or_else(|| {
+        let post_input_deadline = tokio::time::Instant::now()
+            .checked_add(POST_INPUT_TIMEOUT)
+            .ok_or_else(|| {
                 HarnessError::DataInvariant(
                     "post-input deadline overflowed the Tokio instant range".to_owned(),
                 )
@@ -5587,15 +5620,10 @@ mod durable_workload {
             let started = Instant::now();
             let timeout = Duration::from_millis(25);
             let deadline = tokio::time::Instant::now() + timeout;
-            let error = post_input_step(
-                deadline,
-                timeout,
-                "workload_drain",
-                async {
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    Ok(())
-                },
-            )
+            let error = post_input_step(deadline, timeout, "workload_drain", async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(())
+            })
             .await
             .expect_err("a pending post-input operation must hit the shared deadline");
 
@@ -5624,15 +5652,10 @@ mod durable_workload {
             let started = Instant::now();
             let timeout = Duration::from_millis(25);
             let deadline = tokio::time::Instant::now() + timeout;
-            let error = input_window_step(
-                deadline,
-                timeout,
-                "input_workload",
-                async {
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    Ok(())
-                },
-            )
+            let error = input_window_step(deadline, timeout, "input_workload", async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(())
+            })
             .await
             .expect_err("a pending input operation must hit the absolute window deadline");
 
@@ -5911,7 +5934,8 @@ mod durable_workload {
                 .expect("write in-memory evidence");
             writer.shutdown().await.expect("close in-memory evidence");
         };
-        let (evidence, ()) = tokio::join!(read_bounded_reader(reader, limit, retention), writer_task);
+        let (evidence, ()) =
+            tokio::join!(read_bounded_reader(reader, limit, retention), writer_task);
         evidence.expect("read bounded in-memory evidence")
     }
 
@@ -5967,13 +5991,10 @@ mod durable_workload {
                 Ok::<Vec<u8>, String>(b"http diagnostic body\n".to_vec()),
                 Ok(vec![b'h'; EVIDENCE_HTTP_BODY_MAX_BYTES]),
             ]);
-            let http = read_bounded_chunks(
-                http_chunks,
-                EVIDENCE_HTTP_BODY_MAX_BYTES,
-                |error| error,
-            )
-            .await
-            .expect("stream bounded HTTP evidence");
+            let http =
+                read_bounded_chunks(http_chunks, EVIDENCE_HTTP_BODY_MAX_BYTES, |error| error)
+                    .await
+                    .expect("stream bounded HTTP evidence");
             assert_eq!(http.retained.len(), EVIDENCE_HTTP_BODY_MAX_BYTES);
             assert!(http.total_bytes > http.retained.len() as u64);
             assert!(http.truncated);

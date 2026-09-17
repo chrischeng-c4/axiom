@@ -761,30 +761,37 @@ path = "e2e/aof_recovered_catalog_layer_cap.rs"
 [[test]]
 name = "aof_oversized_committed_hash"
 path = "e2e/aof_oversized_committed_hash.rs"
+required-features = []
 
 [[test]]
 name = "aof_oversized_committed_mixed"
 path = "e2e/aof_oversized_committed_mixed.rs"
+required-features = []
 
 [[test]]
 name = "aof_oversized_committed_vector"
 path = "e2e/aof_oversized_committed_vector.rs"
+required-features = []
 
 [[test]]
 name = "aof_oversized_committed_unicode_token"
 path = "e2e/aof_oversized_committed_unicode_token.rs"
+required-features = []
 
 [[test]]
 name = "segment_backpressure_metric"
 path = "e2e/segment_backpressure_metric.rs"
+required-features = []
 
 [[test]]
 name = "aof_oversized_committed_replace"
 path = "e2e/aof_oversized_committed_replace.rs"
+required-features = []
 
 [[test]]
 name = "native_oversized_committed_replace"
 path = "e2e/native_oversized_committed_replace.rs"
+required-features = []
 
 [[test]]
 name = "raft_oversized_committed_replace"
@@ -794,6 +801,7 @@ required-features = ["raft-wal"]
 [[test]]
 name = "aof_standalone_replay_capacity_progress"
 path = "e2e/aof_standalone_replay_capacity_progress.rs"
+required-features = []
 
 [[test]]
 name = "raft_committed_capacity_progress"
@@ -803,14 +811,17 @@ required-features = ["raft-wal"]
 [[test]]
 name = "native_committed_capacity_progress"
 path = "e2e/native_committed_capacity_progress.rs"
+required-features = []
 
 [[test]]
 name = "committed_staged_text_stage_failure"
 path = "e2e/committed_staged_text_stage_failure.rs"
+required-features = []
 
 [[test]]
 name = "merge_cleanup_checkpoint_serialization"
 path = "e2e/merge_cleanup_checkpoint_serialization.rs"
+required-features = []
 
 [[test]]
 name = "inherited_checkpoint_file_sync"
@@ -820,12 +831,34 @@ required-features = []
 [[test]]
 name = "current_publication_apply_barrier"
 path = "e2e/current_publication_apply_barrier.rs"
+required-features = []
 
 [[test]]
 name = "checkpoint_aof_failure_recovery"
 path = "e2e/checkpoint_aof_failure_recovery.rs"
+required-features = []
 
 [[test]]
 name = "aof_trim_append_progress"
 path = "e2e/aof_trim_append_progress.rs"
+required-features = []
+
+[[test]]
+name = "aof_checkpoint_replay"
+path = "e2e/aof_checkpoint_replay.rs"
+required-features = []
+
+[[test]]
+name = "checkpoint_publication_contract"
+path = "e2e/checkpoint_publication_contract.rs"
+required-features = []
+
+[[test]]
+name = "restore_cold_recovery_contract"
+path = "e2e/restore_cold_recovery_contract.rs"
+required-features = []
+
+[[test]]
+name = "field_query_correctness_contract"
+path = "e2e/field_query_correctness_contract.rs"
 required-features = []

@@ -172,12 +172,12 @@ fn initial_items(primary_keyword: String) -> Vec<IndexItem> {
             TEXT_FIELD,
             FieldValue::String(PRIMARY_TEXT.to_owned()),
         ),
-        item(PRIMARY_ID, KEYWORD_FIELD, FieldValue::String(primary_keyword)),
         item(
             PRIMARY_ID,
-            NUMBER_FIELD,
-            FieldValue::Number(PRIMARY_PRICE),
+            KEYWORD_FIELD,
+            FieldValue::String(primary_keyword),
         ),
+        item(PRIMARY_ID, NUMBER_FIELD, FieldValue::Number(PRIMARY_PRICE)),
         item(
             PRIMARY_ID,
             SET_FIELD,
@@ -244,11 +244,7 @@ fn update_request() -> IndexRequest {
             KEYWORD_FIELD,
             FieldValue::String(format!("{UPDATED_KEYWORD_PREFIX}small")),
         ),
-        item(
-            PRIMARY_ID,
-            NUMBER_FIELD,
-            FieldValue::Number(UPDATED_PRICE),
-        ),
+        item(PRIMARY_ID, NUMBER_FIELD, FieldValue::Number(UPDATED_PRICE)),
         item(
             PRIMARY_ID,
             SET_FIELD,
@@ -432,9 +428,9 @@ fn assert_score_maps_equal(
         "{phase}: Text query `{query}` returned the wrong document count",
     );
     for (external_id, reference_score) in reference {
-        let actual_score = actual.get(&external_id).unwrap_or_else(|| {
-            panic!("{phase}: Text query `{query}` lost `{external_id}`")
-        });
+        let actual_score = actual
+            .get(&external_id)
+            .unwrap_or_else(|| panic!("{phase}: Text query `{query}` lost `{external_id}`"));
         let tolerance = reference_score.abs().max(1.0) * 1.0e-5;
         assert!(
             (*actual_score - reference_score).abs() <= tolerance,
@@ -661,7 +657,10 @@ fn corrupt_complete_frame_payload(path: &Path, frame_start: u64, payload_offset:
     file.read_exact(&mut length)
         .expect("read authentic mixed AOF frame length");
     let payload_bytes = u32::from_le_bytes(length) as u64;
-    assert!(payload_bytes > payload_offset, "security fixture payload has target byte");
+    assert!(
+        payload_bytes > payload_offset,
+        "security fixture payload has target byte"
+    );
     let payload_start = frame_start + FRAME_HEADER_BYTES;
     let corrupt_at = payload_start + payload_offset;
     file.seek(SeekFrom::Start(corrupt_at))
@@ -789,7 +788,11 @@ async fn oversized_committed_mixed_aof_replays_suffixes_checkpoints_and_cold_ope
         "valid oversized mixed prefix replay must advance through its committed Index sequence",
     );
     let reference = small_reference_engine();
-    assert_initial_state(&prefix_engine, &reference, "initial oversized mixed AOF replay");
+    assert_initial_state(
+        &prefix_engine,
+        &reference,
+        "initial oversized mixed AOF replay",
+    );
     assert_public_pending_budget(
         prefix_engine.clone(),
         INDEX_SEQUENCE,
@@ -848,7 +851,11 @@ async fn oversized_committed_mixed_aof_replays_suffixes_checkpoints_and_cold_ope
         "AOF replay must apply only sequences strictly greater than the checkpoint watermark",
     );
     apply_reference_tail(&reference);
-    assert_tail_state(&prefix_cold.engine, &reference, "strict mixed AOF suffix after checkpoint");
+    assert_tail_state(
+        &prefix_cold.engine,
+        &reference,
+        "strict mixed AOF suffix after checkpoint",
+    );
     assert_public_pending_budget(
         prefix_cold.engine.clone(),
         DELETE_SEQUENCE,
@@ -894,7 +901,11 @@ async fn oversized_committed_mixed_aof_replays_suffixes_checkpoints_and_cold_ope
         0,
         "fully checkpoint-covered mixed AOF frames must not advance the watermark",
     );
-    assert_tail_state(&final_cold.engine, &reference, "fully covered mixed AOF replay");
+    assert_tail_state(
+        &final_cold.engine,
+        &reference,
+        "fully covered mixed AOF replay",
+    );
 
     assert_complete_corrupt_mixed_frame_is_refused(root.path());
 }

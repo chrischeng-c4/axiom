@@ -50,10 +50,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-pub use storage_durable::{FramedLogTrimObserver, FsyncPolicy};
-use storage_durable::{FramedLogCursor, FramedLogWriter, LogFrame};
 #[cfg(unix)]
 use storage_durable::FramedLogTrimPlan;
+use storage_durable::{FramedLogCursor, FramedLogWriter, LogFrame};
+pub use storage_durable::{FramedLogTrimObserver, FsyncPolicy};
 
 #[cfg(test)]
 use std::fs::OpenOptions;
@@ -98,6 +98,23 @@ pub struct AofWriter {
     inject_failure_once: Option<std::io::ErrorKind>,
 }
 
+pub(crate) struct AofSyncPlan {
+    sync: Option<Box<dyn FnOnce() -> Result<()> + Send>>,
+    complete: Option<Box<dyn FnOnce(&mut FramedLogWriter) -> Result<()> + Send>>,
+}
+
+impl AofSyncPlan {
+    pub(crate) fn sync_off_lock(&mut self) -> Result<()> {
+        self.sync.take().expect("AOF sync plan already synced")()
+    }
+
+    pub(crate) fn complete(mut self, writer: &mut FramedLogWriter) -> Result<()> {
+        self.complete
+            .take()
+            .expect("AOF sync plan already completed")(writer)
+    }
+}
+
 /// A prepared durable AOF trim. It has no public configuration surface.
 #[cfg(unix)]
 pub(crate) struct AofTrimPlan {
@@ -114,6 +131,37 @@ impl AofTrimPlan {
 }
 
 impl AofWriter {
+    pub(crate) fn begin_sync(&mut self) -> Result<Option<AofSyncPlan>> {
+        let Some(plan) = self.inner.begin_sync()? else {
+            return Ok(None);
+        };
+        let state = std::sync::Arc::new(std::sync::Mutex::new(Some(plan)));
+        let sync_state = std::sync::Arc::clone(&state);
+        let complete_state = std::sync::Arc::clone(&state);
+        Ok(Some(AofSyncPlan {
+            sync: Some(Box::new(move || {
+                sync_state
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("AOF sync plan poisoned"))?
+                    .as_ref()
+                    .expect("AOF sync plan missing")
+                    .sync_off_lock()
+            })),
+            complete: Some(Box::new(move |writer| {
+                let plan = complete_state
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("AOF sync plan poisoned"))?
+                    .take()
+                    .expect("AOF sync plan missing");
+                writer.complete_sync(plan)
+            })),
+        }))
+    }
+
+    pub(crate) fn complete_sync(&mut self, plan: AofSyncPlan) -> Result<()> {
+        plan.complete(&mut self.inner)
+    }
+
     /// Install an optional in-process observer for covered AOF frames and the
     /// initial temp-sync boundary during trim. This only forwards the shared
     /// framed-log hook; it does not change AOF locking, trimming, or durability.
@@ -328,13 +376,7 @@ fn replay_aof_into_observed(
     before_decode: impl FnMut(),
 ) -> Result<u64> {
     let mut capacity_owner = None;
-    replay_aof_into_with_capacity_owner(
-        engine,
-        path,
-        from_seq,
-        before_decode,
-        &mut capacity_owner,
-    )
+    replay_aof_into_with_capacity_owner(engine, path, from_seq, before_decode, &mut capacity_owner)
 }
 
 fn replay_aof_into_with_capacity_owner(
@@ -403,9 +445,16 @@ fn replay_aof_into_with_capacity_owner(
             Ok(reservation) => reservation,
             Err(crate::storage::RecordAdmissionError::Capacity(
                 crate::change_budget::AdmissionError::Full { .. },
-            )) => engine
-                .wait_reserve_record_ram(&request)
-                .context("wait for AOF replay scanner admission")?,
+            )) => {
+                // A replay admission can hit the hard limit before the
+                // decode-growth path runs.  Publish the maintenance request
+                // before sleeping so the bootstrap checkpoint owner wakes
+                // even when the current frame has no decoded reservation yet.
+                engine.request_pending_checkpoint();
+                engine
+                    .wait_reserve_record_ram(&request)
+                    .context("wait for AOF replay scanner admission")?
+            }
             Err(error) => {
                 return Err(anyhow::Error::new(error).context("reserve AOF replay scanner"))
             }
@@ -930,11 +979,17 @@ mod tests {
         };
         let normalized = raw + cost.active + cost.frozen + cost.prepublish;
         let active = budget.snapshot().total;
-        assert!(active + workspace < HARD, "fixture scanner must fit after publication");
+        assert!(
+            active + workspace < HARD,
+            "fixture scanner must fit after publication"
+        );
         let held_bytes = HARD - active - workspace + 1;
         let held = budget.owner().try_reserve(held_bytes).unwrap();
         let available = HARD - budget.snapshot().total;
-        assert!(available < workspace, "fixture must block initial scanner admission");
+        assert!(
+            available < workspace,
+            "fixture must block initial scanner admission"
+        );
         assert!(
             held_bytes + workspace <= HARD,
             "held charge and scanner workspace must fit after publication"
@@ -952,7 +1007,9 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
         let replay_engine = engine.clone();
         std::thread::spawn(move || {
-            done_tx.send(replay_aof_into(&replay_engine, path, 0)).unwrap();
+            done_tx
+                .send(replay_aof_into(&replay_engine, path, 0))
+                .unwrap();
         });
 
         match done_rx.recv_timeout(Duration::from_secs(2)) {
@@ -962,12 +1019,21 @@ mod tests {
                 // publication itself before the deadline above.
                 let store = SegmentRdbStore::new(dir.path().join("cleanup-segments")).unwrap();
                 store.save(&engine, 0).unwrap();
-                assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 1);
+                assert_eq!(
+                    done_rx
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap()
+                        .unwrap(),
+                    1
+                );
                 panic!("public replay did not start independent capacity maintenance: {timeout}");
             }
         }
         assert_eq!(
-            engine.search("u", term_query("email", "after-capacity-release")).unwrap().total,
+            engine
+                .search("u", term_query("email", "after-capacity-release"))
+                .unwrap()
+                .total,
             1
         );
         drop(held);
@@ -1015,7 +1081,10 @@ mod tests {
         let payload = encode_payload(&record).unwrap();
         let workspace = crate::wal_wire_cost::scan_workspace_bound(&payload).unwrap();
         let decoded = crate::wal_wire_cost::decoded_peak_bound(&payload).unwrap();
-        assert!(workspace < decoded, "fixture must pass scanner reserve before decoded growth");
+        assert!(
+            workspace < decoded,
+            "fixture must pass scanner reserve before decoded growth"
+        );
         let raw = Engine::record_owned_bytes(&record.entry).unwrap();
         let crate::change_record_cost::RecordEstimate::Ready(cost) =
             engine.estimate_record_cost(&record.entry)
@@ -1024,12 +1093,18 @@ mod tests {
         };
         let normalized = raw + cost.active + cost.frozen + cost.prepublish;
         let active = budget.snapshot().total;
-        assert!(active + decoded < HARD, "fixture decoded record must fit after publication");
+        assert!(
+            active + decoded < HARD,
+            "fixture decoded record must fit after publication"
+        );
         let held_bytes = HARD - active - decoded + 1;
         let held = budget.owner().try_reserve(held_bytes).unwrap();
         let available = HARD - budget.snapshot().total;
         assert!(workspace <= available, "fixture scanner reserve must fit");
-        assert!(available < decoded, "fixture must block only decoded growth");
+        assert!(
+            available < decoded,
+            "fixture must block only decoded growth"
+        );
         assert!(
             held_bytes + normalized <= HARD,
             "held charge and completed normalized record must fit after publication"
@@ -1043,7 +1118,9 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
         let replay_engine = engine.clone();
         std::thread::spawn(move || {
-            done_tx.send(replay_aof_into(&replay_engine, path, 0)).unwrap();
+            done_tx
+                .send(replay_aof_into(&replay_engine, path, 0))
+                .unwrap();
         });
 
         match done_rx.recv_timeout(Duration::from_secs(2)) {
@@ -1051,11 +1128,20 @@ mod tests {
             Err(timeout) => {
                 let store = SegmentRdbStore::new(dir.path().join("cleanup-segments")).unwrap();
                 store.save(&engine, 0).unwrap();
-                assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 1);
+                assert_eq!(
+                    done_rx
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap()
+                        .unwrap(),
+                    1
+                );
                 panic!("public replay decoded-growth wait had no capacity maintainer: {timeout}");
             }
         }
-        assert!(engine.list_collections().unwrap().contains(&"growth-created".to_owned()));
+        assert!(engine
+            .list_collections()
+            .unwrap()
+            .contains(&"growth-created".to_owned()));
         drop(held);
     }
 
@@ -1071,13 +1157,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let baseline = SegmentRdbStore::new(dir.path().join("baseline-segments")).unwrap();
         baseline.save(&engine, 0).unwrap();
-        assert_eq!(budget.snapshot().total, 0, "baseline checkpoint must release schema setup work");
+        assert_eq!(
+            budget.snapshot().total,
+            0,
+            "baseline checkpoint must release schema setup work"
+        );
         let record = rec(index_entry("u", "replayed", "after-reservation-release"));
         let payload = encode_payload(&record).unwrap();
         let workspace = crate::wal_wire_cost::scan_workspace_bound(&payload).unwrap();
         let decoded = crate::wal_wire_cost::decoded_peak_bound(&payload).unwrap();
         assert!(workspace > 0, "fixture must have scanner admission work");
-        assert!(decoded < HARD, "fixture must be fitting, rather than oversized");
+        assert!(
+            decoded < HARD,
+            "fixture must be fitting, rather than oversized"
+        );
         let held = budget.owner().try_reserve(HARD - workspace + 1).unwrap();
         let checkpoints_before = engine.metrics().segment_checkpoint_completed_total.get();
 
@@ -1088,14 +1181,19 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
         let replay_engine = engine.clone();
         std::thread::spawn(move || {
-            done_tx.send(replay_aof_into(&replay_engine, path, 0)).unwrap();
+            done_tx
+                .send(replay_aof_into(&replay_engine, path, 0))
+                .unwrap();
         });
 
         let waiter_deadline = std::time::Instant::now() + Duration::from_secs(2);
         while !budget.has_capacity_waiters() && std::time::Instant::now() < waiter_deadline {
             std::thread::yield_now();
         }
-        assert!(budget.has_capacity_waiters(), "replay must reach the real initial reservation wait");
+        assert!(
+            budget.has_capacity_waiters(),
+            "replay must reach the real initial reservation wait"
+        );
         assert!(
             done_rx.recv_timeout(Duration::from_millis(100)).is_err(),
             "reserved-only capacity must not be treated as checkpointable progress"
@@ -1106,7 +1204,13 @@ mod tests {
             "reserved-only pressure must not publish a pointless checkpoint"
         );
         drop(held);
-        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 1);
+        assert_eq!(
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap(),
+            1
+        );
         assert_eq!(
             engine
                 .search("u", term_query("email", "after-reservation-release"))
@@ -1189,15 +1293,20 @@ mod tests {
             .unwrap();
         // Repetitions now admit their distinct terms. Keep this refusal
         // fixture truly oversized even when its terms are priced exactly.
-        let value = format!("ab{}", (0x4e00..0x4e00 + 512)
-            .map(|scalar| char::from_u32(scalar).unwrap()).collect::<String>());
+        let value = format!(
+            "ab{}",
+            (0x4e00..0x4e00 + 512)
+                .map(|scalar| char::from_u32(scalar).unwrap())
+                .collect::<String>()
+        );
         let mut distinct = std::collections::BTreeSet::new();
         crate::ngram_stream::stream_default_ngrams(&value, |token| {
             distinct.insert(token.to_owned());
             Ok::<_, ()>(())
-        }).unwrap();
-        let normalized = crate::change_memory_cost::estimate_change(
-            &crate::change_memory_cost::Change::Index {
+        })
+        .unwrap();
+        let normalized =
+            crate::change_memory_cost::estimate_change(&crate::change_memory_cost::Change::Index {
                 external_id_bytes: "not-applied".len(),
                 new_document: true,
                 field: crate::change_memory_cost::FieldCost::Text {
@@ -1205,10 +1314,12 @@ mod tests {
                     total_term_bytes: distinct.iter().map(String::len).sum(),
                 },
                 volatile_metadata_bytes: 0,
-            },
-        ).unwrap();
-        assert!(normalized.total() > 64 * 1024,
-            "distinct normalized data must exceed this test's budget before raw transport is added");
+            })
+            .unwrap();
+        assert!(
+            normalized.total() > 64 * 1024,
+            "distinct normalized data must exceed this test's budget before raw transport is added"
+        );
         let record = rec(RaftLogEntry::Index {
             collection_id: "text".into(),
             req: IndexRequest {
@@ -1374,7 +1485,10 @@ mod tests {
             .unwrap();
 
         let mut plan = writer.begin_trim(1).unwrap();
-        assert!(writer.begin_trim(1).is_err(), "an active plan must stay owned");
+        assert!(
+            writer.begin_trim(1).is_err(),
+            "an active plan must stay owned"
+        );
         plan.copy_stable_prefix().unwrap();
         writer
             .append(3, &rec(index_entry("u", "late", "three@example.test")))

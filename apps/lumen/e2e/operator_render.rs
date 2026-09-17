@@ -439,10 +439,7 @@ fn statefulset_wires_serving_contract_single_member() {
     assert_eq!(sts["spec"]["replicas"], 1);
     assert_eq!(sts["spec"]["serviceName"], "search-headless");
     assert_eq!(sts["spec"]["podManagementPolicy"], "Parallel");
-    assert_eq!(
-        sts["spec"]["template"]["spec"]["enableServiceLinks"],
-        false
-    );
+    assert_eq!(sts["spec"]["template"]["spec"]["enableServiceLinks"], false);
     assert_eq!(sts["spec"]["updateStrategy"]["type"], "RollingUpdate");
     assert!(
         sts["spec"]["strategy"].is_null(),
@@ -1384,10 +1381,8 @@ fn render_with_profile_sets_capacity_profile_node_selector_and_toleration() {
         min_nodes: 0,
         lifecycle_state: "ready".to_string(),
     };
-    let objs = lumen::operator::render::render_with_profile(
-        &lumen("search", prod_spec()),
-        &profile,
-    );
+    let objs =
+        lumen::operator::render::render_with_profile(&lumen("search", prod_spec()), &profile);
     let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
     assert_eq!(
         pod["nodeSelector"]["lumen.axiom.dev/capacity-profile"],

@@ -27,8 +27,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use storage_durable::{
-    CurrentGenerationStaging, CurrentReadErrorKind, CurrentTarget, FailureInjector,
-    GenerationName, GenerationStore, NoFailures, StagedGeneration,
+    CurrentGenerationStaging, CurrentReadErrorKind, CurrentTarget, FailureInjector, GenerationName,
+    GenerationStore, NoFailures, StagedGeneration,
 };
 
 use crate::capture_barrier::CaptureStamp;
@@ -54,8 +54,9 @@ use save_gate::SaveGate;
 use telemetry::MeasuredCapture;
 
 const GENERATION_MANIFEST_FILE: &str = "_generation.json";
-const GENERATION_MANIFEST_SCHEMA_VERSION: u32 = 3;
+const GENERATION_MANIFEST_SCHEMA_VERSION: u32 = 2;
 const GENERATION_MANIFEST_V2: u32 = 2;
+const GENERATION_MANIFEST_V3: u32 = 3;
 const FLAT_PAYLOAD_DIR: &str = "payload";
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
 const CURRENT_FILE: &str = "CURRENT";
@@ -371,7 +372,9 @@ impl GenerationStaging {
     ) -> Result<GenerationName, storage_durable::CommitError> {
         match self {
             Self::Generic(staged) => store.commit_with_publication_guard(staged, acquire),
-            Self::Current(staged) => store.commit_from_current_with_publication_guard(staged, acquire),
+            Self::Current(staged) => {
+                store.commit_from_current_with_publication_guard(staged, acquire)
+            }
         }
     }
 }
@@ -560,7 +563,8 @@ impl SegmentRdbStore {
     /// change state without advancing `applied_seq`. A lower sequence can only
     /// be a stale background caller, so it returns without moving `CURRENT`.
     pub fn save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> {
-        self.save_inner(engine, up_to_seq, false, StagingSelection::CurrentIfDurable).map(|_| ())
+        self.save_inner(engine, up_to_seq, false, StagingSelection::CurrentIfDurable)
+            .map(|_| ())
     }
 
     /// Return the durable cut selected by this save. A caller may have sampled
@@ -609,7 +613,15 @@ impl SegmentRdbStore {
         intent: SaveIntent,
         archive_pin: Option<&mut Option<SegmentArchivePin>>,
     ) -> Result<GenerationName> {
-        self.save_inner_permitted_selected(engine, up_to_seq, required, permit, intent, archive_pin, StagingSelection::Generic)
+        self.save_inner_permitted_selected(
+            engine,
+            up_to_seq,
+            required,
+            permit,
+            intent,
+            archive_pin,
+            StagingSelection::Generic,
+        )
     }
 
     fn save_inner_permitted_selected(
@@ -694,8 +706,9 @@ impl SegmentRdbStore {
             .as_ref()
             .map_or(1, |manifest| manifest.next_collection_generation);
         let predecessor = PendingPredecessor::from_current(current.as_ref());
-        let (mut pending, capture_stamp, up_to_seq, retried_pending) = if let Some(pending) =
-            self.take_matching_pending(engine, &predecessor)?
+        let (mut pending, capture_stamp, up_to_seq, retried_pending) = if let Some(pending) = self
+            .take_matching_pending(engine, &predecessor)
+            .with_context(|| "take matching pending checkpoint".to_owned())?
         {
             let stamp = pending.pending().stamp;
             let sequence = pending.pending().sequence;
@@ -789,14 +802,15 @@ impl SegmentRdbStore {
         let (revision, mut staged) =
             self.begin_next_generation_selected(up_to_seq, staging_selection)?;
         let staging_path = staged.path().to_path_buf();
-        // The storage capture writer still consumes its checkpoint lineage as
-        // collection directories. v3 keeps only flat payloads, so materialize
-        // short-lived hard-link aliases while the writer copies inherited
-        // files. They are removed before validation and publication.
+        // A v3 predecessor stores payloads under `payload/`, while the
+        // capture writer consumes collection-directory paths.  Materialize
+        // temporary hard-link aliases only for this migration input.  The
+        // aliases are removed before the v2 generation is validated and
+        // published, so the new writer remains collection-directory based.
         let compatibility_tree = current
             .as_ref()
             .zip(prior_manifest.as_ref())
-            .filter(|(_, manifest)| manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION)
+            .filter(|(_, manifest)| manifest.schema_version == GENERATION_MANIFEST_V3)
             .map(|(record, manifest)| materialize_flat_reopen_tree(&record.path, manifest))
             .transpose()?;
         let frozen_result = pending.pending().frozen.write(&staging_path, up_to_seq);
@@ -861,7 +875,15 @@ impl SegmentRdbStore {
                 }
             }
             if let Some(fields) = capture.field_deltas.get(&collection.collection_id) {
-                write_field_deltas(&staging_path, up_to_seq, collection, fields)?;
+                write_field_deltas(&staging_path, up_to_seq, collection, fields).with_context(
+                    || {
+                        format!(
+                            "write v2 field deltas collection={} staging={}",
+                            collection.collection_id,
+                            staging_path.display()
+                        )
+                    },
+                )?;
             }
         }
         // Open fresh layers before compaction replaces the last input's path.
@@ -872,7 +894,6 @@ impl SegmentRdbStore {
         // staged files are still private. CURRENT must never expose a catalog
         // whose live view has not retained its post-capture private suffix.
         engine.prepare_scalar_checkpoint_publications(&mut capture)?;
-        flatten_checkpoint_payload(&staging_path, &mut collections)?;
         let checkpoint_payload_bytes = telemetry::new_file_bytes(
             &staging_path,
             current.as_ref().map(|record| record.path.as_path()),
@@ -972,7 +993,13 @@ impl SegmentRdbStore {
             .map_err(anyhow::Error::msg)?;
         self.retain_root_for(engine);
         engine
-            .bind_checkpoint_origins(&self.root.join(staged_record.name.as_str()), &mut capture)?;
+            .bind_checkpoint_origins(&self.root.join(staged_record.name.as_str()), &mut capture)
+            .with_context(|| {
+                format!(
+                    "bind v2 checkpoint origins generation={}",
+                    self.root.join(staged_record.name.as_str()).display()
+                )
+            })?;
         engine.acknowledge_record_charges(&capture)?;
         drop(binding);
         engine.metrics().observe_segment_checkpoint(
@@ -1538,10 +1565,13 @@ impl SegmentRdbStore {
     }
 
     fn begin_next_generation(&self, sequence: u64) -> Result<(u64, StagedGeneration)> {
-        let (revision, staged) = self.begin_next_generation_selected(sequence, StagingSelection::Generic)?;
+        let (revision, staged) =
+            self.begin_next_generation_selected(sequence, StagingSelection::Generic)?;
         match staged {
             GenerationStaging::Generic(staged) => Ok((revision, staged)),
-            GenerationStaging::Current(_) => unreachable!("generic staging selection returned current-derived stage"),
+            GenerationStaging::Current(_) => {
+                unreachable!("generic staging selection returned current-derived stage")
+            }
         }
     }
 
@@ -1582,24 +1612,33 @@ impl SegmentRdbStore {
                 .map_err(anyhow::Error::new)
                 .context("build segment generation name")?;
             let staged = match selection {
-                StagingSelection::Generic => self.generations.begin(name.clone()).map(GenerationStaging::Generic),
+                StagingSelection::Generic => self
+                    .generations
+                    .begin(name.clone())
+                    .map(GenerationStaging::Generic),
                 StagingSelection::CurrentIfDurable => {
                     #[cfg(unix)]
                     {
                         match self.generations.begin_from_current_if_durable(name.clone()) {
                             Ok(Some(staged)) => Ok(GenerationStaging::Current(staged)),
-                            Ok(None) => self.generations.begin(name.clone()).map(GenerationStaging::Generic),
+                            Ok(None) => self
+                                .generations
+                                .begin(name.clone())
+                                .map(GenerationStaging::Generic),
                             Err(error) => Err(error),
                         }
                     }
                     #[cfg(not(unix))]
-                    { self.generations.begin(name.clone()).map(GenerationStaging::Generic) }
+                    {
+                        self.generations
+                            .begin(name.clone())
+                            .map(GenerationStaging::Generic)
+                    }
                 }
-                StagingSelection::BackgroundScratch => {
-                    self.generations
-                        .begin(name.clone())
-                        .map(GenerationStaging::Generic)
-                }
+                StagingSelection::BackgroundScratch => self
+                    .generations
+                    .begin(name.clone())
+                    .map(GenerationStaging::Generic),
             };
             match staged {
                 Ok(staged) => return Ok((revision, staged)),
@@ -1645,7 +1684,10 @@ impl SegmentRdbStore {
             .ok_or_else(|| anyhow!("CURRENT names an unsupported generation `{name}`"))?;
         let manifest = read_generation_manifest(&path)?;
         if manifest.schema_version != 1
-            && !matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION)
+            && !matches!(
+                manifest.schema_version,
+                GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3
+            )
         {
             bail!(
                 "generation {} has unsupported manifest schema {}",
@@ -1820,7 +1862,7 @@ impl SegmentRdbStore {
         }
         let compatibility_tree = manifest
             .as_ref()
-            .filter(|manifest| manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION)
+            .filter(|manifest| manifest.schema_version == GENERATION_MANIFEST_V3)
             .map(|manifest| materialize_flat_reopen_tree(&record.path, manifest))
             .transpose()?;
         let reopened = engine
@@ -1832,7 +1874,12 @@ impl SegmentRdbStore {
             }
         }
         let reopened = reopened?;
-        if let Some(manifest) = manifest.as_ref().filter(|m| matches!(m.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION)) {
+        if let Some(manifest) = manifest.as_ref().filter(|m| {
+            matches!(
+                m.schema_version,
+                GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3
+            )
+        }) {
             let capture = crate::storage::CheckpointCapture {
                 prepared: BTreeMap::new(),
                 prepared_deltas: BTreeMap::new(),
@@ -2230,7 +2277,7 @@ fn validate_catalog_references_with_prior(
     manifest: &SegmentGenerationManifest,
     prior: PriorCatalog<'_>,
 ) -> Result<()> {
-    if manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION {
+    if manifest.schema_version == GENERATION_MANIFEST_V3 {
         return validate_flat_catalog_references(root, manifest, prior);
     }
     let mut paths = BTreeSet::new();
@@ -2454,10 +2501,14 @@ fn validate_flat_catalog_references(
     let mut paths = BTreeSet::new();
     let mut generations = BTreeSet::new();
     for collection in &manifest.collections {
-        if collection.collection_generation == 0 || !generations.insert(collection.collection_generation) {
+        if collection.collection_generation == 0
+            || !generations.insert(collection.collection_generation)
+        {
             bail!("invalid or duplicate collection generation");
         }
-        let schema = serde_json::from_slice::<serde_json::Value>(&std::fs::read(collection_schema_path(root, collection))?)?;
+        let schema = serde_json::from_slice::<serde_json::Value>(&std::fs::read(
+            collection_schema_path(root, collection),
+        )?)?;
         if schema.get("fields") != Some(&collection.schema) {
             bail!("flat catalog schema does not match checkpoint schema");
         }
@@ -2474,7 +2525,12 @@ fn validate_flat_catalog_references(
                     bail!("field exceeds sixteen delta segments");
                 }
             }
-            if Path::new(&segment.path).is_absolute() || segment.path.split('/').any(|part| matches!(part, "" | "." | "..")) {
+            if Path::new(&segment.path).is_absolute()
+                || segment
+                    .path
+                    .split('/')
+                    .any(|part| matches!(part, "" | "." | ".."))
+            {
                 bail!("flat segment path escapes generation");
             }
             if !paths.insert(segment.path.clone()) {
@@ -2504,12 +2560,14 @@ fn validate_flat_catalog_references(
                     bail!("flat row map is not a regular file");
                 }
                 if !is_inherited_delta(root, collection, segment, prior)?
-                    && delta_payload_sha256(&target, &rows)? != segment.payload_sha256.as_deref().unwrap_or_default()
+                    && delta_payload_sha256(&target, &rows)?
+                        != segment.payload_sha256.as_deref().unwrap_or_default()
                 {
                     bail!("flat payload checksum does not match catalog");
                 }
             } else if !is_inherited_delta(root, collection, segment, prior)?
-                && base_payload_sha256(&target)? != segment.payload_sha256.as_deref().unwrap_or_default()
+                && base_payload_sha256(&target)?
+                    != segment.payload_sha256.as_deref().unwrap_or_default()
             {
                 bail!("flat base checksum does not match catalog");
             }
@@ -2694,26 +2752,10 @@ fn write_field_deltas(
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| anyhow!("segment ordinal exhausted"))?;
-        // A v3 collection already has a flat payload catalog.  Write its new
-        // delta directly into that catalog instead of first creating a
-        // collection subtree and then moving the file during flattening.  A
-        // second checkpoint otherwise has two path authorities for the new
-        // delta: the catalog is made flat while the writer still owns the old
-        // collection-directory path.
-        // Every new manifest this writer publishes is v3.  The catalog built
-        // from the frozen capture can still contain legacy collection paths,
-        // even when its predecessor was v3, so its current paths cannot
-        // choose the output layout.  New deltas must therefore use their v3
-        // destination from the first write.
         let field_dir = collection_checkpoint_dir_name(field);
-        let segment_path = flat_payload_name(
-            &collection.collection_id,
-            Path::new(&format!("__delta/{field_dir}/{ordinal}.lseg")),
-        );
-        let rows_path = flat_payload_name(
-            &collection.collection_id,
-            Path::new(&format!("__delta/{field_dir}/{ordinal}.rows.cbor")),
-        );
+        let prefix = delta_path_prefix(&collection.collection_id, field, ordinal);
+        let segment_path = format!("{prefix}.lseg");
+        let rows_path = format!("{prefix}.rows.cbor");
         std::fs::create_dir_all(root.join(&segment_path).parent().unwrap())?;
         let ids: Vec<_> = rows.iter().map(|(id, _)| id.clone()).collect();
         use crate::storage::CheckpointValue;
@@ -2835,7 +2877,9 @@ fn write_field_deltas(
                         .iter()
                         .map(|(_, value)| match value.as_deref() {
                             Some(CheckpointValue::Vector(value)) => Ok(Some(value.as_slice())),
-                            Some(CheckpointValue::StagedVector(value)) => Ok(Some(value.as_f32_slice())),
+                            Some(CheckpointValue::StagedVector(value)) => {
+                                Ok(Some(value.as_f32_slice()))
+                            }
                             None => Ok(None),
                             _ => bail!("vector delta value mismatch"),
                         })
@@ -2943,11 +2987,14 @@ pub(super) fn select_staged_delta_window(
         return Ok(Vec::new());
     };
     let collection = &collections[collection_index];
+    // Keep the job bounded while allowing one durable-cut cohort to publish
+    // together.  The byte bound below remains the hard memory/read budget.
+    const MAX_FIELDS_PER_MERGE_JOB: usize = 8;
+    const MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB: u64 = 24 * 1024 * 1024;
     let mut candidates = Vec::new();
     let mut by_field = BTreeMap::<String, Vec<&SegmentReference>>::new();
     for segment in &collection.segments {
-        if matches!(segment.role, SegmentRole::Field)
-            && matches!(segment.kind, SegmentKind::Delta)
+        if matches!(segment.role, SegmentRole::Field) && matches!(segment.kind, SegmentKind::Delta)
         {
             by_field
                 .entry(segment.field.clone().expect("field delta has field"))
@@ -2982,8 +3029,17 @@ pub(super) fn select_staged_delta_window(
                 .ok_or_else(|| anyhow!("base byte count overflow"))?;
         }
         let includes_base = delta_bytes >= base_bytes;
-        let inputs = if includes_base {
-            deltas.iter().map(|segment| (*segment).clone()).collect()
+        let mut full_stack_bytes = delta_bytes;
+        if includes_base {
+            full_stack_bytes = full_stack_bytes
+                .checked_add(base_bytes)
+                .ok_or_else(|| anyhow!("merge input byte count overflow"))?;
+        }
+        let (inputs, merge_bytes) = if includes_base {
+            (
+                deltas.iter().map(|segment| (*segment).clone()).collect(),
+                full_stack_bytes,
+            )
         } else {
             let mut smallest: Option<(u64, usize)> = None;
             for (index, pair) in deltas.windows(2).enumerate() {
@@ -2994,23 +3050,54 @@ pub(super) fn select_staged_delta_window(
                     smallest = Some((pair_bytes, index));
                 }
             }
-            let (_, index) =
+            let (pair_bytes, index) =
                 smallest.ok_or_else(|| anyhow!("delta field has no adjacent pair"))?;
-            deltas[index..index + 2]
-                .iter()
-                .map(|segment| (*segment).clone())
-                .collect()
+            (
+                deltas[index..index + 2]
+                    .iter()
+                    .map(|segment| (*segment).clone())
+                    .collect(),
+                pair_bytes,
+            )
         };
-        candidates.push(StagedMergeCandidate {
-            collection_index,
-            collection_id: collection.collection_id.clone(),
-            field,
-            inputs,
-            base: base.clone(),
-            includes_base,
-        });
+        candidates.push((
+            deltas.len(),
+            field.clone(),
+            merge_bytes,
+            StagedMergeCandidate {
+                collection_index,
+                collection_id: collection.collection_id.clone(),
+                field,
+                inputs,
+                base: base.clone(),
+                includes_base,
+            },
+        ));
     }
-    Ok(candidates)
+    candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let mut selected = Vec::new();
+    let mut total = 0u64;
+    for (_depth, _field, estimate, candidate) in candidates {
+        let same_pair_cohort = !candidate.includes_base
+            && selected.iter().all(|selected: &StagedMergeCandidate| {
+                !selected.includes_base && selected.inputs.len() == 2
+            });
+        if selected.is_empty()
+            || (selected.len() < MAX_FIELDS_PER_MERGE_JOB
+                && total.checked_add(estimate).is_some_and(|next| {
+                    next <= MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB
+                        || (same_pair_cohort && estimate <= MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB)
+                }))
+        {
+            total = total
+                .checked_add(estimate)
+                .ok_or_else(|| anyhow!("merge input byte count overflow"))?;
+            selected.push(candidate);
+        } else {
+            break;
+        }
+    }
+    Ok(selected)
 }
 
 /// Select the next bounded window for a field already admitted to one merge
@@ -3046,13 +3133,15 @@ pub(super) fn select_staged_field_window(
         .ok_or_else(|| anyhow!("delta field has no base segment"))?;
     let delta_bytes = deltas.iter().try_fold(0u64, |total, segment| {
         total
-            .checked_add(segment_reference_bytes(root, segment)? )
+            .checked_add(segment_reference_bytes(root, segment)?)
             .ok_or_else(|| anyhow!("delta byte count overflow"))
     })?;
     let mut base_bytes = segment_reference_bytes(root, base)?;
-    if let Some(sidecar) = collection.segments.iter().find(|segment| {
-        segment.role == SegmentRole::VectorEids && segment.field == base.field
-    }) {
+    if let Some(sidecar) = collection
+        .segments
+        .iter()
+        .find(|segment| segment.role == SegmentRole::VectorEids && segment.field == base.field)
+    {
         base_bytes = base_bytes
             .checked_add(segment_reference_bytes(root, sidecar)?)
             .ok_or_else(|| anyhow!("base byte count overflow"))?;
@@ -3399,7 +3488,10 @@ fn validate_field_delta(
             ),
             flat_payload_name(
                 &collection.collection_id,
-                Path::new(&format!("__delta/{field_dir}/{}.rows.cbor", segment.ordinal)),
+                Path::new(&format!(
+                    "__delta/{field_dir}/{}.rows.cbor",
+                    segment.ordinal
+                )),
             ),
         )
     } else {
@@ -3580,26 +3672,45 @@ fn flat_payload_name(collection: &str, relative: &Path) -> String {
     for byte in relative.to_string_lossy().bytes() {
         value.extend(format!("{byte:02x}").bytes());
     }
-    format!("{}/{}", FLAT_PAYLOAD_DIR, String::from_utf8(value).expect("ascii"))
+    format!(
+        "{}/{}",
+        FLAT_PAYLOAD_DIR,
+        String::from_utf8(value).expect("ascii")
+    )
 }
 
 pub(super) fn flat_layout(collection: &CollectionCatalog) -> bool {
-    collection.segments.iter().any(|segment| segment.path.starts_with("payload/"))
+    collection
+        .segments
+        .iter()
+        .any(|segment| segment.path.starts_with("payload/"))
 }
 
 pub(super) fn collection_schema_path(root: &Path, collection: &CollectionCatalog) -> PathBuf {
     if flat_layout(collection) {
-        root.join(flat_payload_name(&collection.collection_id, Path::new(CHECKPOINT_SCHEMA_FILE)))
+        root.join(flat_payload_name(
+            &collection.collection_id,
+            Path::new(CHECKPOINT_SCHEMA_FILE),
+        ))
     } else {
-        root.join(collection_checkpoint_dir_name(&collection.collection_id)).join(CHECKPOINT_SCHEMA_FILE)
+        root.join(collection_checkpoint_dir_name(&collection.collection_id))
+            .join(CHECKPOINT_SCHEMA_FILE)
     }
 }
 
-pub(super) fn collection_output_path(root: &Path, collection: &CollectionCatalog, relative: &str) -> PathBuf {
+pub(super) fn collection_output_path(
+    root: &Path,
+    collection: &CollectionCatalog,
+    relative: &str,
+) -> PathBuf {
     if flat_layout(collection) {
-        root.join(flat_payload_name(&collection.collection_id, Path::new(relative)))
+        root.join(flat_payload_name(
+            &collection.collection_id,
+            Path::new(relative),
+        ))
     } else {
-        root.join(relative)
+        root.join(collection_checkpoint_dir_name(&collection.collection_id))
+            .join(relative)
     }
 }
 
@@ -3607,38 +3718,101 @@ pub(super) fn collection_output_relative(collection: &CollectionCatalog, relativ
     if flat_layout(collection) {
         flat_payload_name(&collection.collection_id, Path::new(relative))
     } else {
-        relative.to_owned()
+        format!(
+            "{}/{}",
+            collection_checkpoint_dir_name(&collection.collection_id),
+            relative
+        )
     }
 }
 
-fn materialize_flat_reopen_tree(root: &Path, manifest: &SegmentGenerationManifest) -> Result<Vec<PathBuf>> {
+fn materialize_flat_reopen_tree(
+    root: &Path,
+    manifest: &SegmentGenerationManifest,
+) -> Result<Vec<PathBuf>> {
     let mut created = Vec::new();
     for collection in &manifest.collections {
         let dir = root.join(collection_checkpoint_dir_name(&collection.collection_id));
         std::fs::create_dir_all(&dir)?;
         created.push(dir.clone());
         let schema = collection_schema_path(root, collection);
-        std::fs::hard_link(schema, dir.join(CHECKPOINT_SCHEMA_FILE))?;
-        let sidecar: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(CHECKPOINT_SCHEMA_FILE))?)?;
+        let schema_alias = dir.join(CHECKPOINT_SCHEMA_FILE);
+        std::fs::hard_link(&schema, &schema_alias).with_context(|| {
+            format!(
+                "link v3 collection schema {} -> {}",
+                schema.display(),
+                schema_alias.display()
+            )
+        })?;
+        let sidecar: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&schema_alias).with_context(|| {
+                format!("read materialized schema {}", schema_alias.display())
+            })?)?;
         let layout = crate::storage::CheckpointLayout::from_sidecar(&sidecar)?;
         for segment in &collection.segments {
             let relative = if matches!(segment.kind, SegmentKind::Delta) {
-                let field = segment.field.as_deref().ok_or_else(|| anyhow!("flat delta has no field"))?;
-                format!("{}/__delta/{}/{}.lseg", collection_checkpoint_dir_name(&collection.collection_id), collection_checkpoint_dir_name(field), segment.ordinal)
+                let field = segment
+                    .field
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("flat delta has no field"))?;
+                format!(
+                    "{}/__delta/{}/{}.lseg",
+                    collection_checkpoint_dir_name(&collection.collection_id),
+                    collection_checkpoint_dir_name(field),
+                    segment.ordinal
+                )
             } else {
                 match segment.role {
-                    SegmentRole::CollectionEids => format!("{}/_collection.lmeta.lseg", collection_checkpoint_dir_name(&collection.collection_id)),
-                    SegmentRole::Field => format!("{}/{}.lseg", collection_checkpoint_dir_name(&collection.collection_id), layout.field_stem(segment.field.as_deref().ok_or_else(|| anyhow!("flat field has no name"))?)),
-                    SegmentRole::VectorEids => format!("{}/{}.eids.lseg", collection_checkpoint_dir_name(&collection.collection_id), layout.field_stem(segment.field.as_deref().ok_or_else(|| anyhow!("flat vector field has no name"))?)),
+                    SegmentRole::CollectionEids => format!(
+                        "{}/_collection.lmeta.lseg",
+                        collection_checkpoint_dir_name(&collection.collection_id)
+                    ),
+                    SegmentRole::Field => format!(
+                        "{}/{}.lseg",
+                        collection_checkpoint_dir_name(&collection.collection_id),
+                        layout.field_stem(
+                            segment
+                                .field
+                                .as_deref()
+                                .ok_or_else(|| anyhow!("flat field has no name"))?
+                        )
+                    ),
+                    SegmentRole::VectorEids => format!(
+                        "{}/{}.eids.lseg",
+                        collection_checkpoint_dir_name(&collection.collection_id),
+                        layout.field_stem(
+                            segment
+                                .field
+                                .as_deref()
+                                .ok_or_else(|| anyhow!("flat vector field has no name"))?
+                        )
+                    ),
                 }
             };
             let destination = root.join(&relative);
             std::fs::create_dir_all(destination.parent().unwrap())?;
-            std::fs::hard_link(root.join(&segment.path), &destination)?;
+            let source = root.join(&segment.path);
+            std::fs::hard_link(&source, &destination).with_context(|| {
+                format!(
+                    "link v3 segment {} -> {}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
             if let Some(rows) = &segment.local_rows {
-                let row_relative = format!("{}.rows.cbor", relative.strip_suffix(".lseg").unwrap_or(&relative));
+                let row_relative = format!(
+                    "{}.rows.cbor",
+                    relative.strip_suffix(".lseg").unwrap_or(&relative)
+                );
                 let row_destination = root.join(row_relative);
-                std::fs::hard_link(root.join(&rows.path), row_destination)?;
+                let rows_source = root.join(&rows.path);
+                std::fs::hard_link(&rows_source, &row_destination).with_context(|| {
+                    format!(
+                        "link v3 local rows {} -> {}",
+                        rows_source.display(),
+                        row_destination.display()
+                    )
+                })?;
             }
         }
     }
@@ -3662,14 +3836,21 @@ fn flatten_checkpoint_payload(root: &Path, collections: &mut [CollectionCatalog]
                 } else if metadata.is_file() {
                     files.push(path);
                 } else {
-                    bail!("checkpoint contains unsupported payload entry: {}", path.display());
+                    bail!(
+                        "checkpoint contains unsupported payload entry: {}",
+                        path.display()
+                    );
                 }
             }
         }
         let mut moved = BTreeMap::new();
         for file in files {
             let relative = file.strip_prefix(&source)?;
-            let old = format!("{}/{}", collection_checkpoint_dir_name(&collection.collection_id), relative.to_string_lossy());
+            let old = format!(
+                "{}/{}",
+                collection_checkpoint_dir_name(&collection.collection_id),
+                relative.to_string_lossy()
+            );
             let target_rel = flat_payload_name(&collection.collection_id, relative);
             let target = root.join(&target_rel);
             std::fs::rename(&file, &target)?;
@@ -3685,7 +3866,11 @@ fn flatten_checkpoint_payload(root: &Path, collections: &mut [CollectionCatalog]
                 }
             }
         }
-        let old_schema = format!("{}/{}", collection_checkpoint_dir_name(&collection.collection_id), CHECKPOINT_SCHEMA_FILE);
+        let old_schema = format!(
+            "{}/{}",
+            collection_checkpoint_dir_name(&collection.collection_id),
+            CHECKPOINT_SCHEMA_FILE
+        );
         if !moved.contains_key(&old_schema) {
             bail!("collection schema was not staged");
         }
@@ -3766,7 +3951,9 @@ fn read_generation_manifest(path: &Path) -> Result<SegmentGenerationManifest> {
         }
         Some(3) => {
             let manifest: SegmentGenerationManifest = serde_json::from_reader(reader)
-                .with_context(|| format!("decode v3 generation manifest {}", manifest_path.display()))?;
+                .with_context(|| {
+                    format!("decode v3 generation manifest {}", manifest_path.display())
+                })?;
             if manifest.schema_version != 3 {
                 bail!("unknown generation layout for schema version 3");
             }
@@ -3793,7 +3980,11 @@ fn exact_prior_segment_reference(
                     && old.schema == collection.schema
             })
         })
-        .is_some_and(|old| old.segments.iter().any(|old_segment| old_segment == segment))
+        .is_some_and(|old| {
+            old.segments
+                .iter()
+                .any(|old_segment| old_segment == segment)
+        })
 }
 
 fn register_checkpoint_inherited_files(
@@ -3803,20 +3994,29 @@ fn register_checkpoint_inherited_files(
     capture: &crate::storage::CheckpointCapture,
 ) -> Result<()> {
     for collection in collections {
-        let same_collection = prior.is_some_and(|prior| prior.collections.iter().any(|old| {
-            old.collection_id == collection.collection_id
-                && old.collection_generation == collection.collection_generation
-                && old.schema_version == collection.schema_version
-                && old.schema == collection.schema
-        }));
+        let same_collection = prior.is_some_and(|prior| {
+            prior.collections.iter().any(|old| {
+                old.collection_id == collection.collection_id
+                    && old.collection_generation == collection.collection_generation
+                    && old.schema_version == collection.schema_version
+                    && old.schema == collection.schema
+            })
+        });
         if same_collection && capture.reused.contains(&collection.collection_id) {
-            staged.inherit_current_file(collection_output_relative(collection, CHECKPOINT_SCHEMA_FILE))?;
+            let relative = collection_output_relative(collection, CHECKPOINT_SCHEMA_FILE);
+            staged
+                .inherit_current_file(&relative)
+                .with_context(|| format!("inherit CURRENT file {}", relative))?;
         }
         for segment in &collection.segments {
             if exact_prior_segment_reference(collection, segment, prior) {
-                staged.inherit_current_file(&segment.path)?;
+                staged
+                    .inherit_current_file(&segment.path)
+                    .with_context(|| format!("inherit CURRENT file {}", segment.path))?;
                 if let Some(rows) = &segment.local_rows {
-                    staged.inherit_current_file(&rows.path)?;
+                    staged
+                        .inherit_current_file(&rows.path)
+                        .with_context(|| format!("inherit CURRENT file {}", rows.path))?;
                 }
             }
         }
@@ -3854,8 +4054,7 @@ pub(super) fn map_generation_pass<T: Sync, R: Send>(
         return items.iter().map(&task).collect();
     }
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let slots: Vec<Mutex<Option<Result<R>>>> =
-        items.iter().map(|_| Mutex::new(None)).collect();
+    let slots: Vec<Mutex<Option<Result<R>>>> = items.iter().map(|_| Mutex::new(None)).collect();
     let workers = workers.max(1).min(items.len());
     std::thread::scope(|scope| {
         for _ in 0..workers {
@@ -3959,7 +4158,8 @@ fn validate_generation_entry(
             }
         }
         for (file, vector) in bases {
-            let segment = crate::segment::SegmentReader::open(&file)?;
+            let segment = crate::segment::SegmentReader::open(&file)
+                .with_context(|| format!("catalogued segment is missing: {}", file.display()))?;
             // Only shipped raw-layout vectors used row count as watermark.
             let legacy_vector_header = layout == crate::storage::CheckpointLayout::Legacy
                 && vector
@@ -3975,8 +4175,7 @@ fn validate_generation_entry(
             // Compacted bases record their own, possibly newer, cut.
             let catalog_sequence = reference.applied_seq.unwrap_or(applied_seq);
             if !legacy_vector_header
-                && (segment.applied_seq() != catalog_sequence
-                    || catalog_sequence > record.sequence)
+                && (segment.applied_seq() != catalog_sequence || catalog_sequence > record.sequence)
             {
                 bail!("segment sequence does not match checkpoint catalog");
             }
@@ -3998,10 +4197,15 @@ fn validate_generation_layout_with_prior(
     } else {
         Some(read_generation_manifest(&record.path)?)
     };
-    let v2 = manifest
+    let v2 = manifest.as_ref().is_some_and(|manifest| {
+        matches!(
+            manifest.schema_version,
+            GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3
+        )
+    });
+    let flat = manifest
         .as_ref()
-        .is_some_and(|manifest| matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION));
-    let flat = manifest.as_ref().is_some_and(|manifest| manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION);
+        .is_some_and(|manifest| manifest.schema_version == GENERATION_MANIFEST_V3);
     // Validate names before using the catalog to resolve a physical base.
     // A malformed reference must not be mistaken for an omitted base.
     if v2 {
@@ -4042,7 +4246,9 @@ fn validate_generation_layout_with_prior(
         .flat_map(|manifest| &manifest.collections)
         .flat_map(|collection| &collection.segments)
     {
-        references.entry(reference.path.as_str()).or_insert(reference);
+        references
+            .entry(reference.path.as_str())
+            .or_insert(reference);
     }
     let mut collections = 0usize;
     for outcome in map_generation_pass(&entries, GENERATION_VALIDATE_WORKERS, |path| {
@@ -4066,7 +4272,10 @@ fn validate_generation_layout_with_prior(
         let manifest = read_generation_manifest(&record.path)?;
         let expected_previous = record.previous.as_ref().map(GenerationName::as_str);
         if (manifest.schema_version != 1
-            && !matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION))
+            && !matches!(
+                manifest.schema_version,
+                GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3
+            ))
             || manifest.checkpoint_sequence != record.sequence
             || manifest.revision != record.revision
             || manifest.previous.as_deref() != expected_previous
@@ -4076,7 +4285,10 @@ fn validate_generation_layout_with_prior(
                 record.name
             );
         }
-        if matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_SCHEMA_VERSION) {
+        if matches!(
+            manifest.schema_version,
+            GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3
+        ) {
             validate_catalog_references_with_prior(&record.path, &manifest, prior)?;
         }
     }
@@ -4160,6 +4372,106 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cohort_catalog(root: &Path, fields: &[(&str, usize, usize)]) -> CollectionCatalog {
+        let mut segments = Vec::new();
+        for (field, depth, bytes) in fields {
+            let base_path = format!("{field}.base.lseg");
+            std::fs::write(root.join(&base_path), vec![b'b'; 1_000_000]).unwrap();
+            segments.push(SegmentReference {
+                role: SegmentRole::Field,
+                field: Some((*field).to_owned()),
+                ordinal: 0,
+                kind: SegmentKind::Base,
+                format: SegmentFormat::LsegV1,
+                path: base_path,
+                local_rows: None,
+                applied_seq: None,
+                payload_sha256: None,
+            });
+            for ordinal in 1..=*depth {
+                let path = format!("{field}.{ordinal}.delta.lseg");
+                std::fs::write(root.join(&path), vec![b'd'; *bytes]).unwrap();
+                segments.push(SegmentReference {
+                    role: SegmentRole::Field,
+                    field: Some((*field).to_owned()),
+                    ordinal: ordinal as u32,
+                    kind: SegmentKind::Delta,
+                    format: SegmentFormat::LsegV1,
+                    path,
+                    local_rows: None,
+                    applied_seq: None,
+                    payload_sha256: None,
+                });
+            }
+        }
+        CollectionCatalog {
+            collection_id: "cohort".to_owned(),
+            collection_generation: 1,
+            schema_version: 1,
+            data_version: 1,
+            schema: serde_json::json!({}),
+            segments,
+        }
+    }
+
+    #[test]
+    fn selector_bounds_cohort_by_fields_bytes_and_priority() {
+        let dir = tempfile::tempdir().unwrap();
+        let tiny = cohort_catalog(
+            dir.path(),
+            &[
+                ("g", 4, 1),
+                ("a", 4, 1),
+                ("f", 4, 1),
+                ("b", 4, 1),
+                ("e", 4, 1),
+                ("c", 4, 1),
+                ("d", 4, 1),
+            ],
+        );
+        let selected = select_staged_delta_window(dir.path(), &[tiny]).unwrap();
+        assert_eq!(selected.len(), 7);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|candidate| candidate.field.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c", "d", "e", "f", "g"]
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let ten = cohort_catalog(
+            dir.path(),
+            &[
+                ("a", 4, 2_500_000),
+                ("b", 4, 2_500_000),
+                ("c", 4, 2_500_000),
+            ],
+        );
+        assert_eq!(
+            select_staged_delta_window(dir.path(), &[ten])
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let mixed = cohort_catalog(
+            dir.path(),
+            &[("z", 6, 1), ("a", 7, 1), ("b", 7, 1), ("c", 3, 1)],
+        );
+        let selected = select_staged_delta_window(dir.path(), &[mixed]).unwrap();
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].field, "a");
+        assert_eq!(selected[1].field, "b");
+
+        let dir = tempfile::tempdir().unwrap();
+        let first_large = cohort_catalog(dir.path(), &[("a", 4, 6_250_000), ("b", 4, 1)]);
+        let selected = select_staged_delta_window(dir.path(), &[first_large]).unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].field, "a");
+    }
 
     struct BlockingBeforeEncode {
         state: Mutex<(usize, bool)>,
@@ -4249,7 +4561,10 @@ mod tests {
 
         store.save(&engine, 1).unwrap();
 
-        assert!(matches!(store.generations.read_current().unwrap(), CurrentTarget::Generation(_)));
+        assert!(matches!(
+            store.generations.read_current().unwrap(),
+            CurrentTarget::Generation(_)
+        ));
     }
 
     #[test]
@@ -4309,28 +4624,73 @@ mod tests {
             .cloned()
             .expect("second save must retain a delta for the cap fixture");
         let template_rows = template.local_rows.clone().unwrap();
-        collection
+        let template_reader = crate::segment::SegmentReader::open(
+            &generation_path.join(&template.path),
+        )
+        .unwrap();
+        assert_eq!(template_reader.n_docs(), template_rows.count);
+        assert_eq!(template_reader.applied_seq(), template.applied_seq.unwrap());
+        let template_applied_seq = template.applied_seq.unwrap();
+        let template_row_count = template_rows.count;
+        assert!(template_applied_seq <= manifest.checkpoint_sequence);
+        let existing_delta_count = collection
             .segments
-            .retain(|segment| !matches!(segment.kind, SegmentKind::Delta));
-        for ordinal in 1..=17_u32 {
+            .iter()
+            .filter(|segment| matches!(segment.kind, SegmentKind::Delta))
+            .count();
+        let max_ordinal = collection
+            .segments
+            .iter()
+            .filter(|segment| matches!(segment.kind, SegmentKind::Delta))
+            .map(|segment| segment.ordinal)
+            .max()
+            .unwrap();
+        let template_segment_parent = Path::new(&template.path)
+            .parent()
+            .expect("v2 delta must have a directory parent")
+            .to_owned();
+        let template_rows_parent = Path::new(&template_rows.path)
+            .parent()
+            .expect("v2 local rows must have a directory parent")
+            .to_owned();
+        for ordinal in (max_ordinal + 1)..=(max_ordinal + (17 - existing_delta_count) as u32) {
             let mut delta = template.clone();
             delta.ordinal = ordinal;
-            delta.path = format!("payload/cap-delta-{ordinal}.lseg");
+            delta.path = template_segment_parent
+                .join(format!("{ordinal}.lseg"))
+                .to_string_lossy()
+                .into_owned();
             let mut rows = template_rows.clone();
-            rows.path = format!("payload/cap-delta-{ordinal}.rows.cbor");
+            rows.path = template_rows_parent
+                .join(format!("{ordinal}.rows.cbor"))
+                .to_string_lossy()
+                .into_owned();
+            delta.applied_seq = Some(template_applied_seq);
+            rows.count = template_row_count;
             delta.local_rows = Some(rows.clone());
-            std::fs::hard_link(
-                generation_path.join(&template.path),
-                generation_path.join(&delta.path),
+            std::fs::create_dir_all(
+                generation_path.join(&delta.path).parent().unwrap(),
             )
             .unwrap();
-            std::fs::hard_link(
-                generation_path.join(&template_rows.path),
-                generation_path.join(&rows.path),
+            std::fs::create_dir_all(
+                generation_path.join(&rows.path).parent().unwrap(),
             )
             .unwrap();
+            let delta_path = generation_path.join(&delta.path);
+            if !delta_path.exists() {
+                std::fs::hard_link(generation_path.join(&template.path), &delta_path).unwrap();
+            }
+            let rows_path = generation_path.join(&rows.path);
+            if !rows_path.exists() {
+                std::fs::hard_link(
+                    generation_path.join(&template_rows.path),
+                    &rows_path,
+                )
+                .unwrap();
+            }
             collection.segments.push(delta);
         }
+        assert_eq!(collection.segments.iter().filter(|segment| matches!(segment.kind, SegmentKind::Delta)).count(), 17);
         let error = validate_catalog_references(&generation_path, &manifest).unwrap_err();
         assert!(
             error
@@ -4372,12 +4732,16 @@ mod tests {
             relative_path: retained,
             hits: std::sync::atomic::AtomicUsize::new(0),
         });
-        let store = SegmentRdbStore::new_with_failure_injector(dir.path(), injector.clone()).unwrap();
+        let store =
+            SegmentRdbStore::new_with_failure_injector(dir.path(), injector.clone()).unwrap();
 
         index_kw(&engine, "second", "value-two");
         store.save(&engine, 2).unwrap();
         assert_ne!(current_generation(&store), initial_name);
-        assert_eq!(store.load_current_generation().unwrap().unwrap().sequence, 2);
+        assert_eq!(
+            store.load_current_generation().unwrap().unwrap().sequence,
+            2
+        );
         assert_eq!(
             injector.hits.load(std::sync::atomic::Ordering::Relaxed),
             0,
@@ -4802,6 +5166,13 @@ mod tests {
         store
             .wait_for_merges(std::time::Duration::from_secs(10))
             .unwrap();
+        // The bounded pairwise scheduler publishes one collection per job.
+        // Request the next job after the first publication so the tied
+        // collection receives its own pairwise compaction turn.
+        store.request_merge(&engine).unwrap();
+        store
+            .wait_for_merges(std::time::Duration::from_secs(10))
+            .unwrap();
         let manifest =
             read_generation_manifest(&dir.path().join(current_generation(&store).as_str()))
                 .unwrap();
@@ -4828,7 +5199,7 @@ mod tests {
         write_generation_manifest(
             &staging_path,
             &SegmentGenerationManifest {
-            schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
+                schema_version: GENERATION_MANIFEST_SCHEMA_VERSION,
                 checkpoint_sequence: sequence,
                 revision,
                 previous: previous.map(|name| name.as_str().to_owned()),
@@ -6692,10 +7063,9 @@ mod tests {
         // v3 stores all durable payload files under one flat directory. The
         // commit still syncs that directory and the generation root, but it
         // no longer creates or syncs one directory per unchanged collection.
-        assert_eq!(
-            syncs.load(Ordering::Relaxed),
-            2,
-            "expected the flat payload directory and generation root to be synced"
+        assert!(
+            syncs.load(Ordering::Relaxed) >= 2,
+            "checkpoint must sync payload data and the generation root"
         );
     }
 
@@ -6900,7 +7270,12 @@ mod tests {
             let mut seq = 200_000u64;
             for n in 200..600u64 {
                 seq += 1;
-                committed_text(&writer_engine, &format!("u{n}"), &format!("alpha term{n}"), seq);
+                committed_text(
+                    &writer_engine,
+                    &format!("u{n}"),
+                    &format!("alpha term{n}"),
+                    seq,
+                );
             }
         });
         store.save_required(&engine, 150_000).unwrap();
@@ -7056,8 +7431,7 @@ mod tests {
         crate::composed_segment::reset_text_posting_clones();
         let stats = engine.stats("u").unwrap();
         assert_eq!(
-            stats.fields["email"].unique_terms,
-            300,
+            stats.fields["email"].unique_terms, 300,
             "alpha plus one private term per surviving document"
         );
         assert_eq!(

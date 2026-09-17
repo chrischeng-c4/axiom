@@ -110,8 +110,7 @@ fn fixture() -> Fixture {
     let store = Arc::new(SegmentRdbStore::new(&checkpoint_root).expect("open segment store"));
     let wal = Arc::new(MemWal::new());
     let shared_wal: SharedWal = wal.clone();
-    let writer =
-        WriteCoordinator::start_from_with_aof(shared_wal, engine.clone(), 0, aof.clone());
+    let writer = WriteCoordinator::start_from_with_aof(shared_wal, engine.clone(), 0, aof.clone());
     let sink_writer: Arc<dyn WriteSink> = writer.clone();
     let checkpoint: Arc<dyn CheckpointSink> = Arc::new(SegmentCheckpointSink {
         engine: engine.clone(),
@@ -119,12 +118,9 @@ fn fixture() -> Fixture {
         writer: sink_writer.clone(),
         aof: Some(aof.clone()),
     });
-    let state = AppState::with_components(
-        engine.clone(),
-        Arc::new(AuthConfig::open()),
-        sink_writer,
-    )
-    .with_checkpoint(checkpoint);
+    let state =
+        AppState::with_components(engine.clone(), Arc::new(AuthConfig::open()), sink_writer)
+            .with_checkpoint(checkpoint);
     let server = TestServer::new(router(state)).expect("open native committed metrics server");
 
     Fixture {

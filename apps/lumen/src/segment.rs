@@ -4294,14 +4294,23 @@ mod tests {
             std::collections::BTreeMap::new();
         let ids: Vec<u32> = (0..5000u32).filter(|i| i % 3 != 1).collect();
         let tfs: Vec<u32> = ids.iter().map(|i| 1 + i % 7).collect();
-        tokens.insert("apple".into(), Postings::from_sorted(ids.clone(), tfs.clone()));
-        tokens.insert("banana".into(), Postings::from_sorted(vec![1, 3], vec![5, 1]));
+        tokens.insert(
+            "apple".into(),
+            Postings::from_sorted(ids.clone(), tfs.clone()),
+        );
+        tokens.insert(
+            "banana".into(),
+            Postings::from_sorted(vec![1, 3], vec![5, 1]),
+        );
         let lens: Vec<u32> = vec![3; 5000];
         let present = vec![true; lens.len()];
         write_text_segment(&path, 1, &tokens, &lens, &present, 5000, 15000).unwrap();
         let r = SegmentReader::open(&path).unwrap();
 
-        assert!(r.text_posting_cached("apple").is_none(), "cold reader: nothing resident");
+        assert!(
+            r.text_posting_cached("apple").is_none(),
+            "cold reader: nothing resident"
+        );
         let mut seen = Vec::new();
         assert_eq!(
             r.text_posting_scan("apple", |id, tf| seen.push((id, tf))),
@@ -4309,7 +4318,10 @@ mod tests {
             "the count prefix is the token's df"
         );
         let want: Vec<(u32, u32)> = ids.iter().copied().zip(tfs.iter().copied()).collect();
-        assert_eq!(seen, want, "the scan visits exactly the encoded stream, ascending");
+        assert_eq!(
+            seen, want,
+            "the scan visits exactly the encoded stream, ascending"
+        );
         assert!(
             r.text_posting_cached("apple").is_none(),
             "a scan neither reads nor fills the posting cache"

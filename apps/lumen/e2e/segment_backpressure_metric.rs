@@ -300,8 +300,7 @@ async fn precommit_capacity_refusal_body() {
     );
     let envelope = response.json::<Value>();
     assert_eq!(
-        envelope["error"],
-        "pending_change_capacity",
+        envelope["error"], "pending_change_capacity",
         "the valid oversized body must reach pre-commit capacity refusal, not a validation error",
     );
     assert_eq!(

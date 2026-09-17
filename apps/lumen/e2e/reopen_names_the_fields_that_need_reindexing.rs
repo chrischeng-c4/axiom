@@ -60,8 +60,16 @@ const NEVER_WRITTEN: &str = "retracted";
 
 const DOCS: [(&str, &str, [&str; 2]); 3] = [
     ("p-1", "attention is all you need", ["ml", "nlp"]),
-    ("p-2", "a calculus of communicating systems", ["pl", "theory"]),
-    ("p-3", "time clocks and the ordering of events", ["dist", "theory"]),
+    (
+        "p-2",
+        "a calculus of communicating systems",
+        ["pl", "theory"],
+    ),
+    (
+        "p-3",
+        "time clocks and the ordering of events",
+        ["dist", "theory"],
+    ),
 ];
 
 /// A collection with three documents, each carrying `title` and `tags`, and a
@@ -211,13 +219,12 @@ fn the_inspect_command_reports_the_same_damage_offline() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let report: serde_json::Value =
-        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
-            panic!(
-                "inspect --format json must print a JSON document ({e}): {}",
-                String::from_utf8_lossy(&out.stdout)
-            )
-        });
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "inspect --format json must print a JSON document ({e}): {}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
     let rows = report["reindex_needed"]
         .as_array()
         .unwrap_or_else(|| panic!("no reindex_needed array in {report}"));
@@ -260,10 +267,7 @@ fn the_inspect_command_clears_a_clean_snapshot() {
     let rows = report["reindex_needed"]
         .as_array()
         .unwrap_or_else(|| panic!("no reindex_needed array in {report}"));
-    assert!(
-        rows.is_empty(),
-        "a clean snapshot must clear: {report}"
-    );
+    assert!(rows.is_empty(), "a clean snapshot must clear: {report}");
     // The census the report is measured against travels with it, so the
     // operator can tell "nothing is damaged" from "nothing was read".
     let counted: BTreeMap<String, u64> =

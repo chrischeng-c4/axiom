@@ -404,7 +404,7 @@ fn run_budget_relay(
 pub(crate) struct Fallback {
     owner: Option<Owner>,
     relay: Option<BudgetRelay>,
-    _store: Arc<SegmentRdbStore>,
+    _store: Option<Arc<SegmentRdbStore>>,
 }
 
 impl Fallback {
@@ -413,7 +413,17 @@ impl Fallback {
         engine: &Arc<Engine>,
         configured: Option<Arc<SegmentRdbStore>>,
     ) -> Result<()> {
-        if engine.layer_maintenance.owner().is_some() {
+        if let Some(endpoint) = engine.layer_maintenance.owner() {
+            // A configured bootstrap owner may already exist before replay
+            // creates its caller-owned fallback.  Keep the owner as the sole
+            // checkpoint writer, but attach the native relay to that same
+            // endpoint so capacity waits can submit work to it.
+            let relay = BudgetRelay::start(engine.clone(), endpoint)?;
+            *slot = Some(Self {
+                owner: None,
+                relay: Some(relay),
+                _store: configured,
+            });
             return Ok(());
         }
         let is_configured = configured.is_some();
@@ -437,7 +447,7 @@ impl Fallback {
         *slot = Some(Self {
             owner,
             relay,
-            _store: store,
+            _store: Some(store),
         });
         Ok(())
     }
@@ -535,6 +545,24 @@ mod tests {
         let (cold, sequence) = store.load_latest().unwrap().unwrap();
         assert_eq!(sequence, 1);
         assert_eq!(cold.stats("docs").unwrap().documents_indexed, 1);
+    }
+
+    #[test]
+    fn fallback_attaches_relay_to_existing_configured_owner() {
+        let engine = engine();
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(dir.path()).unwrap());
+        let owner = Owner::start(sink(engine.clone(), store), true)
+            .unwrap()
+            .expect("configured owner");
+        let mut fallback = None;
+        Fallback::ensure(&mut fallback, &engine, None).unwrap();
+        let fallback = fallback.expect("existing owner must receive a relay");
+        assert!(fallback.owner.is_none());
+        assert!(fallback.relay.is_some());
+        drop(fallback);
+        let mut owner = owner;
+        owner.join().unwrap();
     }
 
     struct HoldSync {

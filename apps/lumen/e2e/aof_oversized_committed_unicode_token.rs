@@ -103,8 +103,7 @@ const CHILD_ROOT_ENV: &str = "LUMEN_AOF_OVERSIZED_UNICODE_TOKEN_ROOT";
 const CHILD_AOF_ENV: &str = "LUMEN_AOF_OVERSIZED_UNICODE_TOKEN_AOF";
 const CHILD_HANDSHAKE_ENV: &str = "LUMEN_AOF_OVERSIZED_UNICODE_TOKEN_HANDSHAKE";
 const CHILD_CASE: &str = "replay";
-const TEST_NAME: &str =
-    "oversized_committed_unicode_token_aof_replays_normalizes_and_cold_opens";
+const TEST_NAME: &str = "oversized_committed_unicode_token_aof_replays_normalizes_and_cold_opens";
 
 /// Gives `/metrics` the true replay sequence without constructing a fresh
 /// coordinator that would reset this Engine's capture barrier to zero.
@@ -163,11 +162,7 @@ fn create_entry() -> RaftLogEntry {
     }
 }
 
-fn item(
-    external_id: &str,
-    value: FieldValue,
-    version: Option<u64>,
-) -> IndexItem {
+fn item(external_id: &str, value: FieldValue, version: Option<u64>) -> IndexItem {
     IndexItem {
         external_id: external_id.to_owned(),
         field: FIELD.to_owned(),
@@ -520,7 +515,10 @@ async fn assert_public_pending_budget(engine: Arc<Engine>, sequence: u64, phase:
 
 fn corrupt_complete_frame_payload(path: &Path, frame_start: u64) {
     let payload_bytes = frame_payload_bytes(path, frame_start);
-    assert!(payload_bytes > 0, "security Text payload must have a byte to corrupt");
+    assert!(
+        payload_bytes > 0,
+        "security Text payload must have a byte to corrupt"
+    );
     let payload_start = frame_start + FRAME_HEADER_BYTES;
     let mut file = OpenOptions::new()
         .read(true)
@@ -575,7 +573,10 @@ fn assert_complete_corrupt_oversized_frame_is_refused(
         refusal.is_err(),
         "a CRC-valid but format-corrupt >256 MiB Unicode Text AOF frame must be refused before publication",
     );
-    assert_base_state(&engine, "security valid Unicode Text prefix after refused frame");
+    assert_base_state(
+        &engine,
+        "security valid Unicode Text prefix after refused frame",
+    );
     assert_eq!(
         engine
             .stats(COLLECTION)
@@ -584,8 +585,9 @@ fn assert_complete_corrupt_oversized_frame_is_refused(
         2,
         "a refused complete oversized Unicode Text frame must not add its row after the valid two-document prefix",
     );
-    let store = SegmentRdbStore::new(root.join("complete-corrupt-oversized-unicode-token-segments"))
-        .expect("open security Unicode Text segment store");
+    let store =
+        SegmentRdbStore::new(root.join("complete-corrupt-oversized-unicode-token-segments"))
+            .expect("open security Unicode Text segment store");
     let saved = store
         .save_with_sequence(&engine, 0)
         .expect("save only the valid Unicode Text AOF prefix");
@@ -601,7 +603,10 @@ fn assert_complete_corrupt_oversized_frame_is_refused(
         cold.sequence, BASE_SEQUENCE,
         "cold-open must retain only the valid oversized Unicode Text prefix watermark",
     );
-    assert_base_state(&cold.engine, "security cold Unicode Text prefix after refused frame");
+    assert_base_state(
+        &cold.engine,
+        "security cold Unicode Text prefix after refused frame",
+    );
 }
 
 fn child_paths() -> Option<(PathBuf, PathBuf, PathBuf)> {
@@ -663,7 +668,10 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         base_cold.sequence, BASE_SEQUENCE,
         "cold Unicode Text base checkpoint must keep its exact watermark",
     );
-    assert_base_state(&base_cold.engine, "cold committed Unicode Text base checkpoint");
+    assert_base_state(
+        &base_cold.engine,
+        "cold committed Unicode Text base checkpoint",
+    );
 
     append_oversized_suffix(&aof_path);
     let giant_replay = replay_aof_into(&base_cold.engine, &aof_path, base_cold.sequence);
@@ -736,8 +744,14 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         DELETE_SEQUENCE,
         "Unicode Text tail replay must advance through its final committed sequence",
     );
-    assert_tail_state(&giant_cold.engine, "Unicode Text version/delete suffix replay");
-    assert_giant_absent_after_update(&giant_cold.engine, "Unicode Text version/delete suffix replay");
+    assert_tail_state(
+        &giant_cold.engine,
+        "Unicode Text version/delete suffix replay",
+    );
+    assert_giant_absent_after_update(
+        &giant_cold.engine,
+        "Unicode Text version/delete suffix replay",
+    );
     assert_public_pending_budget(
         giant_cold.engine.clone(),
         DELETE_SEQUENCE,
@@ -793,7 +807,8 @@ async fn run_isolated_replay(root: &Path, aof_path: &Path) {
     let handshake = child_root.path().join("entered-case");
     let stdout_path = child_root.path().join("child.stdout");
     let stderr_path = child_root.path().join("child.stderr");
-    let executable = std::env::current_exe().expect("current oversized Unicode Text test executable");
+    let executable =
+        std::env::current_exe().expect("current oversized Unicode Text test executable");
     let stdout = File::create(&stdout_path).expect("create Unicode Text child stdout");
     let stderr = File::create(&stderr_path).expect("create Unicode Text child stderr");
     let child = Command::new(executable)
@@ -824,7 +839,10 @@ async fn run_isolated_replay(root: &Path, aof_path: &Path) {
             Ok(Some(_)) => break,
             Ok(None) if Instant::now() < deadline => tokio::time::sleep(POLL_INTERVAL).await,
             Ok(None) => {
-                let mut raw = child.0.take().expect("timed-out Unicode Text child remains owned");
+                let mut raw = child
+                    .0
+                    .take()
+                    .expect("timed-out Unicode Text child remains owned");
                 let _ = raw.kill();
                 let status = raw.wait().expect("wait for killed Unicode Text child");
                 let stdout = fs::read_to_string(&stdout_path)

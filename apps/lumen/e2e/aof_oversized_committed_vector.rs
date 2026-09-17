@@ -69,9 +69,9 @@ use lumen::log_entry::RaftLogEntry;
 use lumen::segment_rdb::SegmentRdbStore;
 use lumen::storage::{ApplyOutcome, Engine};
 use lumen::types::{
-    CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
-    KnnQuery, PrefixQuery, QueryNode, SearchRequest, VectorBackend, VectorMetric,
-    VectorQuantize, MAX_INDEX_BATCH_SIZE,
+    CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest, KnnQuery,
+    PrefixQuery, QueryNode, SearchRequest, VectorBackend, VectorMetric, VectorQuantize,
+    MAX_INDEX_BATCH_SIZE,
 };
 use lumen::wal::WalRecord;
 
@@ -527,10 +527,19 @@ fn knn_ids(engine: &Engine, field: &str, vector: Vec<f32>, k: u32, label: &str) 
         .collect()
 }
 
-fn knn_set(engine: &Engine, field: &str, vector: Vec<f32>, k: u32, label: &str) -> BTreeSet<String> {
+fn knn_set(
+    engine: &Engine,
+    field: &str,
+    vector: Vec<f32>,
+    k: u32,
+    label: &str,
+) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
     for id in knn_ids(engine, field, vector, k, label) {
-        assert!(ids.insert(id.clone()), "{label} query must not return duplicate ID {id}");
+        assert!(
+            ids.insert(id.clone()),
+            "{label} query must not return duplicate ID {id}"
+        );
     }
     ids
 }
@@ -647,7 +656,11 @@ fn assert_oversized_state(engine: &Engine, phase: &str) {
         "{phase}: the oversized record's mixed Keyword must remain visible",
     );
     assert_eq!(
-        prefix_ids(engine, DELETED_KEYWORD_PREFIX, "future deleted HNSW Keyword"),
+        prefix_ids(
+            engine,
+            DELETED_KEYWORD_PREFIX,
+            "future deleted HNSW Keyword"
+        ),
         BTreeSet::from([hnsw_id(0)]),
         "{phase}: the later HNSW document must be visible before its delete",
     );
@@ -670,7 +683,11 @@ fn assert_tail_state(engine: &Engine, phase: &str) {
         "{phase}: the original mixed Keyword base must not revive after later versions",
     );
     assert_eq!(
-        prefix_ids(engine, GIANT_KEYWORD_PREFIX, "stale giant Keyword after tail"),
+        prefix_ids(
+            engine,
+            GIANT_KEYWORD_PREFIX,
+            "stale giant Keyword after tail"
+        ),
         BTreeSet::new(),
         "{phase}: the stale lower-version mixed Keyword must not replace the update",
     );
@@ -830,7 +847,11 @@ fn assert_complete_corrupt_vector_frame_is_refused(root: &Path) {
     );
     assert_base_state(&engine, "security valid Vector prefix after refused frame");
     assert_eq!(
-        prefix_ids(&engine, "oversized-vector-corrupt-", "refused corrupt Keyword"),
+        prefix_ids(
+            &engine,
+            "oversized-vector-corrupt-",
+            "refused corrupt Keyword"
+        ),
         BTreeSet::new(),
         "a refused complete Vector/Keyword frame must not become Keyword-query-visible",
     );
@@ -851,7 +872,10 @@ fn assert_complete_corrupt_vector_frame_is_refused(root: &Path) {
         cold.sequence, BASE_SEQUENCE,
         "cold-open must retain only the valid Vector prefix watermark",
     );
-    assert_base_state(&cold.engine, "security cold Vector prefix after refused frame");
+    assert_base_state(
+        &cold.engine,
+        "security cold Vector prefix after refused frame",
+    );
 }
 
 fn child_paths() -> Option<(PathBuf, PathBuf, PathBuf)> {
@@ -938,7 +962,10 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         OVERSIZED_SEQUENCE,
         "valid oversized Vector replay must advance through its committed suffix sequence",
     );
-    assert_oversized_state(&base_cold.engine, "oversized mixed Vector AOF suffix replay");
+    assert_oversized_state(
+        &base_cold.engine,
+        "oversized mixed Vector AOF suffix replay",
+    );
     assert_public_pending_budget(
         base_cold.engine.clone(),
         OVERSIZED_SEQUENCE,
@@ -1102,9 +1129,14 @@ async fn run_isolated_replay(root: &Path, aof_path: &Path) {
             Ok(Some(_)) => break,
             Ok(None) if Instant::now() < deadline => tokio::time::sleep(POLL_INTERVAL).await,
             Ok(None) => {
-                let mut raw = child.0.take().expect("timed-out Vector child remains owned");
+                let mut raw = child
+                    .0
+                    .take()
+                    .expect("timed-out Vector child remains owned");
                 let _ = raw.kill();
-                let status = raw.wait().expect("wait for killed oversized Vector replay child");
+                let status = raw
+                    .wait()
+                    .expect("wait for killed oversized Vector replay child");
                 let stdout = fs::read_to_string(&stdout_path)
                     .expect("read killed oversized Vector replay child stdout");
                 let stderr = fs::read_to_string(&stderr_path)
@@ -1122,8 +1154,10 @@ async fn run_isolated_replay(root: &Path, aof_path: &Path) {
         .expect("exited Vector child remains owned")
         .wait()
         .expect("wait for exited oversized Vector replay child");
-    let stdout = fs::read_to_string(&stdout_path).expect("read oversized Vector replay child stdout");
-    let stderr = fs::read_to_string(&stderr_path).expect("read oversized Vector replay child stderr");
+    let stdout =
+        fs::read_to_string(&stdout_path).expect("read oversized Vector replay child stdout");
+    let stderr =
+        fs::read_to_string(&stderr_path).expect("read oversized Vector replay child stderr");
     let entered = fs::read_to_string(&handshake).unwrap_or_else(|error| {
         panic!(
             "isolated child did not enter exact {TEST_NAME}: {error}; stdout={stdout}; stderr={stderr}",

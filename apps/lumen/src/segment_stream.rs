@@ -284,15 +284,21 @@ pub(crate) fn write_text_projection(
         // dictionary codec writes that slice directly and spools only u64
         // boundaries, instead of constructing a term-sized LZ4/CBOR block.
         let (dict_off, dict_len, dict_count, dict_offsets_off, dict_offsets_len) =
-            write_raw_dictionary(path, &mut out, &mut at, |emit| {
-                for term in view.terms()? {
-                    let term = term?;
-                    if view.text_postings(term.as_ref())?.is_some() {
-                        emit(term.as_ref())?;
+            write_raw_dictionary(
+                path,
+                &mut out,
+                &mut at,
+                |emit| {
+                    for term in view.terms()? {
+                        let term = term?;
+                        if view.text_postings(term.as_ref())?.is_some() {
+                            emit(term.as_ref())?;
+                        }
                     }
-                }
-                Ok(())
-            }, None)?;
+                    Ok(())
+                },
+                None,
+            )?;
         let postings_start = at;
         let mut postings = StreamingVarWriter::new();
         for term in view.terms()? {
@@ -1995,7 +2001,11 @@ mod tests {
         }
 
         fn terms<'a>(&'a self) -> Result<Box<dyn Iterator<Item = Result<Cow<'a, str>>> + 'a>> {
-            Ok(Box::new(self.terms.iter().map(|(term, _)| Ok(Cow::Borrowed(term.as_str())))))
+            Ok(Box::new(
+                self.terms
+                    .iter()
+                    .map(|(term, _)| Ok(Cow::Borrowed(term.as_str()))),
+            ))
         }
 
         fn text_postings(&self, term: &str) -> Result<Option<Arc<(Vec<u32>, Vec<u32>)>>> {

@@ -275,17 +275,21 @@ impl RaftStateMachine for EngineSm {
                         return Ok(());
                     }
                 }
-                if self.engine.try_apply_committed_replace_with_capacity_owner(
-                    command, index,
-                    &mut || self.ensure_capacity_owner(),
-                    |apply, outcome| {
-                        let mut outcomes = self.outcomes.lock().expect("outcomes poisoned");
-                        outcomes.insert(index, outcome);
-                        outcomes.advance(index);
-                        apply.advance_sequence(index);
-                        self.applied.store(index, Ordering::Release);
-                    },
-                )? {
+                if self
+                    .engine
+                    .try_apply_committed_replace_with_capacity_owner(
+                        command,
+                        index,
+                        &mut || self.ensure_capacity_owner(),
+                        |apply, outcome| {
+                            let mut outcomes = self.outcomes.lock().expect("outcomes poisoned");
+                            outcomes.insert(index, outcome);
+                            outcomes.advance(index);
+                            apply.advance_sequence(index);
+                            self.applied.store(index, Ordering::Release);
+                        },
+                    )?
+                {
                     return Ok(());
                 }
             }
@@ -455,11 +459,9 @@ impl WriteSink for RaftWriteSink {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
         let record = WalRecord::new(entry);
         let raw = Engine::record_owned_bytes(&record.entry).map_err(|error| match error {
-            RecordAdmissionError::Overflow => {
-                self.prepublication_backpressure(
-                    crate::change_admission::PendingChangeCapacity::Overflow,
-                )
-            }
+            RecordAdmissionError::Overflow => self.prepublication_backpressure(
+                crate::change_admission::PendingChangeCapacity::Overflow,
+            ),
             other => anyhow::Error::new(other),
         })?;
         let extra = raw.checked_mul(2).ok_or_else(|| {
@@ -702,7 +704,11 @@ mod tests {
             let schema_dir = tempfile::tempdir().unwrap();
             let schema_store = crate::segment_rdb::SegmentRdbStore::new(schema_dir.path()).unwrap();
             schema_store.save(&engine, 0).unwrap();
-            assert_eq!(budget.snapshot().active, 0, "schema checkpoint must freeze fixture work");
+            assert_eq!(
+                budget.snapshot().active,
+                0,
+                "schema checkpoint must freeze fixture work"
+            );
             let used = budget.snapshot().total;
             let blocker = budget.owner().try_reserve(HARD_LIMIT - used).unwrap();
             let sm = EngineSm::new(engine.clone(), 0);

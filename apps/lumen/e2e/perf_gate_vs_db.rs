@@ -817,10 +817,7 @@ async fn post_index(client: &reqwest::Client, base: &str, items: &[Value]) {
                 .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
             panic!("scale index failed with HTTP {status}: {body}");
         }
-        let body: Value = response
-            .json()
-            .await
-            .expect("scale index response JSON");
+        let body: Value = response.json().await.expect("scale index response JSON");
         assert_eq!(
             body["indexed"].as_u64(),
             Some(batch.len() as u64),
@@ -3054,15 +3051,11 @@ fn scale_current_generation_segment_bytes(
     scale_segment_bytes(&root.join(generation_name))
 }
 
-async fn wait_for_scale_checkpoint_merges(
-    store: lumen::segment_rdb::SegmentRdbStore,
-    phase: &str,
-) {
-    let merge_result = tokio::task::spawn_blocking(move || {
-        store.wait_for_merges(SCALE_SETUP_MERGE_WATCHDOG)
-    })
-    .await
-    .unwrap_or_else(|error| panic!("{phase}: checkpoint merge wait task failed: {error}"));
+async fn wait_for_scale_checkpoint_merges(store: lumen::segment_rdb::SegmentRdbStore, phase: &str) {
+    let merge_result =
+        tokio::task::spawn_blocking(move || store.wait_for_merges(SCALE_SETUP_MERGE_WATCHDOG))
+            .await
+            .unwrap_or_else(|error| panic!("{phase}: checkpoint merge wait task failed: {error}"));
     merge_result.unwrap_or_else(|error| {
         panic!("{phase}: checkpoint merge drain did not complete: {error}")
     });

@@ -37,7 +37,8 @@ use crate::change_admission::PendingChangeCapacity;
 use crate::change_budget::AdmissionError;
 use crate::log_entry::RaftLogEntry;
 use crate::storage::{
-    ApplyOutcome, Engine, RecordAdmissionError, RecordApplyGuard, RecordReservation, RepriceRecord,
+    ApplyOutcome, Engine, RecordAdmissionError, RecordApplyGuard, RecordReservation,
+    RecordTransientReservation, RepriceRecord,
 };
 use crate::wal::{SharedWal, WalDelivery, WalRecord};
 
@@ -61,7 +62,32 @@ struct PendingApply {
     delivery: WalDelivery,
     admitted_bytes: usize,
     reservation: Option<RecordReservation>,
+    transient: Option<RecordTransientReservation>,
     enqueued_at: std::time::Instant,
+}
+
+/// A local submit makes one atomic pre-publication reservation. Its apply
+/// portion remains eligible for repricing and source retention; the transient
+/// portion covers transport, encode, and local AOF copies until completion.
+/// Keeping both values in one map entry makes lookup and capacity relief
+/// atomic with respect to the sequence.
+struct LocalRecordReservation {
+    apply: RecordReservation,
+    transient: Option<RecordTransientReservation>,
+}
+
+impl LocalRecordReservation {
+    fn bytes(&self) -> usize {
+        self.apply
+            .bytes()
+            .checked_add(
+                self.transient
+                    .as_ref()
+                    .map(RecordTransientReservation::bytes)
+                    .unwrap_or_default(),
+            )
+            .expect("local reservation total overflow")
+    }
 }
 
 enum PreparedLocalRecord<'a> {
@@ -291,7 +317,7 @@ pub struct WriteCoordinator {
     /// reservation before it enters `spawn_blocking`; therefore a subscriber
     /// that observes a record while `publish` is still returning cannot apply
     /// it through the unadmitted path.
-    local_reservations: AsyncMutex<FxHashMap<u64, RecordReservation>>,
+    local_reservations: AsyncMutex<FxHashMap<u64, LocalRecordReservation>>,
     has_local_aof: bool,
     /// A refused local request can need source relief without an apply waiter.
     capacity_relief_requested: AtomicBool,
@@ -301,6 +327,10 @@ pub struct WriteCoordinator {
     /// A failed committed head can still retain its WAL source. Keep any
     /// reservation that the engine did not adopt until process exit.
     failed_head_reservations: Mutex<Vec<RecordReservation>>,
+    /// A failed local head must keep its transport/AOF reservation too. This
+    /// stays separate from the apply reservation because it never owns source
+    /// retention or Engine state.
+    failed_head_transient_reservations: Mutex<Vec<RecordTransientReservation>>,
     failed_head_retentions: Mutex<FxHashMap<u64, crate::change_budget::SourceRetention>>,
     /// A non-owning self reference lets a cancelled request leave a publisher
     /// task alive without retaining the coordinator forever.
@@ -380,11 +410,15 @@ impl WriteCoordinator {
                 mutation_permits: FxHashMap::default(),
             }),
             failed_head_reservations: Mutex::new(Vec::new()),
+            failed_head_transient_reservations: Mutex::new(Vec::new()),
             failed_head_retentions: Mutex::new(FxHashMap::default()),
             self_weak: self_weak.clone(),
             mutation_gate: MutationGate::default(),
         });
         Self::start_capacity_relief(&coord);
+        if let Some(aof) = aof.clone() {
+            Self::start_aof_sync(&coord, aof);
+        }
         let loop_coord = coord.clone();
         tokio::spawn(async move {
             let mut backoff = std::time::Duration::from_millis(100);
@@ -421,8 +455,10 @@ impl WriteCoordinator {
                             // this exact seq) would otherwise hang forever — release
                             // it with a distinct, retryable error instead.
                             let local_reservation = loop_coord.take_local_reservation(seq).await;
-                            let mut reservation = if let Some((expected, reservation)) =
-                                replay_reservation.take()
+                            let (mut reservation, mut transient) = if let Some((
+                                expected,
+                                reservation,
+                            )) = replay_reservation.take()
                             {
                                 if seq != expected || local_reservation.is_some() {
                                     // Losing the pinned head is a broken WAL contract. Never
@@ -432,9 +468,12 @@ impl WriteCoordinator {
                                     tracing::error!(seq, expected, "WAL replay did not return its capacity-blocked head; restart required");
                                     return;
                                 }
-                                Some(reservation)
+                                (Some(reservation), None)
                             } else {
-                                local_reservation
+                                match local_reservation {
+                                    Some(local) => (Some(local.apply), local.transient),
+                                    None => (None, None),
+                                }
                             };
                             if seq <= loop_coord.applied.load(Ordering::Acquire) {
                                 loop_coord.complete_stale(seq);
@@ -531,9 +570,17 @@ impl WriteCoordinator {
                                     }
                                 }
                             }
-                            let Some(admitted_bytes) =
-                                reservation.as_ref().map(RecordReservation::bytes)
-                            else {
+                            let Some(admitted_bytes) = reservation.as_ref().map(|apply| {
+                                apply
+                                    .bytes()
+                                    .checked_add(
+                                        transient
+                                            .as_ref()
+                                            .map(RecordTransientReservation::bytes)
+                                            .unwrap_or_default(),
+                                    )
+                                    .expect("local admission total overflow")
+                            }) else {
                                 // A source larger than the process budget needs a streaming
                                 // apply representation. Never decode it with invented credit.
                                 engine.capture_barrier.apply().mark_uncertain();
@@ -557,6 +604,7 @@ impl WriteCoordinator {
                                 delivery,
                                 admitted_bytes,
                                 reservation,
+                                transient,
                                 enqueued_at: std::time::Instant::now(),
                             };
                             if let Some(retention) = pending
@@ -580,6 +628,7 @@ impl WriteCoordinator {
                                         )))),
                                         pending.reservation.take(),
                                     );
+                                    loop_coord.retain_failed_transient(pending.transient.take());
                                     futures::future::pending::<()>().await;
                                 }
                             }
@@ -590,8 +639,17 @@ impl WriteCoordinator {
                             let applying_coord = loop_coord.clone();
                             let local_aof = aof.clone();
                             let applied = tokio::task::spawn_blocking(move || {
+                                // Keep this outside the unwind boundary. A panic after a
+                                // locally admitted WAL record must retain both halves at the
+                                // unresolved head, even though the transient half has no
+                                // source-retention bridge of its own.
+                                let mut transient = pending.transient.take();
+                                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 let aof = local_aof;
                                 let seq = pending.seq;
+                                // The transient half is already admitted. It must remain alive
+                                // across source decode, reprice waits, AOF clone/encode, append,
+                                // and flush. It is never passed to Engine preparation.
                                 let rec = match pending.delivery.read(pending.admitted_bytes) {
                                     Ok(rec) => rec,
                                     Err(error) => {
@@ -604,6 +662,7 @@ impl WriteCoordinator {
                                             )))),
                                             pending.reservation,
                                         );
+                                        applying_coord.retain_failed_transient(transient.take());
                                         return false;
                                     }
                                 };
@@ -614,7 +673,63 @@ impl WriteCoordinator {
                                     pending.enqueued_at.elapsed(),
                                 );
                                 let version = rec.version;
-                                let aof_rec;
+                                // Persist the recoverable WAL tail before preparing the
+                                // record.  Preparation acquires the CaptureBarrier apply
+                                // lease; waiting for the AOF mutex while holding that lease
+                                // can deadlock a checkpoint that is trying to capture the
+                                // engine while another writer holds the AOF mutex.
+                                let aof_rec = aof.as_ref().map(|_| WalRecord {
+                                    version,
+                                    entry: rec.entry.clone(),
+                                });
+                                if !applying_coord.mutation_gate.is_restart_required() {
+                                    if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec.as_ref()) {
+                                        let persisted = {
+                                            let mut writer =
+                                                aof.lock().expect("aof writer poisoned");
+                                            writer
+                                                .append(seq, rec)
+                                                .and_then(|()| writer.flush())
+                                        };
+                                        if let Err(e) = persisted {
+                                            applying_coord.mutation_gate.require_restart();
+                                            if is_storage_full(&e) {
+                                                tracing::error!(
+                                                    seq,
+                                                    error = %e,
+                                                    "AOF persist failed: ENOSPC — entering degraded read-only mode"
+                                                );
+                                                eng.metrics().mark_storage_degraded();
+                                                applying_coord.fail_unresolved(
+                                                    seq,
+                                                    Err(anyhow::Error::new(StorageFullError(
+                                                        format!(
+                                                            "local storage is full (ENOSPC) persisting sequence {seq}; node entered degraded read-only mode"
+                                                        ),
+                                                    ))),
+                                                    pending.reservation.take(),
+                                                );
+                                            } else {
+                                                tracing::error!(
+                                                    seq,
+                                                    error = %e,
+                                                    "AOF persist failed; restart required"
+                                                );
+                                                applying_coord.fail_unresolved(
+                                                    seq,
+                                                    Err(anyhow::Error::new(RestartRequired(
+                                                        format!(
+                                                            "could not persist local AOF sequence {seq}: {e}; restart this Lumen process"
+                                                        ),
+                                                    ))),
+                                                    pending.reservation.take(),
+                                                );
+                                            }
+                                            applying_coord.retain_failed_transient(transient.take());
+                                            return false;
+                                        }
+                                    }
+                                }
                                 // A prepared guard owns the apply lease and its retained charge
                                 // until after AOF persistence and watermark advancement below.
                                 let mut prepared = None;
@@ -683,10 +798,6 @@ impl WriteCoordinator {
                                                 crate::metrics::ApplyKind::from_entry(prepared_entry);
                                             let apply_items =
                                                 crate::metrics::apply_item_count(prepared_entry);
-                                            aof_rec = aof.as_ref().map(|_| WalRecord {
-                                                version,
-                                                entry: prepared_entry.clone(),
-                                            });
                                             let outcome = eng.apply_prepared_raft_entry(&mut guard);
                                             eng.metrics().observe_coordinator_apply(
                                                 apply_kind,
@@ -712,6 +823,8 @@ impl WriteCoordinator {
                                                 )))),
                                                 Some(reservation),
                                             );
+                                            applying_coord
+                                                .retain_failed_transient(transient.take());
                                             return false;
                                         }
                                         Ok(PreparedLocalRecord::CapacityBlocked { .. }) => {
@@ -727,6 +840,8 @@ impl WriteCoordinator {
                                                 )))),
                                                 None,
                                             );
+                                            applying_coord
+                                                .retain_failed_transient(transient.take());
                                             return false;
                                         }
                                         }
@@ -745,6 +860,7 @@ impl WriteCoordinator {
                                             ))),
                                             None,
                                         );
+                                        applying_coord.retain_failed_transient(transient.take());
                                         return false;
                                     }
                                 };
@@ -761,84 +877,6 @@ impl WriteCoordinator {
                                 if let Err(e) = &outcome {
                                     tracing::warn!(seq, error = %e, "apply error (entry no-ops)");
                                 }
-                                // The AOF is the sole recoverable tail in the embedded segment
-                                // path. `AofWriter` deliberately buffers writes, so completing
-                                // the HTTP waiter before `flush` creates a restart window: a pod
-                                // can be deleted after a 2xx response while the record still only
-                                // lives in this process's BufWriter. Persist it through the OS
-                                // before publishing `applied` or acknowledging the caller. The
-                                // embedded production writer uses `EverySec`; `maybe_sync` keeps
-                                // the normal durability window bounded. A graceful SIGTERM also
-                                // performs a final sync.
-                                // A committed record can have changed earlier
-                                // items and then return an error.  The AOF is
-                                // therefore keyed to a non-uncertain apply
-                                // interval, not `ApplyOutcome::Ok`.
-                                let mut unresolved = false;
-                                if !applying_coord.mutation_gate.is_restart_required() {
-                                    if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec) {
-                                        let persisted = {
-                                            let mut writer =
-                                                aof.lock().expect("aof writer poisoned");
-                                            writer
-                                                .append(seq, &rec)
-                                                // Keep the explicit flush, then apply the
-                                                // EverySec policy before acknowledging the waiter.
-                                                .and_then(|()| writer.flush())
-                                                .and_then(|()| writer.maybe_sync())
-                                        };
-                                        if let Err(e) = persisted {
-                                            // The engine mutation already ran,
-                                            // but its recoverable AOF record did
-                                            // not. Disk-space recovery cannot
-                                            // repair that gap in this process.
-                                            applying_coord.mutation_gate.require_restart();
-                                            apply
-                                                .expect("AOF persistence follows a charged apply guard")
-                                                .mark_uncertain();
-                                            if is_storage_full(&e) {
-                                                // #2516: local disk is out of
-                                                // space. Flip the sticky
-                                                // degraded flag so every
-                                                // subsequent mutating request
-                                                // fast-fails before touching
-                                                // this path again, and report
-                                                // a distinct, stable error so
-                                                // the caller sees 507
-                                                // Insufficient Storage rather
-                                                // than a generic 400.
-                                                tracing::error!(
-                                                    seq,
-                                                    error = %e,
-                                                    "AOF persist failed: ENOSPC — entering degraded read-only mode"
-                                                );
-                                                eng.metrics().mark_storage_degraded();
-                                                outcome = Err(anyhow::Error::new(
-                                                    StorageFullError(format!(
-                                                        "local storage is full (ENOSPC) persisting sequence {seq}; \
-                                                         node entered degraded read-only mode"
-                                                    )),
-                                                ));
-                                            } else {
-                                                tracing::error!(
-                                                    seq,
-                                                    error = %e,
-                                                    "AOF persist failed; restart required"
-                                                );
-                                                outcome = Err(anyhow::Error::new(
-                                                    RestartRequired(format!(
-                                                        "persisted state is uncertain after local AOF failure at sequence {seq}: {e}; restart this Lumen process"
-                                                    )),
-                                                ));
-                                            }
-                                            unresolved = true;
-                                        }
-                                    }
-                                }
-                                if unresolved {
-                                    applying_coord.fail_unresolved(seq, outcome, None);
-                                    return false;
-                                }
                                 apply
                                     .expect("completed committed record has a charged apply guard")
                                     .advance_sequence(seq);
@@ -848,35 +886,65 @@ impl WriteCoordinator {
                                     apply_started_at.elapsed(),
                                 );
                                 applying_coord.complete(seq, outcome);
+                                // The apply charge may become checkpointable only after the
+                                // watermark and waiter result are visible. The transient half
+                                // is last: it protected AOF/encode ownership until completion.
+                                drop(apply);
+                                drop(prepared.take());
+                                drop(transient.take());
                                 true
+                                }));
+                                (result, transient)
                             }).await;
                             match applied {
-                                Ok(true) => {
+                                Ok((Ok(true), transient)) => {
+                                    debug_assert!(
+                                        transient.is_none(),
+                                        "completed local apply must release its transient reservation"
+                                    );
                                     loop_coord
                                         .failed_head_retentions
                                         .lock()
                                         .expect("failed-head retentions poisoned")
                                         .remove(&seq);
                                 }
-                                Ok(false) => {
+                                Ok((Ok(false), transient)) => {
+                                    loop_coord.retain_failed_transient(transient);
                                     // Keep this subscription at its failed head. Polling again
                                     // would acknowledge source bytes and permit a successor.
                                     futures::future::pending::<()>().await;
                                 }
-                                Err(error) => {
+                                Ok((Err(_), transient)) => {
                                     // The lease also latches uncertainty while unwinding, before
                                     // another checkpoint can enter the failed apply interval.
                                     engine.capture_barrier.apply().mark_uncertain();
                                     loop_coord.mutation_gate.require_restart();
+                                    loop_coord.retain_failed_transient(transient);
                                     loop_coord.fail_unresolved(
                                         seq,
                                         Err(anyhow::Error::new(RestartRequired(format!(
-                                            "apply task panicked: {error}; restart required"
+                                            "apply task panicked; restart required"
                                         )))),
                                         None,
                                     );
                                     // Retain the subscription floor after a panic too. The source
                                     // might still own the committed head's bytes.
+                                    futures::future::pending::<()>().await;
+                                }
+                                Err(error) => {
+                                    // A JoinError means the worker did not return its transient
+                                    // half (for example, runtime shutdown). The retained source
+                                    // still pins its apply half; require restart and preserve the
+                                    // subscription floor rather than claiming completion.
+                                    engine.capture_barrier.apply().mark_uncertain();
+                                    loop_coord.mutation_gate.require_restart();
+                                    loop_coord.fail_unresolved(
+                                        seq,
+                                        Err(anyhow::Error::new(RestartRequired(format!(
+                                            "apply task stopped: {error}; restart required"
+                                        )))),
+                                        None,
+                                    );
                                     futures::future::pending::<()>().await;
                                 }
                             }
@@ -1019,7 +1087,90 @@ impl WriteCoordinator {
         });
     }
 
-    async fn take_local_reservation(&self, seq: u64) -> Option<RecordReservation> {
+    fn start_aof_sync(coord: &Arc<Self>, aof: SharedAof) {
+        let weak = Arc::downgrade(coord);
+        let engine = coord.engine.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if weak.upgrade().is_none() {
+                    return;
+                }
+                // Never wait for the synchronous AOF mutex on a Tokio worker.
+                // A test or a foreground append may intentionally hold it while
+                // unrelated collections must continue serving queries.
+                let plan = match tokio::task::spawn_blocking({
+                    let aof = aof.clone();
+                    move || {
+                        let mut writer = match aof.try_lock() {
+                            Ok(writer) => writer,
+                            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+                            Err(std::sync::TryLockError::Poisoned(_)) => {
+                                return Err(anyhow::anyhow!("AOF writer poisoned"));
+                            }
+                        };
+                        writer.begin_sync()
+                    }
+                })
+                .await
+                {
+                    Ok(Ok(plan)) => plan,
+                    Ok(Err(error)) => {
+                        tracing::error!(%error, "AOF sync preparation failed");
+                        engine.capture_barrier.apply().mark_uncertain();
+                        if let Some(coord) = weak.upgrade() {
+                            coord.mutation_gate.require_restart();
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "AOF sync preparation task failed");
+                        engine.capture_barrier.apply().mark_uncertain();
+                        if let Some(coord) = weak.upgrade() {
+                            coord.mutation_gate.require_restart();
+                        }
+                        return;
+                    }
+                };
+                let Some(plan) = plan else { continue };
+                let sync_result = tokio::task::spawn_blocking(move || {
+                    let mut plan = plan;
+                    let result = plan.sync_off_lock();
+                    (plan, result)
+                })
+                .await;
+                let result = match sync_result {
+                    Ok((plan, result)) => match tokio::task::spawn_blocking({
+                        let aof = aof.clone();
+                        move || {
+                            let mut writer = aof
+                                .lock()
+                                .map_err(|_| anyhow::anyhow!("AOF writer poisoned"))?;
+                            result.and_then(|()| writer.complete_sync(plan))
+                        }
+                    })
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(error) => {
+                            Err(anyhow::anyhow!("AOF sync completion task failed: {error}"))
+                        }
+                    },
+                    Err(error) => Err(anyhow::anyhow!("AOF sync task failed: {error}")),
+                };
+                if let Err(error) = result {
+                    tracing::error!(%error, "AOF sync failed; restart required");
+                    engine.capture_barrier.apply().mark_uncertain();
+                    if let Some(coord) = weak.upgrade() {
+                        coord.mutation_gate.require_restart();
+                    }
+                    return;
+                }
+            }
+        });
+    }
+
+    async fn take_local_reservation(&self, seq: u64) -> Option<LocalRecordReservation> {
         self.local_reservations.lock().await.remove(&seq)
     }
 
@@ -1039,7 +1190,10 @@ impl WriteCoordinator {
     /// admission error `PendingChangeCapacity` does not classify at all
     /// (e.g. `RecordAdmissionError::WrongEngine`), which cannot occur for a
     /// same-Engine local submit today.
-    fn try_admit_local_record(&self, entry: &RaftLogEntry) -> Result<Option<RecordReservation>> {
+    fn try_admit_local_record(
+        &self,
+        entry: &RaftLogEntry,
+    ) -> Result<Option<LocalRecordReservation>> {
         let raw = match Engine::record_owned_bytes(entry) {
             Ok(raw) => raw,
             Err(RecordAdmissionError::Overflow) => {
@@ -1052,7 +1206,10 @@ impl WriteCoordinator {
             return Err(self.prepublication_backpressure(PendingChangeCapacity::Overflow));
         };
         match self.engine.try_reserve_record(entry, extra_owned) {
-            Ok(reservation) => Ok(Some(reservation)),
+            Ok(reservation) => {
+                let (apply, transient) = reservation.split_transport();
+                Ok(Some(LocalRecordReservation { apply, transient }))
+            }
             // Unknown schema/context preparation is likewise not a reason to
             // discard a valid record; apply returns its original domain outcome.
             Err(error) => {
@@ -1128,6 +1285,17 @@ impl WriteCoordinator {
             let _ = waiter.send(outcome);
         } else {
             completions.unresolved.insert(seq, outcome);
+        }
+    }
+
+    /// Keep the local transient half until the uncertain process exits. Its
+    /// source is not retained here; the matching apply half owns that bridge.
+    fn retain_failed_transient(&self, transient: Option<RecordTransientReservation>) {
+        if let Some(transient) = transient {
+            self.failed_head_transient_reservations
+                .lock()
+                .expect("failed-head transient reservations poisoned")
+                .push(transient);
         }
     }
 
@@ -1647,7 +1815,7 @@ mod tests {
         let bytes = reservation.bytes();
 
         let result = prepare_local_record(second.as_ref(), entry, reservation)
-        .expect("wrong-engine reprice must return its original reservation");
+            .expect("wrong-engine reprice must return its original reservation");
         match result {
             PreparedLocalRecord::Prepared(_) => {
                 panic!("wrong-engine reprice cannot acquire an apply guard")
@@ -1692,8 +1860,7 @@ mod tests {
         // Build real stale state. The reservation predates a restore, so the
         // next begin must reprice it; the 1 MiB budget leaves room for growth.
         let initial = active.try_reserve_record(&entry, 0).unwrap();
-        let initial = match prepare_local_record(&active, entry.clone(), initial)
-        .unwrap() {
+        let initial = match prepare_local_record(&active, entry.clone(), initial).unwrap() {
             PreparedLocalRecord::Prepared(mut guard) => {
                 active.apply_prepared_raft_entry(&mut guard).unwrap();
                 drop(guard);
@@ -1707,12 +1874,14 @@ mod tests {
             }
         };
         let replacement = Engine::with_change_budget(budget.clone());
-        replacement.create_collection("u", keyword_schema()).unwrap();
+        replacement
+            .create_collection("u", keyword_schema())
+            .unwrap();
         let reservation = active.try_reserve_record(&entry, 0).unwrap();
         active.restore(replacement.snapshot().unwrap()).unwrap();
         let before = budget.snapshot().total;
         let prepared = prepare_local_record(&active, entry, reservation)
-        .expect("stale fitting reprice must grow without fallback maintenance");
+            .expect("stale fitting reprice must grow without fallback maintenance");
         assert!(
             budget.snapshot().total > before,
             "fixture must exercise a real fitting reprice growth"
@@ -1755,7 +1924,9 @@ mod tests {
             }
         };
         let replacement = Engine::with_change_budget(budget.clone());
-        replacement.create_collection("u", keyword_schema()).unwrap();
+        replacement
+            .create_collection("u", keyword_schema())
+            .unwrap();
         let reservation = active.try_reserve_record(&entry, 0).unwrap();
         let reserved_bytes = reservation.bytes();
         active.restore(replacement.snapshot().unwrap()).unwrap();
@@ -1808,7 +1979,9 @@ mod tests {
             _ => panic!("initial record must be prepared"),
         };
         let replacement = Engine::with_change_budget(budget.clone());
-        replacement.create_collection("u", keyword_schema()).unwrap();
+        replacement
+            .create_collection("u", keyword_schema())
+            .unwrap();
         let reservation = active.try_reserve_record(&entry, 0).unwrap();
         active.restore(replacement.snapshot().unwrap()).unwrap();
         let filler_owner = budget.owner();
@@ -1828,7 +2001,9 @@ mod tests {
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let waiter = std::thread::spawn(move || {
             started_tx.send(()).unwrap();
-            reservation.wait_grow_to(required).map(|()| (entry, reservation))
+            reservation
+                .wait_grow_to(required)
+                .map(|()| (entry, reservation))
         });
         started_rx.recv().unwrap();
         for _ in 0..10_000 {
@@ -1920,6 +2095,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_admission_composite_drops_both_reservation_halves() {
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let coord = WriteCoordinator::start(Arc::new(MemWal::new()), engine);
+        let baseline = budget.snapshot().total;
+
+        let local = coord
+            .try_admit_local_record(&admitted_index_entry())
+            .unwrap()
+            .expect("bounded local record must reserve before WAL publication");
+        assert!(local.transient.is_some());
+        assert_eq!(budget.snapshot().reserved, local.bytes());
+        drop(local);
+        assert_eq!(
+            budget.snapshot().total,
+            baseline,
+            "dropping a capacity-relief map entry must release apply and transient halves"
+        );
+    }
+
+    #[tokio::test]
     async fn cancelled_local_submit_keeps_its_reservation_until_apply_finishes() {
         let budget = ChangeBudget::with_hard_limit(1024 * 1024);
         let engine = Arc::new(Engine::with_change_budget(budget.clone()));
@@ -1938,6 +2135,21 @@ mod tests {
         .await
         .expect("submit must publish after pre-admission");
         wait_for_reserved(&budget).await;
+        {
+            let ledger = coord.local_reservations.lock().await;
+            let local = ledger
+                .get(&1)
+                .expect("cancelled local submit must retain its composite reservation");
+            assert!(
+                local.transient.is_some(),
+                "local admission must retain transport/AOF ownership with apply ownership"
+            );
+            assert_eq!(
+                local.bytes(),
+                budget.snapshot().reserved,
+                "the sequence map must retain both reservation halves"
+            );
+        }
         submit.abort();
         assert!(submit.await.unwrap_err().is_cancelled());
         assert!(budget.snapshot().reserved > 0);
@@ -2206,11 +2418,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let aof_path = dir.path().join("aof.log");
         let aof = Arc::new(Mutex::new(
-            crate::aof::AofWriter::open_with_policy(
-                &aof_path,
-                crate::aof::FsyncPolicy::EverySec,
-            )
-            .unwrap(),
+            crate::aof::AofWriter::open_with_policy(&aof_path, crate::aof::FsyncPolicy::EverySec)
+                .unwrap(),
         ));
         let engine = Arc::new(Engine::new());
         let wal = Arc::new(MemWal::new());
@@ -2354,7 +2563,8 @@ mod tests {
             error.downcast_ref::<StorageFullError>().is_some(),
             "{error}"
         );
-        assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+        // The AOF failure occurs before preparation and apply.
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 0);
         assert!(coord.is_restart_required());
         aof.lock().unwrap().set_inject_storage_full(false);
 
@@ -2494,7 +2704,8 @@ mod tests {
 
         assert!(coord.is_restart_required());
         assert_eq!(coord.applied_seq(), 0);
-        assert_eq!(engine.list_collections().unwrap(), vec!["first"]);
+        // The unresolved AOF head is rejected before apply.
+        assert!(engine.list_collections().unwrap().is_empty());
         let mut persisted = Vec::new();
         crate::aof::AofReader::replay(&aof_path, 0, |seq, _| persisted.push(seq)).unwrap();
         assert!(
@@ -2693,7 +2904,11 @@ mod tests {
         let schema_dir = tempfile::tempdir().unwrap();
         let schema_store = crate::segment_rdb::SegmentRdbStore::new(schema_dir.path()).unwrap();
         schema_store.save(&engine, 0).unwrap();
-        assert_eq!(budget.snapshot().active, 0, "schema checkpoint must freeze fixture work");
+        assert_eq!(
+            budget.snapshot().active,
+            0,
+            "schema checkpoint must freeze fixture work"
+        );
         let blocking = blocking_owner
             .try_reserve(1024 * 1024 - budget.snapshot().total)
             .unwrap();
@@ -3024,17 +3239,13 @@ mod tests {
         // take it yet.
         let seq = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if let Some(seq) = coord
-                    .local_reservations
-                    .lock()
-                    .await
-                    .keys()
-                    .next()
-                    .copied()
-                {
+                if let Some(seq) = coord.local_reservations.lock().await.keys().next().copied() {
                     return seq;
                 }
-                assert!(!submitted.is_finished(), "submit finished before installing its reservation");
+                assert!(
+                    !submitted.is_finished(),
+                    "submit finished before installing its reservation"
+                );
                 tokio::task::yield_now().await;
             }
         })

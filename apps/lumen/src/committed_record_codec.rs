@@ -136,7 +136,10 @@ mod tests {
     #[test]
     fn mapped_generic_body_requires_one_exact_private_cbor_item() {
         let bytes = encode(&index_record());
-        assert_eq!(staged_generic_cbor_payload(&bytes).unwrap(), &bytes[HEADER_LEN..]);
+        assert_eq!(
+            staged_generic_cbor_payload(&bytes).unwrap(),
+            &bytes[HEADER_LEN..]
+        );
 
         let mut bad_magic = bytes.clone();
         bad_magic[0] = b'X';

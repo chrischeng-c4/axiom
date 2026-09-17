@@ -188,7 +188,9 @@ impl TextStreamView for LiveProjection<'_> {
             TokPostings::Combined { docids, tfs } => (docids, tfs),
             // Only `tok_postings_at` builds a candidate projection (#4246);
             // `tok_postings` always yields the full active posting.
-            TokPostings::Sparse(_) => unreachable!("tok_postings never yields a candidate projection"),
+            TokPostings::Sparse(_) => {
+                unreachable!("tok_postings never yields a candidate projection")
+            }
         };
         let mut write = 0;
         for read in 0..ids.len() {

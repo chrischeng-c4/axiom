@@ -650,12 +650,10 @@ fn test_release_preparation_rejects_retired_routes_and_stale_llms_guidance() {
 fn test_release_skill_entrypoints_are_identical_and_candidate_first() {
     let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let repo_root = base_dir.parent().unwrap().parent().unwrap();
-    let agents =
-        std::fs::read_to_string(repo_root.join(".agents/skills/build-release/SKILL.md"))
-            .expect("read .agents release skill");
-    let claude =
-        std::fs::read_to_string(repo_root.join(".claude/skills/build-release/SKILL.md"))
-            .expect("read .claude release skill");
+    let agents = std::fs::read_to_string(repo_root.join(".agents/skills/build-release/SKILL.md"))
+        .expect("read .agents release skill");
+    let claude = std::fs::read_to_string(repo_root.join(".claude/skills/build-release/SKILL.md"))
+        .expect("read .claude release skill");
 
     validate_release_skill_pair(&agents, &claude)
         .expect("release skill entrypoints must be identical and candidate-first");

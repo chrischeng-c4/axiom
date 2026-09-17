@@ -194,12 +194,9 @@ fn fixture(root: &Path) -> Fixture {
         writer: sink_writer.clone(),
         aof: Some(aof),
     });
-    let state = AppState::with_components(
-        engine.clone(),
-        Arc::new(AuthConfig::open()),
-        sink_writer,
-    )
-    .with_checkpoint(checkpoint);
+    let state =
+        AppState::with_components(engine.clone(), Arc::new(AuthConfig::open()), sink_writer)
+            .with_checkpoint(checkpoint);
     let server = TestServer::new(router(state)).expect("open native committed ReplaceDocs server");
 
     Fixture {
@@ -652,7 +649,8 @@ async fn run_native_committed_replace_child(root: PathBuf, handshake: PathBuf) {
     fs::write(&handshake, CHILD_CASE).expect("record exact native ReplaceDocs child entry");
     let fixture = fixture(&root);
 
-    let create_sequence = publish_committed(&fixture.wal, create_record(), "collection schema").await;
+    let create_sequence =
+        publish_committed(&fixture.wal, create_record(), "collection schema").await;
     assert_eq!(
         create_sequence, CREATE_SEQUENCE,
         "the schema must be the first native committed MemWal record",
@@ -676,7 +674,10 @@ async fn run_native_committed_replace_child(root: PathBuf, handshake: PathBuf) {
         base_cold.sequence, BASE_SEQUENCE,
         "cold native base checkpoint must retain the established watermark",
     );
-    assert_base_state(&base_cold.engine, "cold native committed ReplaceDocs base checkpoint");
+    assert_base_state(
+        &base_cold.engine,
+        "cold native committed ReplaceDocs base checkpoint",
+    );
 
     let giant_record = oversized_replace_record();
     assert_generic_cbor_source_payload(&giant_record);
@@ -693,7 +694,12 @@ async fn run_native_committed_replace_child(root: PathBuf, handshake: PathBuf) {
         giant_sequence, GIANT_SEQUENCE,
         "the oversized ReplaceDocs source must become the next committed native MemWal record",
     );
-    wait_for_committed_apply(&fixture, giant_sequence, "oversized generic-CBOR ReplaceDocs").await;
+    wait_for_committed_apply(
+        &fixture,
+        giant_sequence,
+        "oversized generic-CBOR ReplaceDocs",
+    )
+    .await;
     assert_eq!(
         fixture.writer.applied_seq(),
         giant_sequence,
@@ -719,11 +725,22 @@ async fn run_native_committed_replace_child(root: PathBuf, handshake: PathBuf) {
             > aof_before,
         "WriteCoordinator must append the applied foreign committed ReplaceDocs record to its real AOF before checkpoint",
     );
-    assert_oversized_state(&fixture.engine, "live native committed oversized ReplaceDocs apply");
-    assert_public_pending_budget(&fixture.server, "live native committed oversized ReplaceDocs apply").await;
+    assert_oversized_state(
+        &fixture.engine,
+        "live native committed oversized ReplaceDocs apply",
+    );
+    assert_public_pending_budget(
+        &fixture.server,
+        "live native committed oversized ReplaceDocs apply",
+    )
+    .await;
 
     checkpoint_now(&fixture.server).await;
-    assert_public_pending_budget(&fixture.server, "native committed oversized ReplaceDocs checkpoint").await;
+    assert_public_pending_budget(
+        &fixture.server,
+        "native committed oversized ReplaceDocs checkpoint",
+    )
+    .await;
     let cold = fixture
         .store
         .load_current_generation()
@@ -733,13 +750,17 @@ async fn run_native_committed_replace_child(root: PathBuf, handshake: PathBuf) {
         cold.sequence, GIANT_SEQUENCE,
         "cold native checkpoint must retain the applied oversized ReplaceDocs watermark",
     );
-    assert_oversized_state(&cold.engine, "cold native committed oversized ReplaceDocs checkpoint");
+    assert_oversized_state(
+        &cold.engine,
+        "cold native committed oversized ReplaceDocs checkpoint",
+    );
 }
 
 async fn run_isolated_child(root: &Path) {
     let child_root = tempfile::tempdir().expect("native committed ReplaceDocs child workspace");
     let child_tmp = child_root.path().join("child-tmp");
-    fs::create_dir(&child_tmp).expect("create parent-owned native ReplaceDocs child temporary directory");
+    fs::create_dir(&child_tmp)
+        .expect("create parent-owned native ReplaceDocs child temporary directory");
     let handshake = child_root.path().join("entered-case");
     let stdout_path = child_root.path().join("child.stdout");
     let stderr_path = child_root.path().join("child.stderr");

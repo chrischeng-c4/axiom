@@ -96,8 +96,7 @@ const CHILD_ROOT_ENV: &str = "LUMEN_AOF_OVERSIZED_HASH_ROOT";
 const CHILD_AOF_ENV: &str = "LUMEN_AOF_OVERSIZED_HASH_AOF";
 const CHILD_HANDSHAKE_ENV: &str = "LUMEN_AOF_OVERSIZED_HASH_HANDSHAKE";
 const CHILD_CASE: &str = "replay";
-const TEST_NAME: &str =
-    "oversized_committed_hash_aof_replays_suffixes_checkpoints_and_cold_opens";
+const TEST_NAME: &str = "oversized_committed_hash_aof_replays_suffixes_checkpoints_and_cold_opens";
 
 /// Supplies the actual replay watermark without constructing a fresh
 /// coordinator, which would initialize this Engine at sequence zero.
@@ -165,12 +164,7 @@ fn create_entry() -> RaftLogEntry {
     }
 }
 
-fn item(
-    external_id: &str,
-    field: &str,
-    value: FieldValue,
-    version: Option<u64>,
-) -> IndexItem {
+fn item(external_id: &str, field: &str, value: FieldValue, version: Option<u64>) -> IndexItem {
     IndexItem {
         external_id: external_id.to_owned(),
         field: field.to_owned(),
@@ -671,7 +665,10 @@ fn corrupt_complete_frame_payload(path: &Path, frame_start: u64) {
     file.read_exact(&mut length)
         .expect("read authentic Hash AOF frame length");
     let payload_bytes = u64::from(u32::from_le_bytes(length));
-    assert!(payload_bytes > 0, "security Hash payload must have a byte to corrupt");
+    assert!(
+        payload_bytes > 0,
+        "security Hash payload must have a byte to corrupt"
+    );
     let payload_start = frame_start + FRAME_HEADER_BYTES;
     file.seek(SeekFrom::Start(payload_start))
         .expect("seek authentic Hash AOF payload byte");
@@ -856,11 +853,7 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         base_cold.sequence, BASE_SEQUENCE,
         "cold Hash base checkpoint must keep its exact watermark",
     );
-    assert_base_state(
-        &base_cold.engine,
-        0,
-        "cold committed Hash base checkpoint",
-    );
+    assert_base_state(&base_cold.engine, 0, "cold committed Hash base checkpoint");
 
     let span = append_oversized_suffix(&aof_path);
     let oversized_replay = replay_aof_into(&base_cold.engine, &aof_path, base_cold.sequence);
@@ -878,11 +871,7 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         OVERSIZED_SEQUENCE,
         "valid oversized Hash replay must advance through its committed suffix sequence",
     );
-    assert_oversized_state(
-        &base_cold.engine,
-        12,
-        "oversized Hash AOF suffix replay",
-    );
+    assert_oversized_state(&base_cold.engine, 12, "oversized Hash AOF suffix replay");
     assert_public_pending_budget(
         base_cold.engine.clone(),
         OVERSIZED_SEQUENCE,
@@ -1001,11 +990,7 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         0,
         "fully checkpoint-covered Hash AOF frames must not advance the watermark",
     );
-    assert_tail_state(
-        &final_cold.engine,
-        0,
-        "fully covered Hash AOF replay",
-    );
+    assert_tail_state(&final_cold.engine, 0, "fully covered Hash AOF replay");
     assert_public_pending_budget(
         final_cold.engine.clone(),
         DELETE_SEQUENCE,
@@ -1049,7 +1034,9 @@ async fn run_isolated_replay(root: &Path, aof_path: &Path) {
             Ok(None) => {
                 let mut raw = child.0.take().expect("timed out child remains owned");
                 let _ = raw.kill();
-                let status = raw.wait().expect("wait for killed oversized Hash replay child");
+                let status = raw
+                    .wait()
+                    .expect("wait for killed oversized Hash replay child");
                 let stdout = fs::read_to_string(&stdout_path)
                     .expect("read killed oversized Hash replay child stdout");
                 let stderr = fs::read_to_string(&stderr_path)

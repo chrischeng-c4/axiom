@@ -316,7 +316,11 @@ fn assert_text_stats(
         "{phase}: Text documents_indexed must match the committed live rows",
     );
     let field = stats.fields.get(FIELD).expect("Text field stats");
-    assert_eq!(field.field_type, FieldType::Text, "{phase}: field stays Text");
+    assert_eq!(
+        field.field_type,
+        FieldType::Text,
+        "{phase}: field stays Text"
+    );
     assert_eq!(
         field.unique_terms, unique_terms,
         "{phase}: repeated words and compact markers must retain the expected dictionary",
@@ -345,12 +349,7 @@ fn assert_single_text_hit(
     assert_score_close(hits[0].score, expected_score, phase);
 }
 
-fn assert_word_scores(
-    engine: &Engine,
-    text: &str,
-    expected: &BTreeMap<String, f32>,
-    phase: &str,
-) {
+fn assert_word_scores(engine: &Engine, text: &str, expected: &BTreeMap<String, f32>, phase: &str) {
     let actual = scores_by_id(engine, text);
     assert_eq!(
         actual.len(),
@@ -440,7 +439,8 @@ fn assert_tail_text_state(engine: &Engine, phase: &str) {
         updated_score,
         phase,
     );
-    let updated_alpha_score = reference_bm25(doc_count, doc_count, 2, UPDATED_DOC_LEN, average_doc_len);
+    let updated_alpha_score =
+        reference_bm25(doc_count, doc_count, 2, UPDATED_DOC_LEN, average_doc_len);
     assert_single_text_hit(
         engine,
         "updated alpha",

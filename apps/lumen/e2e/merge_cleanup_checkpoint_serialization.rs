@@ -329,11 +329,7 @@ fn selected_merge_scratch(root: &Path) -> PathBuf {
     scratch
 }
 
-fn wait_receiver<T>(
-    receiver: mpsc::Receiver<T>,
-    timeout: Duration,
-    phase: &str,
-) -> T {
+fn wait_receiver<T>(receiver: mpsc::Receiver<T>, timeout: Duration, phase: &str) -> T {
     receiver.recv_timeout(timeout).unwrap_or_else(|error| {
         panic!("{phase} did not finish before bounded cleanup watchdog {timeout:?}: {error}")
     })
@@ -396,9 +392,8 @@ fn run_child(root: PathBuf, handshake: PathBuf) {
     let checkpoint_thread = thread::Builder::new()
         .name("lumen-merge-cleanup-held-checkpoint".into())
         .spawn(move || {
-            let _ = checkpoint_done_tx.send(
-                checkpoint_store.save_with_sequence(&checkpoint_engine, CHECKPOINT_SEQUENCE),
-            );
+            let _ = checkpoint_done_tx
+                .send(checkpoint_store.save_with_sequence(&checkpoint_engine, CHECKPOINT_SEQUENCE));
         })
         .expect("start held public checkpoint thread");
 
@@ -427,13 +422,13 @@ fn run_child(root: PathBuf, handshake: PathBuf) {
     // scratch path below is the direct old-cleanup oracle.
     let worker_became_idle_before_checkpoint_release =
         match merge_done_rx.recv_timeout(EARLY_CLEANUP_OBSERVATION) {
-        Ok(Ok(())) => Some("completed successfully".to_owned()),
-        Ok(Err(error)) => Some(format!("completed with error: {error:#}")),
-        Err(mpsc::RecvTimeoutError::Timeout) => None,
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Some("completion observer disconnected".to_owned())
-        }
-    };
+            Ok(Ok(())) => Some("completed successfully".to_owned()),
+            Ok(Err(error)) => Some(format!("completed with error: {error:#}")),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Some("completion observer disconnected".to_owned())
+            }
+        };
     let scratch_survived_held_checkpoint = scratch.exists();
 
     checkpoint_release.release();

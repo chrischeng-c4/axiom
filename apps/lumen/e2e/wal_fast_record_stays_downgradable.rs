@@ -277,7 +277,10 @@ fn the_versioned_wire_still_round_trips_through_the_current_decoder() {
 /// legacy reader happy by breaking the modern one would still look green.
 #[test]
 fn a_version_free_record_round_trips_through_the_current_decoder() {
-    let rec = record(vec![plain_item("d1", "alpha"), plain_item("d2", "beta")], None);
+    let rec = record(
+        vec![plain_item("d1", "alpha"), plain_item("d2", "beta")],
+        None,
+    );
     let bytes = rec.encode().expect("encode");
 
     let back = WalRecord::decode(&bytes).expect("decode");

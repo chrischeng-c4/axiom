@@ -328,7 +328,10 @@ fn updated_fields() -> BTreeMap<String, FieldValue> {
                 UPDATED_SET_VALUE.to_owned(),
             ]),
         ),
-        (HASH_FIELD.to_owned(), FieldValue::String("0x999".to_owned())),
+        (
+            HASH_FIELD.to_owned(),
+            FieldValue::String("0x999".to_owned()),
+        ),
     ])
 }
 
@@ -347,7 +350,10 @@ fn stale_fields() -> BTreeMap<String, FieldValue> {
             SET_FIELD.to_owned(),
             FieldValue::StringList(vec!["replace-stale-set".to_owned()]),
         ),
-        (HASH_FIELD.to_owned(), FieldValue::String("0x998".to_owned())),
+        (
+            HASH_FIELD.to_owned(),
+            FieldValue::String("0x998".to_owned()),
+        ),
     ])
 }
 
@@ -592,11 +598,7 @@ fn assert_tail_state(engine: &Engine, phase: &str) {
         "{phase}: the higher-version Number must replace the giant row value",
     );
     assert_eq!(
-        term_ids(
-            engine,
-            NUMBER_FIELD,
-            FieldValue::Number(GIANT_NUMBER_BASE),
-        ),
+        term_ids(engine, NUMBER_FIELD, FieldValue::Number(GIANT_NUMBER_BASE),),
         BTreeSet::new(),
         "{phase}: the old first-document Number must not survive full replacement",
     );
@@ -694,7 +696,6 @@ async fn assert_public_pending_budget(engine: Arc<Engine>, sequence: u64, phase:
     );
 }
 
-
 fn encode_record(record: WalRecord, phase: &str) -> Vec<u8> {
     record
         .encode()
@@ -780,12 +781,7 @@ fn delete_command() -> Vec<u8> {
     )
 }
 
-fn apply_foreign_committed(
-    state_machine: &EngineSm,
-    sequence: Index,
-    command: &[u8],
-    phase: &str,
-) {
+fn apply_foreign_committed(state_machine: &EngineSm, sequence: Index, command: &[u8], phase: &str) {
     let result = state_machine.apply(sequence, command);
     let diagnostic = result
         .as_ref()
@@ -841,7 +837,8 @@ fn child_paths() -> Option<(PathBuf, PathBuf)> {
 }
 
 async fn run_foreign_committed_replace_child(root: PathBuf, handshake: PathBuf) {
-    fs::write(&handshake, CHILD_CASE).expect("record exact foreign committed ReplaceDocs child entry");
+    fs::write(&handshake, CHILD_CASE)
+        .expect("record exact foreign committed ReplaceDocs child entry");
     let store = Arc::new(
         SegmentRdbStore::new(root.join("segments"))
             .expect("open Raft committed ReplaceDocs segment store"),
@@ -961,7 +958,10 @@ async fn run_foreign_committed_replace_child(root: PathBuf, handshake: PathBuf) 
         DELETE_SEQUENCE,
         "a refused malformed foreign command must not advance the Raft watermark",
     );
-    assert_tail_state(&engine, "malformed foreign command leaves live state unchanged");
+    assert_tail_state(
+        &engine,
+        "malformed foreign command leaves live state unchanged",
+    );
 }
 
 async fn run_isolated_child(root: &Path) {
@@ -972,9 +972,12 @@ async fn run_isolated_child(root: &Path) {
     let handshake = child_root.path().join("entered-case");
     let stdout_path = child_root.path().join("child.stdout");
     let stderr_path = child_root.path().join("child.stderr");
-    let executable = std::env::current_exe().expect("current Raft committed ReplaceDocs test executable");
-    let stdout = File::create(&stdout_path).expect("create Raft committed ReplaceDocs child stdout");
-    let stderr = File::create(&stderr_path).expect("create Raft committed ReplaceDocs child stderr");
+    let executable =
+        std::env::current_exe().expect("current Raft committed ReplaceDocs test executable");
+    let stdout =
+        File::create(&stdout_path).expect("create Raft committed ReplaceDocs child stdout");
+    let stderr =
+        File::create(&stderr_path).expect("create Raft committed ReplaceDocs child stderr");
     let child = Command::new(executable)
         .env(CHILD_MODE_ENV, CHILD_CASE)
         .env(CHILD_ROOT_ENV, root)
@@ -1007,7 +1010,9 @@ async fn run_isolated_child(root: &Path) {
                     .take()
                     .expect("timed-out Raft committed ReplaceDocs child remains owned");
                 let _ = raw.kill();
-                let status = raw.wait().expect("wait for killed Raft committed ReplaceDocs child");
+                let status = raw
+                    .wait()
+                    .expect("wait for killed Raft committed ReplaceDocs child");
                 let stdout = fs::read_to_string(&stdout_path)
                     .expect("read killed Raft committed ReplaceDocs child stdout");
                 let stderr = fs::read_to_string(&stderr_path)
@@ -1025,8 +1030,10 @@ async fn run_isolated_child(root: &Path) {
         .expect("exited Raft committed ReplaceDocs child remains owned")
         .wait()
         .expect("wait for exited Raft committed ReplaceDocs child");
-    let stdout = fs::read_to_string(&stdout_path).expect("read Raft committed ReplaceDocs child stdout");
-    let stderr = fs::read_to_string(&stderr_path).expect("read Raft committed ReplaceDocs child stderr");
+    let stdout =
+        fs::read_to_string(&stdout_path).expect("read Raft committed ReplaceDocs child stdout");
+    let stderr =
+        fs::read_to_string(&stderr_path).expect("read Raft committed ReplaceDocs child stderr");
     let entered = fs::read_to_string(&handshake).unwrap_or_else(|error| {
         panic!(
             "isolated child did not enter exact {TEST_NAME}: {error}; stdout={stdout}; stderr={stderr}",

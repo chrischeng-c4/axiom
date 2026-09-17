@@ -158,12 +158,7 @@ struct HoldPointerIo {
 }
 
 impl HoldPointerIo {
-    fn arm(
-        &self,
-        step: PointerIoStep,
-        entered: mpsc::SyncSender<()>,
-        release: mpsc::Receiver<()>,
-    ) {
+    fn arm(&self, step: PointerIoStep, entered: mpsc::SyncSender<()>, release: mpsc::Receiver<()>) {
         assert!(
             self.pause
                 .lock()
@@ -269,8 +264,7 @@ fn fixture() -> Fixture {
     let engine = Arc::new(Engine::new());
     let wal = Arc::new(MemWal::new());
     let shared_wal: SharedWal = wal.clone();
-    let writer =
-        WriteCoordinator::start_from_with_aof(shared_wal, engine.clone(), 0, aof.clone());
+    let writer = WriteCoordinator::start_from_with_aof(shared_wal, engine.clone(), 0, aof.clone());
     let writer_sink: Arc<dyn WriteSink> = writer.clone();
     let checkpoint = Arc::new(SegmentCheckpointSink {
         engine: engine.clone(),
@@ -339,8 +333,7 @@ async fn term_ids(server: &TestServer, collection: &str, value: &str) -> Vec<Str
         }))
         .await;
     response.assert_status_ok();
-    let mut ids = response
-        .json::<Value>()["hits"]
+    let mut ids = response.json::<Value>()["hits"]
         .as_array()
         .expect("exact term-query hits")
         .iter()
@@ -434,7 +427,10 @@ async fn assert_checkpoint_completion(
         .unwrap_or_else(|_| panic!("{context}: checkpoint exceeded cleanup watchdog"))
         .unwrap_or_else(|error| panic!("{context}: checkpoint task panicked: {error}"))
         .unwrap_or_else(|error| panic!("{context}: checkpoint returned error: {error:#}"));
-    assert!(result, "{context}: configured checkpoint returned persisted=false");
+    assert!(
+        result,
+        "{context}: configured checkpoint returned persisted=false"
+    );
 }
 
 async fn run_pointer_io_case(step: PointerIoStep) {
@@ -512,11 +508,7 @@ async fn run_pointer_io_case(step: PointerIoStep) {
     );
     tokio::pin!(postcut_http);
     let wal_context = format!("{} post-cut HTTP write", step.label());
-    let wal_ready = wait_for_wal_sequence(
-        fixture.wal.as_ref(),
-        postcut_sequence,
-        &wal_context,
-    );
+    let wal_ready = wait_for_wal_sequence(fixture.wal.as_ref(), postcut_sequence, &wal_context);
     tokio::pin!(wal_ready);
     let response_before_wal = tokio::select! {
         () = &mut wal_ready => None,
@@ -615,20 +607,19 @@ async fn run_pointer_io_case(step: PointerIoStep) {
         POSTCUT_COLLECTION,
         POSTCUT_VALUE,
         &[],
-        &format!("{} first cold cut excludes post-cut WAL value", step.label()),
+        &format!(
+            "{} first cold cut excludes post-cut WAL value",
+            step.label()
+        ),
     )
     .await;
-    let replayed = replay_aof_into(
-        &first_cold_engine,
-        &fixture.aof_path,
-        captured_sequence,
-    )
-    .unwrap_or_else(|error| {
-        panic!(
+    let replayed = replay_aof_into(&first_cold_engine, &fixture.aof_path, captured_sequence)
+        .unwrap_or_else(|error| {
+            panic!(
             "{}: AOF after first checkpoint must replay the retained post-cut record: {error:#}",
             step.label(),
         )
-    });
+        });
     assert_eq!(
         replayed,
         postcut_sequence,
@@ -673,7 +664,10 @@ async fn run_pointer_io_case(step: PointerIoStep) {
         POSTCUT_COLLECTION,
         POSTCUT_VALUE,
         &[POSTCUT_ID],
-        &format!("{} second cold cut retains post-cut WAL value", step.label()),
+        &format!(
+            "{} second cold cut retains post-cut WAL value",
+            step.label()
+        ),
     )
     .await;
 }
@@ -902,8 +896,7 @@ fn background_merge_fixture(observer: Arc<PauseBeforeMergeCurrentPublish>) -> Fi
     let engine = Arc::new(Engine::new());
     let wal = Arc::new(MemWal::new());
     let shared_wal: SharedWal = wal.clone();
-    let writer =
-        WriteCoordinator::start_from_with_aof(shared_wal, engine.clone(), 0, aof.clone());
+    let writer = WriteCoordinator::start_from_with_aof(shared_wal, engine.clone(), 0, aof.clone());
     let writer_sink: Arc<dyn WriteSink> = writer.clone();
     let checkpoint = Arc::new(SegmentCheckpointSink {
         engine: engine.clone(),
@@ -932,10 +925,7 @@ fn background_merge_value(round: u64) -> String {
     format!("current-publication-merge-v{round}")
 }
 
-async fn wait_for_background_merge_pause(
-    entered_rx: mpsc::Receiver<()>,
-    step: PointerIoStep,
-) {
+async fn wait_for_background_merge_pause(entered_rx: mpsc::Receiver<()>, step: PointerIoStep) {
     let entered = tokio::task::spawn_blocking(move || entered_rx.recv_timeout(READY_WATCHDOG))
         .await
         .expect("background merge readiness task must join");
@@ -1061,7 +1051,10 @@ async fn run_background_merge_pointer_io_case(step: PointerIoStep) {
     pointer_release.release();
     wait_for_background_merge_completion(
         fixture.store.clone(),
-        &format!("{} background merge after CURRENT I/O release", step.label()),
+        &format!(
+            "{} background merge after CURRENT I/O release",
+            step.label()
+        ),
     )
     .await;
     let response_after_release = if response_before_release.is_none() {
@@ -1140,7 +1133,10 @@ async fn run_background_merge_pointer_io_case(step: PointerIoStep) {
         BACKGROUND_POSTCUT_COLLECTION,
         BACKGROUND_POSTCUT_VALUE,
         &[BACKGROUND_POSTCUT_ID],
-        &format!("{} AOF replay recovers merge-interleaved post-cut value", step.label()),
+        &format!(
+            "{} AOF replay recovers merge-interleaved post-cut value",
+            step.label()
+        ),
     )
     .await;
     assert_term_ids(
@@ -1148,7 +1144,10 @@ async fn run_background_merge_pointer_io_case(step: PointerIoStep) {
         BACKGROUND_POSTCUT_COLLECTION,
         BACKGROUND_POSTCUT_VALUE,
         &[BACKGROUND_POSTCUT_ID],
-        &format!("{} live engine applies merge-interleaved post-cut value", step.label()),
+        &format!(
+            "{} live engine applies merge-interleaved post-cut value",
+            step.label()
+        ),
     )
     .await;
 
@@ -1219,7 +1218,10 @@ fn run_isolated_background_merge_child() {
                 Ok(Some(_)) => break,
                 Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
                 Ok(None) => {
-                    let mut raw = child.0.take().expect("timed-out background-merge child remains owned");
+                    let mut raw = child
+                        .0
+                        .take()
+                        .expect("timed-out background-merge child remains owned");
                     let _ = raw.kill();
                     let status = raw.wait().expect("reap killed background-merge child");
                     let stdout = fs::read_to_string(&stdout_path).unwrap_or_default();
@@ -1269,7 +1271,7 @@ async fn background_merge_current_pointer_io_releases_apply_and_preserves_durabl
             &handshake,
             format!("{BACKGROUND_TEST_NAME}:{}", background_step_name(step)),
         )
-            .expect("record background-merge child entry");
+        .expect("record background-merge child entry");
         run_background_merge_pointer_io_case(step).await;
         return;
     }

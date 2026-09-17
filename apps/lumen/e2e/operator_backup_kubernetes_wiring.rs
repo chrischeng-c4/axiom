@@ -280,11 +280,7 @@ fn rendered_network_policy_is_opt_in_and_never_exposes_the_raft_port() {
 fn operator_cli_renders_requested_immutable_image_and_preserves_default() {
     let render = |extra: &[&str]| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
-        command.args([
-            "k8s",
-            "operator",
-            "render",
-        ]);
+        command.args(["k8s", "operator", "render"]);
         command.args(extra);
         let output = command.output().expect("run lumen operator render");
         assert!(
@@ -408,11 +404,7 @@ fn operator_pdb_serializes_eviction_across_the_replicas() {
 #[test]
 fn operator_render_and_static_manifest_agree_on_the_ha_shape() {
     let rendered = Command::new(env!("CARGO_BIN_EXE_lumen"))
-        .args([
-            "k8s",
-            "operator",
-            "render",
-        ])
+        .args(["k8s", "operator", "render"])
         .output()
         .expect("run lumen operator render");
     assert!(
@@ -433,13 +425,7 @@ fn operator_render_and_static_manifest_agree_on_the_ha_shape() {
     // `--namespace` moves the whole layer, PDB included; a PDB left in
     // `lumen-system` would not cover pods rendered elsewhere.
     let relocated = Command::new(env!("CARGO_BIN_EXE_lumen"))
-        .args([
-            "k8s",
-            "operator",
-            "render",
-            "--namespace",
-            "lumen-live",
-        ])
+        .args(["k8s", "operator", "render", "--namespace", "lumen-live"])
         .output()
         .expect("run lumen operator render --namespace");
     let relocated_yaml = String::from_utf8(relocated.stdout).expect("operator YAML is utf8");
@@ -492,11 +478,7 @@ fn operator_manifest_pins_this_workspaces_version() {
 /// Run `lumen k8s operator render` and parse every emitted document.
 fn rendered_operator_documents(extra: &[&str]) -> Vec<serde_yaml::Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
-    command.args([
-        "k8s",
-        "operator",
-        "render",
-    ]);
+    command.args(["k8s", "operator", "render"]);
     command.args(extra);
     let output = command.output().expect("run lumen operator render");
     assert!(

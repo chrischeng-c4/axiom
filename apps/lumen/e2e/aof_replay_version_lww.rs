@@ -25,9 +25,7 @@ use lumen::api::{router, AppState};
 use lumen::auth::AuthConfig;
 use lumen::coordinator::{SharedAof, WriteCoordinator, WriteSink};
 use lumen::storage::Engine;
-use lumen::types::{
-    FieldValue, IndexItem, IndexRequest, QueryNode, SearchRequest, TermQuery,
-};
+use lumen::types::{FieldValue, IndexItem, IndexRequest, QueryNode, SearchRequest, TermQuery};
 use lumen::wal::{MemWal, SharedWal};
 
 const COLLECTION: &str = "docs";
@@ -150,7 +148,11 @@ async fn version_ceiling_survives_aof_replay() {
         .json(&json!({ "query": { "term": { "field": "kw", "value": "v5" } }, "limit": 10 }))
         .await;
     resp.assert_status_ok();
-    assert_eq!(resp.json::<serde_json::Value>()["total"], 1, "live: v5 must be visible");
+    assert_eq!(
+        resp.json::<serde_json::Value>()["total"],
+        1,
+        "live: v5 must be visible"
+    );
 
     let resp = fixture
         .server
@@ -158,7 +160,11 @@ async fn version_ceiling_survives_aof_replay() {
         .json(&json!({ "query": { "term": { "field": "kw", "value": "v3" } }, "limit": 10 }))
         .await;
     resp.assert_status_ok();
-    assert_eq!(resp.json::<serde_json::Value>()["total"], 0, "live: v3 must NOT be visible");
+    assert_eq!(
+        resp.json::<serde_json::Value>()["total"],
+        0,
+        "live: v3 must NOT be visible"
+    );
 
     fixture
         .aof

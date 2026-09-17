@@ -702,7 +702,10 @@ impl VectorIndex for HnswCpuIndex {
     }
 
     fn checkpoint_codebook_for_preparation(&self) -> Result<Option<ScalarCodebook>> {
-        let inner = self.inner.read().map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
         Ok(inner.store.codebook)
     }
 
@@ -1202,7 +1205,10 @@ impl VectorIndex for FlatCpuIndex {
     }
 
     fn checkpoint_codebook_for_preparation(&self) -> Result<Option<ScalarCodebook>> {
-        let inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         Ok(inner.store.codebook)
     }
     fn restore_checkpoint_vector(&self, eid: &str, vector: &[f32]) -> Result<()> {
@@ -1703,34 +1709,68 @@ pub fn open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> {
 
 #[cfg(test)]
 mod tests {
-#[test]
-fn preparation_codebook_snapshot_is_copy_sized_for_raw_and_sq_backends() {
-    for index in [
-        Box::new(HnswCpuIndex::new(spec(3, VectorMetric::L2, None))) as Box<dyn VectorIndex>,
-        Box::new(FlatCpuIndex::new(spec(3, VectorMetric::L2, None))) as Box<dyn VectorIndex>,
-    ] {
-        assert!(index.checkpoint_codebook_for_preparation().unwrap().is_none());
+    #[test]
+    fn preparation_codebook_snapshot_is_copy_sized_for_raw_and_sq_backends() {
+        for index in [
+            Box::new(HnswCpuIndex::new(spec(3, VectorMetric::L2, None))) as Box<dyn VectorIndex>,
+            Box::new(FlatCpuIndex::new(spec(3, VectorMetric::L2, None))) as Box<dyn VectorIndex>,
+        ] {
+            assert!(index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .is_none());
+        }
+        for index in [
+            Box::new(HnswCpuIndex::new(spec(
+                3,
+                VectorMetric::L2,
+                Some(VectorQuantize::Sq),
+            ))) as Box<dyn VectorIndex>,
+            Box::new(FlatCpuIndex::new(spec(
+                3,
+                VectorMetric::L2,
+                Some(VectorQuantize::Sq),
+            ))) as Box<dyn VectorIndex>,
+        ] {
+            let initial = index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .unwrap();
+            assert_eq!(initial.dim, 3);
+            assert!(initial.min.is_infinite() && initial.min.is_sign_positive());
+            assert!(initial.max.is_infinite() && initial.max.is_sign_negative());
+            index.add("first", &[-2.0, 0.0, 5.0]).unwrap();
+            let snapshot = index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .unwrap();
+            assert_eq!((snapshot.min, snapshot.max, snapshot.dim), (-2.0, 5.0, 3));
+            let mut widened = snapshot;
+            widened.widen(&[-20.0, 0.0, 20.0]);
+            assert_eq!(
+                index
+                    .checkpoint_codebook_for_preparation()
+                    .unwrap()
+                    .unwrap()
+                    .min,
+                -2.0
+            );
+            assert_eq!(
+                index
+                    .checkpoint_codebook_for_preparation()
+                    .unwrap()
+                    .unwrap()
+                    .max,
+                5.0
+            );
+            index.add("later", &[10.0, 0.0, 20.0]).unwrap();
+            let later = index
+                .checkpoint_codebook_for_preparation()
+                .unwrap()
+                .unwrap();
+            assert_eq!((later.min, later.max, later.dim), (-2.0, 20.0, 3));
+        }
     }
-    for index in [
-        Box::new(HnswCpuIndex::new(spec(3, VectorMetric::L2, Some(VectorQuantize::Sq)))) as Box<dyn VectorIndex>,
-        Box::new(FlatCpuIndex::new(spec(3, VectorMetric::L2, Some(VectorQuantize::Sq)))) as Box<dyn VectorIndex>,
-    ] {
-        let initial = index.checkpoint_codebook_for_preparation().unwrap().unwrap();
-        assert_eq!(initial.dim, 3);
-        assert!(initial.min.is_infinite() && initial.min.is_sign_positive());
-        assert!(initial.max.is_infinite() && initial.max.is_sign_negative());
-        index.add("first", &[-2.0, 0.0, 5.0]).unwrap();
-        let snapshot = index.checkpoint_codebook_for_preparation().unwrap().unwrap();
-        assert_eq!((snapshot.min, snapshot.max, snapshot.dim), (-2.0, 5.0, 3));
-        let mut widened = snapshot;
-        widened.widen(&[-20.0, 0.0, 20.0]);
-        assert_eq!(index.checkpoint_codebook_for_preparation().unwrap().unwrap().min, -2.0);
-        assert_eq!(index.checkpoint_codebook_for_preparation().unwrap().unwrap().max, 5.0);
-        index.add("later", &[10.0, 0.0, 20.0]).unwrap();
-        let later = index.checkpoint_codebook_for_preparation().unwrap().unwrap();
-        assert_eq!((later.min, later.max, later.dim), (-2.0, 20.0, 3));
-    }
-}
 
     use super::*;
 

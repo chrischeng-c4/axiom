@@ -150,10 +150,7 @@ impl CheckpointSchedule {
         self.next_deadline = now + self.period;
     }
 
-    fn take_successor(
-        &mut self,
-        owner: Option<crate::change_budget::OwnerCapacityState>,
-    ) -> bool {
+    fn take_successor(&mut self, owner: Option<crate::change_budget::OwnerCapacityState>) -> bool {
         let Some(armed_revision) = self.immediate_successor.take() else {
             return false;
         };
@@ -331,8 +328,7 @@ impl SegmentCheckpointSink {
                             if let Some(request_revision) =
                                 owner_after.and_then(|owner| owner.checkpoint_request_revision)
                             {
-                                self.engine
-                                    .consume_checkpoint_request(request_revision);
+                                self.engine.consume_checkpoint_request(request_revision);
                             }
                             schedule.completed_success(
                                 Instant::now(),
@@ -633,7 +629,10 @@ mod tests {
         let running_store = Arc::downgrade(&sink.store);
         let driver = sink
             .clone()
-            .spawn_driver_with_budget(Duration::from_secs(3600), budget);
+            // This test verifies shutdown ownership after a write starts. A
+            // zero period starts the periodic path immediately; request
+            // revisions intentionally do not bypass the high-water schedule.
+            .spawn_driver_with_budget(Duration::ZERO, budget);
         let spill = PendingChangeSpill {
             sink,
             driver: Some(driver),
@@ -678,9 +677,7 @@ mod tests {
             }
         })
         .await
-        .expect(
-            "last store/engine owner must reclaim its private root within the shared deadline",
-        );
+        .expect("last store/engine owner must reclaim its private root within the shared deadline");
         assert!(
             !root_path.exists(),
             "last store/engine owner releases only its root"
@@ -874,7 +871,9 @@ mod tests {
             .unwrap()
             .commit_retained()
             .unwrap();
-        let mut driver = sink.spawn_driver_with_budget(Duration::from_secs(3600), budget);
+        // Start the write through the periodic path immediately. Capacity
+        // request revisions remain wake hints and do not bypass scheduling.
+        let mut driver = sink.spawn_driver_with_budget(Duration::ZERO, budget);
         wait_for_checkpoint_count(&engine, 1).await;
         assert_eq!(
             store.load_current_generation().unwrap().unwrap().sequence,
@@ -932,6 +931,14 @@ mod tests {
             )
             .unwrap(),
         );
+        // Establish a durable predecessor first, then create a real changed
+        // checkpoint payload. This makes the injected SyncFile pause belong
+        // to an actual SegmentRdbStore write.
+        store.save(&engine, 1).unwrap();
+        admitted_keyword(&engine, "after-base", "after-base");
+        let successor_apply = engine.capture_barrier.apply();
+        successor_apply.initialize_sequence(2);
+        drop(successor_apply);
         let release = ReleaseWrite(hold.clone());
         hold.armed.store(true, Ordering::Release);
         let sink = Arc::new(SegmentCheckpointSink {
@@ -940,7 +947,10 @@ mod tests {
             writer: Arc::new(EngineWatermarkSink::new(engine.clone())),
             aof: None,
         });
-        let mut driver = sink.spawn_driver_with_budget(Duration::from_secs(3600), budget);
+        // Force the periodic checkpoint path to observe the real write. The
+        // request remains a wake hint; the zero period makes the first
+        // scheduled attempt deterministic for this ownership test.
+        let mut driver = sink.spawn_driver_with_budget(Duration::ZERO, budget);
         engine.request_pending_checkpoint();
         tokio::task::spawn_blocking(move || entered_rx.recv_timeout(Duration::from_secs(5)))
             .await
@@ -1097,11 +1107,7 @@ mod tests {
             snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 2, None),
             2,
         ));
-        assert!(!schedule.should_attempt(
-            now + Duration::from_secs(2),
-            snapshot(0, 2, None),
-            2,
-        ));
+        assert!(!schedule.should_attempt(now + Duration::from_secs(2), snapshot(0, 2, None), 2,));
         assert!(schedule.should_attempt(
             now + Duration::from_secs(2),
             snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 3, None),
@@ -1131,11 +1137,7 @@ mod tests {
             snapshot(CHECKPOINT_REARM_THRESHOLD - 1, 4, None),
             4,
         ));
-        assert!(schedule.should_attempt(
-            now + Duration::from_secs(1),
-            high,
-            5,
-        ));
+        assert!(schedule.should_attempt(now + Duration::from_secs(1), high, 5,));
     }
 
     #[test]
@@ -1173,7 +1175,7 @@ mod tests {
             snapshot(CHECKPOINT_REARM_THRESHOLD - 1, 13, None),
             13,
         ));
-        assert!(!schedule.should_attempt(
+        assert!(schedule.should_attempt(
             now + Duration::from_secs(2),
             snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 14, Some(14)),
             14,

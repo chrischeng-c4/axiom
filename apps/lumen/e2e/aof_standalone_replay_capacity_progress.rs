@@ -108,7 +108,8 @@ const CHILD_CASE_ENV: &str = "LUMEN_AOF_CAPACITY_PROGRESS_CASE";
 const CHILD_ROOT_ENV: &str = "LUMEN_AOF_CAPACITY_PROGRESS_ROOT";
 const CHILD_AOF_ENV: &str = "LUMEN_AOF_CAPACITY_PROGRESS_AOF";
 const CHILD_HANDSHAKE_ENV: &str = "LUMEN_AOF_CAPACITY_PROGRESS_HANDSHAKE";
-const TEST_NAME: &str = "standalone_aof_replay_makes_capacity_progress_before_any_caller_checkpoint";
+const TEST_NAME: &str =
+    "standalone_aof_replay_makes_capacity_progress_before_any_caller_checkpoint";
 const SPILL_SENTINEL: &str = "do-not-reuse-preexisting-temp-path";
 
 #[derive(Clone, Copy, Debug)]
@@ -245,11 +246,9 @@ fn target_value(case: CapacityCase, index: usize) -> String {
             assert_eq!(index, 0, "initial target has exactly one value");
             marked_ascii("committed-initial-token", index, INITIAL_TOKEN_BYTES)
         }
-        CapacityCase::DecodedGrowth => marked_ascii(
-            "committed-decoded-growth",
-            index,
-            GROWTH_FIELD_BYTES,
-        ),
+        CapacityCase::DecodedGrowth => {
+            marked_ascii("committed-decoded-growth", index, GROWTH_FIELD_BYTES)
+        }
     }
 }
 
@@ -307,7 +306,8 @@ fn frame_payload_prefix(path: &Path, start: u64) -> [u8; 4] {
     file.seek(SeekFrom::Start(start + FRAME_HEADER_BYTES))
         .expect("seek AOF payload prefix");
     let mut prefix = [0_u8; 4];
-    file.read_exact(&mut prefix).expect("read AOF payload prefix");
+    file.read_exact(&mut prefix)
+        .expect("read AOF payload prefix");
     prefix
 }
 
@@ -356,9 +356,7 @@ fn write_schema_aof(path: &Path) {
         "append schema AOF frame",
     );
     drop(record);
-    writer
-        .sync_strict()
-        .expect("strict-sync schema AOF frame");
+    writer.sync_strict().expect("strict-sync schema AOF frame");
 }
 
 fn write_target_aof(path: &Path, case: CapacityCase) -> u64 {
@@ -402,8 +400,7 @@ fn write_target_aof(path: &Path, case: CapacityCase) -> u64 {
             "initial scanner target must contain its real 2 MiB Keyword token",
         ),
         CapacityCase::DecodedGrowth => assert!(
-            target_frame.payload_bytes
-                >= (GROWTH_FIELD_BYTES * GROWTH_FIELD_COUNT) as u64,
+            target_frame.payload_bytes >= (GROWTH_FIELD_BYTES * GROWTH_FIELD_COUNT) as u64,
             "growth target must retain all eight 256 KiB Keyword values",
         ),
     }
@@ -571,12 +568,13 @@ fn assert_live_state(engine: &Engine, case: CapacityCase, filler_ordinal: usize,
 }
 
 fn reserve_spill_collision() -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "lumen-pending-spill-{}-0",
-        std::process::id()
-    ));
-    fs::write(&path, SPILL_SENTINEL)
-        .unwrap_or_else(|error| panic!("pre-create fallback collision sentinel {}: {error}", path.display()));
+    let path = std::env::temp_dir().join(format!("lumen-pending-spill-{}-0", std::process::id()));
+    fs::write(&path, SPILL_SENTINEL).unwrap_or_else(|error| {
+        panic!(
+            "pre-create fallback collision sentinel {}: {error}",
+            path.display()
+        )
+    });
     path
 }
 
@@ -590,7 +588,9 @@ fn assert_source_complete(path: &Path, expected_len: u64, phase: &str) {
     );
     let mut sequences = Vec::new();
     let maximum = AofReader::replay(path, 0, |sequence, _| sequences.push(sequence))
-        .unwrap_or_else(|error| panic!("{phase}: AOF reader must accept every committed frame: {error:#}"));
+        .unwrap_or_else(|error| {
+            panic!("{phase}: AOF reader must accept every committed frame: {error:#}")
+        });
     assert_eq!(
         sequences,
         vec![CREATE_SEQUENCE, TARGET_SEQUENCE],
@@ -631,7 +631,11 @@ fn replay_before_caller_cleanup(
     let replay_engine = engine.clone();
     let replay_path = aof_path.to_owned();
     let worker = thread::spawn(move || {
-        let _ = sender.send(replay_aof_into(&replay_engine, replay_path, CREATE_SEQUENCE));
+        let _ = sender.send(replay_aof_into(
+            &replay_engine,
+            replay_path,
+            CREATE_SEQUENCE,
+        ));
     });
 
     let completed_before_cleanup = match receiver.recv_timeout(PROGRESS_OBSERVATION) {
@@ -667,7 +671,9 @@ fn replay_before_caller_cleanup(
                 unreachable!("the behavior assertion above always panics");
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                worker.join().expect("disconnected replay worker must not panic");
+                worker
+                    .join()
+                    .expect("disconnected replay worker must not panic");
                 panic!(
                     "{}: replay worker disconnected before returning a public result",
                     case.name(),
@@ -675,7 +681,9 @@ fn replay_before_caller_cleanup(
             }
         },
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            worker.join().expect("disconnected replay worker must not panic");
+            worker
+                .join()
+                .expect("disconnected replay worker must not panic");
             panic!(
                 "{}: replay worker disconnected before returning a public result",
                 case.name(),
@@ -700,7 +708,8 @@ async fn run_child(case: CapacityCase, root: PathBuf, aof_path: PathBuf, handsha
         .expect("cold-open schema-only checkpoint")
         .expect("schema-only checkpoint must publish CURRENT");
     assert_eq!(
-        cold.sequence, CREATE_SEQUENCE,
+        cold.sequence,
+        CREATE_SEQUENCE,
         "{}: child must begin exactly after schema checkpoint",
         case.name(),
     );
@@ -721,16 +730,25 @@ async fn run_child(case: CapacityCase, root: PathBuf, aof_path: PathBuf, handsha
         "{}: public pending accounting must establish the selected free-space condition: free={free_after_setup}",
         case.name(),
     );
-    let checkpoint_before = cold.engine.metrics().segment_checkpoint_completed_total.get();
+    let checkpoint_before = cold
+        .engine
+        .metrics()
+        .segment_checkpoint_completed_total
+        .get();
     let collision = reserve_spill_collision();
     let replayed = replay_before_caller_cleanup(cold.engine.clone(), &store, &aof_path, case);
     assert_eq!(
-        replayed, TARGET_SEQUENCE,
+        replayed,
+        TARGET_SEQUENCE,
         "{}: standalone replay must advance exactly through its one committed target",
         case.name(),
     );
     assert!(
-        cold.engine.metrics().segment_checkpoint_completed_total.get() > checkpoint_before,
+        cold.engine
+            .metrics()
+            .segment_checkpoint_completed_total
+            .get()
+            > checkpoint_before,
         "{}: capacity progress must complete a real maintenance checkpoint before replay returns",
         case.name(),
     );
@@ -747,8 +765,10 @@ async fn run_child(case: CapacityCase, root: PathBuf, aof_path: PathBuf, handsha
     )
     .await;
     assert_eq!(
-        fs::read_to_string(&collision)
-            .unwrap_or_else(|error| panic!("read collision sentinel {}: {error}", collision.display())),
+        fs::read_to_string(&collision).unwrap_or_else(|error| panic!(
+            "read collision sentinel {}: {error}",
+            collision.display()
+        )),
         SPILL_SENTINEL,
         "{}: fallback must not reuse or overwrite a pre-existing temporary spill path",
         case.name(),
@@ -760,7 +780,8 @@ async fn run_child(case: CapacityCase, root: PathBuf, aof_path: PathBuf, handsha
         .save_with_sequence(&cold.engine, TARGET_SEQUENCE)
         .expect("checkpoint only after standalone replay completed");
     assert_eq!(
-        saved, TARGET_SEQUENCE,
+        saved,
+        TARGET_SEQUENCE,
         "{}: final caller checkpoint must retain completed replay watermark",
         case.name(),
     );
@@ -769,7 +790,8 @@ async fn run_child(case: CapacityCase, root: PathBuf, aof_path: PathBuf, handsha
         .expect("cold-open final standalone replay checkpoint")
         .expect("final standalone replay checkpoint must publish CURRENT");
     assert_eq!(
-        final_cold.sequence, TARGET_SEQUENCE,
+        final_cold.sequence,
+        TARGET_SEQUENCE,
         "{}: cold-open checkpoint must retain committed target watermark",
         case.name(),
     );
@@ -788,7 +810,8 @@ async fn run_child(case: CapacityCase, root: PathBuf, aof_path: PathBuf, handsha
     let covered = replay_aof_into(&final_cold.engine, &aof_path, final_cold.sequence)
         .expect("checkpoint-covered replay must not wait or fail");
     assert_eq!(
-        covered, 0,
+        covered,
+        0,
         "{}: checkpoint-covered AOF suffix must be skipped without advancing watermark",
         case.name(),
     );
@@ -876,8 +899,8 @@ async fn run_isolated_child(case: CapacityCase, root: &Path, aof_path: &Path) {
 }
 
 fn create_schema_checkpoint(root: &Path, schema_aof: &Path) {
-    let store = SegmentRdbStore::new(root.join("segments"))
-        .expect("open schema-only segment store");
+    let store =
+        SegmentRdbStore::new(root.join("segments")).expect("open schema-only segment store");
     let engine = Arc::new(Engine::new());
     let replayed = replay_aof_into(&engine, schema_aof, 0)
         .expect("schema AOF replay must succeed before capacity fixture");

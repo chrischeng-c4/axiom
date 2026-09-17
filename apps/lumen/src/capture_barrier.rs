@@ -476,11 +476,7 @@ mod tests {
         apply.join().unwrap();
 
         let (wait_tx, wait_rx) = mpsc::channel();
-        barrier
-            .state
-            .lock()
-            .unwrap()
-            .publication_wait_observer = Some(wait_tx);
+        barrier.state.lock().unwrap().publication_wait_observer = Some(wait_tx);
         let replacement_barrier = barrier.clone();
         let (done_tx, done_rx) = mpsc::channel();
         let replacement = thread::spawn(move || {
@@ -490,16 +486,25 @@ mod tests {
         });
         wait_rx.recv_timeout(LIMIT).unwrap();
         let state = barrier.state.lock().unwrap();
-        assert_eq!(state.epoch, 0, "epoch changed before the publication pin dropped");
+        assert_eq!(
+            state.epoch, 0,
+            "epoch changed before the publication pin dropped"
+        );
         assert_eq!(state.sequence, Some(9));
-        assert!(done_rx.try_recv().is_err(), "epoch replacement crossed a live publication pin");
+        assert!(
+            done_rx.try_recv().is_err(),
+            "epoch replacement crossed a live publication pin"
+        );
         drop(state);
         drop(pin);
         done_rx.recv_timeout(LIMIT).unwrap();
         replacement.join().unwrap();
         let state = barrier.state.lock().unwrap();
         assert_eq!(state.epoch, 1);
-        assert_eq!(state.sequence, None, "epoch replacement must clear the sequence");
+        assert_eq!(
+            state.sequence, None,
+            "epoch replacement must clear the sequence"
+        );
         assert_eq!(state.publication_pins, 0);
     }
 
@@ -513,11 +518,7 @@ mod tests {
         let pin = capture.publication_pin(capture.stamp()).unwrap();
         drop(capture);
         let (wait_tx, wait_rx) = mpsc::channel();
-        barrier
-            .state
-            .lock()
-            .unwrap()
-            .publication_wait_observer = Some(wait_tx);
+        barrier.state.lock().unwrap().publication_wait_observer = Some(wait_tx);
         let other = barrier.clone();
         let (done_tx, done_rx) = mpsc::channel();
         let restore = thread::spawn(move || {
@@ -528,10 +529,20 @@ mod tests {
         });
         wait_rx.recv_timeout(LIMIT).unwrap();
         let state = barrier.state.lock().unwrap();
-        assert_eq!(state.epoch, 0, "restore changed epoch before the publication pin dropped");
+        assert_eq!(
+            state.epoch, 0,
+            "restore changed epoch before the publication pin dropped"
+        );
         assert_eq!(state.restore_inhibitions, 0);
-        assert_eq!(state.sequence, Some(9), "restore inhibition must preserve sequence");
-        assert!(done_rx.try_recv().is_err(), "restore inhibition crossed a live publication pin");
+        assert_eq!(
+            state.sequence,
+            Some(9),
+            "restore inhibition must preserve sequence"
+        );
+        assert!(
+            done_rx.try_recv().is_err(),
+            "restore inhibition crossed a live publication pin"
+        );
         drop(state);
         drop(pin);
         done_rx.recv_timeout(LIMIT).unwrap();

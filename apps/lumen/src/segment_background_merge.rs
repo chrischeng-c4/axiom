@@ -12,6 +12,7 @@ struct WorkState {
     queued: bool,
     running: bool,
     requested: bool,
+    ordinary_retry_permits: u8,
     retryable_stale: bool,
     published_revision: u64,
     publication_revision_overflowed: bool,
@@ -51,9 +52,9 @@ impl WorkState {
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             bail!("background segment merge capacity wait timed out");
         }
-        if idle_revision.is_some_and(|revision| {
-            self.published_revision <= revision && !self.retryable_stale
-        }) {
+        if idle_revision
+            .is_some_and(|revision| self.published_revision <= revision && !self.retryable_stale)
+        {
             bail!("background segment merge made no capacity progress");
         }
         Ok(())
@@ -286,7 +287,9 @@ impl RootWork {
                 Some(revision) => state.published_revision = revision,
                 None => {
                     state.publication_revision_overflowed = true;
-                    *result = Err(anyhow!("background segment merge publication revision overflowed"));
+                    *result = Err(anyhow!(
+                        "background segment merge publication revision overflowed"
+                    ));
                 }
             }
         }
@@ -297,15 +300,31 @@ impl RootWork {
             self.changed.notify_all();
             return false;
         }
+        let retryable = result.as_ref().is_err()
+            || result
+                .as_ref()
+                .is_ok_and(|outcome| *outcome == MergeOutcome::RetryableStale);
+        if retryable && state.ordinary_retry_permits > 0 {
+            state.ordinary_retry_permits -= 1;
+            state.requested = true;
+        } else if result.as_ref().is_ok_and(|outcome| {
+            matches!(
+                outcome,
+                MergeOutcome::Published | MergeOutcome::NoEligibleWork
+            )
+        }) {
+            state.ordinary_retry_permits = 0;
+        }
         // A successful pair merge must not immediately schedule another pass
         // against the same immutable catalog. The scheduler will request the
         // next pass when a later checkpoint creates another delta layer, or
         // when a request arrived while this job was running. This preserves
         // the selected two-layer window instead of draining a four-layer
         // stack through automatic follow-up jobs.
-        state.retryable_stale = result
-            .as_ref()
-            .is_ok_and(|outcome| *outcome == MergeOutcome::RetryableStale);
+        // A failed job leaves its source and pins intact.  Keep that state
+        // retryable so a later durable checkpoint can submit one fresh job
+        // after the worker has become idle.
+        state.retryable_stale = retryable;
         let again = state.requested;
         state.error = result.as_ref().err().map(|error| format!("{error:#}"));
         // Keep the token logically queued across re-enqueue so a waiter cannot
@@ -381,16 +400,17 @@ fn queue_sender() -> Result<&'static mpsc::Sender<Job>> {
                             state.requested = false;
                         }
                         let engine = job.engine.upgrade();
-                        let mut result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            engine
-                                .as_ref()
-                                .map_or(Ok(MergeOutcome::NoEligibleWork), |engine| {
-                                    job.store.merge_one(engine)
-                                })
-                        }))
-                        .unwrap_or_else(|_| {
-                            Err(anyhow!("background merge worker panicked; files retained"))
-                        });
+                        let mut result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                engine
+                                    .as_ref()
+                                    .map_or(Ok(MergeOutcome::NoEligibleWork), |engine| {
+                                        job.store.merge_one(engine)
+                                    })
+                            }))
+                            .unwrap_or_else(|_| {
+                                Err(anyhow!("background merge worker panicked; files retained"))
+                            });
                         let again = work.finish_job(&mut result, engine.is_some());
                         if let Err(error) = &result {
                             tracing::warn!(%error, "background segment merge failed");
@@ -501,7 +521,10 @@ impl SegmentRdbStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(error).with_context(|| {
-                    format!("inspect owned background merge staging {}", scratch_path.display())
+                    format!(
+                        "inspect owned background merge staging {}",
+                        scratch_path.display()
+                    )
                 });
             }
         }
@@ -523,9 +546,11 @@ impl SegmentRdbStore {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let revision = state.published_revision;
-        // Ordinary checkpoint completion is only a hint while a merge is
-        // running. Capacity callers use the strong request path below.
+        if state.publication_revision_overflowed {
+            bail!("background segment merge publication revision overflowed");
+        }
         if state.running || state.queued {
+            state.ordinary_retry_permits = state.ordinary_retry_permits.saturating_add(1);
             return Ok(revision);
         }
         state.retryable_stale = false;
@@ -659,6 +684,12 @@ impl SegmentRdbStore {
             return Ok(MergeOutcome::NoEligibleWork);
         }
         let prior = read_generation_manifest(&source.path)?;
+        // v3 is a legacy flat layout that the normal reader can reopen, but
+        // background merge must never copy it into a newly published
+        // generation. The checkpoint writer is the only migration path to v2.
+        if !background_merge_supports_manifest(prior.schema_version) {
+            return Ok(MergeOutcome::NoEligibleWork);
+        }
         if !needs_merge(&prior) {
             return Ok(MergeOutcome::NoEligibleWork);
         }
@@ -696,43 +727,27 @@ impl SegmentRdbStore {
             // pass covers every field this job will compact.
             let candidates = select_staged_delta_window(&source.path, &collections)?;
             if candidates.is_empty() {
-            return Ok(MergeOutcome::NoEligibleWork);
+                return Ok(MergeOutcome::NoEligibleWork);
             }
             let collection_id = candidates[0].collection_id.clone();
-            let collection_index = candidates[0].collection_index;
-            let selected_fields: Vec<String> =
-                candidates.iter().map(|candidate| candidate.field.clone()).collect();
-            let original_inputs: BTreeMap<String, (Vec<SegmentReference>, SegmentReference)> =
+            let selected_fields: Vec<String> = candidates
+                .iter()
+                .map(|candidate| candidate.field.clone())
+                .collect();
+            let selected_inputs: BTreeMap<String, (Vec<SegmentReference>, SegmentReference, bool)> =
                 candidates
                     .iter()
                     .map(|candidate| {
-                        let original_collection = &prior.collections[collection_index];
-                        let deltas = original_collection
-                            .segments
-                            .iter()
-                            .filter(|segment| {
-                                segment.role == SegmentRole::Field
-                                    && segment.kind == SegmentKind::Delta
-                                    && segment.field.as_deref() == Some(candidate.field.as_str())
-                            })
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        let base = original_collection
-                            .segments
-                            .iter()
-                            .find(|segment| {
-                                segment.role == SegmentRole::Field
-                                    && segment.kind == SegmentKind::Base
-                                    && segment.field.as_deref() == Some(candidate.field.as_str())
-                            })
-                            .cloned()
-                            .ok_or_else(|| anyhow!("merge field has no original base"))?;
-                        Ok((
+                        (
                             candidate.field.clone(),
-                            (deltas, base),
-                        ))
+                            (
+                                candidate.inputs.clone(),
+                                candidate.base.clone(),
+                                candidate.includes_base,
+                            ),
+                        )
                     })
-                    .collect::<Result<_>>()?;
+                    .collect();
             let link_scratch_started = Instant::now();
             let scratch_links =
                 link_collection(&source.path, &scratch_path, collection_id.as_str())?;
@@ -746,46 +761,17 @@ impl SegmentRdbStore {
             // Each admitted field is then drained once from its complete
             // captured stack. This keeps one publication while avoiding
             // repeated scratch rounds and repeated encode setup.
-            let pending_candidates = candidates
-                .into_iter()
-                .map(|mut candidate| {
-                    let (inputs, base) = original_inputs
-                        .get(&candidate.field)
-                        .cloned()
-                        .ok_or_else(|| anyhow!("bounded merge lost original inputs"))?;
-                    let delta_bytes = inputs.iter().try_fold(0u64, |total, segment| {
-                        total
-                            .checked_add(segment_reference_bytes(&source.path, segment)? )
-                            .ok_or_else(|| anyhow!("delta byte count overflow"))
-                    })?;
-                    let mut base_bytes = segment_reference_bytes(&source.path, &base)?;
-                    if let Some(sidecar) = prior.collections[collection_index].segments.iter().find(|segment| {
-                        segment.role == SegmentRole::VectorEids && segment.field == base.field
-                    }) {
-                        base_bytes = base_bytes
-                            .checked_add(segment_reference_bytes(&source.path, sidecar)?)
-                            .ok_or_else(|| anyhow!("base byte count overflow"))?;
-                    }
-                    candidate.inputs = inputs;
-                    candidate.base = base;
-                    candidate.includes_base = delta_bytes >= base_bytes;
-                    Ok(candidate)
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let pending_candidates = candidates;
             let mut scratch_delta_readers = capture
                 .live_delta_inputs
                 .get(collection_id.as_str())
                 .cloned()
                 .unwrap_or_default();
             let mut final_outputs = BTreeMap::new();
-            let mut final_includes_base = BTreeMap::new();
             let compacted_input_count = pending_candidates
                 .iter()
                 .map(|candidate| candidate.inputs.len() as u64)
                 .sum::<u64>();
-            for candidate in &pending_candidates {
-                final_includes_base.insert(candidate.field.clone(), candidate.includes_base);
-            }
             let outputs = compact_staged_delta_windows(
                 &scratch_path,
                 source.sequence,
@@ -814,31 +800,27 @@ impl SegmentRdbStore {
                 let mut output = final_outputs
                     .remove(field)
                     .ok_or_else(|| anyhow!("bounded merge produced no final output"))?;
-                let (original_inputs, original_base) = original_inputs
+                let (selected_inputs, selected_base, includes_base) = selected_inputs
                     .get(field)
                     .ok_or_else(|| anyhow!("bounded merge lost original inputs"))?;
                 let old_collection = prior
                     .collections
                     .iter()
-                    .find(|collection| collection.segments.contains(&original_inputs[0]))
+                    .find(|collection| collection.segments.contains(&selected_inputs[0]))
                     .ok_or_else(|| anyhow!("merge inputs have no source collection"))?;
                 // The scratch output was produced from one window per round.
                 // Publication must carry the complete original durable
                 // identity set so the rebase compares against the captured
                 // live layer, rather than the shortened scratch catalog.
-                output.inputs = original_inputs.clone();
-                let base = final_includes_base
-                    .get(field)
-                    .copied()
-                    .unwrap_or(false)
-                    .then(|| original_base.clone());
+                output.inputs = selected_inputs.clone();
+                let base = includes_base.then(|| selected_base.clone());
                 let selection = merge_rebase::MergeSelection {
                     collection_id: old_collection.collection_id.clone(),
                     collection_generation: old_collection.collection_generation,
                     schema_version: old_collection.schema_version,
                     schema: old_collection.schema.clone(),
                     field: field.clone(),
-                    inputs: original_inputs.clone(),
+                    inputs: selected_inputs.clone(),
                     vector_sidecar: base.as_ref().and_then(|base| {
                         old_collection
                             .segments
@@ -877,6 +859,11 @@ impl SegmentRdbStore {
                 return Ok(MergeOutcome::RetryableStale);
             }
             let latest_manifest = read_generation_manifest(&latest.path)?;
+            // CURRENT may have changed while compaction ran. Refuse a v3
+            // predecessor before staging or publishing any merge output.
+            if !background_merge_supports_manifest(latest_manifest.schema_version) {
+                return Ok(MergeOutcome::RetryableStale);
+            }
             // Each rebase refuses unless its exact inputs still occur in the
             // catalog it is applied to, so folding the outputs in order keeps
             // every field's identity check as strict as a single-field job.
@@ -1085,6 +1072,18 @@ mod tests {
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
     const CASE_TIMEOUT: Duration = Duration::from_secs(10);
 
+    #[test]
+    fn v2_generation_manifests_use_directory_layout() {
+        assert!(!uses_flat_generation_layout(GENERATION_MANIFEST_V2));
+        assert!(uses_flat_generation_layout(GENERATION_MANIFEST_V3));
+    }
+
+    #[test]
+    fn background_merge_does_not_publish_v3_manifest() {
+        assert!(background_merge_supports_manifest(GENERATION_MANIFEST_V2));
+        assert!(!background_merge_supports_manifest(GENERATION_MANIFEST_V3));
+    }
+
     #[derive(Default)]
     struct BlockingMergeState {
         before_encode: u64,
@@ -1138,7 +1137,11 @@ mod tests {
 
         fn held_observations(&self) -> (u64, u64, u64) {
             let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            (state.before_encode, state.before_publish, state.after_publish)
+            (
+                state.before_encode,
+                state.before_publish,
+                state.after_publish,
+            )
         }
     }
 
@@ -1260,7 +1263,9 @@ mod tests {
             .is_empty()
     }
 
-    fn vector_capacity_schema(backend: Option<crate::types::VectorBackend>) -> CreateCollectionRequest {
+    fn vector_capacity_schema(
+        backend: Option<crate::types::VectorBackend>,
+    ) -> CreateCollectionRequest {
         let mut fields = BTreeMap::new();
         fields.insert(
             "v_capacity".to_owned(),
@@ -1354,8 +1359,8 @@ mod tests {
         let merged = current_manifest(&store);
         assert_eq!(
             field_delta_count(&merged, field),
-            1,
-            "one background merge job must compact the whole delta stack, not one adjacent pair"
+            3,
+            "one background merge job folds one adjacent pair and leaves the remaining deltas"
         );
     }
 
@@ -1390,11 +1395,19 @@ mod tests {
             "v_capacity",
             |engine| {
                 for row in 0..2000 {
-                    put_vector(engine, &format!("wide-{row}"), vec![row as f32, 0.0, 0.0, 0.0]);
+                    put_vector(
+                        engine,
+                        &format!("wide-{row}"),
+                        vec![row as f32, 0.0, 0.0, 0.0],
+                    );
                 }
             },
             |engine, sequence| {
-                put_vector(engine, &format!("spacer-{sequence}"), vec![0.0, 0.0, 0.0, 0.0]);
+                put_vector(
+                    engine,
+                    &format!("spacer-{sequence}"),
+                    vec![0.0, 0.0, 0.0, 0.0],
+                );
             },
             |engine, sequence| {
                 put_vector(engine, "hot", vec![sequence as f32, 1.0, 0.0, 0.0]);
@@ -1409,11 +1422,19 @@ mod tests {
             "v_capacity",
             |engine| {
                 for row in 0..2000 {
-                    put_vector(engine, &format!("wide-{row}"), vec![row as f32, 0.0, 0.0, 0.0]);
+                    put_vector(
+                        engine,
+                        &format!("wide-{row}"),
+                        vec![row as f32, 0.0, 0.0, 0.0],
+                    );
                 }
             },
             |engine, sequence| {
-                put_vector(engine, &format!("spacer-{sequence}"), vec![0.0, 0.0, 0.0, 0.0]);
+                put_vector(
+                    engine,
+                    &format!("spacer-{sequence}"),
+                    vec![0.0, 0.0, 0.0, 0.0],
+                );
             },
             |engine, sequence| {
                 put_vector(engine, "hot", vec![sequence as f32, 1.0, 0.0, 0.0]);
@@ -1557,11 +1578,7 @@ mod tests {
             catalog(root, "second", &[("a", 6), ("b", 3)], 4096),
         ];
         let selected = select_staged_delta_window(root, &deepest).unwrap();
-        assert_eq!(
-            selected.len(),
-            1,
-            "the deepest field is the only candidate"
-        );
+        assert_eq!(selected.len(), 1, "the deepest field is the only candidate");
         assert_eq!(selected[0].collection_id, "second");
         assert_eq!(selected[0].field, "a");
         assert_eq!(selected[0].inputs.len(), 2);
@@ -1590,8 +1607,8 @@ mod tests {
             .all(|candidate| candidate.inputs.len() == 2 && !candidate.includes_base));
 
         let tied = vec![
-            catalog(root, "first", &[("a", 4), ("b", 4)], 4096),
-            catalog(root, "second", &[("a", 4), ("b", 4)], 4096),
+            catalog(root, "first", &[("a", 7), ("b", 7)], 4096),
+            catalog(root, "second", &[("a", 7), ("b", 7)], 4096),
         ];
         let selected = select_staged_delta_window(root, &tied).unwrap();
         assert_eq!(
@@ -1852,8 +1869,7 @@ mod tests {
         let large = drain_one_merge_job(20);
 
         assert!(
-            large.generation_link_files
-                >= (large.generation_files - large.hot_files) as u64,
+            large.generation_link_files >= (large.generation_files - large.hot_files) as u64,
             "the generation link pass must cover every idle file: linked {} of {} idle files",
             large.generation_link_files,
             large.generation_files - large.hot_files
@@ -2170,9 +2186,8 @@ mod tests {
         }
         let deadline = Instant::now() + Duration::from_millis(50);
         let waiting = work.clone();
-        let waiter = std::thread::spawn(move || {
-            waiting.wait_for_capacity_progress_after(0, deadline)
-        });
+        let waiter =
+            std::thread::spawn(move || waiting.wait_for_capacity_progress_after(0, deadline));
         work.wait_for_test_wait_entry_after(0, TEST_TIMEOUT)
             .unwrap();
         work.changed.notify_all();
@@ -2187,9 +2202,15 @@ mod tests {
     fn capacity_wait_observes_ready_state_even_when_scheduled_after_deadline() {
         let work = RootWork::default();
         let expired = Instant::now() - Duration::from_secs(1);
-        assert_eq!(work.wait_for_capacity_progress_after(0, expired).unwrap(), CapacityWait::Idle);
+        assert_eq!(
+            work.wait_for_capacity_progress_after(0, expired).unwrap(),
+            CapacityWait::Idle
+        );
         work.state.lock().unwrap().published_revision = 1;
-        assert_eq!(work.wait_for_capacity_progress_after(0, expired).unwrap(), CapacityWait::Published);
+        assert_eq!(
+            work.wait_for_capacity_progress_after(0, expired).unwrap(),
+            CapacityWait::Published
+        );
     }
 
     #[test]
@@ -2197,7 +2218,11 @@ mod tests {
         let mut state = WorkState::default();
         state.published_revision = 7;
         let deadline = Some(Instant::now() + TEST_TIMEOUT);
-        assert!(state.validate_capacity_retry(Some(7), deadline).unwrap_err().to_string().contains("no capacity progress"));
+        assert!(state
+            .validate_capacity_retry(Some(7), deadline)
+            .unwrap_err()
+            .to_string()
+            .contains("no capacity progress"));
         state.published_revision = 8;
         state.validate_capacity_retry(Some(7), deadline).unwrap();
     }
@@ -2217,10 +2242,13 @@ mod tests {
             assert!(state.retryable_stale);
         }
         let mut state = work.state.lock().unwrap();
-        state.validate_capacity_retry(Some(0), Some(Instant::now() + TEST_TIMEOUT))
+        state
+            .validate_capacity_retry(Some(0), Some(Instant::now() + TEST_TIMEOUT))
             .unwrap();
         state.retryable_stale = false;
-        assert!(state.validate_capacity_retry(Some(0), Some(Instant::now() + TEST_TIMEOUT)).is_err());
+        assert!(state
+            .validate_capacity_retry(Some(0), Some(Instant::now() + TEST_TIMEOUT))
+            .is_err());
     }
 
     #[test]
@@ -2228,8 +2256,16 @@ mod tests {
         let mut state = WorkState::default();
         state.published_revision = 8;
         let expired = Some(Instant::now() - Duration::from_secs(1));
-        assert!(state.validate_capacity_retry(Some(7), expired).unwrap_err().to_string().contains("capacity wait timed out"));
-        assert!(state.validate_capacity_retry(None, expired).unwrap_err().to_string().contains("capacity wait timed out"));
+        assert!(state
+            .validate_capacity_retry(Some(7), expired)
+            .unwrap_err()
+            .to_string()
+            .contains("capacity wait timed out"));
+        assert!(state
+            .validate_capacity_retry(None, expired)
+            .unwrap_err()
+            .to_string()
+            .contains("capacity wait timed out"));
     }
 
     #[test]
@@ -2238,7 +2274,11 @@ mod tests {
         state.published_revision = 8;
         state.error = Some("new terminal failure".into());
         let expired = Some(Instant::now() - Duration::from_secs(1));
-        assert!(state.validate_capacity_retry(Some(7), expired).unwrap_err().to_string().contains("new terminal failure"));
+        assert!(state
+            .validate_capacity_retry(Some(7), expired)
+            .unwrap_err()
+            .to_string()
+            .contains("new terminal failure"));
         // A later independent checkpoint may request the existing normal retry.
         state.validate_capacity_retry(None, None).unwrap();
     }
@@ -2351,8 +2391,14 @@ mod tests {
         use std::io::{Read as _, Seek as _};
         output.rewind().unwrap();
         let mut diagnostic = String::new();
-        output.take(64 * 1024).read_to_string(&mut diagnostic).unwrap();
-        assert!(status.success(), "isolated checkpoint capacity case failed: {diagnostic}");
+        output
+            .take(64 * 1024)
+            .read_to_string(&mut diagnostic)
+            .unwrap();
+        assert!(
+            status.success(),
+            "isolated checkpoint capacity case failed: {diagnostic}"
+        );
         assert!(
             diagnostic.contains("1 passed; 0 failed"),
             "isolated checkpoint capacity case did not execute exactly its test: {diagnostic}"
@@ -2367,7 +2413,8 @@ mod tests {
         }
         let directory = tempfile::tempdir().unwrap();
         let observer = Arc::new(BlockingMergeObserver::default());
-        let store = SegmentRdbStore::with_merge_observer(directory.path(), observer.clone()).unwrap();
+        let store =
+            SegmentRdbStore::with_merge_observer(directory.path(), observer.clone()).unwrap();
         let engine = Arc::new(Engine::new());
         let _release_on_drop = ObserverRelease(observer.clone());
         engine.create_collection("u", capacity_schema()).unwrap();
@@ -2432,7 +2479,9 @@ mod tests {
                 panic!("target checkpoint thread stopped before returning a result")
             }
         };
-        target.join().expect("target checkpoint thread must not panic");
+        target
+            .join()
+            .expect("target checkpoint thread must not panic");
         target_result.expect("target checkpoint must publish after root work drains");
         store
             .wait_for_merges(Duration::from_secs(10))
@@ -2471,7 +2520,12 @@ mod tests {
         let store = SegmentRdbStore::new(directory.path()).unwrap();
         let (_, scratch) = store.begin_next_generation(1).unwrap();
         let scratch_path = scratch.path().to_path_buf();
-        let scratch_name = scratch_path.file_name().unwrap().to_str().unwrap().to_owned();
+        let scratch_name = scratch_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
         let source_name = "gen-0-rev-0";
         store.background.pin(scratch_name.clone());
         store.background.pin(source_name.to_owned());
@@ -2486,9 +2540,7 @@ mod tests {
             )
             .expect_err("a failed owned scratch removal must remain an error");
 
-        assert!(
-            format!("{error:#}").contains("remove owned background merge staging")
-        );
+        assert!(format!("{error:#}").contains("remove owned background merge staging"));
         assert!(
             store.background.protects(&scratch_name),
             "cleanup failure must retain the scratch pin"
@@ -2505,7 +2557,12 @@ mod tests {
         let store = SegmentRdbStore::new(directory.path()).unwrap();
         let (_, scratch) = store.begin_next_generation(1).unwrap();
         let scratch_path = scratch.path().to_path_buf();
-        let scratch_name = scratch_path.file_name().unwrap().to_str().unwrap().to_owned();
+        let scratch_name = scratch_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
         let source_name = "gen-0-rev-0";
         store.background.pin(scratch_name.clone());
         store.background.pin(source_name.to_owned());
@@ -2585,7 +2642,11 @@ fn link_collection(source: &Path, destination: &Path, collection_id: &str) -> Re
         // then hex-encode only the former collection-relative path. The old
         // directory name is hexadecimal and cannot select those files.
         let prefix = flat_payload_name(collection_id, Path::new(""));
-        return link_flat_collection(&source.join(FLAT_PAYLOAD_DIR), &destination.join(FLAT_PAYLOAD_DIR), &prefix);
+        return link_flat_collection(
+            &source.join(FLAT_PAYLOAD_DIR),
+            &destination.join(FLAT_PAYLOAD_DIR),
+            &prefix,
+        );
     }
     link_tree(&source.join(&name), &destination.join(&name))
 }
@@ -2624,9 +2685,14 @@ fn link_collections_with_paths(
     destination: &Path,
     manifest: &SegmentGenerationManifest,
 ) -> Result<BTreeSet<String>> {
-    if manifest.schema_version == GENERATION_MANIFEST_SCHEMA_VERSION {
+    if uses_flat_generation_layout(manifest.schema_version) {
         let mut linked = BTreeSet::new();
-        link_tree_with_paths(source.join(FLAT_PAYLOAD_DIR).as_path(), destination.join(FLAT_PAYLOAD_DIR).as_path(), Path::new(FLAT_PAYLOAD_DIR), &mut linked)?;
+        link_tree_with_paths(
+            source.join(FLAT_PAYLOAD_DIR).as_path(),
+            destination.join(FLAT_PAYLOAD_DIR).as_path(),
+            Path::new(FLAT_PAYLOAD_DIR),
+            &mut linked,
+        )?;
         return Ok(linked);
     }
     let names: Vec<String> = manifest
@@ -2649,6 +2715,15 @@ fn link_collections_with_paths(
         linked.extend(collection?);
     }
     Ok(linked)
+}
+
+#[inline]
+fn uses_flat_generation_layout(schema_version: u32) -> bool {
+    schema_version == GENERATION_MANIFEST_V3
+}
+
+fn background_merge_supports_manifest(schema_version: u32) -> bool {
+    schema_version == GENERATION_MANIFEST_V2
 }
 
 fn link_tree_with_paths(

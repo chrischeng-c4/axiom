@@ -98,6 +98,7 @@ const INTERLEAVING_WATCHDOG: Duration = Duration::from_secs(10);
 const FINISH_WATCHDOG: Duration = Duration::from_secs(30);
 const CHILD_WATCHDOG: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+const SUBMIT_FLUSH_DEADLINE: Duration = Duration::from_secs(1);
 const PENDING_HARD_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 const CHILD_MODE_ENV: &str = "LUMEN_AOF_TRIM_APPEND_PROGRESS_CHILD";
 const CHILD_HANDSHAKE_ENV: &str = "LUMEN_AOF_TRIM_APPEND_PROGRESS_HANDSHAKE";
@@ -169,6 +170,7 @@ impl FailureInjector for CheckpointSyncHold {
 struct PauseCoveredFrame {
     expected: Mutex<Option<CoveredFrameExpectation>>,
     temp_sync: Mutex<Option<TempSyncPause>>,
+    background_sync: Mutex<Option<BackgroundSyncPause>>,
     exact_hits: AtomicUsize,
     unexpected_hits: AtomicUsize,
     temp_sync_hits: AtomicUsize,
@@ -181,6 +183,11 @@ struct CoveredFrameExpectation {
 
 struct TempSyncPause {
     through: u64,
+    entered: mpsc::SyncSender<()>,
+    release: mpsc::Receiver<()>,
+}
+
+struct BackgroundSyncPause {
     entered: mpsc::SyncSender<()>,
     release: mpsc::Receiver<()>,
 }
@@ -231,6 +238,17 @@ impl PauseCoveredFrame {
             "fixture may arm only one real initial temp-sync pause",
         );
     }
+
+    fn arm_background_sync(&self, entered: mpsc::SyncSender<()>, release: mpsc::Receiver<()>) {
+        assert!(
+            self.background_sync
+                .lock()
+                .expect("trim background-sync observer mutex")
+                .replace(BackgroundSyncPause { entered, release })
+                .is_none(),
+            "fixture may arm only one background-sync pause",
+        );
+    }
 }
 
 impl FramedLogTrimObserver for PauseCoveredFrame {
@@ -270,6 +288,19 @@ impl FramedLogTrimObserver for PauseCoveredFrame {
             return;
         };
         self.temp_sync_hits.fetch_add(1, Ordering::AcqRel);
+        let _ = pause.entered.send(());
+        let _ = pause.release.recv();
+    }
+
+    fn before_background_sync(&self) {
+        let pause = self
+            .background_sync
+            .lock()
+            .expect("trim background-sync observer mutex")
+            .take();
+        let Some(pause) = pause else {
+            return;
+        };
         let _ = pause.entered.send(());
         let _ = pause.release.recv();
     }
@@ -410,8 +441,7 @@ async fn assert_term_ids(server: &TestServer, value: &str, expected: &[&str], co
         }))
         .await;
     response.assert_status_ok();
-    let mut actual = response
-        .json::<Value>()["hits"]
+    let mut actual = response.json::<Value>()["hits"]
         .as_array()
         .expect("exact Keyword query hits")
         .iter()
@@ -518,12 +548,7 @@ async fn assert_pending_budget(server: &TestServer, context: &str) {
 async fn wait_for_wal_sequence(wal: &MemWal, sequence: u64, context: &str) {
     let result = tokio::time::timeout(INTERLEAVING_WATCHDOG, async {
         loop {
-            if wal
-                .latest_seq()
-                .await
-                .expect("read MemWal sequence")
-                >= sequence
-            {
+            if wal.latest_seq().await.expect("read MemWal sequence") >= sequence {
                 return;
             }
             tokio::task::yield_now().await;
@@ -576,6 +601,25 @@ async fn wait_for_temp_sync_pause(
             let _ = task.await;
         }
         panic!("{context}: trim did not reach real initial temp-sync pause: {entered:?}");
+    }
+}
+
+async fn wait_for_background_sync_pause(
+    entered_rx: mpsc::Receiver<()>,
+    trim_release: &mut ReleaseOnDrop,
+    checkpoint: &mut CheckpointTask,
+    context: &str,
+) {
+    let entered = tokio::task::spawn_blocking(move || entered_rx.recv_timeout(READY_WATCHDOG))
+        .await
+        .expect("background-sync readiness task joins");
+    if !matches!(entered, Ok(())) {
+        trim_release.release();
+        if let Some(task) = checkpoint.0.take() {
+            task.abort();
+            let _ = task.await;
+        }
+        panic!("{context}: background sync did not reach observer hook: {entered:?}");
     }
 }
 
@@ -650,12 +694,21 @@ async fn run_covered_trim_case() {
     )
     .await;
 
+    let (background_entered_tx, background_entered_rx) = mpsc::sync_channel(1);
+    let (background_release_tx, background_release_rx) = mpsc::sync_channel(1);
+    fixture
+        .trim_pause
+        .arm_background_sync(background_entered_tx, background_release_rx);
+    let mut background_release = ReleaseOnDrop(Some(background_release_tx));
+    wait_for_background_sync_pause(
+        background_entered_rx,
+        &mut trim_release,
+        &mut checkpoint,
+        "observe real background AOF sync before later append",
+    )
+    .await;
     let later_tail_sequence = first_tail_sequence + 1;
-    let later_http = post_keyword_status(
-        fixture.server.clone(),
-        LATER_TAIL_ID,
-        LATER_TAIL_VALUE,
-    );
+    let later_http = post_keyword_status(fixture.server.clone(), LATER_TAIL_ID, LATER_TAIL_VALUE);
     tokio::pin!(later_http);
     let wal_ready = wait_for_wal_sequence(
         fixture.wal.as_ref(),
@@ -681,7 +734,7 @@ async fn run_covered_trim_case() {
     );
     let response_before_release = match response_before_wal {
         Some(status) => Some(status),
-        None => tokio::time::timeout(INTERLEAVING_WATCHDOG, &mut later_http)
+        None => tokio::time::timeout(SUBMIT_FLUSH_DEADLINE, &mut later_http)
             .await
             .ok(),
     };
@@ -692,8 +745,9 @@ async fn run_covered_trim_case() {
     assert_eq!(
         response_before_release,
         Some(StatusCode::OK),
-        "later HTTP write must return 200 while the real initial trim temp sync remains held",
+        "later HTTP write must return 200 while background sync is held at its pre-sync hook",
     );
+    background_release.release();
     finish_checkpoint(checkpoint, "finish checkpoint after later append").await;
     assert_eq!(
         fixture.trim_pause.exact_hits.load(Ordering::Acquire),
@@ -721,6 +775,11 @@ async fn run_covered_trim_case() {
         vec![first_tail_sequence, later_tail_sequence],
         "trim must retain exactly both post-cut AOF frames in sequence order",
     );
+    let mut restarted_aof =
+        AofWriter::open(&fixture.aof_path).expect("restart must reopen the retained AOF suffix");
+    restarted_aof
+        .sync_strict()
+        .expect("restart must strict-sync the retained AOF suffix");
 
     let cold_engine = cold_engine(
         &fixture,
@@ -849,11 +908,12 @@ fn run_isolated_child() {
     let stdout = fs::read_to_string(&stdout_path).unwrap_or_default();
     let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
     let entered = fs::read_to_string(&handshake).unwrap_or_else(|error| {
-        panic!(
-            "trim child did not enter intended body: {error}; stdout={stdout}; stderr={stderr}",
-        )
+        panic!("trim child did not enter intended body: {error}; stdout={stdout}; stderr={stderr}",)
     });
-    assert_eq!(entered, TEST_NAME, "trim child must run intended exact test");
+    assert_eq!(
+        entered, TEST_NAME,
+        "trim child must run intended exact test"
+    );
     assert!(
         status.success(),
         "trim child failed; stdout={stdout}; stderr={stderr}",

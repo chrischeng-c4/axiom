@@ -281,9 +281,9 @@ fn append_and_apply(
     writer
         .append(sequence, &record)
         .unwrap_or_else(|error| panic!("{phase}: append real AOF record {sequence}: {error:#}"));
-    engine
-        .apply_raft_entry(entry)
-        .unwrap_or_else(|error| panic!("{phase}: apply real committed record {sequence}: {error:#}"));
+    engine.apply_raft_entry(entry).unwrap_or_else(|error| {
+        panic!("{phase}: apply real committed record {sequence}: {error:#}")
+    });
 }
 
 fn wait_for_expected_merge_result(store: &SegmentRdbStore, round: usize) {
@@ -354,7 +354,9 @@ fn build_sixteen_catalog_deltas(
         );
         let saved = store
             .save_with_sequence(engine, sequence)
-            .unwrap_or_else(|error| panic!("catalog delta {round}: save real checkpoint: {error:#}"));
+            .unwrap_or_else(|error| {
+                panic!("catalog delta {round}: save real checkpoint: {error:#}")
+            });
         assert_eq!(
             saved, sequence,
             "catalog delta {round}: checkpoint must publish its exact next sequence",
@@ -535,7 +537,10 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         cold.sequence, CATALOG_WATERMARK,
         "cold recovery must start exactly after the catalog-cap checkpoint",
     );
-    assert_catalog_winner(&cold.engine, "cold catalog-cap checkpoint before AOF suffix");
+    assert_catalog_winner(
+        &cold.engine,
+        "cold catalog-cap checkpoint before AOF suffix",
+    );
 
     let replay = replay_aof_into(&cold.engine, &aof_path, cold.sequence);
     assert!(

@@ -105,7 +105,8 @@ const CHILD_MODE_ENV: &str = "LUMEN_NATIVE_CAPACITY_PROGRESS_CHILD";
 const CHILD_ROOT_ENV: &str = "LUMEN_NATIVE_CAPACITY_PROGRESS_ROOT";
 const CHILD_HANDSHAKE_ENV: &str = "LUMEN_NATIVE_CAPACITY_PROGRESS_HANDSHAKE";
 const CHILD_CASE: &str = "native-generic-predecode-capacity";
-const TEST_NAME: &str = "native_committed_generic_apply_makes_capacity_progress_before_any_caller_checkpoint";
+const TEST_NAME: &str =
+    "native_committed_generic_apply_makes_capacity_progress_before_any_caller_checkpoint";
 
 struct Fixture {
     engine: Arc<Engine>,
@@ -152,12 +153,9 @@ fn fixture(root: &Path) -> Fixture {
         writer: sink_writer.clone(),
         aof: Some(aof.clone()),
     });
-    let state = AppState::with_components(
-        engine.clone(),
-        Arc::new(AuthConfig::open()),
-        sink_writer,
-    )
-    .with_checkpoint(checkpoint);
+    let state =
+        AppState::with_components(engine.clone(), Arc::new(AuthConfig::open()), sink_writer)
+            .with_checkpoint(checkpoint);
     let server = TestServer::new(router(state)).expect("open native capacity-progress HTTP server");
 
     Fixture {
@@ -376,9 +374,7 @@ fn fill_checkpointable_local_work(engine: &Arc<Engine>) -> usize {
             "each direct local setup replacement must produce one public result",
         );
     }
-    panic!(
-        "setup did not leave at most 1 MiB free after {MAX_FILLER_WRITES} real local records",
-    );
+    panic!("setup did not leave at most 1 MiB free after {MAX_FILLER_WRITES} real local records",);
 }
 
 fn assert_live_state(engine: &Engine, filler_ordinal: usize, phase: &str) {
@@ -472,7 +468,12 @@ async fn checkpoint_now(server: &TestServer) {
     );
 }
 
-fn assert_aof_target_wire(fixture: &Fixture, expected_bytes: usize, expected_crc: u32, phase: &str) {
+fn assert_aof_target_wire(
+    fixture: &Fixture,
+    expected_bytes: usize,
+    expected_crc: u32,
+    phase: &str,
+) {
     fixture
         .aof
         .lock()
@@ -486,7 +487,9 @@ fn assert_aof_target_wire(fixture: &Fixture, expected_bytes: usize, expected_crc
             .expect("re-encode persisted native generic AOF record");
         frames.push((sequence, wire.len(), crc32fast::hash(&wire)));
     })
-    .unwrap_or_else(|error| panic!("{phase}: read persisted native committed AOF source: {error:#}"));
+    .unwrap_or_else(|error| {
+        panic!("{phase}: read persisted native committed AOF source: {error:#}")
+    });
     assert_eq!(
         frames,
         vec![(TARGET_SEQUENCE, expected_bytes, expected_crc)],
@@ -595,7 +598,8 @@ async fn run_child(root: PathBuf, handshake: PathBuf) {
     fs::write(&handshake, CHILD_CASE).expect("record exact native capacity child entry");
     let fixture = fixture(&root);
 
-    let create_sequence = publish_committed(&fixture.wal, create_record(), "collection schema").await;
+    let create_sequence =
+        publish_committed(&fixture.wal, create_record(), "collection schema").await;
     assert_eq!(
         create_sequence, CREATE_SEQUENCE,
         "the schema must be the first native committed MemWal record",
@@ -628,11 +632,8 @@ async fn run_child(root: PathBuf, handshake: PathBuf) {
         "public pending accounting must establish the selected pre-decode pressure: free={free_after_setup}",
     );
     assert_public_pending_budget(&fixture.server, "native direct local capacity setup").await;
-    let checkpoints_before = public_metric(
-        &fixture.server,
-        "lumen_segment_checkpoint_completed_total",
-    )
-    .await;
+    let checkpoints_before =
+        public_metric(&fixture.server, "lumen_segment_checkpoint_completed_total").await;
 
     let target = target_record();
     let (source_bytes, source_crc) = assert_generic_target_source(&target);
@@ -646,13 +647,8 @@ async fn run_child(root: PathBuf, handshake: PathBuf) {
         target_sequence, TARGET_SEQUENCE,
         "the fitting generic target must become the next committed native MemWal record",
     );
-    require_progress_before_caller_checkpoint(
-        &fixture,
-        filler_ordinal,
-        source_bytes,
-        source_crc,
-    )
-    .await;
+    require_progress_before_caller_checkpoint(&fixture, filler_ordinal, source_bytes, source_crc)
+        .await;
 
     assert_eq!(
         fixture.writer.applied_seq(),
@@ -715,13 +711,15 @@ async fn run_child(root: PathBuf, handshake: PathBuf) {
 }
 
 async fn run_isolated_child(root: &Path) {
-    let child_workspace = tempfile::tempdir().expect("create parent-owned native capacity child workspace");
+    let child_workspace =
+        tempfile::tempdir().expect("create parent-owned native capacity child workspace");
     let child_tmp = child_workspace.path().join("tmp");
     fs::create_dir(&child_tmp).expect("create parent-owned native capacity TMPDIR");
     let handshake = child_workspace.path().join("entered-case");
     let stdout_path = child_workspace.path().join("child.stdout");
     let stderr_path = child_workspace.path().join("child.stderr");
-    let executable = std::env::current_exe().expect("locate current native capacity e2e executable");
+    let executable =
+        std::env::current_exe().expect("locate current native capacity e2e executable");
     let child = Command::new(executable)
         .env(CHILD_MODE_ENV, CHILD_CASE)
         .env(CHILD_ROOT_ENV, root)

@@ -285,7 +285,11 @@ async fn delegated_metrics_are_exposed_by_the_actual_router() {
         "delegated_auth_allowed_total",
         "delegated_auth_denied_total",
     ] {
-        assert_eq!(delegated_metric(&before, name), 0, "{name} must start at zero");
+        assert_eq!(
+            delegated_metric(&before, name),
+            0,
+            "{name} must start at zero"
+        );
     }
 
     assert_eq!(

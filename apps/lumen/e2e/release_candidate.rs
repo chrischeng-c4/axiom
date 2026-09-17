@@ -1563,7 +1563,8 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
         "let report = ledger.validate().map_err(HarnessError::Workload)?;",
         "counter_delta.checkpoints > 0,",
         "counter_delta.merges > 0,",
-        "let restart_elapsed = server.restart_and_wait_ready().await?;",
+        "let restart_elapsed = post_input_step(",
+        "server.restart_and_wait_ready(),",
         "fn semantic_wrong_field_query(",
         "let mismatch = semantic_wrong_field_query(field, value, fingerprint, document.number)?;",
         "if response_contains_id(&mismatch_response, &document.external_id) {",
@@ -1630,6 +1631,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 ("number_read_costs_on_100k_documents".into(), true),
                 ("median_statistic_and_ignored_inventory".into(), false),
+                (
+                    "restart_command_timeout_kills_and_reaps_a_stuck_child".into(),
+                    false,
+                ),
                 ("approved_30_minute_durable_workload".into(), true),
                 (
                     "fingerprint_only_readback_cannot_pass_an_ignored_field_predicate".into(),
@@ -1673,7 +1678,27 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "seed_backpressure_retry_honors_absolute_setup_deadline".into(),
+                    false,
+                ),
+                (
                     "request_deadline_is_the_approved_five_seconds".into(),
+                    false,
+                ),
+                (
+                    "post_input_workload_drain_deadline_returns_promptly".into(),
+                    false,
+                ),
+                (
+                    "input_window_deadline_returns_promptly_with_the_timed_out_stage".into(),
+                    false,
+                ),
+                (
+                    "input_window_timeout_aborts_sampler_before_drive_finalization".into(),
+                    false,
+                ),
+                (
+                    "request_pump_capacity_wait_honors_input_window_deadline".into(),
                     false,
                 ),
                 (
@@ -1699,6 +1724,22 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 (
                     "failure_evidence_keeps_request_chain_and_collects_before_cleanup".into(),
+                    false,
+                ),
+                (
+                    "journal_records_a_real_reqwest_connect_error_with_full_chain".into(),
+                    false,
+                ),
+                (
+                    "request_error_journal_lands_in_the_failure_evidence_bundle".into(),
+                    false,
+                ),
+                (
+                    "request_error_journal_caps_entries_and_counts_the_overflow".into(),
+                    false,
+                ),
+                (
+                    "non_success_status_record_carries_status_and_a_truncated_body".into(),
                     false,
                 ),
                 (

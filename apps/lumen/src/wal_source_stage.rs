@@ -713,7 +713,10 @@ mod tests {
         let mapped = staged.mapped_generic_cbor().unwrap().unwrap();
         assert_eq!(mapped.bytes(), expected);
         drop(staged);
-        assert!(path.exists(), "mapped owner pins the private stage directory");
+        assert!(
+            path.exists(),
+            "mapped owner pins the private stage directory"
+        );
         drop(mapped);
         assert!(!path.exists());
     }
@@ -721,7 +724,10 @@ mod tests {
     #[test]
     fn private_generic_mapping_refuses_corrupt_envelope_or_payload_suffix() {
         for (name, mutate) in [
-            ("header", Box::new(|bytes: &mut Vec<u8>| bytes[0] = b'X') as Box<dyn Fn(&mut Vec<u8>)>),
+            (
+                "header",
+                Box::new(|bytes: &mut Vec<u8>| bytes[0] = b'X') as Box<dyn Fn(&mut Vec<u8>)>,
+            ),
             ("version", Box::new(|bytes: &mut Vec<u8>| bytes[4] = 2)),
             ("cbor", Box::new(|bytes: &mut Vec<u8>| bytes.truncate(5))),
             ("suffix", Box::new(|bytes: &mut Vec<u8>| bytes.push(0))),

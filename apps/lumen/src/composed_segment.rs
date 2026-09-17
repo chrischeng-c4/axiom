@@ -229,7 +229,8 @@ impl Default for QueryCache {
         Self {
             text_postings: moka::sync::Cache::builder()
                 .weigher(|k: &String, v: &CachedTextPosting| {
-                    cached_text_posting_weight(v).saturating_add(k.len().min(u32::MAX as usize) as u32)
+                    cached_text_posting_weight(v)
+                        .saturating_add(k.len().min(u32::MAX as usize) as u32)
                 })
                 .max_capacity(posting_cache_bytes())
                 .build(),
@@ -708,10 +709,11 @@ impl ComposedSegmentReader {
         let any = self
             .source_reader(source)
             .text_posting_any_at(dict_id, |local| {
-                self.source_row_live(source, local, dead).unwrap_or_else(|| {
-                    torn = true;
-                    true
-                })
+                self.source_row_live(source, local, dead)
+                    .unwrap_or_else(|| {
+                        torn = true;
+                        true
+                    })
             })?;
         (!torn).then_some(any)
     }
@@ -1137,7 +1139,13 @@ impl ComposedSegmentReader {
                     base_tfs.push(tf);
                 }
             } else {
-                retain_uncovered_sorted(&base.0, &base.1, &unions.all, &mut base_ids, &mut base_tfs);
+                retain_uncovered_sorted(
+                    &base.0,
+                    &base.1,
+                    &unions.all,
+                    &mut base_ids,
+                    &mut base_tfs,
+                );
             }
         }
         let mut newer = Vec::new();
@@ -1461,7 +1469,6 @@ impl ComposedSegmentReader {
         }
         Some(out)
     }
-
 }
 
 struct StringSource<'a> {
@@ -2049,7 +2056,11 @@ mod tests {
         let dead: RoaringBitmap = [0u32].into_iter().collect();
         let all: RoaringBitmap = [0u32, 1, 2].into_iter().collect();
         assert_eq!(brute(&none), 4, "a b d e");
-        assert_eq!(brute(&dead), 3, "b dies with row 0; a survives in the delta row");
+        assert_eq!(
+            brute(&dead),
+            3,
+            "b dies with row 0; a survives in the delta row"
+        );
         assert_eq!(brute(&all), 0);
 
         reset_text_posting_clones();
@@ -2057,10 +2068,22 @@ mod tests {
         assert_eq!(view.live_text_term_count(&dead), Some(3));
         assert_eq!(view.live_text_term_count(&all), Some(0));
         assert_eq!(view.text_term_has_live_doc("a", &none), Some(true));
-        assert_eq!(view.text_term_has_live_doc("c", &none), Some(false), "hidden by coverage");
-        assert_eq!(view.text_term_has_live_doc("b", &dead), Some(false), "hidden by a tombstone");
+        assert_eq!(
+            view.text_term_has_live_doc("c", &none),
+            Some(false),
+            "hidden by coverage"
+        );
+        assert_eq!(
+            view.text_term_has_live_doc("b", &dead),
+            Some(false),
+            "hidden by a tombstone"
+        );
         assert_eq!(view.text_term_has_live_doc("a", &dead), Some(true));
-        assert_eq!(view.text_term_has_live_doc("zzz", &none), Some(false), "absent");
+        assert_eq!(
+            view.text_term_has_live_doc("zzz", &none),
+            Some(false),
+            "absent"
+        );
         assert_eq!(
             text_posting_clones(),
             0,
@@ -2099,7 +2122,12 @@ mod tests {
             Some(4)
         );
         let prepared = view
-            .prepare_replacement(None, &[first.clone(), second.clone()], merged.clone(), vec![1, 2])
+            .prepare_replacement(
+                None,
+                &[first.clone(), second.clone()],
+                merged.clone(),
+                vec![1, 2],
+            )
             .unwrap();
         let windowed = view.install_prepared_replacement(&prepared).unwrap();
         assert_eq!(windowed.known_distinct_terms(), Some(4));
@@ -2107,11 +2135,19 @@ mod tests {
 
         // Base-including merge of base + `first` + `second` into a dense local
         // space; the remaining `third` layer is re-folded on top.
-        let rebased_rows: &[Option<&[(&str, u32)]>] =
-            &[Some(&[("a", 1)]), Some(&[("b", 1)]), Some(&[("c", 1), ("a", 1)])];
+        let rebased_rows: &[Option<&[(&str, u32)]>] = &[
+            Some(&[("a", 1)]),
+            Some(&[("b", 1)]),
+            Some(&[("c", 1), ("a", 1)]),
+        ];
         let rebased = text(&dir.path().join("rebased"), rebased_rows);
         let prepared = view
-            .prepare_replacement(Some(&base), &[first.clone(), second.clone()], rebased, vec![0, 1, 2])
+            .prepare_replacement(
+                Some(&base),
+                &[first.clone(), second.clone()],
+                rebased,
+                vec![0, 1, 2],
+            )
             .unwrap();
         let folded = view.install_prepared_replacement(&prepared).unwrap();
         assert_eq!(folded.known_distinct_terms(), Some(4));
@@ -2297,16 +2333,31 @@ mod tests {
         let ids = vec![5, 9, 20, 21, 700];
         let tfs = vec![1, 2, 3, 4, 5];
         let (mut a, mut b) = (Vec::new(), Vec::new());
-        retain_uncovered_sorted(&ids, &tfs, &RoaringBitmap::from_iter([5u32, 700, 9000]), &mut a, &mut b);
+        retain_uncovered_sorted(
+            &ids,
+            &tfs,
+            &RoaringBitmap::from_iter([5u32, 700, 9000]),
+            &mut a,
+            &mut b,
+        );
         assert_eq!((a, b), (vec![9, 20, 21], vec![2, 3, 4]));
         let (mut a, mut b) = (Vec::new(), Vec::new());
-        retain_uncovered_sorted(&ids, &tfs, &RoaringBitmap::from_iter(ids.iter().copied()), &mut a, &mut b);
+        retain_uncovered_sorted(
+            &ids,
+            &tfs,
+            &RoaringBitmap::from_iter(ids.iter().copied()),
+            &mut a,
+            &mut b,
+        );
         assert!(a.is_empty() && b.is_empty());
     }
 
     const MERGE_TOKENS: [&str; 3] = ["shared", "rare", "absent-from-base"];
 
-    fn random_text_rows(rng: &mut impl rand::Rng, n: usize) -> Vec<Option<Vec<(&'static str, u32)>>> {
+    fn random_text_rows(
+        rng: &mut impl rand::Rng,
+        n: usize,
+    ) -> Vec<Option<Vec<(&'static str, u32)>>> {
         (0..n)
             .map(|_| {
                 if rng.gen_bool(0.15) {
@@ -2336,17 +2387,25 @@ mod tests {
     fn assert_merge_matches_reference(view: &ComposedSegmentReader, label: &str) {
         for token in MERGE_TOKENS.iter().chain(["never-written"].iter()) {
             let fast = view.merge_text_postings(token).map(|p| (*p).clone());
-            let reference = view.merge_text_postings_reference(token).map(|p| (*p).clone());
+            let reference = view
+                .merge_text_postings_reference(token)
+                .map(|p| (*p).clone());
             assert_eq!(fast, reference, "{label} token {token}");
             let cached = view.text_postings_arc(token).map(|p| (*p).clone());
-            assert_eq!(cached, reference, "{label} token {token} via text_postings_arc");
+            assert_eq!(
+                cached, reference,
+                "{label} token {token} via text_postings_arc"
+            );
             assert_eq!(
                 view.text_token_df(token),
                 reference.as_ref().map_or(0, |p| p.0.len()),
                 "{label} token {token} df"
             );
             if let Some((ids, tfs)) = &reference {
-                assert!(ids.windows(2).all(|w| w[0] < w[1]), "{label} token {token} ids sorted unique");
+                assert!(
+                    ids.windows(2).all(|w| w[0] < w[1]),
+                    "{label} token {token} ids sorted unique"
+                );
                 assert_eq!(ids.len(), tfs.len());
             }
         }
@@ -2366,10 +2425,9 @@ mod tests {
         };
         let mut out = Vec::new();
         for id in 0..200u32 {
-            let owner = layers
-                .iter()
-                .rev()
-                .find_map(|(ids, rows)| ids.iter().position(|&g| g == id).map(|local| &rows[local]));
+            let owner = layers.iter().rev().find_map(|(ids, rows)| {
+                ids.iter().position(|&g| g == id).map(|local| &rows[local])
+            });
             let tf = match owner {
                 Some(row) => tf_in(row),
                 None => base_ids
@@ -2430,7 +2488,11 @@ mod tests {
                     );
                 }
             };
-            check(&view, &model_layers, &format!("round {round} layers 0 mapped {mapped}"));
+            check(
+                &view,
+                &model_layers,
+                &format!("round {round} layers 0 mapped {mapped}"),
+            );
             let layers = rng.gen_range(0..=5usize);
             for layer in 0..layers {
                 let m = rng.gen_range(1..=14usize);
@@ -2459,8 +2521,9 @@ mod tests {
         // galloping path; the hidden rows and the layer rows must still land
         // exactly where the reference puts them.
         let dir = tempfile::tempdir().unwrap();
-        let base_rows: Vec<Option<Vec<(&str, u32)>>> =
-            (0..700u32).map(|i| Some(vec![("shared", 1 + i % 5)])).collect();
+        let base_rows: Vec<Option<Vec<(&str, u32)>>> = (0..700u32)
+            .map(|i| Some(vec![("shared", 1 + i % 5)]))
+            .collect();
         let base = text_rows(&dir.path().join("base"), &base_rows);
         let older = text_rows(
             &dir.path().join("older"),
@@ -2518,7 +2581,11 @@ mod tests {
             } else {
                 ComposedSegmentReader::from_base(base)
             };
-            let layers = if round % 3 == 0 && round % 2 == 0 { 0 } else { rng.gen_range(0..=5usize) };
+            let layers = if round % 3 == 0 && round % 2 == 0 {
+                0
+            } else {
+                rng.gen_range(0..=5usize)
+            };
             for layer in 0..layers {
                 let m = rng.gen_range(1..=14usize);
                 let mut pool: Vec<u32> = (0..140).collect();
@@ -2543,19 +2610,30 @@ mod tests {
                 let full = view.text_postings_arc(token);
                 match &full {
                     None => match cold {
-                        None => assert!(view.dense_base_only(), "{label} {token}: None only on a dense base"),
+                        None => assert!(
+                            view.dense_base_only(),
+                            "{label} {token}: None only on a dense base"
+                        ),
                         Some(TextPostingAt::Sparse { df, ref hits }) => {
                             assert_eq!((df, hits.len()), (0, 0), "{label} {token}: absent token");
                         }
-                        Some(TextPostingAt::Cached(_)) => panic!("{label} {token}: cold view reported Cached"),
+                        Some(TextPostingAt::Cached(_)) => {
+                            panic!("{label} {token}: cold view reported Cached")
+                        }
                     },
                     Some(full) => {
-                        let want_df = full.0.iter().filter(|id| !hidden_set.contains(**id)).count();
+                        let want_df = full
+                            .0
+                            .iter()
+                            .filter(|id| !hidden_set.contains(**id))
+                            .count();
                         let want_hits: Vec<(u32, u32)> = full
                             .0
                             .iter()
                             .zip(&full.1)
-                            .filter(|(id, _)| !hidden_set.contains(**id) && candidates.binary_search(id).is_ok())
+                            .filter(|(id, _)| {
+                                !hidden_set.contains(**id) && candidates.binary_search(id).is_ok()
+                            })
                             .map(|(&id, &tf)| (id, tf))
                             .collect();
                         match cold {
@@ -2575,14 +2653,23 @@ mod tests {
                 }
             }
         }
-        assert!(sparse_seen > 100, "the fixture must exercise the sparse path ({sparse_seen})");
+        assert!(
+            sparse_seen > 100,
+            "the fixture must exercise the sparse path ({sparse_seen})"
+        );
     }
 
     #[test]
     fn coverage_driven_text_merge_keeps_torn_map_as_none() {
         let dir = tempfile::tempdir().unwrap();
-        let base = text(&dir.path().join("base"), &[Some(&[("shared", 1)]), Some(&[("shared", 2)])]);
-        let delta = text(&dir.path().join("delta"), &[Some(&[("shared", 9)]), Some(&[("shared", 8)])]);
+        let base = text(
+            &dir.path().join("base"),
+            &[Some(&[("shared", 1)]), Some(&[("shared", 2)])],
+        );
+        let delta = text(
+            &dir.path().join("delta"),
+            &[Some(&[("shared", 9)]), Some(&[("shared", 8)])],
+        );
         let torn = Arc::new(DeltaLayer {
             reader: delta,
             ids: vec![1],

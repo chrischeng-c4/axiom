@@ -262,8 +262,7 @@ async fn assert_term_ids(server: &TestServer, value: &str, expected: &[&str], co
         }))
         .await;
     response.assert_status_ok();
-    let mut actual = response
-        .json::<Value>()["hits"]
+    let mut actual = response.json::<Value>()["hits"]
         .as_array()
         .expect("Keyword query hits")
         .iter()
@@ -478,15 +477,33 @@ async fn prepublication_sync_failure_retains_frozen_cut_and_aof_suffix() {
 
     let failed_cold_engine = cold_engine(&fixture, base_sequence, "failed checkpoint cold base");
     let failed_cold = cold_server(failed_cold_engine.clone(), base_sequence);
-    assert_term_ids(&failed_cold, BASE_VALUE, &[ID], "failed checkpoint cold base").await;
-    assert_term_ids(&failed_cold, FROZEN_VALUE, &[], "failed checkpoint excludes frozen suffix").await;
+    assert_term_ids(
+        &failed_cold,
+        BASE_VALUE,
+        &[ID],
+        "failed checkpoint cold base",
+    )
+    .await;
+    assert_term_ids(
+        &failed_cold,
+        FROZEN_VALUE,
+        &[],
+        "failed checkpoint excludes frozen suffix",
+    )
+    .await;
     assert_eq!(
         replay_aof_into(&failed_cold_engine, &fixture.aof_path, base_sequence)
             .expect("replay retained pre-publication AOF suffix"),
         frozen_sequence,
         "cold replay must recover the committed frozen record after the failed checkpoint"
     );
-    assert_term_ids(&failed_cold, FROZEN_VALUE, &[ID], "failed checkpoint AOF recovery").await;
+    assert_term_ids(
+        &failed_cold,
+        FROZEN_VALUE,
+        &[ID],
+        "failed checkpoint AOF recovery",
+    )
+    .await;
     assert_pending_budget(&fixture.server, "failed pre-publication recovery").await;
 
     // Start the retry before the later write. The production retry must reuse
@@ -524,7 +541,11 @@ async fn prepublication_sync_failure_retains_frozen_cut_and_aof_suffix() {
     );
     assert_term_ids(&retry_cold, NEWER_VALUE, &[ID], "retry AOF recovery").await;
 
-    checkpoint_success(fixture.checkpoint.as_ref(), "publish final newer durable cut").await;
+    checkpoint_success(
+        fixture.checkpoint.as_ref(),
+        "publish final newer durable cut",
+    )
+    .await;
     sync_aof(&fixture, "inspect AOF after final newer checkpoint");
     assert_eq!(
         aof_sequences(&fixture.aof_path, "final newer checkpoint"),
@@ -535,7 +556,13 @@ async fn prepublication_sync_failure_retains_frozen_cut_and_aof_suffix() {
         cold_engine(&fixture, newer_sequence, "final newer cold checkpoint"),
         newer_sequence,
     );
-    assert_term_ids(&final_cold, NEWER_VALUE, &[ID], "final newer cold checkpoint").await;
+    assert_term_ids(
+        &final_cold,
+        NEWER_VALUE,
+        &[ID],
+        "final newer cold checkpoint",
+    )
+    .await;
     assert_pending_budget(&fixture.server, "pre-publication recovery").await;
 }
 
@@ -570,14 +597,19 @@ async fn postpublication_trim_failure_retains_aof_then_reclaims_only_covered_fra
         "the first tail record must arrive after the held capture without a synthetic sequence"
     );
     sync_aof(&fixture, "snapshot AOF before failed trim");
-    let aof_before_failed_trim = fs::read(&fixture.aof_path)
-        .expect("read full AOF before releasing failed-trim checkpoint");
+    let aof_before_failed_trim =
+        fs::read(&fixture.aof_path).expect("read full AOF before releasing failed-trim checkpoint");
     assert_eq!(
         aof_sequences(&fixture.aof_path, "full AOF before failed trim"),
         vec![captured_sequence, first_tail_sequence],
         "the full old AOF must contain both the covered capture and later suffix"
     );
-    finish_held_checkpoint(checkpoint, release, "release first checkpoint with trim obstacle").await;
+    finish_held_checkpoint(
+        checkpoint,
+        release,
+        "release first checkpoint with trim obstacle",
+    )
+    .await;
 
     sync_aof(&fixture, "inspect AOF after post-publication trim failure");
     let first_cold_engine = cold_engine(
@@ -648,11 +680,7 @@ async fn postpublication_trim_failure_retains_aof_then_reclaims_only_covered_fra
         vec![later_tail_sequence],
         "healthy retry must reclaim covered frames and retain only the later suffix"
     );
-    let retry_cold_engine = cold_engine(
-        &fixture,
-        first_tail_sequence,
-        "healthy retry durable cut",
-    );
+    let retry_cold_engine = cold_engine(&fixture, first_tail_sequence, "healthy retry durable cut");
     let retry_cold = cold_server(retry_cold_engine.clone(), first_tail_sequence);
     assert_term_ids(
         &retry_cold,
@@ -667,9 +695,19 @@ async fn postpublication_trim_failure_retains_aof_then_reclaims_only_covered_fra
         later_tail_sequence,
         "healthy retry must retain the later suffix for strict replay"
     );
-    assert_term_ids(&retry_cold, LATER_TAIL_VALUE, &[ID], "healthy retry AOF recovery").await;
+    assert_term_ids(
+        &retry_cold,
+        LATER_TAIL_VALUE,
+        &[ID],
+        "healthy retry AOF recovery",
+    )
+    .await;
 
-    checkpoint_success(fixture.checkpoint.as_ref(), "publish final later-tail checkpoint").await;
+    checkpoint_success(
+        fixture.checkpoint.as_ref(),
+        "publish final later-tail checkpoint",
+    )
+    .await;
     sync_aof(&fixture, "inspect AOF after final later-tail checkpoint");
     assert_eq!(
         aof_sequences(&fixture.aof_path, "final later-tail checkpoint"),

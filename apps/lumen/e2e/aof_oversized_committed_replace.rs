@@ -328,7 +328,10 @@ fn updated_fields() -> BTreeMap<String, FieldValue> {
                 UPDATED_SET_VALUE.to_owned(),
             ]),
         ),
-        (HASH_FIELD.to_owned(), FieldValue::String("0x999".to_owned())),
+        (
+            HASH_FIELD.to_owned(),
+            FieldValue::String("0x999".to_owned()),
+        ),
     ])
 }
 
@@ -347,7 +350,10 @@ fn stale_fields() -> BTreeMap<String, FieldValue> {
             SET_FIELD.to_owned(),
             FieldValue::StringList(vec!["replace-stale-set".to_owned()]),
         ),
-        (HASH_FIELD.to_owned(), FieldValue::String("0x998".to_owned())),
+        (
+            HASH_FIELD.to_owned(),
+            FieldValue::String("0x998".to_owned()),
+        ),
     ])
 }
 
@@ -689,11 +695,7 @@ fn assert_tail_state(engine: &Engine, phase: &str) {
         "{phase}: the higher-version Number must replace the giant row value",
     );
     assert_eq!(
-        term_ids(
-            engine,
-            NUMBER_FIELD,
-            FieldValue::Number(GIANT_NUMBER_BASE),
-        ),
+        term_ids(engine, NUMBER_FIELD, FieldValue::Number(GIANT_NUMBER_BASE),),
         BTreeSet::new(),
         "{phase}: the old first-document Number must not survive full replacement",
     );
@@ -846,7 +848,10 @@ fn assert_complete_corrupt_oversized_replace_frame_is_refused(
         refusal.is_err(),
         "a CRC-valid but format-corrupt >256 MiB ReplaceDocs AOF frame must be refused before publication",
     );
-    assert_base_state(&engine, "security valid ReplaceDocs prefix after refused frame");
+    assert_base_state(
+        &engine,
+        "security valid ReplaceDocs prefix after refused frame",
+    );
     let store = SegmentRdbStore::new(root.join("complete-corrupt-oversized-replace-segments"))
         .expect("open security ReplaceDocs segment store");
     let saved = store
@@ -864,7 +869,10 @@ fn assert_complete_corrupt_oversized_replace_frame_is_refused(
         cold.sequence, BASE_SEQUENCE,
         "cold-open must retain only the valid ReplaceDocs prefix watermark",
     );
-    assert_base_state(&cold.engine, "security cold ReplaceDocs prefix after refused frame");
+    assert_base_state(
+        &cold.engine,
+        "security cold ReplaceDocs prefix after refused frame",
+    );
 }
 
 fn child_paths() -> Option<(PathBuf, PathBuf, PathBuf)> {
@@ -927,7 +935,10 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         base_cold.sequence, BASE_SEQUENCE,
         "cold ReplaceDocs base checkpoint must keep its exact watermark",
     );
-    assert_base_state(&base_cold.engine, "cold committed ReplaceDocs base checkpoint");
+    assert_base_state(
+        &base_cold.engine,
+        "cold committed ReplaceDocs base checkpoint",
+    );
 
     let giant_span = append_oversized_suffix(&aof_path);
     let giant_replay = replay_aof_into(&base_cold.engine, &aof_path, base_cold.sequence);
@@ -995,7 +1006,10 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         DELETE_SEQUENCE,
         "strict ReplaceDocs suffix replay must advance through its final committed sequence",
     );
-    assert_tail_state(&giant_cold.engine, "strict ReplaceDocs update/stale/delete suffix replay");
+    assert_tail_state(
+        &giant_cold.engine,
+        "strict ReplaceDocs update/stale/delete suffix replay",
+    );
     assert_public_pending_budget(
         giant_cold.engine.clone(),
         DELETE_SEQUENCE,
@@ -1018,7 +1032,10 @@ async fn run_replay_child(root: PathBuf, aof_path: PathBuf, handshake: PathBuf) 
         final_cold.sequence, DELETE_SEQUENCE,
         "final cold ReplaceDocs checkpoint must retain the full watermark",
     );
-    assert_tail_state(&final_cold.engine, "final oversized ReplaceDocs cold reopen");
+    assert_tail_state(
+        &final_cold.engine,
+        "final oversized ReplaceDocs cold reopen",
+    );
     assert_public_pending_budget(
         final_cold.engine.clone(),
         DELETE_SEQUENCE,
@@ -1051,7 +1068,8 @@ async fn run_isolated_replay(root: &Path, aof_path: &Path) {
     let handshake = child_root.path().join("entered-case");
     let stdout_path = child_root.path().join("child.stdout");
     let stderr_path = child_root.path().join("child.stderr");
-    let executable = std::env::current_exe().expect("current oversized ReplaceDocs test executable");
+    let executable =
+        std::env::current_exe().expect("current oversized ReplaceDocs test executable");
     let stdout = File::create(&stdout_path).expect("create ReplaceDocs child stdout");
     let stderr = File::create(&stderr_path).expect("create ReplaceDocs child stderr");
     let child = Command::new(executable)
@@ -1088,10 +1106,10 @@ async fn run_isolated_replay(root: &Path, aof_path: &Path) {
                     .expect("timed-out ReplaceDocs child remains owned");
                 let _ = raw.kill();
                 let status = raw.wait().expect("wait for killed ReplaceDocs child");
-                let stdout = fs::read_to_string(&stdout_path)
-                    .expect("read killed ReplaceDocs child stdout");
-                let stderr = fs::read_to_string(&stderr_path)
-                    .expect("read killed ReplaceDocs child stderr");
+                let stdout =
+                    fs::read_to_string(&stdout_path).expect("read killed ReplaceDocs child stdout");
+                let stderr =
+                    fs::read_to_string(&stderr_path).expect("read killed ReplaceDocs child stderr");
                 panic!(
                     "a valid committed 32-document >256 MiB ReplaceDocs AOF frame must replay and checkpoint before cleanup; child was killed after {REPLAY_WATCHDOG:?}: status={status}; stdout={stdout}; stderr={stderr}",
                 );

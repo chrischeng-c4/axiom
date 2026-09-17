@@ -340,9 +340,7 @@ async fn cold_host_readiness_diagnostic(host: &RaftHost) -> String {
         Ok(Err(error)) => format!("error={error}"),
         Err(_) => format!("timed_out_after_ms={}", route_timeout.as_millis()),
     };
-    format!(
-        "applied_watch={applied_index}; persistence={persistence:?}; raftz={raftz}"
-    )
+    format!("applied_watch={applied_index}; persistence={persistence:?}; raftz={raftz}")
 }
 
 async fn wait_for_leader(host: &RaftHost) {

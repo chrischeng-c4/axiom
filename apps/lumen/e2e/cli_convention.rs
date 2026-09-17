@@ -174,12 +174,7 @@ fn serve_rejects_retired_nats_wal_backend() {
 
 #[test]
 fn serve_rejects_retired_nats_url_flag() {
-    let output = run_lumen_rejected(&[
-        "serve",
-        "--nats-url",
-        "nats://127.0.0.1:4222",
-        "--help",
-    ]);
+    let output = run_lumen_rejected(&["serve", "--nats-url", "nats://127.0.0.1:4222", "--help"]);
     assert!(
         output.contains("--nats-url"),
         "the rejected URL spelling must identify the rejected CLI input:\\n{output}"
@@ -188,12 +183,7 @@ fn serve_rejects_retired_nats_url_flag() {
 
 #[test]
 fn serve_rejects_retired_nats_connect_timeout_flag() {
-    let output = run_lumen_rejected(&[
-        "serve",
-        "--nats-connect-timeout-secs",
-        "1",
-        "--help",
-    ]);
+    let output = run_lumen_rejected(&["serve", "--nats-connect-timeout-secs", "1", "--help"]);
     assert!(
         output.contains("--nats-connect-timeout-secs"),
         "the rejected timeout spelling must identify the rejected CLI input:\\n{output}"

@@ -738,14 +738,15 @@ fn test_ca(common_name: &str) -> TestCa {
 
 /// A serving leaf for `dns`, signed by `ca`.
 fn test_leaf(ca: &TestCa, dns: &str) -> (String, String) {
-    let mut params =
-        rcgen::CertificateParams::new(vec![dns.to_string()]).expect("leaf params");
+    let mut params = rcgen::CertificateParams::new(vec![dns.to_string()]).expect("leaf params");
     params
         .distinguished_name
         .push(rcgen::DnType::CommonName, dns);
     params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
     let key = rcgen::KeyPair::generate().expect("leaf key");
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("sign leaf");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("sign leaf");
     (cert.pem(), key.serialize_pem())
 }
 
@@ -1017,7 +1018,11 @@ fn connect_verifies_the_service_identity_through_the_forwarded_socket() {
     let log = std::fs::read_to_string(&fixture.kubectl_log).unwrap_or_default();
     let invocations: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(invocations.len(), 1, "{log}");
-    assert!(invocations[0].contains("port-forward"), "{}", invocations[0]);
+    assert!(
+        invocations[0].contains("port-forward"),
+        "{}",
+        invocations[0]
+    );
 }
 
 /// Run `lumen connect --ca-file` against a deployment that will refuse it, and

@@ -1587,8 +1587,7 @@ mod local_oversized_record_capacity {
         );
         let envelope = response.json::<Value>();
         assert_eq!(
-            envelope["error"],
-            "pending_change_capacity",
+            envelope["error"], "pending_change_capacity",
             "the valid oversized request must reach the capacity refusal, not a validation error"
         );
         assert_eq!(
@@ -1624,7 +1623,9 @@ mod local_oversized_record_capacity {
             .await
             .assert_status_ok();
         assert_eq!(
-            wal.latest_seq().await.expect("read MemWal after small request"),
+            wal.latest_seq()
+                .await
+                .expect("read MemWal after small request"),
             wal_before + 1,
             "only the later small request may allocate the next WAL sequence"
         );

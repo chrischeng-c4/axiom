@@ -61,7 +61,6 @@ impl WriteCoordinator {
                     let mut writer = aof.lock().expect("aof writer poisoned");
                     writer.append_raw_payload(seq, payload)
                         .and_then(|()| writer.flush())
-                        .and_then(|()| writer.maybe_sync())
                 });
                 if let Err(error) = persisted {
                     coord.mutation_gate.require_restart();

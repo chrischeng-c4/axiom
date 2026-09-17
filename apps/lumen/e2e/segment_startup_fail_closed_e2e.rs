@@ -350,8 +350,7 @@ fn assert_refuses_without_mutation(root: &Path, case: &str) -> String {
 fn assert_refuses_with_existing_empty_baseline(root: &Path, case: &str) -> String {
     let current = std::fs::read(root.join("CURRENT")).expect("read empty CURRENT baseline");
     assert_eq!(
-        current,
-        b"empty\n",
+        current, b"empty\n",
         "{case} fixture must begin from the official empty CURRENT baseline"
     );
     let before = snapshot_root(root);
@@ -913,17 +912,14 @@ fn valid_crc_malformed_middle_aof_refuses_before_listener_or_successor() {
     let empty_current = std::fs::read(root.path().join("CURRENT"))
         .expect("read official empty checkpoint baseline");
     assert_eq!(
-        empty_current,
-        b"empty\n",
+        empty_current, b"empty\n",
         "fixture must use the official empty checkpoint baseline before corrupt AOF replay"
     );
     let aof_path = root.path().join("aof.log");
     let before = write_valid_crc_malformed_middle_aof(root.path());
 
-    let _logs = assert_refuses_with_existing_empty_baseline(
-        root.path(),
-        "CRC-valid malformed middle AOF",
-    );
+    let _logs =
+        assert_refuses_with_existing_empty_baseline(root.path(), "CRC-valid malformed middle AOF");
 
     assert_eq!(
         std::fs::read(root.path().join("CURRENT")).expect("read refused empty checkpoint baseline"),

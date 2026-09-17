@@ -477,7 +477,8 @@ pub struct Metrics {
     /// see [`APPLY_SECONDS_BUCKETS_US`] for the bucket bounds and
     /// [`Metrics::render_coordinator_apply_histogram`] for how these become
     /// the cumulative counts a Prometheus histogram requires.
-    pub coordinator_apply_seconds_buckets: [[Counter; APPLY_SECONDS_BUCKET_COUNT]; APPLY_KIND_COUNT],
+    pub coordinator_apply_seconds_buckets:
+        [[Counter; APPLY_SECONDS_BUCKET_COUNT]; APPLY_KIND_COUNT],
     /// #4326: per-[`ApplyKind`] sum of write-coordinator per-record apply
     /// durations in whole microseconds — an integer atomic for lock-free
     /// accumulation; `render()` divides by 1e6 to produce
@@ -1174,9 +1175,10 @@ impl Metrics {
                 let stage_idx = stage.index();
                 let kind_idx = kind.index();
                 let mut cumulative = 0u64;
-                for ((le, _), bucket) in APPLY_SECONDS_BUCKETS_US.iter().zip(
-                    self.coordinator_stage_seconds_buckets[stage_idx][kind_idx].iter(),
-                ) {
+                for ((le, _), bucket) in APPLY_SECONDS_BUCKETS_US
+                    .iter()
+                    .zip(self.coordinator_stage_seconds_buckets[stage_idx][kind_idx].iter())
+                {
                     cumulative += bucket.get();
                     let _ = writeln!(
                         out,
@@ -1192,8 +1194,7 @@ impl Metrics {
                     kind.label(),
                     stage.label()
                 );
-                let sum = self.coordinator_stage_seconds_us_sum[stage_idx][kind_idx].get()
-                    as f64
+                let sum = self.coordinator_stage_seconds_us_sum[stage_idx][kind_idx].get() as f64
                     / 1_000_000.0;
                 let _ = writeln!(
                     out,
@@ -1242,10 +1243,16 @@ impl Metrics {
                 .zip(self.coordinator_apply_seconds_buckets[idx].iter())
             {
                 cumulative += bucket.get();
-                let _ = writeln!(out, "{SECONDS}_bucket{{le=\"{le}\",kind=\"{label}\"}} {cumulative}");
+                let _ = writeln!(
+                    out,
+                    "{SECONDS}_bucket{{le=\"{le}\",kind=\"{label}\"}} {cumulative}"
+                );
             }
             let total = self.coordinator_apply_seconds_count[idx].get();
-            let _ = writeln!(out, "{SECONDS}_bucket{{le=\"+Inf\",kind=\"{label}\"}} {total}");
+            let _ = writeln!(
+                out,
+                "{SECONDS}_bucket{{le=\"+Inf\",kind=\"{label}\"}} {total}"
+            );
             let sum_seconds = self.coordinator_apply_seconds_us_sum[idx].get() as f64 / 1_000_000.0;
             let _ = writeln!(out, "{SECONDS}_sum{{kind=\"{label}\"}} {sum_seconds}");
             let _ = writeln!(out, "{SECONDS}_count{{kind=\"{label}\"}} {total}");
@@ -1289,7 +1296,10 @@ impl Metrics {
             let (micros, count, _) = self.segment_merge_step_observation(step);
             let phase = step.name();
             let seconds = micros as f64 / 1_000_000.0;
-            let _ = writeln!(out, "{SECONDS}_bucket{{le=\"+Inf\",phase=\"{phase}\"}} {count}");
+            let _ = writeln!(
+                out,
+                "{SECONDS}_bucket{{le=\"+Inf\",phase=\"{phase}\"}} {count}"
+            );
             let _ = writeln!(out, "{SECONDS}_sum{{phase=\"{phase}\"}} {seconds}");
             let _ = writeln!(out, "{SECONDS}_count{{phase=\"{phase}\"}} {count}");
         }
@@ -1391,11 +1401,7 @@ mod tests {
     fn coordinator_stage_histogram_renders_kind_and_stage_labels() {
         let metrics = Metrics::new();
         for stage in CoordinatorStage::ALL {
-            metrics.observe_coordinator_stage(
-                ApplyKind::Index,
-                stage,
-                Duration::from_millis(2),
-            );
+            metrics.observe_coordinator_stage(ApplyKind::Index, stage, Duration::from_millis(2));
         }
         let out = metrics.render();
         for stage in CoordinatorStage::ALL {
@@ -1482,7 +1488,11 @@ mod tests {
         let frozen = rendered_pending_gauge(rendered, "lumen_pending_change_frozen_bytes");
         let total = rendered_pending_gauge(rendered, "lumen_pending_change_total_bytes");
         let high_water = rendered_pending_gauge(rendered, "lumen_pending_change_high_water_bytes");
-        assert_eq!(reserved + active + frozen, total, "mixed scrape:\n{rendered}");
+        assert_eq!(
+            reserved + active + frozen,
+            total,
+            "mixed scrape:\n{rendered}"
+        );
         assert!(high_water >= total, "peak below live total:\n{rendered}");
         assert!(
             total >= held_bytes,

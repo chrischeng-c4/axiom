@@ -607,12 +607,7 @@ async fn assert_recovery_after_restoring_stage_directory(fixture: &Fixture) {
         BTreeSet::from([EXTERNAL_ID.to_owned()]),
         "cold recovered checkpoint must retain staged Text Match result",
     );
-    assert_public_pending_budget(
-        recovered,
-        INDEX_SEQUENCE,
-        "fresh retained-source recovery",
-    )
-    .await;
+    assert_public_pending_budget(recovered, INDEX_SEQUENCE, "fresh retained-source recovery").await;
 }
 
 async fn run_child(root: PathBuf, child_tmp: PathBuf, handshake: PathBuf) {
@@ -756,8 +751,7 @@ async fn run_isolated_case() {
     let handshake = child_workspace.path().join("entered-case");
     let stdout_path = child_workspace.path().join("child.stdout");
     let stderr_path = child_workspace.path().join("child.stderr");
-    let executable =
-        std::env::current_exe().expect("locate committed staged Text e2e executable");
+    let executable = std::env::current_exe().expect("locate committed staged Text e2e executable");
     let child = Command::new(executable)
         .env(CHILD_MODE_ENV, CHILD_CASE)
         .env(CHILD_ROOT_ENV, &child_root)

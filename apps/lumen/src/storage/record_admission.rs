@@ -76,7 +76,36 @@ pub(crate) struct RecordReservation {
     wait_for_preparation: bool,
 }
 
+/// Transport and AOF scratch ownership for a locally published record.
+///
+/// It comes from the same atomic admission as [`RecordReservation`], but it
+/// never enters Engine repricing or source retention. Keeping it separate
+/// lets the coordinator carry the temporary copies across WAL publication and
+/// AOF flush without making the apply reservation price them again.
+pub(crate) struct RecordTransientReservation {
+    reservation: Reservation,
+}
+
+impl RecordTransientReservation {
+    pub(crate) fn bytes(&self) -> usize {
+        self.reservation.bytes()
+    }
+}
+
 impl RecordReservation {
+    /// Split transport-owned copies out of an already-admitted record. The
+    /// apply half keeps source retention; the returned transient half has no
+    /// source bridge and is released only after AOF persistence and completion.
+    pub(crate) fn split_transport(mut self) -> (Self, Option<RecordTransientReservation>) {
+        let bytes = self.extra_owned;
+        if bytes == 0 {
+            return (self, None);
+        }
+        let reservation = self.reservation.split_off(bytes);
+        self.extra_owned = 0;
+        (self, Some(RecordTransientReservation { reservation }))
+    }
+
     pub(crate) fn source_retention(&mut self) -> crate::change_budget::SourceRetention {
         self.reservation.source_retention()
     }
@@ -932,6 +961,30 @@ mod tests {
     }
 
     #[test]
+    fn local_record_split_keeps_transport_out_of_apply_reprice() {
+        let budget = ChangeBudget::with_hard_limit(1 << 20);
+        let engine = engine(&budget);
+        let raw = Engine::record_owned_bytes(&entry()).unwrap();
+        let accepted = engine.try_reserve_record(&entry(), raw * 2).unwrap();
+        let total = accepted.bytes();
+
+        let (apply, transient) = accepted.split_transport();
+        let transient = transient.expect("transport-owned copies must split");
+        assert_eq!(apply.extra_owned, 0);
+        assert_eq!(transient.bytes(), raw * 2);
+        assert_eq!(
+            apply.bytes() + transient.bytes(),
+            total,
+            "split keeps the one atomic admission total"
+        );
+        assert_eq!(budget.snapshot().reserved, total);
+        drop(apply);
+        assert_eq!(budget.snapshot().reserved, transient.bytes());
+        drop(transient);
+        assert_eq!(budget.snapshot().total, 0);
+    }
+
+    #[test]
     fn admission_stale_prepared_text_releases_the_discarded_reader_charge() {
         let budget = ChangeBudget::with_hard_limit(64 * 1024 * 1024);
         let engine = engine(&budget);
@@ -1498,13 +1551,15 @@ mod tests {
 
         let entry = entry();
         let raw = Engine::record_owned_bytes(&entry).unwrap();
-        let reservation = engine.try_reserve_record(&entry, 0).unwrap_or_else(|error| {
-            panic!(
-                "a record whose exact price needs unavailable context must still be \
+        let reservation = engine
+            .try_reserve_record(&entry, 0)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "a record whose exact price needs unavailable context must still be \
                  reserved at its known minimal bound before publication, not left \
                  unreserved: {error:?}"
-            )
-        });
+                )
+            });
         assert_eq!(
             reservation.bytes(),
             raw,
@@ -1533,7 +1588,10 @@ mod tests {
             Err(error) => error,
         };
         assert!(
-            matches!(error, RecordAdmissionError::Capacity(AdmissionError::Full { .. })),
+            matches!(
+                error,
+                RecordAdmissionError::Capacity(AdmissionError::Full { .. })
+            ),
             "a Full minimal bound must classify as capacity, not a bare domain error \
              a caller would otherwise treat as safe to publish unreserved: {error:?}"
         );

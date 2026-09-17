@@ -658,6 +658,33 @@ impl Owner {
 }
 
 impl Reservation {
+    /// Divide one already-admitted reservation without changing process
+    /// accounting. The original half keeps its source-retention bridge; the
+    /// new half is ordinary transient ownership. This is deliberately a pure
+    /// handle split: it must not wake capacity waiters or open a second
+    /// admission race.
+    pub(crate) fn split_off(&mut self, bytes: usize) -> Reservation {
+        assert!(
+            bytes <= self.bytes,
+            "cannot split {bytes} bytes from {} reserved bytes",
+            self.bytes
+        );
+        self.bytes = self
+            .bytes
+            .checked_sub(bytes)
+            .expect("split bytes were checked against reservation");
+        Reservation {
+            budget: self.budget.clone(),
+            owner: self.owner,
+            lifetime: self.lifetime.clone(),
+            bytes,
+            committed: false,
+            // The source must stay with the apply half. The transient half
+            // protects only temporary encode/AOF ownership.
+            source_retention: None,
+        }
+    }
+
     pub(crate) fn source_retention(&mut self) -> SourceRetention {
         let retained = self
             .source_retention
@@ -1210,6 +1237,38 @@ mod tests {
         reservation.shrink_to(6).unwrap();
         drop(reservation);
         assert_eq!(budget.snapshot().reserved, 6);
+        drop(guard);
+        assert_eq!(budget.snapshot().total, 0);
+    }
+
+    #[test]
+    fn split_off_keeps_owner_total_and_source_retention_on_apply_half() {
+        let budget = ChangeBudget::with_hard_limit(16);
+        let owner = budget.owner();
+        let mut apply = owner.try_reserve(10).unwrap();
+        let guard = apply.source_retention();
+        let wake = budget.checkpoint_wake();
+        let epoch = wake.epoch();
+        let transient = apply.split_off(4);
+
+        assert_eq!(apply.bytes(), 6);
+        assert_eq!(transient.bytes(), 4);
+        assert_eq!(budget.snapshot().reserved, 10);
+        assert_eq!(
+            wake.epoch(),
+            epoch,
+            "a handle-only split must not wake capacity waiters"
+        );
+
+        // The transient half has no source bridge and releases independently.
+        drop(transient);
+        assert_eq!(budget.snapshot().reserved, 6);
+        drop(apply);
+        assert_eq!(
+            budget.snapshot().reserved,
+            6,
+            "source retention must stay on the apply half"
+        );
         drop(guard);
         assert_eq!(budget.snapshot().total, 0);
     }
@@ -1828,7 +1887,10 @@ mod tests {
     fn process_registry_shares_live_default_budget() {
         let first = ChangeBudget::process_shared();
         let second = ChangeBudget::process_shared();
-        assert!(Arc::ptr_eq(&first.0, &second.0), "live callers must share one process budget");
+        assert!(
+            Arc::ptr_eq(&first.0, &second.0),
+            "live callers must share one process budget"
+        );
         let owner = first.owner();
         let reserved = owner.try_reserve(3).unwrap();
         // Other Engine tests use this same process-wide budget in parallel.

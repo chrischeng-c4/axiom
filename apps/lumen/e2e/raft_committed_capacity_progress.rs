@@ -98,7 +98,8 @@ const CHILD_MODE_ENV: &str = "LUMEN_RAFT_CAPACITY_PROGRESS_CHILD";
 const CHILD_ROOT_ENV: &str = "LUMEN_RAFT_CAPACITY_PROGRESS_ROOT";
 const CHILD_HANDSHAKE_ENV: &str = "LUMEN_RAFT_CAPACITY_PROGRESS_HANDSHAKE";
 const CHILD_CASE: &str = "generic-predecode-capacity";
-const TEST_NAME: &str = "raft_committed_generic_apply_makes_capacity_progress_before_any_caller_checkpoint";
+const TEST_NAME: &str =
+    "raft_committed_generic_apply_makes_capacity_progress_before_any_caller_checkpoint";
 
 /// Supplies the actual committed Raft watermark without constructing a fresh
 /// coordinator, which would initialize this Engine's capture barrier at zero.
@@ -342,9 +343,7 @@ fn fill_checkpointable_local_work(engine: &Arc<Engine>) -> usize {
             "each direct local setup replacement must produce one public result",
         );
     }
-    panic!(
-        "setup did not leave at most 1 MiB free after {MAX_FILLER_WRITES} real local records",
-    );
+    panic!("setup did not leave at most 1 MiB free after {MAX_FILLER_WRITES} real local records",);
 }
 
 fn assert_live_state(engine: &Engine, filler_ordinal: usize, phase: &str) {
@@ -395,12 +394,16 @@ fn apply_before_caller_checkpoint(
 
     let completed_before_cleanup = match receiver.recv_timeout(PROGRESS_OBSERVATION) {
         Ok(result) => {
-            worker.join().expect("committed Raft apply worker must not panic");
+            worker
+                .join()
+                .expect("committed Raft apply worker must not panic");
             result
         }
         Err(mpsc::RecvTimeoutError::Timeout) => match receiver.try_recv() {
             Ok(result) => {
-                worker.join().expect("committed Raft apply worker must not panic");
+                worker
+                    .join()
+                    .expect("committed Raft apply worker must not panic");
                 result
             }
             Err(mpsc::TryRecvError::Empty) => {
@@ -540,11 +543,8 @@ async fn run_child(root: PathBuf, handshake: PathBuf) {
     );
 
     let engine = cold.engine;
-    let state_machine = EngineSm::new_with_segment_store(
-        engine.clone(),
-        CREATE_SEQUENCE,
-        store.clone(),
-    );
+    let state_machine =
+        EngineSm::new_with_segment_store(engine.clone(), CREATE_SEQUENCE, store.clone());
     let filler_ordinal = fill_checkpointable_local_work(&engine);
     let free_after_setup = PENDING_HARD_LIMIT_BYTES - pending_total_from_engine(&engine);
     assert!(
@@ -574,7 +574,11 @@ async fn run_child(root: PathBuf, handshake: PathBuf) {
         engine.metrics().segment_checkpoint_completed_total.get() > checkpoint_before,
         "capacity progress must complete a real maintenance checkpoint before generic Raft apply returns",
     );
-    assert_live_state(&engine, filler_ordinal, "live committed Raft capacity progress");
+    assert_live_state(
+        &engine,
+        filler_ordinal,
+        "live committed Raft capacity progress",
+    );
     assert_public_pending_budget(
         engine.clone(),
         TARGET_SEQUENCE,
@@ -626,7 +630,8 @@ async fn run_child(root: PathBuf, handshake: PathBuf) {
 }
 
 async fn run_isolated_child(root: &Path) {
-    let child_workspace = tempfile::tempdir().expect("create parent-owned Raft capacity child workspace");
+    let child_workspace =
+        tempfile::tempdir().expect("create parent-owned Raft capacity child workspace");
     let child_tmp = child_workspace.path().join("tmp");
     fs::create_dir(&child_tmp).expect("create parent-owned Raft capacity TMPDIR");
     let handshake = child_workspace.path().join("entered-case");

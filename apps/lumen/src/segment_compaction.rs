@@ -81,9 +81,13 @@ pub(super) fn write_compacted_field(
     let stem = layout.field_stem(field);
     let last = inputs.last().expect("validated non-empty");
     let (segment_rel, rows_rel, kind, ordinal) = if includes_base {
-        let existing = inputs.iter().find(|input| matches!(input.kind, SegmentKind::Base)).map(|input| input.path.clone());
+        let existing = inputs
+            .iter()
+            .find(|input| matches!(input.kind, SegmentKind::Base))
+            .map(|input| input.path.clone());
         (
-            existing.unwrap_or_else(|| collection_output_relative(collection, &format!("{stem}.lseg"))),
+            existing
+                .unwrap_or_else(|| collection_output_relative(collection, &format!("{stem}.lseg"))),
             collection_output_relative(collection, &format!("{stem}.rows.cbor")),
             SegmentKind::Base,
             0,

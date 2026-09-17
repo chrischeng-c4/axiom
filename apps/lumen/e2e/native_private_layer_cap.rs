@@ -280,10 +280,10 @@ async fn run_isolated_case(case_key: &'static str, test_name: &'static str) {
         .expect("exited native private-layer-cap child remains owned")
         .wait()
         .expect("wait for exited native private-layer-cap child");
-    let stdout = fs::read_to_string(&stdout_path)
-        .expect("read native private-layer-cap child stdout");
-    let stderr = fs::read_to_string(&stderr_path)
-        .expect("read native private-layer-cap child stderr");
+    let stdout =
+        fs::read_to_string(&stdout_path).expect("read native private-layer-cap child stdout");
+    let stderr =
+        fs::read_to_string(&stderr_path).expect("read native private-layer-cap child stderr");
     let entered = fs::read_to_string(&handshake).unwrap_or_else(|error| {
         panic!(
             "{case_key}: isolated child did not enter exact {test_name}: {error}; stdout={stdout}; stderr={stderr}",
@@ -332,12 +332,9 @@ fn fixture(configured_owner: bool) -> Fixture {
         writer: sink_writer.clone(),
         aof: None,
     });
-    let state = AppState::with_components(
-        engine.clone(),
-        Arc::new(AuthConfig::open()),
-        sink_writer,
-    )
-    .with_checkpoint(checkpoint);
+    let state =
+        AppState::with_components(engine.clone(), Arc::new(AuthConfig::open()), sink_writer)
+            .with_checkpoint(checkpoint);
     let server = TestServer::new(router(state)).expect("open native private-layer-cap HTTP server");
     // The configured case must reuse this existing bootstrap owner. The lazy
     // case deliberately has no owner, so native delivery must install one only
@@ -612,10 +609,8 @@ async fn require_capacity_checkpoint_pause(
     entered_rx: mpsc::Receiver<()>,
     release: &mut SyncRelease,
 ) {
-    let entered = tokio::task::spawn_blocking(move || {
-        entered_rx.recv_timeout(CAPACITY_READY_WATCHDOG)
-    })
-    .await;
+    let entered =
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(CAPACITY_READY_WATCHDOG)).await;
     let ready = matches!(&entered, Ok(Ok(())));
     if !ready {
         // The current source has no cap checkpoint. A future failing path may
@@ -677,7 +672,8 @@ async fn checkpoint_now(server: &TestServer) {
 }
 
 async fn apply_pre_cap_layers(fixture: &Fixture) {
-    let create_sequence = publish_committed(&fixture.wal, create_record(), "collection schema").await;
+    let create_sequence =
+        publish_committed(&fixture.wal, create_record(), "collection schema").await;
     assert_eq!(
         create_sequence, CREATE_SEQUENCE,
         "the schema must be the first native committed MemWal record",
@@ -722,11 +718,7 @@ async fn require_capacity_checkpoint_completion(
 ) {
     let completed = tokio::time::timeout(CAPACITY_READY_WATCHDOG, async {
         loop {
-            if public_metric(
-                &fixture.server,
-                "lumen_segment_checkpoint_completed_total",
-            )
-            .await
+            if public_metric(&fixture.server, "lumen_segment_checkpoint_completed_total").await
                 > checkpoints_before
             {
                 return;
@@ -749,7 +741,8 @@ async fn require_capacity_checkpoint_completion(
 }
 
 async fn final_delete_checkpoint_and_cold_open(fixture: &Fixture) {
-    let delete_sequence = publish_committed(&fixture.wal, delete_record(), "full-document delete").await;
+    let delete_sequence =
+        publish_committed(&fixture.wal, delete_record(), "full-document delete").await;
     assert_eq!(
         delete_sequence, DELETE_SEQUENCE,
         "the full-document delete must be ordered after the retained capacity record",
@@ -800,11 +793,8 @@ async fn configured_capacity_case() {
     let mut fixture = fixture(true);
     apply_pre_cap_layers(&fixture).await;
 
-    let checkpoints_before = public_metric(
-        &fixture.server,
-        "lumen_segment_checkpoint_completed_total",
-    )
-    .await;
+    let checkpoints_before =
+        public_metric(&fixture.server, "lumen_segment_checkpoint_completed_total").await;
     let (entered_tx, entered_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel(1);
     fixture.hold.arm(entered_tx, release_rx);
@@ -884,11 +874,8 @@ async fn lazy_capacity_case() {
     let fixture = fixture(false);
     apply_pre_cap_layers(&fixture).await;
 
-    let checkpoints_before = public_metric(
-        &fixture.server,
-        "lumen_segment_checkpoint_completed_total",
-    )
-    .await;
+    let checkpoints_before =
+        public_metric(&fixture.server, "lumen_segment_checkpoint_completed_total").await;
     let pressure_sequence = publish_committed(
         &fixture.wal,
         layer_record(PRIVATE_LAYER_CAP + 1),
