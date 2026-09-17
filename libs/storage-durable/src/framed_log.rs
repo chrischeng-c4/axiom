@@ -50,6 +50,11 @@ pub const MAX_FRAME_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
 pub trait FramedLogTrimObserver: Send + Sync + std::fmt::Debug {
     fn covered_frame(&self, through: u64, seq: u64);
 
+    /// Called after an EverySec sync has flushed its current bytes and just
+    /// before the filesystem sync starts off the writer lock.  This is a
+    /// test-only observation seam; it does not delay or change the sync.
+    fn before_background_sync(&self) {}
+
     fn before_temp_sync(&self, _through: u64) {}
 }
 
@@ -149,6 +154,8 @@ pub struct FramedLogWriter {
     last_sync: Instant,
     sync_every: Duration,
     dirty: bool,
+    sync_revision: u64,
+    sync_identity: Arc<()>,
     trim_observer: Option<Arc<dyn FramedLogTrimObserver>>,
     trim_identity: Arc<()>,
     trim_revision: u64,
@@ -156,6 +163,17 @@ pub struct FramedLogWriter {
     trim_next_id: u64,
     #[cfg(test)]
     trim_faults: Arc<TrimFaults>,
+}
+
+/// An EverySec sync captured while the writer lock was held. The file sync is
+/// completed by [`FramedLogWriter::finish_sync`] without holding that lock.
+#[derive(Debug)]
+pub struct FramedLogSyncPlan {
+    file: File,
+    path: PathBuf,
+    revision: u64,
+    identity: Arc<()>,
+    observer: Option<Arc<dyn FramedLogTrimObserver>>,
 }
 
 impl FramedLogWriter {
@@ -200,6 +218,8 @@ impl FramedLogWriter {
             last_sync: Instant::now(),
             sync_every: Duration::from_secs(1),
             dirty: false,
+            sync_revision: 0,
+            sync_identity: Arc::new(()),
             trim_observer: None,
             trim_identity: Arc::new(()),
             trim_revision: 0,
@@ -213,6 +233,13 @@ impl FramedLogWriter {
     #[doc(hidden)]
     pub fn with_trim_observer(mut self, observer: Arc<dyn FramedLogTrimObserver>) -> Self {
         self.trim_observer = Some(observer);
+        // An observer is used by the checkpoint integration path to observe
+        // the split-phase background sync.  A writer opened with the legacy
+        // `Always` policy otherwise never creates a sync plan, so the hook
+        // would be unreachable even though the observer is propagated into
+        // the plan.  Keep the normal default unchanged and opt this observed
+        // writer into the existing EverySec background lifecycle.
+        self.policy = FsyncPolicy::EverySec;
         self
     }
 
@@ -240,6 +267,10 @@ impl FramedLogWriter {
         self.file.write_all(&header).context("write log header")?;
         self.file.write_all(payload).context("write log payload")?;
         self.dirty = true;
+        self.sync_revision = self
+            .sync_revision
+            .checked_add(1)
+            .context("log sync revision exhausted")?;
         if self.policy.should_sync_immediately() {
             self.sync()?;
         }
@@ -280,19 +311,71 @@ impl FramedLogWriter {
         Ok(())
     }
 
+    /// Prepare an EverySec sync while holding the writer lock.
+    ///
+    /// The returned file is pinned to the current inode. Callers must invoke
+    /// [`FramedLogWriter::finish_sync`] after releasing any external mutex.
+    pub fn begin_sync(&mut self) -> Result<Option<FramedLogSyncPlan>> {
+        if self.policy != FsyncPolicy::EverySec
+            || (self.trim_observer.is_none() && !self.dirty)
+            || self.last_sync.elapsed() < self.sync_every
+        {
+            return Ok(None);
+        }
+        self.flush()?;
+        Ok(Some(FramedLogSyncPlan {
+            file: self
+                .file
+                .get_ref()
+                .try_clone()
+                .context("pin log for sync")?,
+            path: self.path.clone(),
+            revision: self.sync_revision,
+            identity: Arc::clone(&self.sync_identity),
+            observer: self.trim_observer.clone(),
+        }))
+    }
+
+    /// Finish a split-phase sync after reacquiring the writer lock.
+    pub fn complete_sync(&mut self, plan: FramedLogSyncPlan) -> Result<()> {
+        if !Arc::ptr_eq(&plan.identity, &self.sync_identity) {
+            bail!("sync plan belongs to another writer");
+        }
+        if self.sync_revision == plan.revision {
+            self.last_sync = Instant::now();
+            self.dirty = false;
+        }
+        Ok(())
+    }
+
+    /// Synchronous compatibility wrapper.
+    pub fn finish_sync(&mut self, plan: FramedLogSyncPlan) -> Result<()> {
+        plan.sync_off_lock()?;
+        self.complete_sync(plan)
+    }
+
     pub fn truncate_through(&mut self, through: u64) -> Result<()> {
         let active = Arc::clone(&self.trim_active);
-        let owner = active.lock().map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?;
+        let owner = active
+            .lock()
+            .map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?;
         if owner.is_some() {
             bail!("trim plan Busy");
         }
-        let revision = self.trim_revision.checked_add(1).context("trim revision exhausted")?;
+        let revision = self
+            .trim_revision
+            .checked_add(1)
+            .context("trim revision exhausted")?;
         self.flush()?;
         let mut frames = FramedLogCursor::open(&self.path)?;
         let tmp = self.compact_tmp_path();
         remove_abandoned_trim_temp(&tmp)?;
         let mut dst = BufWriter::new(
-            OpenOptions::new().create_new(true).read(true).append(true).open(&tmp)
+            OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .append(true)
+                .open(&tmp)
                 .with_context(|| format!("create log compaction temp {}", tmp.display()))?,
         );
         // Preserve the existing owned-frame payload limit on this separate API.
@@ -302,13 +385,21 @@ impl FramedLogWriter {
             }
         }
         dst.flush().context("flush log compaction temp")?;
-        dst.get_ref().sync_all().context("fsync log compaction temp")?;
-        let file = dst.into_inner().map_err(|error| error.into_error())
+        dst.get_ref()
+            .sync_all()
+            .context("fsync log compaction temp")?;
+        let file = dst
+            .into_inner()
+            .map_err(|error| error.into_error())
             .context("retain log compaction temp handle")?;
         std::fs::rename(&tmp, &self.path).context("commit log compaction")?;
         // Keep the published handle even if the directory sync fails.
         self.file = BufWriter::new(file);
         self.trim_revision = revision;
+        self.sync_revision = self
+            .sync_revision
+            .checked_add(1)
+            .context("log sync revision exhausted")?;
         sync_parent_dir(&self.path)?;
         self.dirty = false;
         self.last_sync = Instant::now();
@@ -319,14 +410,20 @@ impl FramedLogWriter {
     /// Flush buffers here; scanning and syncing belong to the unlocked plan.
     pub fn begin_trim_mapped(&mut self, through: u64) -> Result<FramedLogTrimPlan> {
         let active = Arc::clone(&self.trim_active);
-        let mut owner = active.lock().map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?;
+        let mut owner = active
+            .lock()
+            .map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?;
         if owner.is_some() {
             bail!("trim plan Busy");
         }
         let id = self.trim_next_id;
         let next_id = id.checked_add(1).context("trim identity exhausted")?;
         self.flush()?;
-        let source = self.file.get_ref().try_clone().context("pin live trim source")?;
+        let source = self
+            .file
+            .get_ref()
+            .try_clone()
+            .context("pin live trim source")?;
         let metadata = source.metadata()?;
         let source_identity = trim_file_identity(&metadata)?;
         if trim_file_identity(&std::fs::symlink_metadata(&self.path)?)? != source_identity {
@@ -335,7 +432,11 @@ impl FramedLogWriter {
         let tmp = self.compact_tmp_path();
         remove_abandoned_trim_temp(&tmp)?;
         let temp = BufWriter::new(
-            OpenOptions::new().create_new(true).read(true).append(true).open(&tmp)
+            OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .append(true)
+                .open(&tmp)
                 .with_context(|| format!("create log compaction temp {}", tmp.display()))?,
         );
         // Nothing fallible follows ownership publication. A failed open
@@ -367,12 +468,18 @@ impl FramedLogWriter {
         if plan.state != TrimPlanState::Ready
             || !Arc::ptr_eq(&plan.identity, &self.trim_identity)
             || plan.revision != self.trim_revision
-            || *self.trim_active.lock().map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?
+            || *self
+                .trim_active
+                .lock()
+                .map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?
                 != Some(plan.id)
         {
             bail!("trim plan is not publishable");
         }
-        let revision = self.trim_revision.checked_add(1).context("trim revision exhausted")?;
+        let revision = self
+            .trim_revision
+            .checked_add(1)
+            .context("trim revision exhausted")?;
         if trim_file_identity(&self.file.get_ref().metadata()?)? != plan.source_identity
             || trim_file_identity(&plan.source.metadata()?)? != plan.source_identity
             || trim_file_identity(&std::fs::symlink_metadata(&self.path)?)? != plan.source_identity
@@ -386,24 +493,40 @@ impl FramedLogWriter {
         }
         let temp = plan.temp.as_mut().context("missing trim temp")?;
         let added = stream_trim_range(
-            &plan.source, plan.source_end, current_end, plan.through, temp, None,
+            &plan.source,
+            plan.source_end,
+            current_end,
+            plan.through,
+            temp,
+            None,
         )?;
         temp.flush().context("flush log compaction suffix")?;
         if added {
             #[cfg(test)]
             plan.faults.check(TrimFaultPoint::SuffixTempSync)?;
-            temp.get_ref().sync_all().context("fsync log compaction suffix")?;
+            temp.get_ref()
+                .sync_all()
+                .context("fsync log compaction suffix")?;
         }
         if trim_file_identity(&temp.get_ref().metadata()?)?
             != trim_file_identity(&std::fs::symlink_metadata(&plan.tmp)?)?
         {
             bail!("trim temporary path changed");
         }
-        let file = plan.temp.take().context("missing trim temp")?.into_inner()
-            .map_err(|error| error.into_error()).context("retain log compaction temp handle")?;
+        let file = plan
+            .temp
+            .take()
+            .context("missing trim temp")?
+            .into_inner()
+            .map_err(|error| error.into_error())
+            .context("retain log compaction temp handle")?;
         std::fs::rename(&plan.tmp, &self.path).context("commit log compaction")?;
         self.file = BufWriter::new(file);
         self.trim_revision = revision;
+        self.sync_revision = self
+            .sync_revision
+            .checked_add(1)
+            .context("log sync revision exhausted")?;
         plan.state = TrimPlanState::Published;
         #[cfg(test)]
         plan.faults.check(TrimFaultPoint::ParentSyncAfterRename)?;
@@ -435,11 +558,16 @@ impl FramedLogWriter {
     #[cfg(any(not(unix), test))]
     fn truncate_mapped_in_place(&mut self, through: u64) -> Result<()> {
         let active = Arc::clone(&self.trim_active);
-        let owner = active.lock().map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?;
+        let owner = active
+            .lock()
+            .map_err(|_| anyhow::anyhow!("trim ownership poisoned"))?;
         if owner.is_some() {
             bail!("trim plan Busy");
         }
-        let revision = self.trim_revision.checked_add(1).context("trim revision exhausted")?;
+        let revision = self
+            .trim_revision
+            .checked_add(1)
+            .context("trim revision exhausted")?;
         self.flush()?;
         let mut frames = FramedLogCursor::open(&self.path)?;
         let tmp = self.compact_tmp_path();
@@ -484,6 +612,10 @@ impl FramedLogWriter {
         // reports an error, later appends still target the published log.
         self.file = BufWriter::new(file);
         self.trim_revision = revision;
+        self.sync_revision = self
+            .sync_revision
+            .checked_add(1)
+            .context("log sync revision exhausted")?;
         sync_parent_dir(&self.path)?;
         self.dirty = false;
         self.last_sync = Instant::now();
@@ -502,6 +634,17 @@ impl FramedLogWriter {
     }
 }
 
+impl FramedLogSyncPlan {
+    /// Sync the pinned file while the writer mutex is not held.
+    pub fn sync_off_lock(&self) -> Result<()> {
+        if let Some(observer) = &self.observer {
+            observer.before_background_sync();
+        }
+        self.file.sync_all().context("fsync log")?;
+        sync_parent_dir(&self.path)
+    }
+}
+
 impl FramedLogTrimPlan {
     /// Validate and copy the whole captured prefix, then durably sync it.
     /// This has no writer borrow and never changes the live log.
@@ -514,7 +657,12 @@ impl FramedLogTrimPlan {
         let result = (|| {
             let temp = self.temp.as_mut().context("missing trim temp")?;
             stream_trim_range(
-                &self.source, 0, self.source_end, self.through, temp, self.observer.as_deref(),
+                &self.source,
+                0,
+                self.source_end,
+                self.through,
+                temp,
+                self.observer.as_deref(),
             )?;
             temp.flush().context("flush log compaction temp")?;
             if let Some(observer) = &self.observer {
@@ -522,17 +670,26 @@ impl FramedLogTrimPlan {
             }
             #[cfg(test)]
             self.faults.check(TrimFaultPoint::PrefixTempSync)?;
-            temp.get_ref().sync_all().context("fsync log compaction temp")?;
+            temp.get_ref()
+                .sync_all()
+                .context("fsync log compaction temp")?;
             Ok(())
         })();
-        self.state = if result.is_ok() { TrimPlanState::Ready } else { TrimPlanState::Failed };
+        self.state = if result.is_ok() {
+            TrimPlanState::Ready
+        } else {
+            TrimPlanState::Failed
+        };
         result
     }
 }
 
 impl Drop for FramedLogTrimPlan {
     fn drop(&mut self) {
-        let mut owner = self.active.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if *owner == Some(self.id) {
             // Keep ownership until removal completes, so the next begin
             // cannot create its temp between clearing this ID and unlinking.
@@ -564,7 +721,10 @@ fn trim_file_identity(metadata: &std::fs::Metadata) -> Result<TrimFileIdentity> 
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        Ok(TrimFileIdentity { device: metadata.dev(), inode: metadata.ino() })
+        Ok(TrimFileIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
     }
     #[cfg(not(unix))]
     bail!("staged log trim requires Unix inode identity")
@@ -579,7 +739,8 @@ fn trim_read_exact_at(file: &File, mut bytes: &mut [u8], mut offset: u64) -> Res
         };
         #[cfg(not(unix))]
         let read: std::io::Result<usize> = Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported, "staged log trim requires positional reads",
+            std::io::ErrorKind::Unsupported,
+            "staged log trim requires positional reads",
         ));
         match read {
             Ok(0) => bail!("trim source ended before captured EOF"),
@@ -639,7 +800,8 @@ fn stream_trim_range(
             trim_read_exact_at(source, &mut buffer[..count], offset)?;
             crc.update(&buffer[..count]);
             if keep {
-                temp.write_all(&buffer[..count]).context("write trim frame payload")?;
+                temp.write_all(&buffer[..count])
+                    .context("write trim frame payload")?;
             }
             offset += count as u64;
             remaining -= count as u64;
@@ -1154,6 +1316,27 @@ fn validate_payload_crc_streaming(file: &mut File, len: u64, expected: u32) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_sec_sync_plan_keeps_newer_append_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aof.log");
+        let mut log = FramedLogWriter::open(&path, FsyncPolicy::EverySec).unwrap();
+        log.append(1, b"old").unwrap();
+        log.last_sync = Instant::now() - Duration::from_secs(2);
+        let plan = log.begin_sync().unwrap().expect("sync plan");
+        log.append(2, b"new").unwrap();
+        log.finish_sync(plan).unwrap();
+        assert!(log.dirty, "a stale plan must not clear a newer append");
+
+        log.last_sync = Instant::now() - Duration::from_secs(2);
+        let next = log.begin_sync().unwrap().expect("replacement sync plan");
+        log.finish_sync(next).unwrap();
+        assert!(
+            !log.dirty,
+            "the replacement plan clears the current revision"
+        );
+    }
 
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
@@ -1711,8 +1894,16 @@ mod tests {
         marker.write_all(b"active-plan-owned-temp").unwrap();
         marker.sync_all().unwrap();
         let before = std::fs::read(&tmp).unwrap();
-        assert!(log.begin_trim_mapped(1).unwrap_err().to_string().contains("Busy"));
-        assert!(log.truncate_through(1).unwrap_err().to_string().contains("Busy"));
+        assert!(log
+            .begin_trim_mapped(1)
+            .unwrap_err()
+            .to_string()
+            .contains("Busy"));
+        assert!(log
+            .truncate_through(1)
+            .unwrap_err()
+            .to_string()
+            .contains("Busy"));
         assert_eq!(std::fs::read(&tmp).unwrap(), before);
 
         drop(plan);
@@ -1796,14 +1987,21 @@ mod tests {
         assert!(prefix_plan.copy_stable_prefix().is_err());
         assert!(prefix_plan.copy_stable_prefix().is_err());
         assert!(prefix.finish_trim_mapped(prefix_plan).is_err());
-        assert_eq!(std::fs::metadata(&prefix_path).unwrap().len(), before_prefix);
+        assert_eq!(
+            std::fs::metadata(&prefix_path).unwrap().len(),
+            before_prefix
+        );
 
         let torn_prefix_path = dir.path().join("torn-prefix.log");
-        let mut torn_prefix = FramedLogWriter::open(&torn_prefix_path, FsyncPolicy::Always).unwrap();
+        let mut torn_prefix =
+            FramedLogWriter::open(&torn_prefix_path, FsyncPolicy::Always).unwrap();
         torn_prefix.append(1, b"covered").unwrap();
         torn_prefix.append(2, b"retained").unwrap();
         torn_prefix.sync().unwrap();
-        let mut torn_prefix_bytes = OpenOptions::new().append(true).open(&torn_prefix_path).unwrap();
+        let mut torn_prefix_bytes = OpenOptions::new()
+            .append(true)
+            .open(&torn_prefix_path)
+            .unwrap();
         torn_prefix_bytes.write_all(&3u64.to_le_bytes()).unwrap();
         torn_prefix_bytes.sync_all().unwrap();
         let mut torn_prefix_plan = torn_prefix.begin_trim_mapped(3).unwrap();
@@ -1826,7 +2024,10 @@ mod tests {
         corrupt_suffix.sync_all().unwrap();
         let before_suffix = std::fs::metadata(&suffix_path).unwrap().len();
         assert!(suffix.finish_trim_mapped(suffix_plan).is_err());
-        assert_eq!(std::fs::metadata(&suffix_path).unwrap().len(), before_suffix);
+        assert_eq!(
+            std::fs::metadata(&suffix_path).unwrap().len(),
+            before_suffix
+        );
         drop(suffix);
         assert_eq!(replay_sequences(&suffix_path), vec![1, 2]);
     }
