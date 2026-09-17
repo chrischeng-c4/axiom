@@ -289,6 +289,13 @@ impl Engine {
         self.changes.owner.request_checkpoint();
     }
 
+    #[cfg(test)]
+    pub(crate) fn raw_capacity_state_for_test(
+        &self,
+    ) -> Result<crate::change_budget::OwnerRawCapacityState, AdmissionError> {
+        self.changes.owner.raw_capacity_state_for_test()
+    }
+
     pub(crate) fn consume_checkpoint_request(&self, revision: u64) {
         self.changes
             .owner

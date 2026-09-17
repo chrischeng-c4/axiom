@@ -192,6 +192,15 @@ pub(crate) struct OwnerCapacityState {
     pub(crate) checkpoint_request_revision: Option<u64>,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OwnerRawCapacityState {
+    pub active: usize,
+    pub frozen_batches: usize,
+    pub resident_active: usize,
+    pub resident_frozen: usize,
+}
+
 /// One engine or restore candidate's accounting namespace. Retire only after
 /// ordinary reservations and committed RAM have left this owner's live path.
 /// Retained payload handles may outlive retirement and stay charged until
@@ -499,6 +508,34 @@ impl Default for ChangeBudget {
 }
 
 impl Owner {
+    #[cfg(test)]
+    pub(crate) fn raw_capacity_state_for_test(
+        &self,
+    ) -> Result<OwnerRawCapacityState, AdmissionError> {
+        let state = self
+            .budget
+            .0
+            .state
+            .lock()
+            .expect("change budget lock poisoned");
+        let owner = state.owners.get(&self.id).ok_or(AdmissionError::Retired)?;
+        Ok(OwnerRawCapacityState {
+            active: owner.active,
+            frozen_batches: owner.frozen.len(),
+            resident_active: owner
+                .resident
+                .get(&owner.current_capture_epoch)
+                .copied()
+                .unwrap_or_default(),
+            resident_frozen: owner
+                .resident
+                .iter()
+                .filter(|(epoch, _)| **epoch != owner.current_capture_epoch)
+                .map(|(_, bytes)| *bytes)
+                .sum(),
+        })
+    }
+
     pub(crate) fn request_checkpoint(&self) -> bool {
         let mut state = self
             .budget
@@ -509,7 +546,18 @@ impl Owner {
         let Some(owner) = state.owners.get(&self.id) else {
             return false;
         };
-        if owner.active == 0 && owner.frozen.is_empty() {
+        let resident_active = owner
+            .resident
+            .get(&owner.current_capture_epoch)
+            .copied()
+            .unwrap_or_default();
+        let resident_frozen = owner
+            .resident
+            .iter()
+            .filter(|(epoch, _)| **epoch != owner.current_capture_epoch)
+            .any(|(_, bytes)| *bytes != 0);
+        if owner.active == 0 && owner.frozen.is_empty() && resident_active == 0 && !resident_frozen
+        {
             return false;
         }
         let work_revision = owner.work_revision;

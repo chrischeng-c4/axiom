@@ -377,7 +377,10 @@ fn run_budget_relay(
             .checkpoint_request_revision
             .or_else(|| engine.has_capacity_waiters().then_some(state.work_revision));
         if demand_revision.is_some()
-            && (state.active != 0 || state.frozen != 0)
+            && (state.active != 0
+                || state.frozen != 0
+                // Explicit requests may be backed only by resident bytes.
+                || state.checkpoint_request_revision.is_some())
             && last_requested_revision != demand_revision
         {
             last_requested_revision = demand_revision;
@@ -386,6 +389,20 @@ fn run_budget_relay(
             // accounting, or apply lock is held here.
             if endpoint.wait_for(Work::Checkpoint).is_err() {
                 return;
+            }
+            // A local capacity refusal needs both publication and compaction.
+            // The checkpoint frees only the frozen layer; without the merge,
+            // repeated refusals can fill the segment budget again before the
+            // next request arrives. Coalesce both operations by the same
+            // request revision so one refusal cannot enqueue an unbounded
+            // stream of maintenance work.
+            if endpoint.wait_for(Work::Merge).is_err() {
+                return;
+            }
+            // Clear only the request observed before this cycle. A newer
+            // request may have arrived while checkpointing or merging.
+            if let Some(request_revision) = state.checkpoint_request_revision {
+                engine.consume_checkpoint_request(request_revision);
             }
             continue;
         }
@@ -713,6 +730,7 @@ mod tests {
         assert_eq!(store.load_latest().unwrap().unwrap().1, 0);
         assert!(!engine.capture_barrier.is_uncertain());
     }
+
     #[test]
     fn fallback_replaces_a_stopped_owner_slot() {
         let engine = engine();
@@ -728,6 +746,109 @@ mod tests {
             !Arc::ptr_eq(&old, &replacement) && !replacement.is_stopped(),
             "a stopped fallback slot must not suppress a replacement owner"
         );
+    }
+
+    #[test]
+    fn local_capacity_requests_schedule_two_checkpoint_merge_cycles() {
+        let engine = engine();
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(dir.path()).unwrap());
+        let mut fallback = None;
+        Fallback::ensure(&mut fallback, &engine, Some(store)).unwrap();
+        let endpoint = engine.layer_maintenance.owner().unwrap();
+        for id in ["one", "two"] {
+            while engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision)
+                .is_some()
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            engine
+                .index(
+                    "docs",
+                    serde_json::from_value(serde_json::json!({
+                        "items":[{"external_id":id,"field":"kw","value":"next"}]
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            let state = engine.capacity_owner_state().unwrap();
+            assert!(state.active != 0 || state.frozen != 0);
+            let start = endpoint.requests.lock().unwrap().requested;
+            engine.request_pending_checkpoint();
+            let expected = start + 2;
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                let requests = endpoint.requests.lock().unwrap();
+                let request_cleared = engine
+                    .capacity_owner_state()
+                    .and_then(|state| state.checkpoint_request_revision)
+                    .is_none();
+                if requests.requested >= expected
+                    && requests.completed >= expected
+                    && request_cleared
+                {
+                    break;
+                }
+                drop(requests);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let requests = endpoint.requests.lock().unwrap();
+            assert!(requests.requested >= expected && requests.completed >= expected);
+            drop(requests);
+            assert!(engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision)
+                .is_none());
+        }
+        drop(fallback);
+    }
+
+    #[test]
+    fn resident_only_capacity_request_reaches_checkpoint_and_merge_relay() {
+        let engine = engine();
+        let raw = engine.raw_capacity_state_for_test().unwrap();
+        assert_eq!(raw.active, 0);
+        assert_eq!(raw.frozen_batches, 0);
+        assert!(raw.resident_active > 0);
+        assert_eq!(raw.resident_frozen, 0);
+        let dir = tempfile::tempdir().unwrap();
+        engine.request_pending_checkpoint();
+        assert!(engine
+            .capacity_owner_state()
+            .unwrap()
+            .checkpoint_request_revision
+            .is_some());
+        let mut fallback = None;
+        Fallback::ensure(
+            &mut fallback,
+            &engine,
+            Some(Arc::new(SegmentRdbStore::new(dir.path()).unwrap())),
+        )
+        .unwrap();
+        let endpoint = engine.layer_maintenance.owner().unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let request = engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision);
+            let requests = endpoint.requests.lock().unwrap();
+            if request.is_none() && requests.requested >= 2 && requests.completed >= 2 {
+                break;
+            }
+            drop(requests);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let requests = endpoint.requests.lock().unwrap();
+        assert!(requests.requested >= 2 && requests.completed >= 2);
+        drop(requests);
+        assert!(engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .is_none());
+        drop(fallback);
     }
 
     #[test]
