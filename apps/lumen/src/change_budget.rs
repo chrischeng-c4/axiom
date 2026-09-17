@@ -82,9 +82,24 @@ struct State {
     next_owner: u64,
     next_batch: u64,
     next_work_revision: u64,
+    next_checkpoint_request_revision: u64,
     checkpoint_request_revision: Option<u64>,
     high_water_bytes: usize,
     owners: BTreeMap<u64, OwnerState>,
+}
+
+fn request_revision(state: &mut State, work_revision: u64) -> u64 {
+    if let Some(revision) = state.checkpoint_request_revision {
+        return revision;
+    }
+    let revision = state
+        .next_checkpoint_request_revision
+        .checked_add(1)
+        .expect("checkpoint request revision exhausted")
+        .max(work_revision);
+    state.next_checkpoint_request_revision = revision;
+    state.checkpoint_request_revision = Some(revision);
+    revision
 }
 
 struct Inner {
@@ -161,9 +176,9 @@ struct CapacityWaiter(ChangeBudget);
 
 impl Drop for CapacityWaiter {
     fn drop(&mut self) {
-        let previous = self.0 .0.capacity_waiters.fetch_sub(1, Ordering::AcqRel);
+        let previous = self.0.0.capacity_waiters.fetch_sub(1, Ordering::AcqRel);
         assert!(previous > 0, "capacity waiter accounting lost");
-        self.0 .0.wake.signal();
+        self.0.0.wake.signal();
     }
 }
 
@@ -383,7 +398,8 @@ impl ChangeBudget {
         if pending.active == 0 && pending.frozen == 0 {
             return false;
         }
-        state.checkpoint_request_revision = Some(state.next_work_revision);
+        let work_revision = state.next_work_revision;
+        request_revision(&mut state, work_revision);
         self.0.wake.signal();
         true
     }
@@ -490,13 +506,19 @@ impl Owner {
             .state
             .lock()
             .expect("change budget lock poisoned");
-        let Some(owner) = state.owners.get_mut(&self.id) else {
+        let Some(owner) = state.owners.get(&self.id) else {
             return false;
         };
         if owner.active == 0 && owner.frozen.is_empty() {
             return false;
         }
-        owner.checkpoint_request_revision = Some(owner.work_revision);
+        let work_revision = owner.work_revision;
+        let revision = request_revision(&mut state, work_revision);
+        state
+            .owners
+            .get_mut(&self.id)
+            .expect("owner checked above")
+            .checkpoint_request_revision = Some(revision);
         self.budget.0.wake.signal();
         true
     }
@@ -515,6 +537,9 @@ impl Owner {
             if owner.checkpoint_request_revision == Some(revision) {
                 owner.checkpoint_request_revision = None;
             }
+        }
+        if state.checkpoint_request_revision == Some(revision) {
+            state.checkpoint_request_revision = None;
         }
     }
 
@@ -1520,6 +1545,22 @@ mod tests {
         let snapshot = budget.snapshot();
         assert_eq!(snapshot.work_revision, 1);
         assert_eq!(snapshot.checkpoint_request_revision, Some(1));
+    }
+
+    #[test]
+    fn owner_checkpoint_request_advances_after_consumption_without_new_work() {
+        let budget = ChangeBudget::with_hard_limit(64);
+        let owner = budget.owner();
+        let _charge = owner.try_reserve(16).unwrap().commit().unwrap();
+
+        assert!(owner.request_checkpoint());
+        let first = owner.capacity_state().unwrap().checkpoint_request_revision;
+        owner.consume_checkpoint_request(first);
+        assert_eq!(budget.snapshot().checkpoint_request_revision, None);
+
+        assert!(owner.request_checkpoint());
+        let second = owner.capacity_state().unwrap().checkpoint_request_revision;
+        assert!(second > first);
     }
 
     #[test]
