@@ -12,18 +12,6 @@
 //!   It does not measure latency or RSS. The approved stage6 30-minute release
 //!   workload covers checkpoint and merge budgets.
 //!   This bounded oracle does not replace that release gate.
-//! - Behavior (partial-error recovery): `indexing_durable_oracle.rs:8583` requires
-//!   an error-returning committed record's live Keyword prefix to replay, and
-//!   `:8676` requires cold checkpoint recovery to retain the live Number deletion.
-//! - Security (persisted-input boundary): `apps/lumen/src/coordinator.rs:377`
-//!   controls the AOF bytes this process later reads; `indexing_durable_oracle.rs:8583`
-//!   rejects silently losing an error-returning applied record. `apps/lumen/src/storage.rs:4981`
-//!   drops a caller-supplied value before fallible validation; `:8676` refuses to
-//!   honor the stale persisted Number after a cold reopen.
-//! - Performance (existing gate): these cases change recovery correctness at
-//!   `apps/lumen/src/coordinator.rs:377` and `apps/lumen/src/storage.rs:4981`.
-//!   They make no latency or RSS claim. The existing stage6 durable workload at
-//!   `apps/lumen/e2e/perf_gate.rs:2865` measures checkpoint and merge work.
 
 use std::collections::{BTreeMap, HashMap};
 #[cfg(unix)]
@@ -33,7 +21,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
-use async_trait::async_trait;
 use axum_test::TestServer;
 use futures::StreamExt;
 use serde_json::{json, Map, Value};
@@ -51,79 +38,19 @@ use lumen::types::{
 };
 use lumen::wal::{MemWal, SharedWal, WalLog};
 
-const COLLECTION: &str = "docs";
+#[path = "support/indexing_durable_fixture.rs"]
+mod durable_fixture;
+
+use durable_fixture::{
+    checkpoint, create_schema, fixture, hit_ids, http_search, post_index, recover_from_checkpoint,
+    local_checkpoint_sink, sorted_hit_ids, Fixture, COLLECTION,
+};
+
 const COMMON: &str = "common";
 const RARE: &str = "rare";
 const OTHER: &str = "other";
 const DOCUMENTS: usize = 476;
 const PREFIX_DOCUMENTS: usize = 365;
-
-struct LocalCheckpointSink {
-    engine: Arc<Engine>,
-    store: Arc<SegmentRdbStore>,
-    writer: Arc<WriteCoordinator>,
-    aof: SharedAof,
-}
-
-#[async_trait]
-impl CheckpointSink for LocalCheckpointSink {
-    async fn checkpoint_now(&self) -> Result<bool> {
-        let _permit = self.writer.mutation_gate().shared().await?;
-        let sequence = self.writer.applied_seq();
-        self.store.save(&self.engine, sequence)?;
-        self.store.prune(3)?;
-        self.aof
-            .lock()
-            .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
-            .truncate_through(sequence)?;
-        Ok(true)
-    }
-}
-
-struct Fixture {
-    _dir: tempfile::TempDir,
-    checkpoint_root: std::path::PathBuf,
-    server: TestServer,
-    engine: Arc<Engine>,
-    writer: Arc<WriteCoordinator>,
-    aof: SharedAof,
-    aof_path: std::path::PathBuf,
-    store: Arc<SegmentRdbStore>,
-}
-
-fn fixture() -> Fixture {
-    let dir = tempfile::tempdir().expect("fixture directory");
-    let checkpoint_root = dir.path().join("segments");
-    let aof_path = dir.path().join("aof.log");
-    let store = Arc::new(SegmentRdbStore::new(&checkpoint_root).expect("segment store"));
-    let aof: SharedAof = Arc::new(Mutex::new(AofWriter::open(&aof_path).expect("aof")));
-    let engine = Arc::new(Engine::new());
-    let wal: SharedWal = Arc::new(MemWal::new());
-    let writer = WriteCoordinator::start_from_with_aof(wal, engine.clone(), 0, aof.clone());
-    let checkpoint = Arc::new(LocalCheckpointSink {
-        engine: engine.clone(),
-        store: store.clone(),
-        writer: writer.clone(),
-        aof: aof.clone(),
-    });
-    let state = AppState::with_components(
-        engine.clone(),
-        Arc::new(AuthConfig::open()),
-        writer.clone() as Arc<dyn WriteSink>,
-    )
-    .with_checkpoint(checkpoint);
-    let server = TestServer::new(router(state)).expect("test server");
-    Fixture {
-        _dir: dir,
-        checkpoint_root,
-        server,
-        engine,
-        writer,
-        aof,
-        aof_path,
-        store,
-    }
-}
 
 fn external_id(id: usize) -> String {
     format!("doc-{id:03}")
@@ -181,30 +108,6 @@ fn corpus_items_range(field_major: bool, start: usize, end: usize) -> Vec<Value>
     }
 }
 
-async fn create_schema(server: &TestServer) {
-    server
-        .put("/collections/docs")
-        .json(&json!({
-            "fields": {
-                "kw": { "type": "keyword" },
-                "num": { "type": "number" },
-                "body": { "type": "text", "analyzer": "whitespace_lower" }
-            }
-        }))
-        .await
-        .assert_status_ok();
-}
-
-async fn post_index(server: &TestServer, items: Vec<Value>) {
-    for chunk in items.chunks(1000) {
-        server
-            .post("/collections/docs/index")
-            .json(&json!({ "items": chunk }))
-            .await
-            .assert_status_ok();
-    }
-}
-
 async fn index_updates(server: &TestServer) {
     server
         .post("/collections/docs/index")
@@ -233,39 +136,6 @@ async fn index_updates(server: &TestServer) {
         ]}))
         .await
         .assert_status_ok();
-}
-
-async fn checkpoint(server: &TestServer) {
-    let response = server.post("/admin/checkpoint").await;
-    response.assert_status_ok();
-    assert_eq!(response.json::<Value>()["persisted"], true);
-}
-
-/// Drive a search through the public HTTP route.  The case deliberately does
-/// not inspect a recovered index's private postings: callers only observe the
-/// recovered value through the same search request they used before the
-/// checkpoint.
-async fn http_search(server: &TestServer, query: Value, context: &str) -> Value {
-    let response = server
-        .post(&format!("/collections/{COLLECTION}/search"))
-        .json(&json!({ "query": query, "limit": 500 }))
-        .await;
-    response.assert_status_ok();
-    let body = response.json::<Value>();
-    assert!(
-        body["total"].is_u64(),
-        "{context}: search response must expose a numeric total: {body}"
-    );
-    body
-}
-
-fn hit_ids(body: &Value) -> Vec<&str> {
-    body["hits"]
-        .as_array()
-        .expect("search hits are an array")
-        .iter()
-        .map(|hit| hit["external_id"].as_str().expect("hit external id"))
-        .collect()
 }
 
 fn snapshot(engine: &Arc<Engine>) -> SnapshotV1 {
@@ -396,16 +266,6 @@ fn assert_index_invariants(engine: &Arc<Engine>) {
     let numbers = number_forward(&snap, "num");
     assert_eq!(numbers.get("doc-466"), Some(&9001.0));
     assert_eq!(numbers.get("doc-467"), Some(&9002.0));
-}
-
-fn sorted_hit_ids(response: lumen::types::SearchResponse) -> Vec<String> {
-    let mut ids: Vec<_> = response
-        .hits
-        .into_iter()
-        .map(|hit| hit.external_id)
-        .collect();
-    ids.sort();
-    ids
 }
 
 fn assert_keyword_total(engine: &Arc<Engine>, value: &str, expected: u64) {
@@ -574,18 +434,6 @@ fn assert_queries(engine: &Arc<Engine>) {
         assert_eq!(utf8_text.total, 1);
         assert_eq!(sorted_hit_ids(utf8_text), vec![expected_id]);
     }
-}
-
-fn recover_from_checkpoint(fixture: &Fixture) -> (Arc<Engine>, u64, u64) {
-    let loaded = fixture
-        .store
-        .load_current_generation()
-        .expect("load CURRENT")
-        .expect("checkpoint generation");
-    let checkpoint_sequence = loaded.sequence;
-    let replayed = replay_aof_into(&loaded.engine, &fixture.aof_path, checkpoint_sequence)
-        .expect("replay AOF tail");
-    (loaded.engine, checkpoint_sequence, replayed)
 }
 
 async fn run_history(field_major: bool) -> Value {
@@ -4969,7 +4817,7 @@ struct Stage1CaptureBarrierFixture {
     writer: Arc<WriteCoordinator>,
     aof: SharedAof,
     wal: Arc<MemWal>,
-    checkpoint: Arc<LocalCheckpointSink>,
+    checkpoint: Arc<dyn CheckpointSink>,
     server: TestServer,
 }
 
@@ -5016,12 +4864,12 @@ fn stage1_capture_barrier_fixture() -> Stage1CaptureBarrierFixture {
     let wal = Arc::new(MemWal::new());
     let shared_wal: SharedWal = wal.clone();
     let writer = WriteCoordinator::start_from_with_aof(shared_wal, engine.clone(), 0, aof.clone());
-    let checkpoint = Arc::new(LocalCheckpointSink {
-        engine: engine.clone(),
-        store: store.clone(),
-        writer: writer.clone(),
-        aof: aof.clone(),
-    });
+    let checkpoint = local_checkpoint_sink(
+        engine.clone(),
+        store.clone(),
+        writer.clone(),
+        aof.clone(),
+    );
     let state = AppState::with_components(
         engine.clone(),
         Arc::new(AuthConfig::open()),
@@ -11503,206 +11351,6 @@ mod full_compaction_contract {
             );
         }
     }
-}
-
-// A committed `Index` record can return an error after changing the engine.
-// These cases use the real coordinator/AOF/checkpoint route rather than a
-// local Engine shortcut, because recovery consumes the persisted `RaftLogEntry`
-// rather than an already-materialized index.
-fn partial_error_index_entry(items: Vec<Value>) -> RaftLogEntry {
-    RaftLogEntry::Index {
-        collection_id: COLLECTION.to_owned(),
-        req: serde_json::from_value(json!({ "items": items })).expect("partial-error index entry"),
-    }
-}
-
-fn partial_error_term_ids(engine: &Arc<Engine>, field: &str, value: FieldValue) -> Vec<String> {
-    sorted_hit_ids(
-        engine
-            .search(
-                COLLECTION,
-                SearchRequest {
-                    query: QueryNode::Term(TermQuery {
-                        field: field.to_owned(),
-                        value,
-                    }),
-                    limit: 20,
-                    offset: 0,
-                    cursor: None,
-                    routing_key: None,
-                    sort: None,
-                    track_total: true,
-                    collapse: None,
-                },
-            )
-            .expect("partial-error term query"),
-    )
-}
-
-#[tokio::test]
-async fn partial_error_mixed_index_replays_its_live_keyword_prefix_from_aof() {
-    let fixture = fixture();
-    create_schema(&fixture.server).await;
-    post_index(
-        &fixture.server,
-        vec![json!({
-            "external_id": "partial-error-baseline",
-            "field": "kw",
-            "value": "baseline",
-        })],
-    )
-    .await;
-    checkpoint(&fixture.server).await;
-    let checkpoint_sequence = fixture.writer.applied_seq();
-
-    let error = fixture
-        .writer
-        .submit(partial_error_index_entry(vec![
-            json!({
-                "external_id": "partial-error-prefix",
-                "field": "kw",
-                "value": "survives-error",
-            }),
-            json!({
-                "external_id": "partial-error-prefix",
-                "field": "unknown-after-prefix",
-                "value": "must-error",
-            }),
-        ]))
-        .await
-        .expect_err("mixed index must report the unknown field after applying its valid prefix");
-    assert!(
-        format!("{error:#}").contains("unknown field `unknown-after-prefix`"),
-        "the public write must retain its existing unknown-field error, got: {error:#}"
-    );
-    let committed_sequence = fixture.writer.applied_seq();
-    assert_eq!(
-        committed_sequence,
-        checkpoint_sequence + 1,
-        "the error return belongs to one concrete committed record"
-    );
-
-    let live = http_search(
-        &fixture.server,
-        json!({ "term": { "field": "kw", "value": "survives-error" } }),
-        "live mixed-index prefix",
-    )
-    .await;
-    assert_eq!(
-        hit_ids(&live),
-        vec!["partial-error-prefix"],
-        "the valid prefix is visible even though the same committed record returned an error"
-    );
-
-    fixture
-        .aof
-        .lock()
-        .expect("AOF lock")
-        .sync_strict()
-        .expect("strict-sync AOF tail");
-    let (replayed_engine, recovered_checkpoint_sequence, replayed_sequence) =
-        recover_from_checkpoint(&fixture);
-    assert_eq!(
-        recovered_checkpoint_sequence, checkpoint_sequence,
-        "recovery starts from the published base before the partial-error record"
-    );
-    assert_eq!(
-        replayed_sequence, committed_sequence,
-        "a committed record with a visible valid prefix must be retained in the AOF tail"
-    );
-    assert_eq!(
-        partial_error_term_ids(
-            &replayed_engine,
-            "kw",
-            FieldValue::String("survives-error".to_owned()),
-        ),
-        vec!["partial-error-prefix".to_owned()],
-        "AOF replay must restore the live valid prefix from an error-returning record"
-    );
-
-    checkpoint(&fixture.server).await;
-    let (checkpointed_engine, checkpointed_sequence, checkpointed_tail) =
-        recover_from_checkpoint(&fixture);
-    assert_eq!(
-        checkpointed_sequence, committed_sequence,
-        "the incremental checkpoint must publish through the partial-error record"
-    );
-    assert_eq!(
-        checkpointed_tail, 0,
-        "the checkpointed partial-error record has no remaining AOF tail"
-    );
-    assert_eq!(
-        partial_error_term_ids(
-            &checkpointed_engine,
-            "kw",
-            FieldValue::String("survives-error".to_owned()),
-        ),
-        vec!["partial-error-prefix".to_owned()],
-        "a cold incremental checkpoint must keep the prefix that live reads exposed"
-    );
-}
-
-#[tokio::test]
-async fn partial_error_number_reindex_checkpoint_never_resurrects_the_dropped_value() {
-    let fixture = fixture();
-    create_schema(&fixture.server).await;
-    post_index(
-        &fixture.server,
-        vec![json!({
-            "external_id": "partial-error-number",
-            "field": "num",
-            "value": 41.0,
-        })],
-    )
-    .await;
-    checkpoint(&fixture.server).await;
-    let checkpoint_sequence = fixture.writer.applied_seq();
-
-    let error = fixture
-        .writer
-        .submit(partial_error_index_entry(vec![json!({
-            "external_id": "partial-error-number",
-            "field": "num",
-            "value": "not-a-number",
-        })]))
-        .await
-        .expect_err("a Number field must reject a string replacement");
-    assert!(
-        format!("{error:#}").contains("type mismatch on field `num`"),
-        "the public write must retain its existing Number type-mismatch error, got: {error:#}"
-    );
-    let committed_sequence = fixture.writer.applied_seq();
-    assert_eq!(
-        committed_sequence,
-        checkpoint_sequence + 1,
-        "the error return belongs to one concrete committed Number record"
-    );
-
-    let live = http_search(
-        &fixture.server,
-        json!({ "term": { "field": "num", "value": 41.0 } }),
-        "live Number after invalid reindex",
-    )
-    .await;
-    assert!(
-        hit_ids(&live).is_empty(),
-        "the existing partial-error semantics drop the old Number value before returning its error"
-    );
-
-    checkpoint(&fixture.server).await;
-    let (cold_engine, cold_sequence, replayed_tail) = recover_from_checkpoint(&fixture);
-    assert_eq!(
-        cold_sequence, committed_sequence,
-        "the incremental checkpoint must cover the error-returning Number record"
-    );
-    assert_eq!(
-        replayed_tail, 0,
-        "the current generation must contain this cut without an uncheckpointed tail"
-    );
-    assert!(
-        partial_error_term_ids(&cold_engine, "num", FieldValue::Number(41.0)).is_empty(),
-        "a cold incremental checkpoint must not resurrect the Number value that live reads lost"
-    );
 }
 
 mod capacity_http_contract {

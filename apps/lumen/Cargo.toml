@@ -458,6 +458,10 @@ name = "indexing_durable_oracle"
 path = "e2e/indexing_durable_oracle.rs"
 
 [[test]]
+name = "indexing_partial_error_recovery"
+path = "e2e/indexing_partial_error_recovery.rs"
+
+[[test]]
 name = "hybrid_rrf"
 path = "e2e/hybrid_rrf.rs"
 
