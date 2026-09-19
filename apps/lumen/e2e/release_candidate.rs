@@ -1686,6 +1686,14 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "seed_checkpoint_requires_one_persisted_drained_publication".into(),
+                    false,
+                ),
+                (
+                    "seed_checkpoint_honors_setup_and_body_deadlines".into(),
+                    false,
+                ),
+                (
                     "request_deadline_is_the_approved_five_seconds".into(),
                     false,
                 ),

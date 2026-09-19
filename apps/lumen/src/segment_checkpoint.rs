@@ -94,12 +94,11 @@ impl SegmentCheckpointDriver {
     }
 }
 
-/// One high-water crossing schedules one immediate checkpoint. Further work
-/// above the threshold waits for the normal post-completion period, until the
-/// pending total drains below the re-arm threshold and crosses it again. A
-/// capacity request can join the one immediate attempt for the current
-/// pressure epoch. Further request revisions stay coalesced until that
-/// pressure drains.
+/// A high-water crossing schedules one immediate checkpoint. Each successful
+/// publication can schedule one successor when new owner work arrived during
+/// the checkpoint and remains above the trigger. Unchanged high work waits for
+/// the normal post-completion period. New capacity requests can also schedule
+/// an immediate attempt without waiting for the pressure to drain.
 struct CheckpointSchedule {
     period: Duration,
     next_deadline: Instant,
@@ -114,7 +113,8 @@ struct CheckpointSchedule {
 
 // Do not re-arm on a brief dip below the 128 MiB trigger. A real drain must
 // leave enough headroom before the next crossing can schedule an immediate
-// checkpoint; explicit capacity requests share that same pressure epoch.
+// checkpoint. Successful publications and new capacity requests are separate
+// reasons to retry while the process remains above the threshold.
 const CHECKPOINT_REARM_THRESHOLD: usize = crate::change_budget::CHECKPOINT_TRIGGER / 2;
 
 impl CheckpointSchedule {
@@ -150,9 +150,8 @@ impl CheckpointSchedule {
         }
         let periodic_due = now >= self.next_deadline;
         if periodic_due {
-            // A periodic attempt does not reset the pressure epoch. If it
-            // runs while charge is still present, later request revisions
-            // stay coalesced until the real drain below the threshold.
+            // A periodic attempt does not reset the pressure epoch. High work
+            // alone cannot trigger another early attempt without a real drain.
             if pending.total >= CHECKPOINT_REARM_THRESHOLD {
                 self.early_attempted = true;
             }
@@ -188,26 +187,21 @@ impl CheckpointSchedule {
         after: Snapshot,
         owner_before: Option<crate::change_budget::OwnerCapacityState>,
         owner_after: Option<crate::change_budget::OwnerCapacityState>,
-        successor_attempt: bool,
     ) {
         self.next_deadline = now + self.period;
         self.early_attempted = after.total >= CHECKPOINT_REARM_THRESHOLD;
-        self.immediate_successor = if !successor_attempt {
-            match (owner_before, owner_after) {
-                (Some(before), Some(after))
-                    if after.active > 0
-                        && after.work_revision > before.work_revision
-                        && (after.active >= crate::change_budget::CHECKPOINT_TRIGGER
-                            || after
-                                .checkpoint_request_revision
-                                .is_some_and(|revision| revision > before.work_revision)) =>
-                {
-                    Some(after.work_revision)
-                }
-                _ => None,
+        self.immediate_successor = match (owner_before, owner_after) {
+            (Some(before), Some(after))
+                if after.active > 0
+                    && after.work_revision > before.work_revision
+                    && (after.active >= crate::change_budget::CHECKPOINT_TRIGGER
+                        || after
+                            .checkpoint_request_revision
+                            .is_some_and(|revision| revision > before.work_revision)) =>
+            {
+                Some(after.work_revision)
             }
-        } else {
-            None
+            _ => None,
         };
         if after.total < crate::change_budget::CHECKPOINT_TRIGGER {
             self.early_attempted = false;
@@ -369,7 +363,6 @@ impl SegmentCheckpointSink {
                                 after,
                                 owner_before,
                                 owner_after,
-                                successor_attempt,
                             );
                         }
                         Err(error) => {
@@ -1243,7 +1236,6 @@ mod tests {
                 work_revision: 11,
                 checkpoint_request_revision: Some(11),
             }),
-            false,
         );
         let successor_owner = Some(crate::change_budget::OwnerCapacityState {
             active: crate::change_budget::CHECKPOINT_TRIGGER + 1,
@@ -1253,6 +1245,62 @@ mod tests {
         });
         assert!(schedule.take_successor(successor_owner));
         assert!(!schedule.take_successor(successor_owner));
+    }
+
+    #[test]
+    fn successful_successors_keep_new_high_work_runnable_without_a_refusal() {
+        let now = Instant::now();
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(3600), now);
+        let high = crate::change_budget::CHECKPOINT_TRIGGER + 1;
+        assert!(schedule.should_attempt(now, snapshot(high, 10, None), 10));
+
+        for revision in 11..=13 {
+            let before = crate::change_budget::OwnerCapacityState {
+                active: high,
+                frozen: 0,
+                work_revision: revision - 1,
+                checkpoint_request_revision: None,
+            };
+            let after = crate::change_budget::OwnerCapacityState {
+                work_revision: revision,
+                ..before
+            };
+            schedule.completed_success(
+                now + Duration::from_secs(revision - 10),
+                snapshot(high, revision, None),
+                Some(before),
+                Some(after),
+            );
+            assert!(
+                schedule.take_successor(Some(after)),
+                "new high work after publication {revision} must not wait for a 429 to request relief"
+            );
+            assert!(
+                !schedule.take_successor(Some(after)),
+                "one publication must arm only one successor"
+            );
+        }
+
+        // A high process total is not enough: unchanged owner work must never
+        // form a busy loop, even after a chain of successful publications.
+        let unchanged = crate::change_budget::OwnerCapacityState {
+            active: high,
+            frozen: 0,
+            work_revision: 13,
+            checkpoint_request_revision: None,
+        };
+        schedule.completed_success(
+            now + Duration::from_secs(4),
+            snapshot(high, 13, None),
+            Some(unchanged),
+            Some(unchanged),
+        );
+        assert!(!schedule.take_successor(Some(unchanged)));
+        assert!(!schedule.should_attempt(
+            now + Duration::from_secs(4),
+            snapshot(high, 13, None),
+            13,
+        ));
     }
 
     #[test]
@@ -1276,7 +1324,6 @@ mod tests {
                 work_revision: 10,
                 checkpoint_request_revision: Some(10),
             }),
-            false,
         );
         assert!(schedule.should_attempt(
             now + Duration::from_secs(1),
