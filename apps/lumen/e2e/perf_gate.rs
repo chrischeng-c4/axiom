@@ -2041,20 +2041,11 @@ mod durable_workload {
                 ])?;
                 let image_id = verify_image_identity(&image)?;
                 let port_output = docker(&["port", &container, "7373/tcp"])?;
-                let port = port_output
-                    .trim()
-                    .rsplit(':')
-                    .next()
-                    .and_then(|value| value.parse::<u16>().ok())
-                    .ok_or_else(|| {
-                        HarnessError::Startup(format!(
-                            "cannot parse published port: {port_output:?}"
-                        ))
-                    })?;
+                let base = published_loopback_base(&port_output)?;
                 Ok(Self {
                     container: container.clone(),
                     volume: volume.clone(),
-                    base: format!("http://127.0.0.1:{port}"),
+                    base,
                     client: reqwest::Client::builder()
                         .timeout(REQUEST_TIMEOUT)
                         .build()
@@ -2198,13 +2189,117 @@ mod durable_workload {
             self.cleanup_armed = false;
         }
 
-        async fn restart_and_wait_ready(&self) -> Result<Duration> {
+        async fn restart_and_wait_ready(&mut self) -> Result<Duration> {
+            self.restart_and_wait_ready_with(&mut DockerRestartCommandRunner)
+                .await
+        }
+
+        async fn restart_and_wait_ready_with<R: RestartCommandRunner>(
+            &mut self,
+            runner: &mut R,
+        ) -> Result<Duration> {
             let started = Instant::now();
-            let container = self.container.clone();
-            let args = ["restart", container.as_str()];
-            run_command_with_timeout("docker", &args, STARTUP_TIMEOUT).await?;
-            self.wait_ready().await?;
+            runner.restart(&self.container).await?;
+            self.refresh_restart_endpoint(runner, Instant::now() + STARTUP_TIMEOUT)
+                .await?;
             Ok(started.elapsed())
+        }
+
+        async fn refresh_restart_endpoint<R: RestartCommandRunner>(
+            &mut self,
+            runner: &mut R,
+            deadline: Instant,
+        ) -> Result<()> {
+            // Docker can assign another random host port on restart. Resolve
+            // the same container again before any readiness or cold readback.
+            // Lookup and readiness share the existing startup deadline.
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            tokio::time::timeout(remaining, async {
+                let output = runner.published_port(&self.container).await?;
+                if Instant::now() >= deadline {
+                    return Err(HarnessError::Startup(
+                        "published-port lookup exhausted the startup budget".to_owned(),
+                    ));
+                }
+                let base = published_loopback_base(&output)?;
+                eprintln!(
+                    "PERF_RESTART_ENDPOINT container={} previous={} current={}",
+                    self.container, self.base, base
+                );
+                self.base = base;
+                self.wait_ready().await
+            })
+            .await
+            .map_err(|_| {
+                HarnessError::Startup(format!(
+                    "published-port refresh and readiness exceeded the remaining {remaining:?} startup budget"
+                ))
+            })?
+        }
+    }
+
+    fn published_loopback_base(output: &str) -> Result<String> {
+        let port = output
+            .trim()
+            .strip_prefix("127.0.0.1:")
+            .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|port| *port != 0)
+            .ok_or_else(|| {
+                HarnessError::Startup(format!(
+                    "cannot parse one published loopback port: {output:?}"
+                ))
+            })?;
+        Ok(format!("http://127.0.0.1:{port}"))
+    }
+
+    #[async_trait]
+    trait RestartCommandRunner {
+        async fn restart(&mut self, container: &str) -> Result<()>;
+        async fn published_port(&mut self, container: &str) -> Result<String>;
+    }
+
+    struct DockerRestartCommandRunner;
+
+    #[async_trait]
+    impl RestartCommandRunner for DockerRestartCommandRunner {
+        async fn restart(&mut self, container: &str) -> Result<()> {
+            run_command_with_timeout("docker", &["restart", container], STARTUP_TIMEOUT)
+                .await
+                .map(|_| ())
+        }
+
+        async fn published_port(&mut self, container: &str) -> Result<String> {
+            let args = vec![
+                "port".to_owned(),
+                container.to_owned(),
+                "7373/tcp".to_owned(),
+            ];
+            let failure = |detail: String| HarnessError::Command {
+                program: "docker",
+                args: args.clone(),
+                detail,
+            };
+            let mut command = tokio::process::Command::new("docker");
+            command
+                .args(&args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let (status, stdout, stderr) = tokio::time::timeout(REQUEST_TIMEOUT, async {
+                let child = command.spawn().map_err(|error| error.to_string())?;
+                collect_docker_output(child, EvidenceRetention::Prefix).await
+            })
+            .await
+            .map_err(|_| failure("published-port lookup exceeded request deadline".to_owned()))?
+            .map_err(&failure)?;
+            if !status.success() || stdout.truncated {
+                return Err(failure(format!(
+                    "published-port lookup status={status}: {}",
+                    render_command_streams(&stdout, &stderr)
+                )));
+            }
+            String::from_utf8(stdout.retained).map_err(|error| failure(error.to_string()))
         }
     }
 
@@ -5049,7 +5144,7 @@ mod durable_workload {
 
     async fn run_case(config: CaseConfig) -> Result<CompletedCase> {
         let mut server = DockerLumen::start().await?;
-        let result = run_case_with_server(&server, config).await;
+        let result = run_case_with_server(&mut server, config).await;
         if let Err(error) = &result {
             server.finish_failure(error).await;
         }
@@ -5057,7 +5152,7 @@ mod durable_workload {
     }
 
     async fn run_case_with_server(
-        server: &DockerLumen,
+        server: &mut DockerLumen,
         config: CaseConfig,
     ) -> Result<CompletedCase> {
         // The metric preflight is intentionally before the costly seed. Current
@@ -6495,6 +6590,240 @@ mod durable_workload {
             assert!(failure.contains("request_connect=false"));
             assert!(failure.contains("connection reset by peer"));
         });
+    }
+
+    struct ScriptedRestartRunner {
+        calls: Vec<String>,
+        port_result: Option<Result<String>>,
+    }
+
+    #[async_trait]
+    impl RestartCommandRunner for ScriptedRestartRunner {
+        async fn restart(&mut self, container: &str) -> Result<()> {
+            self.calls.push(format!("restart {container}"));
+            Ok(())
+        }
+
+        async fn published_port(&mut self, container: &str) -> Result<String> {
+            self.calls.push(format!("port {container} 7373/tcp"));
+            self.port_result
+                .take()
+                .expect("resolve the port exactly once")
+        }
+    }
+
+    async fn fake_ready_lumen() -> (
+        DockerLumen,
+        Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        fake_ready_lumen_with_delay(Duration::ZERO).await
+    }
+
+    async fn fake_ready_lumen_with_delay(
+        delay: Duration,
+    ) -> (
+        DockerLumen,
+        Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .route(
+                "/readyz",
+                axum::routing::get(
+                    |axum::extract::State((requests, delay)): axum::extract::State<(
+                        Arc<std::sync::atomic::AtomicUsize>,
+                        Duration,
+                    )>| async move {
+                        requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        tokio::time::sleep(delay).await;
+                        axum::http::StatusCode::OK
+                    },
+                ),
+            )
+            .with_state((Arc::clone(&requests), delay));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake restart readiness responder");
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            DockerLumen {
+                container: "restart-test-owner".to_owned(),
+                volume: "restart-test-volume".to_owned(),
+                base: format!("http://{address}"),
+                client: reqwest::Client::builder()
+                    .timeout(REQUEST_TIMEOUT)
+                    .build()
+                    .unwrap(),
+                image_reference: "restart-test-image-reference".to_owned(),
+                image_id: "restart-test-image-id".to_owned(),
+                cleanup_armed: false,
+                request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+            },
+            requests,
+            task,
+        )
+    }
+
+    #[tokio::test]
+    async fn restart_refreshes_published_port_before_readiness() {
+        let (mut server, old_requests, old_task) = fake_ready_lumen().await;
+        let (new_server, new_requests, new_task) = fake_ready_lumen().await;
+        let old_identity = (
+            server.container.clone(),
+            server.volume.clone(),
+            server.image_reference.clone(),
+            server.image_id.clone(),
+        );
+        let mut runner = ScriptedRestartRunner {
+            calls: Vec::new(),
+            port_result: Some(Ok(format!(
+                "{}\n",
+                new_server.base.strip_prefix("http://").unwrap()
+            ))),
+        };
+        server
+            .restart_and_wait_ready_with(&mut runner)
+            .await
+            .unwrap();
+        assert_eq!(
+            server.base, new_server.base,
+            "cold readbacks need the new URL"
+        );
+        assert_eq!(
+            runner.calls,
+            [
+                "restart restart-test-owner",
+                "port restart-test-owner 7373/tcp"
+            ]
+        );
+        assert_eq!(
+            old_requests.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a healthy responder at the stale port must not satisfy readiness"
+        );
+        assert_eq!(new_requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            (
+                server.container.clone(),
+                server.volume.clone(),
+                server.image_reference.clone(),
+                server.image_id.clone()
+            ),
+            old_identity
+        );
+        old_task.abort();
+        new_task.abort();
+    }
+
+    #[tokio::test]
+    async fn restart_port_lookup_failure_never_falls_back_to_stale_url() {
+        let (mut server, requests, task) = fake_ready_lumen().await;
+        let old_base = server.base.clone();
+        let mut runner = ScriptedRestartRunner {
+            calls: Vec::new(),
+            port_result: Some(Err(HarnessError::Startup("port lookup failed".to_owned()))),
+        };
+        let result = server.restart_and_wait_ready_with(&mut runner).await;
+        assert!(
+            result.is_err(),
+            "a healthy stale URL must not hide lookup failure"
+        );
+        assert_eq!(server.base, old_base);
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn restart_rejects_invalid_published_ports_without_a_stale_probe() {
+        let (mut server, requests, task) = fake_ready_lumen().await;
+        let old_base = server.base.clone();
+        for output in [
+            "",
+            "127.0.0.1:0",
+            "127.0.0.1:65536",
+            "127.0.0.1:not-a-port",
+            "0.0.0.0:7373",
+            "example.invalid:7373",
+            "127.0.0.1:1234\n127.0.0.1:5678",
+        ] {
+            let mut runner = ScriptedRestartRunner {
+                calls: Vec::new(),
+                port_result: Some(Ok(output.to_owned())),
+            };
+            let result = server.restart_and_wait_ready_with(&mut runner).await;
+            assert!(result.is_err(), "must refuse mapping {output:?}");
+            assert_eq!(server.base, old_base);
+        }
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+        task.abort();
+    }
+
+    struct DelayedPortRunner {
+        output: String,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl RestartCommandRunner for DelayedPortRunner {
+        async fn restart(&mut self, _container: &str) -> Result<()> {
+            panic!("this fixture covers only the post-restart readiness budget")
+        }
+
+        async fn published_port(&mut self, _container: &str) -> Result<String> {
+            tokio::time::sleep(self.delay).await;
+            Ok(self.output.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn restart_port_lookup_cannot_outlive_the_readiness_budget() {
+        let (mut server, requests, task) = fake_ready_lumen().await;
+        let old_base = server.base.clone();
+        let mut runner = DelayedPortRunner {
+            output: server.base.strip_prefix("http://").unwrap().to_owned(),
+            delay: Duration::from_secs(1),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            server
+                .refresh_restart_endpoint(&mut runner, Instant::now() + Duration::from_millis(50)),
+        )
+        .await
+        .expect("the original readiness budget must terminate lookup");
+        assert!(
+            matches!(result, Err(HarnessError::Startup(_))),
+            "{result:?}"
+        );
+        assert_eq!(server.base, old_base);
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn restart_port_lookup_does_not_reset_the_readiness_budget() {
+        let (mut server, _requests, task) =
+            fake_ready_lumen_with_delay(Duration::from_secs(1)).await;
+        let mut runner = DelayedPortRunner {
+            output: server.base.strip_prefix("http://").unwrap().to_owned(),
+            delay: Duration::from_millis(25),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            server
+                .refresh_restart_endpoint(&mut runner, Instant::now() + Duration::from_millis(100)),
+        )
+        .await
+        .expect("lookup and HTTP readiness must share the same deadline");
+        assert!(
+            matches!(result, Err(HarnessError::Startup(_))),
+            "{result:?}"
+        );
+        task.abort();
     }
 
     #[cfg(test)]
