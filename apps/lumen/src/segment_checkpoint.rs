@@ -96,9 +96,11 @@ impl SegmentCheckpointDriver {
 
 /// A high-water crossing schedules one immediate checkpoint. Each successful
 /// publication can schedule one successor when new owner work arrived during
-/// the checkpoint and remains above the trigger. Unchanged high work waits for
-/// the normal post-completion period. New capacity requests can also schedule
-/// an immediate attempt without waiting for the pressure to drain.
+/// the checkpoint and remains above the trigger. A drained owner also retains
+/// one successor for its next active-byte crossing, even if reservations keep
+/// the process total high. Unchanged high work waits for the normal
+/// post-completion period. New capacity requests can also schedule an immediate
+/// attempt without waiting for the pressure to drain.
 struct CheckpointSchedule {
     period: Duration,
     next_deadline: Instant,
@@ -165,6 +167,7 @@ impl CheckpointSchedule {
     }
 
     fn completed(&mut self, now: Instant, pending: Snapshot) {
+        self.immediate_successor = None;
         if pending.total >= CHECKPOINT_REARM_THRESHOLD {
             self.early_attempted = true;
         }
@@ -172,13 +175,22 @@ impl CheckpointSchedule {
     }
 
     fn take_successor(&mut self, owner: Option<crate::change_budget::OwnerCapacityState>) -> bool {
-        let Some(armed_revision) = self.immediate_successor.take() else {
+        let Some(armed_revision) = self.immediate_successor else {
             return false;
         };
-        owner.is_some_and(|owner| {
-            owner.active >= crate::change_budget::CHECKPOINT_TRIGGER
-                && owner.work_revision >= armed_revision
-        })
+        let Some(owner) = owner.filter(|owner| owner.work_revision >= armed_revision) else {
+            self.immediate_successor = None;
+            return false;
+        };
+        if owner.active < crate::change_budget::CHECKPOINT_TRIGGER {
+            // Reservations are not checkpointable. Keep the successful
+            // publication's one successor until this owner's active work
+            // crosses the existing trigger, rather than consuming it on a
+            // below-trigger poll and waiting for the next periodic deadline.
+            return false;
+        }
+        self.immediate_successor = None;
+        true
     }
 
     fn completed_success(
@@ -191,6 +203,9 @@ impl CheckpointSchedule {
         self.next_deadline = now + self.period;
         self.early_attempted = after.total >= CHECKPOINT_REARM_THRESHOLD;
         self.immediate_successor = match (owner_before, owner_after) {
+            (Some(_), Some(after)) if after.active < crate::change_budget::CHECKPOINT_TRIGGER => {
+                Some(after.work_revision)
+            }
             (Some(before), Some(after))
                 if after.active > 0
                     && after.work_revision > before.work_revision
@@ -1330,6 +1345,143 @@ mod tests {
             snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 11, Some(11)),
             11,
         ));
+    }
+
+    #[test]
+    fn new_owner_work_crossing_after_publication_is_not_hidden_by_reservations() {
+        let now = Instant::now();
+        let trigger = crate::change_budget::CHECKPOINT_TRIGGER;
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(3600), now);
+        assert!(schedule.should_attempt(now, snapshot(trigger, 10, None), 10));
+        let before = crate::change_budget::OwnerCapacityState {
+            active: trigger,
+            frozen: 0,
+            work_revision: 10,
+            checkpoint_request_revision: None,
+        };
+        let after = crate::change_budget::OwnerCapacityState {
+            active: trigger * 3 / 4,
+            work_revision: 11,
+            ..before
+        };
+        // A successful publication left newer owner work below the trigger.
+        // In-flight request reservations keep the process total above it.
+        let pending = Snapshot {
+            reserved: trigger / 2,
+            active: after.active,
+            frozen: 0,
+            total: trigger * 5 / 4,
+            work_revision: 11,
+            checkpoint_request_revision: None,
+        };
+        schedule.completed_success(now, pending, Some(before), Some(after));
+        assert!(
+            !schedule.take_successor(Some(after)),
+            "reserved work is not a capture target"
+        );
+        assert!(
+            !schedule.should_attempt(now, pending, 11),
+            "do not publish just for reservations"
+        );
+
+        let crossed = crate::change_budget::OwnerCapacityState {
+            active: trigger,
+            work_revision: 12,
+            ..after
+        };
+        assert!(
+            schedule.take_successor(Some(crossed)),
+            "new publishable owner work must cross the unchanged trigger without waiting for a refusal or the normal period"
+        );
+        assert!(
+            !schedule.take_successor(Some(crossed)),
+            "one publication permits only one successor"
+        );
+    }
+
+    #[test]
+    fn reservations_after_a_complete_owner_drain_do_not_hide_new_work() {
+        let now = Instant::now();
+        let trigger = crate::change_budget::CHECKPOINT_TRIGGER;
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(3600), now);
+        let before = crate::change_budget::OwnerCapacityState {
+            active: trigger,
+            frozen: 0,
+            work_revision: 10,
+            checkpoint_request_revision: None,
+        };
+        let drained = crate::change_budget::OwnerCapacityState {
+            active: 0,
+            ..before
+        };
+        let reserved = Snapshot {
+            reserved: trigger,
+            active: 0,
+            frozen: 0,
+            total: trigger,
+            work_revision: 10,
+            checkpoint_request_revision: None,
+        };
+        schedule.completed_success(now, reserved, Some(before), Some(drained));
+        for _ in 0..3 {
+            assert!(!schedule.take_successor(Some(drained)));
+            assert!(!schedule.should_attempt(now, reserved, 10));
+        }
+        let new_work = crate::change_budget::OwnerCapacityState {
+            active: trigger,
+            work_revision: 11,
+            ..drained
+        };
+        assert!(
+            schedule.take_successor(Some(new_work)),
+            "the owner's next crossing must remain observable after a complete drain"
+        );
+        assert!(!schedule.take_successor(Some(new_work)));
+    }
+
+    #[test]
+    fn failed_publication_cancels_a_deferred_successor() {
+        let now = Instant::now();
+        let trigger = crate::change_budget::CHECKPOINT_TRIGGER;
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
+        schedule.immediate_successor = Some(10);
+        schedule.completed(now, snapshot(trigger, 11, None));
+        let owner = crate::change_budget::OwnerCapacityState {
+            active: trigger,
+            frozen: 0,
+            work_revision: 11,
+            checkpoint_request_revision: None,
+        };
+        assert!(
+            !schedule.take_successor(Some(owner)),
+            "a failed attempt must retain its existing periodic backoff"
+        );
+        assert!(!schedule.should_attempt(now, snapshot(trigger, 11, None), 11));
+        assert!(schedule.should_attempt(
+            now + Duration::from_secs(30),
+            snapshot(trigger, 11, None),
+            11
+        ));
+    }
+
+    #[test]
+    fn missing_or_replaced_owner_cancels_a_deferred_successor() {
+        let now = Instant::now();
+        let trigger = crate::change_budget::CHECKPOINT_TRIGGER;
+        for owner in [
+            None,
+            Some(crate::change_budget::OwnerCapacityState {
+                active: trigger,
+                frozen: 0,
+                work_revision: 9,
+                checkpoint_request_revision: None,
+            }),
+        ] {
+            let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
+            schedule.immediate_successor = Some(10);
+            assert!(!schedule.take_successor(owner));
+            assert_eq!(schedule.immediate_successor, None);
+        }
     }
 
     #[test]
