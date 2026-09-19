@@ -5786,4 +5786,3 @@ mod full_compaction_contract {
         }
     }
 }
-
