@@ -1654,6 +1654,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments".into(),
+                    false,
+                ),
+                (
                     "runtime_metrics_reject_a_missing_required_row".into(),
                     false,
                 ),
@@ -1679,6 +1683,14 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 (
                     "seed_backpressure_retry_honors_absolute_setup_deadline".into(),
+                    false,
+                ),
+                (
+                    "seed_checkpoint_requires_one_persisted_drained_publication".into(),
+                    false,
+                ),
+                (
+                    "seed_checkpoint_honors_setup_and_body_deadlines".into(),
                     false,
                 ),
                 (

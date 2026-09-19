@@ -658,6 +658,10 @@ fn median_statistic_and_ignored_inventory() {
                 "approved_index_operation_requires_the_frozen_fourteen_field_schema",
                 false,
             ),
+            (
+                "runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments",
+                false,
+            ),
             ("runtime_metrics_reject_a_missing_required_row", false),
             ("runtime_metrics_reject_a_duplicate_required_row", false),
             ("runtime_metrics_reject_an_invalid_required_row", false),
@@ -671,6 +675,8 @@ fn median_statistic_and_ignored_inventory() {
                 false,
             ),
             ("seed_backpressure_retry_honors_absolute_setup_deadline", false),
+            ("seed_checkpoint_requires_one_persisted_drained_publication", false),
+            ("seed_checkpoint_honors_setup_and_body_deadlines", false),
             ("request_deadline_is_the_approved_five_seconds", false),
             (
                 "post_input_workload_drain_deadline_returns_promptly",
@@ -3102,6 +3108,73 @@ mod durable_workload {
         Ok(())
     }
 
+    async fn checkpoint_seed(
+        client: &reqwest::Client,
+        base: &str,
+        setup_deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        // Only fixture preparation gets this one awaited checkpoint. The
+        // measured workload still has its original five-second request bound,
+        // offers the full load, and cannot retry errors. Reuse the existing
+        // 60-second drain bound without extending the total setup deadline.
+        let deadline = setup_deadline.min(tokio::time::Instant::now() + DRAIN_TIMEOUT);
+        let timeout = || HarnessError::SetupTimeout {
+            stage: "seed_checkpoint",
+        };
+        if tokio::time::Instant::now() >= deadline {
+            return Err(timeout());
+        }
+        tokio::time::timeout_at(deadline, async {
+            let response = client
+                .post(format!("{base}/admin/checkpoint"))
+                .timeout(DRAIN_TIMEOUT)
+                .json(&json!({}))
+                .send()
+                .await
+                .map_err(HarnessError::request_failure)?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(HarnessError::Http(format!(
+                    "seed checkpoint returned {status}"
+                )));
+            }
+            let response = response
+                .json::<Value>()
+                .await
+                .map_err(HarnessError::request_failure)?;
+            if response.get("persisted").and_then(Value::as_bool) != Some(true) {
+                return Err(HarnessError::DataInvariant(
+                    "seed checkpoint did not confirm persisted=true".to_owned(),
+                ));
+            }
+            let (status, metrics) =
+                fetch_interval_metrics(client, format!("{base}/metrics"), REQUEST_TIMEOUT).await?;
+            if !status.is_success() {
+                return Err(HarnessError::Http(format!(
+                    "seed checkpoint metrics returned {status}"
+                )));
+            }
+            // Persisted deltas can remain on disk. Only pending change charges
+            // must be zero, so fixture work cannot enter the measured window.
+            for name in [
+                "lumen_pending_change_active_bytes",
+                "lumen_pending_change_frozen_bytes",
+                "lumen_pending_change_reserved_bytes",
+            ] {
+                let bytes = prometheus_counter(&metrics, name)?;
+                if bytes != 0 {
+                    return Err(HarnessError::DataInvariant(format!(
+                        "seed checkpoint left pending work: {name}={bytes}"
+                    )));
+                }
+            }
+            eprintln!("PERF_SEED_CHECKPOINT persisted=true active_bytes=0 frozen_bytes=0 reserved_bytes=0");
+            Ok(())
+        })
+        .await
+        .map_err(|_| timeout())?
+    }
+
     async fn create_collection(
         server: &DockerLumen,
         collection: &str,
@@ -4048,6 +4121,18 @@ mod durable_workload {
         Ok((status, body))
     }
 
+    fn runtime_sample(elapsed: Duration, counters: RuntimeCounters, metrics: &str) -> String {
+        let pending = metrics
+            .lines()
+            .filter(|line| line.starts_with("lumen_pending_change_"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "PERF_RUNTIME_SAMPLE elapsed_ms={} counters={counters:?} pending=[{pending}]",
+            elapsed.as_millis()
+        )
+    }
+
     async fn drive_workload(
         server: &DockerLumen,
         config: CaseConfig,
@@ -4068,6 +4153,7 @@ mod durable_workload {
         let sampler = tokio::spawn(async move {
             let mut first = None;
             let mut last = None;
+            let mut next_log = Duration::ZERO;
             let input_end = input_window;
             while sampler_clock.elapsed() < input_end {
                 let (status, metrics) = fetch_interval_metrics(
@@ -4084,6 +4170,13 @@ mod durable_workload {
                 let counters = RuntimeCounters::parse(&metrics)?;
                 if sampler_clock.elapsed() >= input_end {
                     break;
+                }
+                // Reuse the required scrape. These bounded diagnostic lines
+                // survive a failed ledger gate and do not affect its decision.
+                let elapsed = sampler_clock.elapsed();
+                if elapsed >= next_log {
+                    eprintln!("{}", runtime_sample(elapsed, counters, &metrics));
+                    next_log = elapsed + Duration::from_secs(10);
                 }
                 first.get_or_insert(counters);
                 last = Some(counters);
@@ -4234,6 +4327,7 @@ mod durable_workload {
                 // VmHWM remains a peak through the drain, while completion/IO evidence
                 // above remains strictly within measured input.
                 deltas.process_rss_high_water_bytes = counters_after.process_rss_high_water_bytes;
+                eprintln!("PERF_RUNTIME_DELTA {deltas:?}");
                 deltas.assert_complete_interval_evidence()?;
                 let mut ledger = ledger.lock().await;
                 for _ in 0..deltas.checkpoints {
@@ -4987,6 +5081,17 @@ mod durable_workload {
             }
             Err(error) => return Err(error),
         }
+        eprintln!("PERF_STAGE_BEGIN seed_checkpoint");
+        match checkpoint_seed(&server.client, &server.base, setup_deadline).await {
+            Ok(()) => eprintln!("PERF_STAGE_END seed_checkpoint"),
+            Err(error @ HarnessError::SetupTimeout { .. }) => {
+                eprintln!("PERF_STAGE_TIMEOUT seed_checkpoint");
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
+        // The clock and metric baseline are created only after seed work is
+        // durable. This preparation checkpoint cannot satisfy interval gates.
         let (report, counter_delta, observed_input_duration) =
             drive_workload(&server, config).await?;
         let post_input_deadline = tokio::time::Instant::now()
@@ -5465,6 +5570,29 @@ mod durable_workload {
     }
 
     #[test]
+    fn runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments() {
+        let metrics = format!(
+            "{}\n# HELP lumen_pending_change_total_bytes pending changes\n\
+             lumen_pending_change_reserved_bytes 7\n\
+             lumen_pending_change_active_bytes 11\n\
+             lumen_pending_change_frozen_bytes 13\n\
+             lumen_pending_change_total_bytes 31\n\
+             unrelated_metric 999",
+            complete_runtime_metrics(1)
+        );
+        let counters = RuntimeCounters::parse(&metrics).unwrap();
+        let sample = runtime_sample(Duration::from_millis(10_250), counters, &metrics);
+        assert!(sample.starts_with("PERF_RUNTIME_SAMPLE elapsed_ms=10250 "));
+        assert!(sample.contains("checkpoints: 10, merges: 5"));
+        for (state, bytes) in [("reserved", 7), ("active", 11), ("frozen", 13), ("total", 31)] {
+            assert!(sample.contains(&format!("lumen_pending_change_{state}_bytes {bytes}")));
+        }
+        assert!(!sample.contains("# HELP"));
+        assert!(!sample.contains("unrelated_metric"));
+        assert!(!sample.contains('\n'));
+    }
+
+    #[test]
     fn runtime_metrics_reject_a_missing_required_row() {
         let metrics = complete_runtime_metrics(1)
             .lines()
@@ -5601,6 +5729,166 @@ mod durable_workload {
             match result {
                 Err(HarnessError::SetupTimeout { stage: "seed" }) => {}
                 other => panic!("expected a typed seed setup timeout, got {other:?}"),
+            }
+        });
+    }
+
+    #[cfg(test)]
+    async fn fake_seed_checkpoint_server(
+        status: reqwest::StatusCode,
+        body: &'static str,
+        metrics: String,
+        delay_headers: bool,
+        delay_body: bool,
+    ) -> (
+        String,
+        Arc<StdMutex<Vec<&'static str>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let calls = Arc::new(StdMutex::new(Vec::new()));
+        let checkpoint_calls = calls.clone();
+        let metric_calls = calls.clone();
+        let app = axum::Router::new()
+            .route("/admin/checkpoint", axum::routing::post(move || {
+                let calls = checkpoint_calls.clone();
+                async move {
+                    calls.lock().unwrap().push("checkpoint");
+                    if delay_headers {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                    let body = axum::body::Body::from_stream(futures::stream::once(async move {
+                        if delay_body {
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                        Ok::<_, std::convert::Infallible>(body)
+                    }));
+                    let mut response = axum::response::Response::new(body);
+                    *response.status_mut() = status;
+                    response
+                }
+            }))
+            .route("/metrics", axum::routing::get(move || {
+                let calls = metric_calls.clone();
+                let metrics = metrics.clone();
+                async move {
+                    calls.lock().unwrap().push("metrics");
+                    metrics
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), calls, task)
+    }
+
+    #[test]
+    fn seed_checkpoint_requires_one_persisted_drained_publication() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let client = reqwest::Client::new();
+            let drained = "lumen_pending_change_active_bytes 0\nlumen_pending_change_frozen_bytes 0\nlumen_pending_change_reserved_bytes 0\n";
+            let mut cases = vec![
+                (200, r#"{"persisted":true}"#, drained.to_owned(), true, 2),
+                (429, r#"{"persisted":true}"#, drained.to_owned(), false, 1),
+                (503, r#"{"persisted":true}"#, drained.to_owned(), false, 1),
+                (200, r#"{"persisted":false}"#, drained.to_owned(), false, 1),
+                (200, r#"{"persisted":"true"}"#, drained.to_owned(), false, 1),
+                (200, "not-json", drained.to_owned(), false, 1),
+                (200, r#"{"persisted":true}"#, String::new(), false, 2),
+            ];
+            for metric in ["active", "frozen", "reserved"] {
+                cases.push((
+                    200,
+                    r#"{"persisted":true}"#,
+                    drained.replace(&format!("{metric}_bytes 0"), &format!("{metric}_bytes 1")),
+                    false,
+                    2,
+                ));
+            }
+            for (status, body, metrics, succeeds, expected_calls) in cases {
+                let (base, calls, task) = fake_seed_checkpoint_server(
+                    reqwest::StatusCode::from_u16(status).unwrap(),
+                    body,
+                    metrics.clone(),
+                    false,
+                    false,
+                )
+                .await;
+                let result = checkpoint_seed(
+                    &client,
+                    &base,
+                    tokio::time::Instant::now() + Duration::from_secs(1),
+                )
+                .await;
+                task.abort();
+                assert_eq!(
+                    result.is_ok(), succeeds,
+                    "status={status} body={body} metrics={metrics}: {result:?}"
+                );
+                let calls = calls.lock().unwrap();
+                assert_eq!(
+                    calls.len(), expected_calls,
+                    "checkpoint cannot be skipped or retried"
+                );
+                assert_eq!(calls[0], "checkpoint");
+                if expected_calls == 2 {
+                    assert_eq!(calls[1], "metrics", "drain is checked only after publication");
+                }
+            }
+            assert_eq!(DRAIN_TIMEOUT, Duration::from_secs(60));
+            assert_eq!(INPUT_SECONDS, 1800);
+            assert_eq!(DOCOPS_PER_SECOND, 100);
+            assert_eq!(QUERY_QPS, 10);
+        });
+    }
+
+    #[test]
+    fn seed_checkpoint_honors_setup_and_body_deadlines() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let client = reqwest::Client::new();
+            for (delay_headers, delay_body, expired) in [
+                (true, false, false),
+                (false, true, false),
+                (false, false, true),
+            ] {
+                let (base, calls, task) = fake_seed_checkpoint_server(
+                    reqwest::StatusCode::OK,
+                    r#"{"persisted":true}"#,
+                    String::new(),
+                    delay_headers,
+                    delay_body,
+                )
+                .await;
+                let now = tokio::time::Instant::now();
+                let deadline = now + if expired {
+                    Duration::ZERO
+                } else {
+                    Duration::from_millis(25)
+                };
+                let started = Instant::now();
+                let result = checkpoint_seed(&client, &base, deadline).await;
+                task.abort();
+                assert!(
+                    started.elapsed() < Duration::from_secs(1),
+                    "setup must stop promptly"
+                );
+                assert!(
+                    matches!(result, Err(HarnessError::SetupTimeout { stage: "seed_checkpoint" })),
+                    "{result:?}"
+                );
+                assert_eq!(
+                    calls.lock().unwrap().len(), usize::from(!expired),
+                    "a timed-out checkpoint is never retried"
+                );
             }
         });
     }

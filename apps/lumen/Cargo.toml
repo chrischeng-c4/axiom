@@ -458,6 +458,10 @@ name = "indexing_durable_oracle"
 path = "e2e/indexing_durable_oracle.rs"
 
 [[test]]
+name = "indexing_segment_compaction"
+path = "e2e/indexing_segment_compaction.rs"
+
+[[test]]
 name = "indexing_capacity_http"
 path = "e2e/indexing_capacity_http.rs"
 

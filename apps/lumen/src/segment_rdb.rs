@@ -2987,9 +2987,11 @@ pub(super) fn select_staged_delta_window(
         return Ok(Vec::new());
     };
     let collection = &collections[collection_index];
-    // Keep the job bounded while allowing one durable-cut cohort to publish
-    // together.  The byte bound below remains the hard memory/read budget.
+    // A small durable-cut cohort should share the whole-root publication
+    // cost. Expand its field bound only when the complete job stays inside
+    // the existing byte budget. Larger pair cohorts retain their old bound.
     const MAX_FIELDS_PER_MERGE_JOB: usize = 8;
+    const MAX_BYTE_BOUNDED_FIELDS_PER_MERGE_JOB: usize = 16;
     const MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB: u64 = 24 * 1024 * 1024;
     let mut candidates = Vec::new();
     let mut by_field = BTreeMap::<String, Vec<&SegmentReference>>::new();
@@ -3082,12 +3084,14 @@ pub(super) fn select_staged_delta_window(
             && selected.iter().all(|selected: &StagedMergeCandidate| {
                 !selected.includes_base && selected.inputs.len() == 2
             });
+        let within_byte_budget = total
+            .checked_add(estimate)
+            .is_some_and(|next| next <= MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB);
         if selected.is_empty()
+            || (selected.len() < MAX_BYTE_BOUNDED_FIELDS_PER_MERGE_JOB && within_byte_budget)
             || (selected.len() < MAX_FIELDS_PER_MERGE_JOB
-                && total.checked_add(estimate).is_some_and(|next| {
-                    next <= MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB
-                        || (same_pair_cohort && estimate <= MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB)
-                }))
+                && same_pair_cohort
+                && estimate <= MAX_LOGICAL_READ_BYTES_PER_MERGE_JOB)
         {
             total = total
                 .checked_add(estimate)
@@ -4412,6 +4416,63 @@ mod tests {
             data_version: 1,
             schema: serde_json::json!({}),
             segments,
+        }
+    }
+
+    #[test]
+    fn selector_keeps_small_fourteen_field_cohort_in_one_bounded_job() {
+        // Fourteen fields in the durable workload share one checkpoint cut.
+        // Splitting a small cohort repeats the whole-root publication work,
+        // even when all selected inputs fit inside the existing byte budget.
+        for (count, delta_bytes, expected) in [
+            (14, 1, 14),
+            (17, 1, 16),
+            (14, 1024 * 1024, 12),
+            (9, 2 * 1024 * 1024, 8),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let names: Vec<_> = (0..count).map(|index| format!("f{index:02}")).collect();
+            let fields: Vec<_> = names
+                .iter()
+                .map(|name| (name.as_str(), 4, delta_bytes))
+                .collect();
+            let catalog = cohort_catalog(dir.path(), &fields);
+            // Sparse base files keep these fixtures delta-only without
+            // allocating or reading a large corpus. Selection uses file sizes.
+            for name in &names {
+                OpenOptions::new()
+                    .write(true)
+                    .open(dir.path().join(format!("{name}.base.lseg")))
+                    .unwrap()
+                    .set_len(64 * 1024 * 1024)
+                    .unwrap();
+            }
+            let selected = select_staged_delta_window(dir.path(), &[catalog]).unwrap();
+            assert_eq!(
+                selected.len(),
+                expected,
+                "count={count}, delta_bytes={delta_bytes}: small cohorts share one publication; large cohorts retain their old bound"
+            );
+            assert_eq!(
+                selected
+                    .iter()
+                    .map(|candidate| candidate.field.as_str())
+                    .collect::<Vec<_>>(),
+                names[..expected]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                "field ordering stays deterministic"
+            );
+            assert!(selected.iter().all(|candidate| {
+                !candidate.includes_base && candidate.inputs.len() == 2
+            }));
+            if selected.len() > 8 {
+                assert!(
+                    selected.len() * 2 * delta_bytes <= 24 * 1024 * 1024,
+                    "an expanded cohort must fit the unchanged total byte budget"
+                );
+            }
         }
     }
 
