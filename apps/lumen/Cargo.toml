@@ -713,6 +713,10 @@ name = "vector_filtered_recall_after_replace"
 path = "e2e/vector_filtered_recall_after_replace.rs"
 
 [[test]]
+name = "vector_exact_scan_allocations"
+path = "e2e/vector_exact_scan_allocations.rs"
+
+[[test]]
 name = "vector_field_keeps_its_backend_across_reopen"
 path = "e2e/vector_field_keeps_its_backend_across_reopen.rs"
 
