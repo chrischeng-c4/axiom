@@ -30,6 +30,7 @@ use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 thread_local! {
     pub(crate) static HNSW_CHECKPOINT_FULL_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static HNSW_SEARCH_POOLS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    static VECTOR_STORE_OWNED_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +442,8 @@ impl VectorStore {
     /// Materialize the f32 view of every stored vector. Decoded on the
     /// fly when SQ is on.
     fn iter_decoded(&self) -> Box<dyn Iterator<Item = (String, Vec<f32>)> + '_> {
+        #[cfg(test)]
+        VECTOR_STORE_OWNED_SCANS.with(|scans| scans.set(scans.get() + 1));
         if let Some(cb) = self.codebook.as_ref() {
             Box::new(
                 self.encoded
@@ -847,12 +850,29 @@ impl VectorIndex for HnswCpuIndex {
         // a short or degraded result. Membership and scoring are unchanged.
         self.exact_scan_fallbacks.fetch_add(1, Ordering::Relaxed);
         let metric = inner.store.spec.metric;
-        let mut cand: Vec<(String, f32)> = inner
-            .store
-            .iter_decoded()
-            .filter(|(eid, _)| allow(eid))
-            .map(|(eid, v)| (eid, -distance(metric, query, &v)))
-            .collect();
+        // The read guard pins the store until the selected IDs are copied.
+        // Borrow raw vectors and candidate IDs. For SQ, reject the ID before
+        // decoding its vector; only allowed values need a temporary f32 view.
+        let mut cand: Vec<(&str, f32)> = if let Some(codebook) = inner.store.codebook.as_ref() {
+            inner
+                .store
+                .encoded
+                .iter()
+                .filter(|(eid, _)| allow(eid))
+                .map(|(eid, bytes)| {
+                    let vector = decode_sq(bytes, codebook);
+                    (eid.as_str(), -distance(metric, query, &vector))
+                })
+                .collect()
+        } else {
+            inner
+                .store
+                .raw
+                .iter()
+                .filter(|(eid, _)| allow(eid))
+                .map(|(eid, vector)| (eid.as_str(), -distance(metric, query, vector)))
+                .collect()
+        };
         let want = k.min(cand.len());
         if want > 0 && want < cand.len() {
             cand.select_nth_unstable_by(want - 1, |a, b| {
@@ -861,7 +881,10 @@ impl VectorIndex for HnswCpuIndex {
             cand.truncate(want);
         }
         cand.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(cand)
+        Ok(cand
+            .into_iter()
+            .map(|(eid, score)| (eid.to_owned(), score))
+            .collect())
     }
 
     fn len(&self) -> usize {
@@ -1794,6 +1817,29 @@ mod tests {
     }
 
     #[test]
+    fn hnsw_exact_fallback_does_not_enter_the_owned_store_iterator() {
+        for quantize in [None, Some(VectorQuantize::Sq)] {
+            let index = HnswCpuIndex::new(spec(3, VectorMetric::L2, quantize));
+            index.set_ef_search(32);
+            for i in 0..128 {
+                index.add(&format!("v{i}"), &[i as f32, 1.0, 0.0]).unwrap();
+            }
+            VECTOR_STORE_OWNED_SCANS.with(|scans| scans.set(0));
+            let before = index.exact_scan_fallbacks();
+            assert!(index
+                .search_knn_filtered(&[0.0, 1.0, 0.0], 5, &|_| false)
+                .unwrap()
+                .is_empty());
+            assert_eq!(index.exact_scan_fallbacks(), before + 1);
+            assert_eq!(
+                VECTOR_STORE_OWNED_SCANS.with(|scans| scans.get()),
+                0,
+                "fallback must filter and score borrowed values, quantize={quantize:?}"
+            );
+        }
+    }
+
+    #[test]
     fn hnsw_nearest_orphans_do_not_repeat_an_inconclusive_graph_search() {
         const N: usize = 256;
         const K: usize = 5;
@@ -1822,7 +1868,8 @@ mod tests {
         assert_eq!(index.exact_scan_fallbacks(), before + 1);
         let pools = HNSW_SEARCH_POOLS.with(|pools| pools.borrow().clone());
         assert_eq!(
-            pools.len(), 1,
+            pools.len(),
+            1,
             "an unresolved nearest orphan must go directly to the exact fallback: {pools:?}"
         );
     }
@@ -1871,9 +1918,7 @@ mod tests {
         let hits = index
             .search_knn_filtered(&[0.0, 0.0, 0.0], 5, &|_| true)
             .unwrap();
-        let expected: Vec<_> = (0..5)
-            .map(|i| (format!("v{i:03}"), -(i as f32)))
-            .collect();
+        let expected: Vec<_> = (0..5).map(|i| (format!("v{i:03}"), -(i as f32))).collect();
         assert_eq!(hits, expected);
         assert_eq!(index.exact_scan_fallbacks(), before);
         assert_eq!(
