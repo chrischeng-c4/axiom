@@ -658,6 +658,10 @@ fn median_statistic_and_ignored_inventory() {
                 "approved_index_operation_requires_the_frozen_fourteen_field_schema",
                 false,
             ),
+            (
+                "runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments",
+                false,
+            ),
             ("runtime_metrics_reject_a_missing_required_row", false),
             ("runtime_metrics_reject_a_duplicate_required_row", false),
             ("runtime_metrics_reject_an_invalid_required_row", false),
@@ -4048,6 +4052,18 @@ mod durable_workload {
         Ok((status, body))
     }
 
+    fn runtime_sample(elapsed: Duration, counters: RuntimeCounters, metrics: &str) -> String {
+        let pending = metrics
+            .lines()
+            .filter(|line| line.starts_with("lumen_pending_change_"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "PERF_RUNTIME_SAMPLE elapsed_ms={} counters={counters:?} pending=[{pending}]",
+            elapsed.as_millis()
+        )
+    }
+
     async fn drive_workload(
         server: &DockerLumen,
         config: CaseConfig,
@@ -4068,6 +4084,7 @@ mod durable_workload {
         let sampler = tokio::spawn(async move {
             let mut first = None;
             let mut last = None;
+            let mut next_log = Duration::ZERO;
             let input_end = input_window;
             while sampler_clock.elapsed() < input_end {
                 let (status, metrics) = fetch_interval_metrics(
@@ -4084,6 +4101,13 @@ mod durable_workload {
                 let counters = RuntimeCounters::parse(&metrics)?;
                 if sampler_clock.elapsed() >= input_end {
                     break;
+                }
+                // Reuse the required scrape. These bounded diagnostic lines
+                // survive a failed ledger gate and do not affect its decision.
+                let elapsed = sampler_clock.elapsed();
+                if elapsed >= next_log {
+                    eprintln!("{}", runtime_sample(elapsed, counters, &metrics));
+                    next_log = elapsed + Duration::from_secs(10);
                 }
                 first.get_or_insert(counters);
                 last = Some(counters);
@@ -4234,6 +4258,7 @@ mod durable_workload {
                 // VmHWM remains a peak through the drain, while completion/IO evidence
                 // above remains strictly within measured input.
                 deltas.process_rss_high_water_bytes = counters_after.process_rss_high_water_bytes;
+                eprintln!("PERF_RUNTIME_DELTA {deltas:?}");
                 deltas.assert_complete_interval_evidence()?;
                 let mut ledger = ledger.lock().await;
                 for _ in 0..deltas.checkpoints {
@@ -5462,6 +5487,29 @@ mod durable_workload {
             format!("{PROCESS_RSS_HIGH_WATER_BYTES} 1024"),
         ]
         .join("\n")
+    }
+
+    #[test]
+    fn runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments() {
+        let metrics = format!(
+            "{}\n# HELP lumen_pending_change_total_bytes pending changes\n\
+             lumen_pending_change_reserved_bytes 7\n\
+             lumen_pending_change_active_bytes 11\n\
+             lumen_pending_change_frozen_bytes 13\n\
+             lumen_pending_change_total_bytes 31\n\
+             unrelated_metric 999",
+            complete_runtime_metrics(1)
+        );
+        let counters = RuntimeCounters::parse(&metrics).unwrap();
+        let sample = runtime_sample(Duration::from_millis(10_250), counters, &metrics);
+        assert!(sample.starts_with("PERF_RUNTIME_SAMPLE elapsed_ms=10250 "));
+        assert!(sample.contains("checkpoints: 10, merges: 5"));
+        for (state, bytes) in [("reserved", 7), ("active", 11), ("frozen", 13), ("total", 31)] {
+            assert!(sample.contains(&format!("lumen_pending_change_{state}_bytes {bytes}")));
+        }
+        assert!(!sample.contains("# HELP"));
+        assert!(!sample.contains("unrelated_metric"));
+        assert!(!sample.contains('\n'));
     }
 
     #[test]

@@ -225,12 +225,24 @@ impl SegmentCheckpointSink {
         let sink_writer = self.writer.clone();
         let sink_aof = self.aof.clone();
         tokio::task::spawn_blocking(move || {
-            let sink = SegmentCheckpointSink {
+            let sink = Arc::new(SegmentCheckpointSink {
                 engine: sink_engine,
                 store: sink_store,
                 writer: sink_writer,
                 aof: sink_aof,
+            });
+            // Capacity refusal can happen while a manual checkpoint is frozen.
+            // Register this sink first so relief uses the same root, rather than
+            // retaining another full capture in a temporary spill store. Keep
+            // the owner in the blocking task even if the async caller cancels.
+            let _manual_owner = if fence.is_none() {
+                crate::segment_capacity::Owner::start(sink.clone(), false)?
+            } else {
+                None
             };
+            // Manual publication and its background merge may outlive this
+            // scoped owner. Only a persistent driver's supplied fence applies
+            // to them; a later manual request must not invalidate that merge.
             let store = match fence {
                 Some(fence) => sink.store.as_ref().clone().with_publication_fence(fence),
                 None => sink.store.as_ref().clone(),

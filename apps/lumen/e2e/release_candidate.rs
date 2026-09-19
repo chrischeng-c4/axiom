@@ -1654,6 +1654,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments".into(),
+                    false,
+                ),
+                (
                     "runtime_metrics_reject_a_missing_required_row".into(),
                     false,
                 ),
