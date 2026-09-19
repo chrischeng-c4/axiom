@@ -29,6 +29,7 @@ use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 #[cfg(test)]
 thread_local! {
     pub(crate) static HNSW_CHECKPOINT_FULL_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static HNSW_SEARCH_POOLS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +571,8 @@ impl HnswBackend {
     }
 
     fn search(&self, vec: &[f32], k: usize, ef: usize) -> Vec<(usize, f32)> {
+        #[cfg(test)]
+        HNSW_SEARCH_POOLS.with(|pools| pools.borrow_mut().push(k));
         let ef = k.max(ef);
         let raw = match self {
             HnswBackend::L2(h) => h.search(vec, k, ef),
@@ -799,14 +802,16 @@ impl VectorIndex for HnswCpuIndex {
             return Ok(Vec::new());
         }
         // hnsw_rs exposes no mid-traversal filter hook and does not support node
-        // removal. When a query cannot be answered conclusively from the graph
-        // (due to filter selectivity or orphan interference), the candidate pool
-        // widens up to the total graph capacity (`inner.next_id`). When enough
-        // allowed candidates are found without orphan interference, the traversal
-        // answers directly; otherwise it falls back to an exact scan over the store.
+        // removal. Bound graph expansion by the configured search beam or the
+        // initial over-fetch, whichever is larger. Asking the graph for the
+        // whole corpus also raises its traversal ef to corpus size, while an
+        // exact filtered scan already provides the required fallback. In
+        // particular, repeating a traversal cannot certify an unresolved
+        // nearest orphan, so that case goes directly to the exact live store.
         let graph_len = inner.next_id;
-        let mut pool = (k * 4 + k).min(graph_len);
+        let mut pool = k.saturating_mul(5).min(graph_len);
         let ef = inner.ef_search;
+        let pool_limit = pool.max(ef).min(graph_len);
         loop {
             let raw = inner.hnsw.search(query, pool, ef);
             let mut out: Vec<(String, f32)> = Vec::with_capacity(k);
@@ -831,15 +836,15 @@ impl VectorIndex for HnswCpuIndex {
                 return Ok(out);
             }
 
-            if pool >= graph_len {
+            if has_unresolved_orphan || pool >= pool_limit {
                 break;
             }
-            pool = (pool * 2).min(graph_len);
+            pool = pool.saturating_mul(2).min(pool_limit);
         }
 
-        // When the candidate pool covers the graph or orphans prevent a conclusive
-        // approximate answer, fall back to an exact filtered scan over the live store
-        // rather than returning a short or degraded result.
+        // When the bounded graph search or an orphan prevents a conclusive
+        // approximate answer, scan the exact live store instead of returning
+        // a short or degraded result. Membership and scoring are unchanged.
         self.exact_scan_fallbacks.fetch_add(1, Ordering::Relaxed);
         let metric = inner.store.spec.metric;
         let mut cand: Vec<(String, f32)> = inner
@@ -1786,6 +1791,95 @@ mod tests {
             backend: crate::types::VectorBackend::HnswCpu,
             quantize: q,
         }
+    }
+
+    #[test]
+    fn hnsw_nearest_orphans_do_not_repeat_an_inconclusive_graph_search() {
+        const N: usize = 256;
+        const K: usize = 5;
+        let index = HnswCpuIndex::new(spec(3, VectorMetric::L2, None));
+        // Exhaustive on this small fixture, so topology cannot hide the orphan.
+        index.set_ef_search(N + K);
+        for i in 0..N {
+            index
+                .add(&format!("v{i:03}"), &[i as f32, 0.0, 0.0])
+                .unwrap();
+        }
+        for i in 0..K {
+            index
+                .add(&format!("v{i:03}"), &[(1000 + i) as f32, 0.0, 0.0])
+                .unwrap();
+        }
+        HNSW_SEARCH_POOLS.with(|pools| pools.borrow_mut().clear());
+        let before = index.exact_scan_fallbacks();
+        let hits = index
+            .search_knn_filtered(&[0.0, 0.0, 0.0], K, &|_| true)
+            .unwrap();
+        let expected: Vec<_> = (K..2 * K)
+            .map(|i| (format!("v{i:03}"), -(i as f32)))
+            .collect();
+        assert_eq!(hits, expected);
+        assert_eq!(index.exact_scan_fallbacks(), before + 1);
+        let pools = HNSW_SEARCH_POOLS.with(|pools| pools.borrow().clone());
+        assert_eq!(
+            pools.len(), 1,
+            "an unresolved nearest orphan must go directly to the exact fallback: {pools:?}"
+        );
+    }
+
+    #[test]
+    fn hnsw_selective_search_bounds_graph_pool_before_exact_fallback() {
+        const N: usize = 512;
+        const K: usize = 5;
+        const EF: usize = 64;
+        let index = HnswCpuIndex::new(spec(3, VectorMetric::L2, None));
+        index.set_ef_search(EF);
+        for i in 0..N {
+            index
+                .add(&format!("v{i:03}"), &[i as f32, 0.0, 0.0])
+                .unwrap();
+        }
+        HNSW_SEARCH_POOLS.with(|pools| pools.borrow_mut().clear());
+        let before = index.exact_scan_fallbacks();
+        let hits = index
+            .search_knn_filtered(&[0.0, 0.0, 0.0], K, &|eid| eid == "v511")
+            .unwrap();
+        assert_eq!(hits, vec![("v511".to_owned(), -511.0)]);
+        assert_eq!(index.exact_scan_fallbacks(), before + 1);
+        let pools = HNSW_SEARCH_POOLS.with(|pools| pools.borrow().clone());
+        assert!(
+            !pools.is_empty(),
+            "the declared graph backend must be consulted"
+        );
+        assert!(
+            pools.iter().all(|&pool| pool <= EF.max(5 * K)),
+            "a selective filter must not grow traversal to corpus size: {pools:?}"
+        );
+    }
+
+    #[test]
+    fn hnsw_clean_permissive_search_keeps_the_graph_answer() {
+        let index = HnswCpuIndex::new(spec(3, VectorMetric::L2, None));
+        index.set_ef_search(64);
+        for i in 0..128 {
+            index
+                .add(&format!("v{i:03}"), &[i as f32, 0.0, 0.0])
+                .unwrap();
+        }
+        HNSW_SEARCH_POOLS.with(|pools| pools.borrow_mut().clear());
+        let before = index.exact_scan_fallbacks();
+        let hits = index
+            .search_knn_filtered(&[0.0, 0.0, 0.0], 5, &|_| true)
+            .unwrap();
+        let expected: Vec<_> = (0..5)
+            .map(|i| (format!("v{i:03}"), -(i as f32)))
+            .collect();
+        assert_eq!(hits, expected);
+        assert_eq!(index.exact_scan_fallbacks(), before);
+        assert_eq!(
+            HNSW_SEARCH_POOLS.with(|pools| pools.borrow().clone()),
+            vec![25]
+        );
     }
 
     // -----------------------------------------------------------------
