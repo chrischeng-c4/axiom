@@ -8508,22 +8508,10 @@ fn eval_query(
                 // that match's scored posting and apply the filters as per-doc
                 // predicates, so the match is never scored over a wide filter's
                 // worth of docs.
-                let min_filter_sel = filter_pos
-                    .iter()
-                    .map(|c| estimate_selectivity(coll, c))
-                    .min();
-                let min_match_sel = match_pos
-                    .iter()
-                    .map(|c| estimate_selectivity(coll, c))
-                    .min();
-                let use_bitmap = !filter_pos.is_empty()
-                    && match min_match_sel {
-                        Some(m) => min_filter_sel.map(|f| f <= m).unwrap_or(true),
-                        None => true,
-                    };
-
-                if use_bitmap {
-                    let cand = eval_filter_bitmap_conjunction(coll, &filter_pos, &filter_nots)?;
+                if let Some(plan) =
+                    plan_filter_candidates(coll, &filter_pos, &filter_nots, &match_pos)?
+                {
+                    let cand = plan.resolve(coll, &filter_pos, &filter_nots)?;
                     // Each filter / negation contributes a constant 1.0; matches
                     // add BM25 on top and gate membership.
                     let base = filter_pos.len() as f32 + nots.len() as f32;
@@ -8784,22 +8772,9 @@ fn eval_predicable_and_topk(
         }
     }
 
-    let min_filter_sel = filter_pos
-        .iter()
-        .map(|c| estimate_selectivity(coll, c))
-        .min();
-    let min_match_sel = match_pos
-        .iter()
-        .map(|c| estimate_selectivity(coll, c))
-        .min();
-    let use_bitmap = match min_match_sel {
-        Some(m) => min_filter_sel.map(|f| f <= m).unwrap_or(true),
-        None => true,
-    };
-    if !use_bitmap {
+    let Some(plan) = plan_filter_candidates(coll, &filter_pos, &filter_nots, &match_pos)? else {
         return Ok(None);
-    }
-
+    };
     let base = filter_pos.len() as f32 + nots.len() as f32;
     if nots.is_empty() && match_pos.len() == 1 {
         if let Some(topk) = eval_single_token_keyword_range_topk(
@@ -8814,7 +8789,7 @@ fn eval_predicable_and_topk(
         }
     }
 
-    let cand = eval_filter_bitmap_conjunction(coll, &filter_pos, &filter_nots)?;
+    let cand = plan.resolve(coll, &filter_pos, &filter_nots)?;
 
     let preps = prep_matches(coll, &match_pos)?;
     let not_preps = prep_matches(coll, &match_nots)?;
@@ -11160,6 +11135,61 @@ fn count_common_sorted(a: &[u32], b: &[u32]) -> usize {
 /// instead of materializing each token's full posting; above it the posting
 /// is reused across enough candidates to be worth holding.
 const SPARSE_CANDIDATE_MAX: u64 = 64;
+
+enum FilterCandidatePlan {
+    Ready(RoaringBitmap),
+    // Keep bitmap construction lazy so the keyword/range top-k fast path can
+    // still return a page without first materializing the whole filter set.
+    Deferred,
+}
+
+impl FilterCandidatePlan {
+    fn resolve(
+        self,
+        coll: &Collection,
+        filters: &[&QueryNode],
+        filter_nots: &[&QueryNode],
+    ) -> Result<RoaringBitmap> {
+        match self {
+            Self::Ready(cand) => Ok(cand),
+            Self::Deferred => eval_filter_bitmap_conjunction(coll, filters, filter_nots),
+        }
+    }
+}
+
+/// Choose the filter driver without materializing wide text postings merely
+/// to estimate their size. A filter estimated to match at most one row is
+/// evaluated first; if its ACTUAL set fits the sparse resolver, no text
+/// estimate is needed. A nonempty text match cannot have a smaller estimate.
+/// Exact Hamming's estimate is only a prior, so hash collisions must pass this
+/// cardinality check too. All other cases retain the original estimates and
+/// rarest-positive planning, including its score accumulation order.
+fn plan_filter_candidates(
+    coll: &Collection,
+    filters: &[&QueryNode],
+    filter_nots: &[&QueryNode],
+    matches: &[&QueryNode],
+) -> Result<Option<FilterCandidatePlan>> {
+    let Some(filter_sel) = filters.iter().map(|c| estimate_selectivity(coll, c)).min() else {
+        return Ok(None);
+    };
+    let mut candidates = None;
+    if filter_sel <= 1 {
+        let cand = eval_filter_bitmap_conjunction(coll, filters, filter_nots)?;
+        if cand.len() <= SPARSE_CANDIDATE_MAX {
+            return Ok(Some(FilterCandidatePlan::Ready(cand)));
+        }
+        candidates = Some(cand);
+    }
+    let match_sel = matches.iter().map(|c| estimate_selectivity(coll, c)).min();
+    if match_sel.is_some_and(|sel| sel < filter_sel) {
+        return Ok(None);
+    }
+    Ok(Some(match candidates {
+        Some(cand) => FilterCandidatePlan::Ready(cand),
+        None => FilterCandidatePlan::Deferred,
+    }))
+}
 
 /// A match clause with its per-token postings RESOLVED once (Phase 2m). On the
 /// segment path each `TokPostings` holds the cache-resident posting `Arc`, so a
@@ -21633,6 +21663,163 @@ mod exact_hamming_filter_tests {
         let exact = run(&e, QueryNode::And(vec![hamming_raw(0, 0), matchq("tok")]));
         assert_eq!(exact.len(), 1);
         assert_eq!(exact["near"], got["near"]);
+    }
+
+    fn sparse_layered_match_does_not_materialize_for_planning(general: bool, analyzer: Analyzer) {
+        use crate::composed_segment::TextPostingAt;
+
+        let e = Arc::new(Engine::new());
+        let mut schema = schema();
+        schema.fields.get_mut("body").unwrap().analyzer = Some(analyzer);
+        e.create_collection("c", schema).unwrap();
+        let text_for = |i| match analyzer {
+            Analyzer::Ngram => format!(
+                "ngram document {i} slot 0 {}",
+                "durable search token ".repeat(12)
+            ),
+            _ => body(i),
+        };
+        for i in 0..128 {
+            index(&e, &format!("d{i}"), sig(i), &text_for(i));
+        }
+        let text = text_for(7);
+        let query = QueryNode::And(vec![hamming(7, 0), matchq(&text)]);
+        let query = if general {
+            QueryNode::Or(vec![query])
+        } else {
+            query
+        };
+        let expected = run(&e, query.clone());
+        assert_eq!(expected.len(), 1);
+        assert!(expected.contains_key("d7"));
+        let wrong = matchq(&format!("{text} neverindexedpredicate"));
+        let wrong_query = QueryNode::And(vec![hamming(7, 0), wrong.clone()]);
+        let not_query = QueryNode::And(vec![hamming(7, 0), QueryNode::Not(Box::new(wrong))]);
+        assert!(run(&e, wrong_query.clone()).is_empty());
+        let expected_not = run(&e, not_query.clone());
+
+        let dir = tempfile::tempdir().unwrap();
+        e.__seal_text_field_to_segment("c", "body", dir.path())
+            .unwrap();
+        // A real replacement layer prevents the dense-base df shortcut.
+        // It carries the same row, so the in-memory result remains the oracle.
+        let tokens = tokenize::tokenize(&text, analyzer);
+        let mut postings: BTreeMap<String, Postings> = BTreeMap::new();
+        for token in &tokens {
+            let posting = postings.entry(token.clone()).or_default();
+            posting.upsert(0, posting.tf(0).unwrap_or(0) + 1);
+        }
+        let layer_path = dir.path().join("replacement.lseg");
+        crate::segment::write_text_segment(
+            &layer_path,
+            1,
+            &postings,
+            &[tokens.len() as u32],
+            &[true],
+            1,
+            tokens.len() as u64,
+        )
+        .unwrap();
+        let reader = Arc::new(crate::segment::SegmentReader::open(&layer_path).unwrap());
+        let segment = {
+            let mut state = e.state.write().unwrap();
+            let coll = state.collections.get_mut("c").unwrap();
+            // The fixture swaps the segment directly instead of publishing
+            // through the normal write path. Do not reuse its live oracle.
+            coll.clear_search_cache();
+            let FieldIndex::Text { idx, .. } = coll.fields.get_mut("body").unwrap() else {
+                unreachable!()
+            };
+            let segment = Arc::new(
+                idx.segment
+                    .as_ref()
+                    .unwrap()
+                    .with_delta(reader, vec![7])
+                    .unwrap(),
+            );
+            idx.segment = Some(segment.clone());
+            segment
+        };
+        assert!(matches!(
+            segment.text_posting_at(&tokens[0], &[7], |_| false),
+            Some(TextPostingAt::Sparse { .. })
+        ));
+
+        crate::composed_segment::reset_text_term_probes();
+        assert_eq!(run(&e, query), expected, "layered BM25 score bits");
+        let probes = crate::composed_segment::text_term_probes();
+        let distinct = tokens.iter().collect::<BTreeSet<_>>().len() as u64;
+        assert!(probes > 0, "the query must read the layered index");
+        assert!(
+            probes <= distinct,
+            "planning probed {probes} postings for {distinct} distinct terms"
+        );
+        assert!(
+            matches!(
+                segment.text_posting_at(&tokens[0], &[7], |_| false),
+                Some(TextPostingAt::Sparse { .. })
+            ),
+            "a one-document filter must not fill the whole-posting cache just to plan its match"
+        );
+        assert!(run(&e, wrong_query).is_empty());
+        assert_eq!(run(&e, not_query), expected_not);
+    }
+
+    #[test]
+    fn sparse_layered_topk_skips_materializing_match_estimates() {
+        sparse_layered_match_does_not_materialize_for_planning(false, Analyzer::WhitespaceLower);
+    }
+
+    #[test]
+    fn sparse_layered_general_and_skips_materializing_match_estimates() {
+        sparse_layered_match_does_not_materialize_for_planning(true, Analyzer::WhitespaceLower);
+    }
+
+    #[test]
+    fn sparse_layered_ngram_topk_skips_materializing_match_estimates() {
+        sparse_layered_match_does_not_materialize_for_planning(false, Analyzer::Ngram);
+    }
+
+    #[test]
+    fn sparse_layered_ngram_general_and_skips_materializing_match_estimates() {
+        sparse_layered_match_does_not_materialize_for_planning(true, Analyzer::Ngram);
+    }
+
+    #[test]
+    fn sparse_filter_planning_checks_actual_hash_collision_count() {
+        for n in [SPARSE_CANDIDATE_MAX as u32, SPARSE_CANDIDATE_MAX as u32 + 1] {
+            let e = seed(n);
+            for i in 0..n {
+                index(&e, &format!("d{i}"), sig(0), &body(i));
+            }
+            let filter = hamming(0, 0);
+            // The absent term has estimate zero. Only a truly bounded set may
+            // skip this estimate; above the bound the original match driver wins.
+            let absent = matchq("neverindexedpredicate");
+            let state = e.state.read().unwrap();
+            let coll = state.collections.get("c").unwrap();
+            let plan = plan_filter_candidates(coll, &[&filter], &[], &[&absent]).unwrap();
+            if u64::from(n) <= SPARSE_CANDIDATE_MAX {
+                let ids = plan
+                    .expect("bounded actual candidates")
+                    .resolve(coll, &[&filter], &[])
+                    .unwrap();
+                assert_eq!(ids.len(), u64::from(n));
+            } else {
+                assert!(
+                    plan.is_none(),
+                    "large collisions must retain the original text estimate"
+                );
+            }
+            drop(state);
+            assert!(run(&e, QueryNode::And(vec![filter.clone(), absent])).is_empty());
+            let text = matchq("7");
+            let exact = run(&e, QueryNode::And(vec![filter, text.clone()]));
+            let fallback = run(&e, QueryNode::And(vec![hamming(0, 1), text]));
+            assert_eq!(exact, fallback);
+            assert_eq!(exact.len(), 1);
+            assert!(exact.contains_key("d7"));
+        }
     }
 }
 
