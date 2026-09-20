@@ -469,8 +469,19 @@ impl SegmentRdbStore {
         self
     }
 
-    pub(crate) fn request_capacity_merge(&self, engine: &Arc<Engine>) -> Result<()> {
+    pub(crate) fn request_capacity_merge(&self, engine: &Arc<Engine>) -> Result<u64> {
         self.request_merge_for_capacity_retry(engine, None, None)
+    }
+
+    /// Wait only for the capacity request's next root publication or an idle
+    /// queue. A later unrelated root job does not delay a new checkpoint.
+    pub(crate) fn wait_for_capacity_merge_progress(
+        &self,
+        revision: u64,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.background
+            .wait_for_capacity_progress_after(revision, Instant::now() + timeout)
             .map(|_| ())
     }
 

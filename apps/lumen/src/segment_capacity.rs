@@ -279,8 +279,8 @@ fn run(sink: Arc<SegmentCheckpointSink>, endpoint: Arc<Endpoint>) {
                 sink.checkpoint_sync(&store)?;
             }
             if merge {
-                store.request_capacity_merge(&sink.engine)?;
-                store.wait_for_merges(Duration::from_secs(60))?;
+                let revision = store.request_capacity_merge(&sink.engine)?;
+                store.wait_for_capacity_merge_progress(revision, Duration::from_secs(60))?;
             }
             Ok(())
         }))
