@@ -3555,6 +3555,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     // Cold-start sequence: the WAL position the checkpoint is current as of, so
     // the apply loop tails from `start_seq + 1`.
+    let mut deferred_graph_restore = false;
     let mut start_seq = {
         if is_raft {
             // Raft cold-starts inside `RaftHost::spawn` (snapshot restore + replay
@@ -3564,9 +3565,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         } else if let Some(store) = &segment_store {
             // Segment mode: reopen every collection from the newest checkpoint
             // INTO `engine` (no whole-collection load), replacing the CBOR restore.
-            let outcome = store
-                .reopen_into_with_outcome(&engine)
+            let (outcome, deferred) = store
+                .reopen_for_aof_replay(&engine)
                 .context("load latest segment checkpoint")?;
+            deferred_graph_restore = deferred;
             let generation = outcome.generation.as_ref().map(|name| name.as_str());
             tracing::info!(
                 decision = outcome.decision.as_str(),
@@ -3653,6 +3655,17 @@ async fn serve(args: ServeArgs) -> Result<()> {
     } else {
         None
     };
+
+    if deferred_graph_restore {
+        // The shutdown cache can be newer than CURRENT. Match it only after
+        // replaying durable AOF records, while no request can observe staging.
+        let store = segment_store.as_ref().expect("deferred graph restore needs a segment store").clone();
+        let recovered = engine.clone();
+        tokio::task::spawn_blocking(move || store.finish_aof_graph_restore(&recovered))
+            .await
+            .context("graph restore worker failed")?
+            .context("finish graph restore after AOF replay")?;
+    }
 
     // Embedded backend: build the `MemWal` now that `start_seq` reflects the
     // final restore watermark (checkpoint restore, then AOF-tail replay if
@@ -3967,15 +3980,20 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
     // Manual and periodic saves share checkpoint_now. Retain the handle so
     // its waiter thread receives shutdown with this serving scope.
-    let _segment_checkpoint_driver = segment_store.map(|store| {
+    let segment_checkpoint_sink = segment_store.map(|store| {
         Arc::new(SegmentCheckpointSink {
             engine: engine.clone(),
             store,
             writer: writer.clone(),
             aof: aof_writer.clone(),
         })
-        .spawn_periodic_driver(Duration::from_secs(args.snapshot_secs.max(1)))
     });
+    let mut segment_checkpoint_driver = segment_checkpoint_sink.as_ref().map(|sink| {
+        sink.clone().spawn_periodic_driver(Duration::from_secs(args.snapshot_secs.max(1)))
+    });
+    // Raft retains its existing shutdown/snapshot contract. This optional cache
+    // belongs only to the standalone segment persistence path.
+    let shutdown_checkpoint_sink = if is_raft { None } else { segment_checkpoint_sink };
 
     // #2516: periodic ENOSPC re-probe. While this node is in degraded
     // read-only mode (`Metrics::storage_degraded`), attempt a small write
@@ -4138,6 +4156,17 @@ async fn serve(args: ServeArgs) -> Result<()> {
         // this absolute deadline, so its fixed relative timeout cannot extend
         // the caller-visible grace period.
         let _ = http_shutdown_tx.send(());
+        if let Some(sink) = shutdown_checkpoint_sink {
+            if let Some(driver) = &mut segment_checkpoint_driver {
+                driver.request_stop();
+            }
+            match tokio::time::timeout(deadline.remaining(), sink.save_shutdown_graph_cache()).await {
+                Ok(Ok(0)) => tracing::debug!("no HNSW shutdown cache needed"),
+                Ok(Ok(fields)) => tracing::info!(fields, "HNSW shutdown cache saved"),
+                Ok(Err(error)) => tracing::warn!(%error, "optional HNSW shutdown cache unavailable"),
+                Err(_) => tracing::warn!("optional HNSW shutdown cache reached the shutdown deadline"),
+            }
+        }
         #[cfg(feature = "raft-wal")]
         if let Some(host) = shutdown_raft_host {
             if let Err(error) = shutdown_raft_within(host, shutdown_peer_server, deadline).await {

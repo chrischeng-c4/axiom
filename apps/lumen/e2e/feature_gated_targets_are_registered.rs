@@ -31,6 +31,11 @@ impl GatedTarget {
 
 const REGISTRY: &[GatedTarget] = &[
     GatedTarget {
+        path: "apps/lumen/e2e/hnsw_shutdown_cache.rs",
+        gate: r#"#![cfg(unix)]"#,
+        required_features: &[],
+    },
+    GatedTarget {
         path: "apps/lumen/e2e/inherited_checkpoint_file_sync.rs",
         gate: r#"#![cfg(unix)]"#,
         required_features: &[],

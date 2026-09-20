@@ -4231,6 +4231,29 @@ impl Collection {
 // Engine
 // ---------------------------------------------------------------------------
 
+fn graph_cache_field_path(root: &std::path::Path, collection: &str, field: &str) -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update((collection.len() as u64).to_le_bytes());
+    hash.update(collection.as_bytes());
+    hash.update(field.as_bytes());
+    root.join(format!("{:x}", hash.finalize()))
+}
+
+fn ensure_real_cache_directory(path: &std::path::Path) -> Result<()> {
+    match std::fs::create_dir(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        bail!("optional graph cache path is not a real directory");
+    }
+    storage_durable::set_private_directory_mode(path)?;
+    Ok(())
+}
+
 #[derive(Default)]
 pub struct Engine {
     pub(crate) capture_barrier: crate::capture_barrier::CaptureBarrier,
@@ -5236,9 +5259,15 @@ impl Engine {
     }
 
     pub(crate) fn finish_checkpoint_vectors(&self) -> Result<()> {
+        self.finish_checkpoint_vectors_with_graph_cache(None)
+    }
+
+    pub(crate) fn finish_checkpoint_vectors_with_graph_cache(
+        &self, cache: Option<&std::path::Path>,
+    ) -> Result<()> {
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
-        for coll in state.collections.values_mut() {
-            for field in coll.fields.values_mut() {
+        for (collection_name, coll) in &mut state.collections {
+            for (field_name, field) in &mut coll.fields {
                 if let FieldIndex::Vector { spec, idx, bytes } = field {
                     if spec.backend == crate::types::VectorBackend::HnswCpu {
                         let (vectors, codebook) = idx.dump_for_snapshot()?;
@@ -5246,13 +5275,68 @@ impl Engine {
                             .iter()
                             .map(|(eid, value)| (eid.len() + value.len() * 4) as u64)
                             .sum();
-                        *idx = Box::new(HnswCpuIndex::restore(*spec, vectors, codebook)?);
+                        let directory = cache.map(|root| graph_cache_field_path(root, collection_name, field_name));
+                        *idx = Box::new(HnswCpuIndex::restore_with_graph_cache(
+                            *spec, vectors, codebook, directory.as_deref(),
+                        )?);
                     }
                 }
             }
         }
         self.publish_storage_bytes(&state);
         Ok(())
+    }
+
+    /// Caller holds the standalone writer fence and checkpoint save gate.
+    pub(crate) fn has_hnsw_graphs(&self) -> Result<bool> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        Ok(state.collections.values().any(|collection| collection.fields.values().any(|field| {
+            matches!(field, FieldIndex::Vector { spec, idx, .. }
+                if spec.backend == crate::types::VectorBackend::HnswCpu && idx.len() > 0)
+        })))
+    }
+
+    /// Caller holds the standalone writer fence and checkpoint save gate.
+    pub(crate) fn save_hnsw_graph_caches(&self, root: &std::path::Path) -> Result<usize> {
+        let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
+        let mut live_paths = std::collections::BTreeSet::new();
+        for (collection_name, collection) in &state.collections {
+            for (field_name, field) in &collection.fields {
+                if matches!(field, FieldIndex::Vector { spec, idx, .. }
+                    if spec.backend == crate::types::VectorBackend::HnswCpu && idx.len() > 0) {
+                    live_paths.insert(graph_cache_field_path(root, collection_name, field_name));
+                }
+            }
+        }
+        if !live_paths.is_empty() || root.exists() {
+            ensure_real_cache_directory(root)?;
+            // Checkpoint plus synced AOF remain authoritative under the writer
+            // fence. Removed fields no longer need their optional old cache.
+            for entry in std::fs::read_dir(root)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let owned = name.to_str().is_some_and(|name| name.len() == 64
+                    && name.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+                if owned && entry.file_type()?.is_dir() && !live_paths.contains(&entry.path()) {
+                    std::fs::remove_dir_all(entry.path())?;
+                }
+            }
+        }
+        let mut saved = 0;
+        for (collection_name, collection) in &state.collections {
+            for (field_name, field) in &collection.fields {
+                if let FieldIndex::Vector { spec, idx, .. } = field {
+                    if spec.backend != crate::types::VectorBackend::HnswCpu || idx.len() == 0 {
+                        continue;
+                    }
+                    ensure_real_cache_directory(root)?;
+                    let directory = graph_cache_field_path(root, collection_name, field_name);
+                    ensure_real_cache_directory(&directory)?;
+                    saved += usize::from(idx.save_graph_cache(&directory)?);
+                }
+            }
+        }
+        Ok(saved)
     }
 
     pub(crate) fn apply_checkpoint_delta(
