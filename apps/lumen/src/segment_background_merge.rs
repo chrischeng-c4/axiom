@@ -2351,7 +2351,7 @@ mod tests {
         assert!(state.error.as_deref().unwrap().contains("overflowed"));
     }
 
-    fn capacity_progress_case_runs_in_its_own_process() -> bool {
+    fn capacity_progress_case_runs_in_its_own_process(test_name: &str) -> bool {
         const CHILD: &str = "LUMEN_CHECKPOINT_CAPACITY_UNIT_CHILD";
         if std::env::var_os(CHILD).as_deref() == Some(std::ffi::OsStr::new("1")) {
             return false;
@@ -2362,7 +2362,7 @@ mod tests {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "segment_rdb::background::tests::checkpoint_capacity_wait_yields_after_its_field_merge_while_follow_up_merge_runs",
+                test_name,
                 "--nocapture",
             ])
             .env(CHILD, "1")
@@ -2408,7 +2408,9 @@ mod tests {
 
     #[test]
     fn checkpoint_capacity_wait_yields_after_its_field_merge_while_follow_up_merge_runs() {
-        if capacity_progress_case_runs_in_its_own_process() {
+        if capacity_progress_case_runs_in_its_own_process(
+            "segment_rdb::background::tests::checkpoint_capacity_wait_yields_after_its_field_merge_while_follow_up_merge_runs",
+        ) {
             return;
         }
         let directory = tempfile::tempdir().unwrap();
@@ -2512,6 +2514,77 @@ mod tests {
             completed_while_follow_up_merge_is_held,
             "checkpoint did not resume after capacity-field merge while follow-up root merge remained queued"
         );
+    }
+
+    #[test]
+    fn capacity_owner_merge_completes_after_capacity_progress_while_follow_up_merge_is_held() {
+        if capacity_progress_case_runs_in_its_own_process(
+            "segment_rdb::background::tests::capacity_owner_merge_completes_after_capacity_progress_while_follow_up_merge_is_held",
+        ) {
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(BlockingMergeObserver::default());
+        let store = Arc::new(
+            SegmentRdbStore::with_merge_observer(directory.path(), observer.clone()).unwrap(),
+        );
+        let engine = Arc::new(Engine::new());
+        let _release_on_drop = ObserverRelease(observer.clone());
+        engine.create_collection("u", capacity_schema()).unwrap();
+        store.save_required(&engine, 1).unwrap();
+        for sequence in 2..=17 {
+            index_fields(&engine, &format!("a-{sequence}"), None);
+            store.save_required(&engine, sequence).unwrap();
+            if sequence == 5 {
+                observer.wait_until(
+                    |state| state.before_encode >= 1,
+                    "first background merge must pause before encode",
+                );
+            }
+        }
+
+        let mut fallback = None;
+        crate::segment_capacity::Fallback::ensure(&mut fallback, &engine, Some(store.clone()))
+            .unwrap();
+        let endpoint = engine.layer_maintenance.owner().unwrap();
+        let baseline_wait_entries = store.background.test_wait_entries();
+        let (merge_tx, merge_rx) = mpsc::channel();
+        let merge_endpoint = endpoint.clone();
+        let merge = std::thread::spawn(move || {
+            let _ = merge_tx.send(merge_endpoint.wait_for(crate::segment_capacity::Work::Merge));
+        });
+        store
+            .background
+            .wait_for_test_wait_entry_after(baseline_wait_entries, CASE_TIMEOUT)
+            .expect("capacity owner must enter its merge wait");
+
+        observer.release_first_encode();
+        observer.wait_until(
+            |state| state.before_publish >= 2 && state.after_publish >= 1,
+            "first merge must publish before the follow-up merge pauses",
+        );
+        let held_result = merge_rx.recv_timeout(CASE_TIMEOUT);
+        let completed_while_follow_up_merge_is_held = held_result.is_ok();
+        observer.release_all();
+        let merge_result = match held_result {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => merge_rx
+                .recv_timeout(CASE_TIMEOUT)
+                .expect("capacity owner merge must finish after cleanup release"),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("capacity owner merge thread stopped before returning a result")
+            }
+        };
+        merge.join().expect("capacity owner merge thread must not panic");
+        merge_result.expect("capacity owner merge must not fail");
+        store
+            .wait_for_merges(Duration::from_secs(10))
+            .expect("background merge worker must drain before fixture teardown");
+        assert!(
+            completed_while_follow_up_merge_is_held,
+            "capacity owner waited for an unrelated follow-up root merge after capacity progress"
+        );
+        drop(fallback);
     }
 
     #[test]
