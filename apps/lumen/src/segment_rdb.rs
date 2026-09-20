@@ -63,6 +63,7 @@ const CURRENT_FILE: &str = "CURRENT";
 const CURRENT_TEMP_FILE: &str = "CURRENT.tmp";
 const AOF_FILE: &str = "aof.log";
 const AOF_COMPACT_TEMP_FILE: &str = "aof.log.compact.tmp";
+const HNSW_GRAPH_CACHE_DIR: &str = "hnsw-graph-cache";
 // The shipped image pre-populates its declared volume with this inert regular
 // file so Docker recognizes a non-empty data directory. It carries no Lumen
 // state and is part of a semantically new root.
@@ -231,6 +232,7 @@ struct RootInventory {
     revision_generations: Vec<String>,
     has_aof_log: bool,
     has_aof_compact_temp: bool,
+    has_graph_cache: bool,
 }
 
 /// The exact generation selected by `CURRENT`, reopened into a fresh engine.
@@ -1044,6 +1046,26 @@ impl SegmentRdbStore {
         telemetry::generation_disk_bytes(&self.root)
     }
 
+    /// Optional acceleration only. The caller holds the mutation fence; the
+    /// save gate keeps physical publication and cache IO serialized.
+    pub(crate) fn save_hnsw_graph_caches(&self, engine: &Engine) -> Result<usize> {
+        let _guard = self.save_gate.lock_owned();
+        engine.save_hnsw_graph_caches(&self.root.join(HNSW_GRAPH_CACHE_DIR))
+    }
+
+    pub(crate) fn has_hnsw_graph_cache(&self) -> bool {
+        std::fs::symlink_metadata(self.root.join(HNSW_GRAPH_CACHE_DIR))
+            .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+    }
+
+    /// Finish standalone recovery only after the authoritative AOF tail has
+    /// been applied. The optional graph must match those final vector contents.
+    #[doc(hidden)]
+    pub fn finish_aof_graph_restore(&self, engine: &Engine) -> Result<()> {
+        let _guard = self.save_gate.lock_owned();
+        engine.finish_checkpoint_vectors_with_graph_cache(Some(&self.root.join(HNSW_GRAPH_CACHE_DIR)))
+    }
+
     fn verify_predecessor_catalog(
         &self,
         record: &GenerationRecord,
@@ -1175,6 +1197,21 @@ impl SegmentRdbStore {
     /// the open-time inventory already accepted. It never selects an unpointed
     /// revision or falls back from a corrupt highest legacy generation.
     pub fn reopen_into_with_outcome(&self, engine: &Arc<Engine>) -> Result<SegmentStartupOutcome> {
+        self.reopen_into_with_graph_policy(engine, false)
+    }
+
+    /// Standalone startup only. A true second result requires calling
+    /// `finish_aof_graph_restore` after AOF replay and before serving queries.
+    /// Ordinary checkpoint readers and Raft keep the eager restore path.
+    #[doc(hidden)]
+    pub fn reopen_for_aof_replay(&self, engine: &Arc<Engine>) -> Result<(SegmentStartupOutcome, bool)> {
+        let deferred = self.has_hnsw_graph_cache();
+        Ok((self.reopen_into_with_graph_policy(engine, deferred)?, deferred))
+    }
+
+    fn reopen_into_with_graph_policy(
+        &self, engine: &Arc<Engine>, defer_until_aof: bool,
+    ) -> Result<SegmentStartupOutcome> {
         let _guard = self.save_gate.lock_owned();
         match self.generations.read_current() {
             Ok(CurrentTarget::Empty) => match self.bootstrap {
@@ -1207,7 +1244,7 @@ impl SegmentRdbStore {
             },
             Ok(CurrentTarget::Generation(name)) => {
                 let record = self.record_for_name(name)?;
-                let seq = self.reopen_record(engine, &record)?;
+                let seq = self.reopen_record_with_graph_policy(engine, &record, defer_until_aof)?;
                 let staging_cleaned = match self.bootstrap {
                     StartupBootstrap::ExistingCurrent { staging_cleaned } => staging_cleaned,
                     StartupBootstrap::InitializedEmpty {
@@ -1242,7 +1279,7 @@ impl SegmentRdbStore {
                 let Some(record) = self.legacy_records()?.into_iter().next_back() else {
                     bail!("CURRENT is missing and no exact 0.4.28 generation can be adopted");
                 };
-                let seq = self.reopen_record(engine, &record)?;
+                let seq = self.reopen_record_with_graph_policy(engine, &record, defer_until_aof)?;
                 self.generations
                     .adopt_legacy(record.name.clone())
                     .map_err(anyhow::Error::new)
@@ -1357,6 +1394,13 @@ impl SegmentRdbStore {
                 }
             };
             children.push(format!("{raw} ({kind})"));
+            // This optional cache cannot authorize empty initialization. With
+            // CURRENT present, a malformed cache remains ignorable. Readers
+            // and writers independently refuse cache symlinks.
+            if raw == HNSW_GRAPH_CACHE_DIR {
+                inventory.has_graph_cache = true;
+                continue;
+            }
             let regular_file = !metadata.file_type().is_symlink() && metadata.is_file();
             let real_directory = !metadata.file_type().is_symlink() && metadata.is_dir();
 
@@ -1485,6 +1529,9 @@ impl SegmentRdbStore {
                     bail!(
                         "CURRENT is missing but root contains unpointed revision generation `{name}`; refusing to select or initialize it"
                     );
+                }
+                if inventory.has_graph_cache {
+                    bail!("CURRENT is missing beside an optional HNSW graph cache; refusing initialization or cleanup without durable authority");
                 }
                 let recovered_legacy_aside = self.reconcile_legacy_asides()?;
                 let staging_cleaned = self.sweep_abandoned_staging()?;
@@ -1784,9 +1831,15 @@ impl SegmentRdbStore {
     }
 
     fn reopen_record(&self, engine: &Arc<Engine>, record: &GenerationRecord) -> Result<u64> {
+        self.reopen_record_with_graph_policy(engine, record, false)
+    }
+
+    fn reopen_record_with_graph_policy(
+        &self, engine: &Arc<Engine>, record: &GenerationRecord, defer_until_aof: bool,
+    ) -> Result<u64> {
         let collections = validate_generation_layout(record)?;
         let replacement = Engine::new();
-        self.reopen_once(&replacement, record, collections)?;
+        self.reopen_once_with_graph_policy(&replacement, record, collections, defer_until_aof)?;
         self.retain_root_for(&replacement);
         // Decode and build backends once, before touching the caller. Activation
         // is one apply interval and invalidates captures from its former epoch.
@@ -1810,13 +1863,28 @@ impl SegmentRdbStore {
         record: &GenerationRecord,
         collections: usize,
     ) -> Result<()> {
+        self.reopen_once_with_graph_policy(engine, record, collections, false)
+    }
+
+    fn reopen_once_with_graph_policy(
+        &self,
+        engine: &Engine,
+        record: &GenerationRecord,
+        collections: usize,
+        defer_until_aof: bool,
+    ) -> Result<()> {
         let manifest = if record.legacy {
             None
         } else {
             Some(read_generation_manifest(&record.path)?)
         };
-        let defer_hnsw = manifest.as_ref().is_some_and(|manifest| {
-            manifest.collections.iter().any(|collection| {
+        let graph_cache = self.root.join(HNSW_GRAPH_CACHE_DIR);
+        let graph_cache = std::fs::symlink_metadata(&graph_cache).ok()
+            .filter(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+            .map(|_| graph_cache);
+        let defer_hnsw = defer_until_aof || manifest.as_ref().is_some_and(|manifest| {
+            (graph_cache.is_some() && matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3))
+            || manifest.collections.iter().any(|collection| {
                 collection.segments.iter().any(|segment| {
                     (matches!(segment.kind, SegmentKind::Delta) || segment.local_rows.is_some())
                         && segment
@@ -1966,8 +2034,12 @@ impl SegmentRdbStore {
                     }
                 }
             }
-            if defer_hnsw {
-                engine.finish_checkpoint_vectors()?;
+            if defer_hnsw && !defer_until_aof {
+                if let Some(cache) = graph_cache.as_deref() {
+                    engine.finish_checkpoint_vectors_with_graph_cache(Some(cache))?;
+                } else {
+                    engine.finish_checkpoint_vectors()?;
+                }
             }
             engine.hydrate_checkpoint_identities(&record.path, &capture)?;
             return Ok(());
@@ -4375,6 +4447,46 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn graph_cache_without_current_cannot_initialize_or_clean_a_root() {
+        for kind in 0..3 {
+            let root = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let cache = root.path().join(super::HNSW_GRAPH_CACHE_DIR);
+            match kind {
+                0 => std::fs::create_dir(&cache).unwrap(),
+                1 => std::fs::write(&cache, b"damaged cache").unwrap(),
+                _ => std::os::unix::fs::symlink(outside.path(), &cache).unwrap(),
+            }
+            let partial = root.path().join(".gen-7.tmp");
+            std::fs::create_dir(&partial).unwrap();
+            std::fs::write(partial.join("sentinel"), b"keep until authority is known").unwrap();
+            let result = super::SegmentRdbStore::new(root.path());
+            assert!(result.is_err(), "a cache cannot authorize empty initialization without CURRENT (kind {kind})");
+            assert!(!root.path().join("CURRENT").exists());
+            assert_eq!(std::fs::read(partial.join("sentinel")).unwrap(), b"keep until authority is known");
+            assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn graph_cache_cleanup_does_not_remove_unrelated_root_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let store = super::SegmentRdbStore::new(root.path()).unwrap();
+        let cache = root.path().join(super::HNSW_GRAPH_CACHE_DIR);
+        let obsolete = cache.join("a".repeat(64));
+        std::fs::create_dir_all(&obsolete).unwrap();
+        std::fs::write(obsolete.join("graph.hnsw.graph"), b"obsolete cache").unwrap();
+        let retained = cache.join("unknown-entry");
+        std::fs::create_dir(&retained).unwrap();
+        std::fs::write(retained.join("sentinel"), b"keep").unwrap();
+        assert_eq!(store.save_hnsw_graph_caches(&crate::storage::Engine::new()).unwrap(), 0);
+        assert!(!obsolete.exists());
+        assert_eq!(std::fs::read(retained.join("sentinel")).unwrap(), b"keep");
+        assert!(root.path().join("CURRENT").is_file());
+    }
+
     use super::*;
 
     fn cohort_catalog(root: &Path, fields: &[(&str, usize, usize)]) -> CollectionCatalog {

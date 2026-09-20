@@ -279,6 +279,14 @@ impl LumenProcess {
         self.logs()
     }
 
+    /// Signal only this owned child. The caller retains the bounded wait and
+    /// emergency cleanup, as Docker does before its stop timeout.
+    #[cfg(unix)]
+    pub fn send_sigterm(&mut self) {
+        let pid = self.child().id() as libc::pid_t;
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0, "signal owned Lumen child");
+    }
+
     fn finish_exited_child(&mut self) -> String {
         self.child.take().expect("lumen child is available");
         self.port_bind_handoff.take();

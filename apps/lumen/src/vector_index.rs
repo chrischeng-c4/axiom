@@ -26,6 +26,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 
+#[path = "vector_index/graph_cache.rs"]
+mod graph_cache;
+
 #[cfg(test)]
 thread_local! {
     pub(crate) static HNSW_CHECKPOINT_FULL_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -41,6 +44,11 @@ thread_local! {
 /// (HNSW, flat CPU brute force) goes through this trait so the storage
 /// layer doesn't care which one is in use.
 pub trait VectorIndex: Send + Sync {
+    /// Optional shutdown-only acceleration. This is never durable authority.
+    #[doc(hidden)]
+    fn save_graph_cache(&self, _directory: &std::path::Path) -> Result<bool> {
+        Ok(false)
+    }
     /// Insert (or overwrite) the vector associated with `external_id`.
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()>;
 
@@ -505,6 +513,7 @@ enum HnswBackend {
     // recomputations that make DistCosine the hot-path cost.
     Cosine(hnsw_rs::hnsw::Hnsw<'static, f32, hnsw_rs::anndists::dist::DistDot>),
     Dot(hnsw_rs::hnsw::Hnsw<'static, f32, hnsw_rs::anndists::dist::DistDot>),
+    Cached(Box<graph_cache::OwnedGraph>),
 }
 
 // SAFETY-equivalent: `hnsw_rs::Hnsw` is `Send + Sync` for the distance
@@ -570,6 +579,7 @@ impl HnswBackend {
             // Cosine: feed the unit-normalized vector so DistDot == cosine.
             HnswBackend::Cosine(h) => h.insert((&normalize_unit_safe(vec), id)),
             HnswBackend::Dot(h) => h.insert((vec, id)),
+            HnswBackend::Cached(h) => h.insert(vec, id),
         }
     }
 
@@ -584,12 +594,32 @@ impl HnswBackend {
                 h.search(&q, k, ef)
             }
             HnswBackend::Dot(h) => h.search(vec, k, ef),
+            HnswBackend::Cached(h) => return h.search(vec, k, ef),
         };
         raw.into_iter().map(|n| (n.d_id, n.distance)).collect()
     }
 }
 
 impl HnswCpuIndex {
+    pub(crate) fn restore_with_graph_cache(
+        spec: VectorSpec,
+        vectors: Vec<(String, Vec<f32>)>,
+        codebook: Option<ScalarCodebook>,
+        directory: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        if let Some(directory) = directory {
+            match graph_cache::load(spec, &vectors, codebook, directory) {
+                Ok(Some(index)) => {
+                    tracing::info!(rows = vectors.len(), "HNSW graph cache loaded");
+                    return Ok(index);
+                }
+                Ok(None) => {}
+                Err(error) => tracing::warn!(%error, "ignoring optional HNSW graph cache"),
+            }
+        }
+        Self::restore(spec, vectors, codebook)
+    }
+
     /// Construct a fresh, empty CPU HNSW index for the given spec.
     pub fn new(spec: VectorSpec) -> Self {
         Self {
@@ -646,13 +676,10 @@ impl HnswCpuIndex {
     /// The segment is consumed and dropped: once the rows are re-inserted the
     /// store owns them.
     ///
-    /// This is a full graph build, and it runs synchronously on the reopen path
-    /// — the node is not serving while it happens. That cost is what declaring
-    /// `hnsw-cpu` buys and there is no cheaper honest option (a graph cannot be
-    /// traversed against a column it has no edges for), but a node that looks
-    /// hung for minutes at start-up with nothing in its log is a different
-    /// problem from a node that is slow. So it says what it is doing, before
-    /// and after, at a level an operator watching a restart actually has on.
+    /// This fallback builds the graph synchronously before serving. A matched
+    /// graph cache can avoid this path during checkpoint recovery. Without
+    /// cached edges, the graph must be rebuilt from the authoritative vectors.
+    /// Log both edges so an operator can distinguish recovery from a hung node.
     pub fn open_from_segment(
         spec: VectorSpec,
         seg: std::sync::Arc<crate::segment::SegmentReader>,
@@ -699,6 +726,10 @@ impl HnswCpuIndex {
 }
 
 impl VectorIndex for HnswCpuIndex {
+    fn save_graph_cache(&self, directory: &std::path::Path) -> Result<bool> {
+        let inner = self.inner.read().map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        graph_cache::save(&inner, directory)
+    }
     fn checkpoint_vector(&self, external_id: &str) -> Result<Option<Vec<f32>>> {
         let inner = self
             .inner

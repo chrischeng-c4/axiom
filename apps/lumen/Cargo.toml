@@ -107,6 +107,7 @@ rayon = "1.10"
 # internally unit-normalized vectors to use the NEON kernel (DistCosine has no
 # SIMD path and recomputes both operand norms per comparison).
 hnsw_rs = { version = "0.3", features = ["simdeez_f"] }
+self_cell = "=1.2.2"
 jieba-rs = { version = "=0.7.4", optional = true }
 # K8s Operator (feature `operator`). Versions mirror the workspace's existing
 # kube-rs user (mambalibs/queuekit) so the lockfile stays single-versioned.
@@ -872,6 +873,11 @@ required-features = []
 [[test]]
 name = "restore_cold_recovery_contract"
 path = "e2e/restore_cold_recovery_contract.rs"
+required-features = []
+
+[[test]]
+name = "hnsw_shutdown_cache"
+path = "e2e/hnsw_shutdown_cache.rs"
 required-features = []
 
 [[test]]

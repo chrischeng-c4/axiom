@@ -59,6 +59,19 @@ impl Drop for SegmentCheckpointDriver {
 }
 
 impl SegmentCheckpointDriver {
+    /// Stop new scheduling without waiting for an already-owned save. Shutdown
+    /// cache IO subsequently joins the same store gate within its own deadline.
+    #[doc(hidden)]
+    pub fn request_stop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(owner) = &mut self.capacity_owner {
+            owner.stop();
+        }
+    }
+
     /// Stop scheduling and wait for a started blocking save before another
     /// driver uses the same checkpoint root. `Drop` remains emergency cleanup.
     #[doc(hidden)]
@@ -225,6 +238,40 @@ impl CheckpointSchedule {
 }
 
 impl SegmentCheckpointSink {
+    /// Standalone shutdown-only preparation. The caller owns its absolute
+    /// timeout. A detached native thread cannot make Tokio runtime shutdown
+    /// wait forever for optional graph IO; incomplete files remain cache misses.
+    #[doc(hidden)]
+    pub async fn save_shutdown_graph_cache(self: Arc<Self>) -> Result<usize> {
+        let gate = self.writer.mutation_gate().context("shutdown cache requires a writer fence")?;
+        let permit = gate.exclusive().await?;
+        let (send, receive) = oneshot::channel();
+        std::thread::Builder::new()
+            .name("lumen-hnsw-shutdown-cache".into())
+            .spawn(move || {
+                let _permit = permit;
+                let result = (|| {
+                    if !self.engine.has_hnsw_graphs()? && !self.store.has_hnsw_graph_cache() {
+                        return Ok(0);
+                    }
+                    if let Some(aof) = &self.aof {
+                        // The exclusive writer fence includes every completed
+                        // append. Preserve that durable tail instead of spending
+                        // Docker's stop window rewriting the full checkpoint.
+                        aof.lock()
+                            .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
+                            .sync()?;
+                    } else {
+                        self.checkpoint_sync(&self.store)?;
+                    }
+                    self.store.save_hnsw_graph_caches(&self.engine)
+                })();
+                let _ = send.send(result);
+            })
+            .context("start optional shutdown cache worker")?;
+        receive.await.context("shutdown cache worker stopped")?
+    }
+
     async fn checkpoint_with_fence(
         &self,
         fence: Option<crate::segment_capacity::PublicationFence>,
@@ -609,6 +656,62 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn shutdown_graph_cache_preserves_current_and_durable_aof_tail() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        let store = Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap());
+        let tail = root.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(AofWriter::open(&tail).unwrap()));
+        let writer = crate::coordinator::WriteCoordinator::start_from_with_aof(
+            Arc::new(crate::wal::MemWal::new()), engine.clone(), 0, aof.clone(),
+        );
+        writer.submit(RaftLogEntry::CreateCollection {
+            collection_id: "v".into(),
+            req: serde_json::from_value(serde_json::json!({
+                "fields": {"v": {"type": "vector", "dim": 3, "metric": "l2", "backend": "hnsw-cpu"}}
+            })).unwrap(),
+        }).await.unwrap();
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine, store, writer: writer.clone(), aof: Some(aof.clone()),
+        });
+        sink.checkpoint_now().await.unwrap();
+        let current = std::fs::read(root.path().join("CURRENT")).unwrap();
+        writer.submit(RaftLogEntry::Index {
+            collection_id: "v".into(),
+            req: serde_json::from_value(serde_json::json!({"items": [{
+                "external_id": "tail", "field": "v", "value": [1.0, 2.0, 3.0]
+            }]})).unwrap(),
+        }).await.unwrap();
+        aof.lock().unwrap().sync().unwrap();
+        let before = std::fs::read(&tail).unwrap();
+        assert!(!before.is_empty());
+        assert_eq!(sink.save_shutdown_graph_cache().await.unwrap(), 1);
+        assert_eq!(std::fs::read(root.path().join("CURRENT")).unwrap(), current,
+            "shutdown cache must not rewrite CURRENT when a durable AOF exists");
+        assert_eq!(std::fs::read(tail).unwrap(), before, "cache must not trim the authoritative tail");
+    }
+
+    #[tokio::test]
+    async fn shutdown_cache_wait_for_inflight_writes_can_be_cancelled() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        let writer = crate::coordinator::WriteCoordinator::start(
+            Arc::new(crate::wal::MemWal::new()), engine.clone(),
+        );
+        let gate = writer.mutation_gate();
+        let in_flight = gate.shared().await.unwrap();
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine,
+            store: Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap()),
+            writer, aof: None,
+        });
+        assert!(tokio::time::timeout(Duration::from_millis(25), sink.clone().save_shutdown_graph_cache()).await.is_err());
+        assert!(!root.path().join("hnsw-graph-cache").exists());
+        drop(in_flight);
+        assert_eq!(tokio::time::timeout(Duration::from_secs(2), sink.save_shutdown_graph_cache()).await.unwrap().unwrap(), 0);
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dropping_private_spill_keeps_root_while_blocking_save_owns_store() {
