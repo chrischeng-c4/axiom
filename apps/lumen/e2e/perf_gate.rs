@@ -766,6 +766,14 @@ fn median_statistic_and_ignored_inventory() {
                 "restart_phase_diagnostics_retains_bounded_terminal_records_for_every_phase",
                 false,
             ),
+            (
+                "restart_readiness_diagnostics_keep_bounded_http_transport_process_and_deadline_evidence",
+                false,
+            ),
+            (
+                "restart_readiness_diagnostic_record_names_each_failure_kind_and_caps_text",
+                false,
+            ),
         ]
     );
 
@@ -876,6 +884,8 @@ mod durable_workload {
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
     const RESTART_DIAGNOSTIC_PREFIX: &str = "PERF_RESTART_DIAGNOSTIC";
+    const RESTART_READINESS_BODY_MAX_BYTES: usize = 4 * 1024;
+    const RESTART_DIAGNOSTIC_TEXT_MAX_BYTES: usize = 4 * 1024;
     const SETUP_TIMEOUT: Duration = Duration::from_secs(INPUT_SECONDS);
     const DRAIN_TIMEOUT: Duration = Duration::from_millis(perf_cell_receipt::DRAIN_LIMIT_MS);
     // No separate post-input budget is declared. Derive this guard from the
@@ -1427,8 +1437,41 @@ mod durable_workload {
         first_ready_elapsed: Option<Duration>,
     }
 
+    #[derive(Clone, Debug, Default)]
+    struct RestartReadinessDiagnostics {
+        readiness_failure: Option<RestartReadinessFailure>,
+        docker_process_state: Option<DockerProcessState>,
+    }
+
+    #[derive(Clone, Debug)]
+    enum RestartReadinessFailure {
+        HttpStatus { status: String, body: String },
+        Transport { error: String },
+        Deadline,
+    }
+
+    #[derive(Clone, Debug)]
+    struct DockerProcessState {
+        detail: String,
+    }
+
+    fn bounded_restart_diagnostic_text(bytes: &[u8], total_bytes: u64, truncated: bool) -> String {
+        format!(
+            "bytes={total_bytes} truncated={truncated} text={:?}",
+            String::from_utf8_lossy(bytes)
+        )
+    }
+
+    fn bounded_restart_diagnostic_error(error: impl ToString) -> String {
+        let text = error.to_string();
+        let bytes = text.as_bytes();
+        let retained = &bytes[..bytes.len().min(RESTART_DIAGNOSTIC_TEXT_MAX_BYTES)];
+        bounded_restart_diagnostic_text(retained, bytes.len() as u64, retained.len() != bytes.len())
+    }
+
     fn render_restart_phase_diagnostics(
         diagnostics: &RestartPhaseDiagnostics,
+        readiness: &RestartReadinessDiagnostics,
         phase: &str,
         outcome: &str,
     ) -> String {
@@ -1436,8 +1479,35 @@ mod durable_workload {
             Some(value) => value.as_millis().to_string(),
             None => "null".to_owned(),
         };
+        let (readyz_failure, readyz_status, readyz_body, readyz_transport_error) =
+            match readiness.readiness_failure.as_ref() {
+                None => ("none".to_owned(), "null".to_owned(), "null".to_owned(), "null".to_owned()),
+                Some(RestartReadinessFailure::HttpStatus { status, body }) => (
+                    "http_status".to_owned(),
+                    status.clone(),
+                    body.clone(),
+                    "null".to_owned(),
+                ),
+                Some(RestartReadinessFailure::Transport { error }) => (
+                    "transport".to_owned(),
+                    "null".to_owned(),
+                    "null".to_owned(),
+                    error.clone(),
+                ),
+                Some(RestartReadinessFailure::Deadline) => (
+                    "deadline".to_owned(),
+                    "null".to_owned(),
+                    "null".to_owned(),
+                    "null".to_owned(),
+                ),
+            };
+        let docker_process_state = readiness
+            .docker_process_state
+            .as_ref()
+            .map(|state| state.detail.as_str())
+            .unwrap_or("null");
         format!(
-            "{RESTART_DIAGNOSTIC_PREFIX} phase={phase} outcome={outcome} total_elapsed_ms={} restart_elapsed_ms={} port_lookup_elapsed_ms={} readyz_wait_elapsed_ms={} readiness_attempts={} first_ready_elapsed_ms={}",
+            "{RESTART_DIAGNOSTIC_PREFIX} phase={phase} outcome={outcome} total_elapsed_ms={} restart_elapsed_ms={} port_lookup_elapsed_ms={} readyz_wait_elapsed_ms={} readiness_attempts={} first_ready_elapsed_ms={} readyz_failure={readyz_failure} readyz_status={readyz_status:?} readyz_body={readyz_body:?} readyz_transport_error={readyz_transport_error:?} docker_process_state={docker_process_state:?}",
             diagnostics.total_elapsed.as_millis(),
             elapsed(diagnostics.restart_elapsed),
             elapsed(diagnostics.port_lookup_elapsed),
@@ -1452,7 +1522,21 @@ mod durable_workload {
         phase: &str,
         outcome: &str,
     ) -> String {
-        let record = render_restart_phase_diagnostics(diagnostics, phase, outcome);
+        emit_restart_phase_diagnostics_with_readiness(
+            diagnostics,
+            &RestartReadinessDiagnostics::default(),
+            phase,
+            outcome,
+        )
+    }
+
+    fn emit_restart_phase_diagnostics_with_readiness(
+        diagnostics: &RestartPhaseDiagnostics,
+        readiness: &RestartReadinessDiagnostics,
+        phase: &str,
+        outcome: &str,
+    ) -> String {
+        let record = render_restart_phase_diagnostics(diagnostics, readiness, phase, outcome);
         eprintln!("{record}");
         record
     }
@@ -2303,7 +2387,7 @@ mod durable_workload {
                 .await
         }
 
-        async fn restart_and_wait_ready_with<R: RestartCommandRunner>(
+        async fn restart_and_wait_ready_with<R: RestartCommandRunner + Send>(
             &mut self,
             runner: &mut R,
         ) -> Result<Duration> {
@@ -2354,16 +2438,28 @@ mod durable_workload {
             mut observe: Observe,
         ) -> Result<Duration>
         where
-            R: RestartCommandRunner,
+            R: RestartCommandRunner + Send,
             Observe: FnMut(&str, RestartPhaseDiagnostics),
         {
             let started = Instant::now();
             let mut diagnostics = RestartPhaseDiagnostics::default();
+            let mut readiness = RestartReadinessDiagnostics::default();
             let mut emit = |diagnostics: &mut RestartPhaseDiagnostics,
+                            readiness: &RestartReadinessDiagnostics,
                             phase: &'static str,
                             outcome: &'static str| {
                 diagnostics.total_elapsed = started.elapsed();
-                let record = emit_restart_phase_diagnostics(diagnostics, phase, outcome);
+                let record = if readiness.readiness_failure.is_some() {
+                    emit_restart_phase_diagnostics_with_readiness(
+                        diagnostics,
+                        readiness,
+                        phase,
+                        outcome,
+                    )
+                } else {
+                    let record = emit_restart_phase_diagnostics(diagnostics, phase, outcome);
+                    record
+                };
                 observe(&record, *diagnostics);
             };
 
@@ -2372,14 +2468,14 @@ mod durable_workload {
             match tokio::time::timeout(remaining, runner.restart(&self.container)).await {
                 Err(_) => {
                     diagnostics.restart_elapsed = Some(restart_started.elapsed());
-                    emit(&mut diagnostics, "docker-restart", "timeout");
+                    emit(&mut diagnostics, &readiness, "docker-restart", "timeout");
                     return Err(HarnessError::Startup(
                         "restart command exhausted the total restart deadline".to_owned(),
                     ));
                 }
                 Ok(Err(error)) => {
                     diagnostics.restart_elapsed = Some(restart_started.elapsed());
-                    emit(&mut diagnostics, "docker-restart", "error");
+                    emit(&mut diagnostics, &readiness, "docker-restart", "error");
                     return Err(error);
                 }
                 Ok(Ok(())) => {
@@ -2394,7 +2490,7 @@ mod durable_workload {
                 {
                     Err(_) => {
                         diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());
-                        emit(&mut diagnostics, "published-port", "timeout");
+                        emit(&mut diagnostics, &readiness, "published-port", "timeout");
                         return Err(HarnessError::Startup(
                             "published-port refresh and readiness exhausted the startup budget"
                                 .to_owned(),
@@ -2402,7 +2498,7 @@ mod durable_workload {
                     }
                     Ok(Err(error)) => {
                         diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());
-                        emit(&mut diagnostics, "published-port", "error");
+                        emit(&mut diagnostics, &readiness, "published-port", "error");
                         return Err(error);
                     }
                     Ok(Ok(output)) => {
@@ -2413,7 +2509,7 @@ mod durable_workload {
             let base = match published_loopback_base(&output) {
                 Ok(base) => base,
                 Err(error) => {
-                    emit(&mut diagnostics, "published-port", "error");
+                    emit(&mut diagnostics, &readiness, "published-port", "error");
                     return Err(error);
                 }
             };
@@ -2428,30 +2524,85 @@ mod durable_workload {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
                     diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
-                    emit(&mut diagnostics, "readyz", "timeout");
+                    readiness.readiness_failure = Some(RestartReadinessFailure::Deadline);
+                    readiness.docker_process_state = Some(DockerProcessState {
+                        detail: "deadline_before_process_inspect".to_owned(),
+                    });
+                    emit(&mut diagnostics, &readiness, "readyz", "timeout");
                     return Err(HarnessError::Startup(format!(
                         "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
                         STARTUP_TIMEOUT.as_secs()
                     )));
                 }
                 diagnostics.readiness_attempts += 1;
-                if let Ok(Ok(response)) = tokio::time::timeout(
+                match tokio::time::timeout(
                     remaining,
                     self.client.get(format!("{}/readyz", self.base)).send(),
                 )
                 .await
                 {
-                    if response.status().is_success() {
+                    Ok(Ok(response)) if response.status().is_success() => {
                         diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
                         #[rustfmt::skip]
                         diagnostics.first_ready_elapsed.get_or_insert_with(|| started.elapsed());
-                        emit(&mut diagnostics, "complete", "success");
+                        emit(&mut diagnostics, &readiness, "complete", "success");
                         return Ok(started.elapsed());
                     }
+                    Ok(Ok(response)) => {
+                        let status = response.status().to_string();
+                        let body_deadline = deadline.saturating_duration_since(Instant::now());
+                        readiness.readiness_failure = Some(
+                            match tokio::time::timeout(
+                                body_deadline,
+                                read_bounded_chunks(
+                                    response.bytes_stream(),
+                                    RESTART_READINESS_BODY_MAX_BYTES,
+                                    bounded_restart_diagnostic_error,
+                                ),
+                            )
+                            .await
+                            {
+                                Ok(Ok(body)) => RestartReadinessFailure::HttpStatus {
+                                    status,
+                                    body: bounded_restart_diagnostic_text(
+                                        &body.retained,
+                                        body.total_bytes,
+                                        body.truncated,
+                                    ),
+                                },
+                                Ok(Err(error)) => RestartReadinessFailure::Transport { error },
+                                Err(_) => RestartReadinessFailure::Deadline,
+                            },
+                        );
+                    }
+                    Ok(Err(error)) => {
+                        readiness.readiness_failure = Some(RestartReadinessFailure::Transport {
+                            error: bounded_restart_diagnostic_error(error),
+                        });
+                    }
+                    Err(_) => {
+                        readiness.readiness_failure = Some(RestartReadinessFailure::Deadline);
+                    }
+                }
+                if readiness.docker_process_state.is_none() {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    readiness.docker_process_state = Some(
+                        match tokio::time::timeout(
+                            remaining,
+                            runner.process_state(&self.container),
+                        )
+                        .await
+                        {
+                            Ok(state) => state,
+                            Err(_) => DockerProcessState {
+                                detail: "process_inspect_exhausted_readiness_deadline".to_owned(),
+                            },
+                        },
+                    );
                 }
                 if Instant::now() >= deadline {
                     diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
-                    emit(&mut diagnostics, "readyz", "timeout");
+                    emit(&mut diagnostics, &readiness, "readyz", "timeout");
                     return Err(HarnessError::Startup(format!(
                         "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
                         STARTUP_TIMEOUT.as_secs()
@@ -2485,6 +2636,12 @@ mod durable_workload {
     trait RestartCommandRunner {
         async fn restart(&mut self, container: &str) -> Result<()>;
         async fn published_port(&mut self, container: &str) -> Result<String>;
+
+        async fn process_state(&mut self, _container: &str) -> DockerProcessState {
+            DockerProcessState {
+                detail: "not_collected".to_owned(),
+            }
+        }
     }
 
     struct DockerRestartCommandRunner;
@@ -2528,6 +2685,74 @@ mod durable_workload {
                 )));
             }
             String::from_utf8(stdout.retained).map_err(|error| failure(error.to_string()))
+        }
+
+        async fn process_state(&mut self, container: &str) -> DockerProcessState {
+            let args = vec![
+                "inspect".to_owned(),
+                "--format".to_owned(),
+                "{{.State.Running}}\\t{{.State.ExitCode}}\\t{{.State.OOMKilled}}\\t{{.State.Error}}"
+                    .to_owned(),
+                container.to_owned(),
+            ];
+            let mut command = tokio::process::Command::new("docker");
+            command
+                .args(&args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let result = tokio::time::timeout(REQUEST_TIMEOUT, async {
+                let child = command.spawn().map_err(|error| error.to_string())?;
+                collect_docker_output(child, EvidenceRetention::Prefix).await
+            })
+            .await;
+            let (status, stdout, _stderr) = match result {
+                Ok(Ok(values)) => values,
+                Ok(Err(error)) => {
+                    return DockerProcessState {
+                        detail: format!("inspect_error={}", bounded_restart_diagnostic_error(error)),
+                    };
+                }
+                Err(_) => {
+                    return DockerProcessState {
+                        detail: "inspect_timeout".to_owned(),
+                    };
+                }
+            };
+            if !status.success() || stdout.truncated {
+                return DockerProcessState {
+                    detail: format!(
+                        "inspect_command_status={status} output={}",
+                        bounded_restart_diagnostic_text(
+                            &stdout.retained,
+                            stdout.total_bytes,
+                            stdout.truncated,
+                        )
+                    ),
+                };
+            }
+            let output = String::from_utf8_lossy(&stdout.retained);
+            let mut fields = output.trim_end().splitn(4, '\t');
+            let (Some(running), Some(exit_code), Some(oom_killed), Some(error)) =
+                (fields.next(), fields.next(), fields.next(), fields.next())
+            else {
+                return DockerProcessState {
+                    detail: format!(
+                        "inspect_unparseable={}",
+                        bounded_restart_diagnostic_text(
+                            &stdout.retained,
+                            stdout.total_bytes,
+                            stdout.truncated,
+                        )
+                    ),
+                };
+            };
+            DockerProcessState {
+                detail: format!(
+                    "running={running} exit_code={exit_code} oom_killed={oom_killed} error={}",
+                    bounded_restart_diagnostic_error(error),
+                ),
+            }
         }
     }
 
@@ -7886,6 +8111,91 @@ mod durable_workload {
                 "missing bounded terminal restart diagnostic contract line: {expected}"
             );
         }
+    }
+
+    /// A failed post-restart readiness check must leave one bounded, structured
+    /// record in the job log.  Phase timing alone cannot tell an HTTP refusal
+    /// from a transport failure or a stopped container.
+    #[test]
+    fn restart_readiness_diagnostics_keep_bounded_http_transport_process_and_deadline_evidence() {
+        let region = restart_diagnostic_production_region(include_str!("perf_gate.rs"));
+        for expected in [
+            "const RESTART_READINESS_BODY_MAX_BYTES: usize = 4 * 1024;",
+            "readyz_failure=",
+            "readyz_status=",
+            "readyz_body=",
+            "readyz_transport_error=",
+            "docker_process_state=",
+            "DockerProcessState",
+            "HttpStatus",
+            "Transport",
+            "Deadline",
+            "runner.process_state(&self.container),",
+        ] {
+            assert!(
+                restart_diagnostic_production_contains(region, expected),
+                "missing bounded restart-readiness diagnostic contract line: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn restart_readiness_diagnostic_record_names_each_failure_kind_and_caps_text() {
+        let capped_body = bounded_restart_diagnostic_text(
+            &vec![b'x'; RESTART_READINESS_BODY_MAX_BYTES],
+            (RESTART_READINESS_BODY_MAX_BYTES + 1) as u64,
+            true,
+        );
+        let http = RestartReadinessDiagnostics {
+            readiness_failure: Some(RestartReadinessFailure::HttpStatus {
+                status: "503 Service Unavailable".to_owned(),
+                body: capped_body.clone(),
+            }),
+            docker_process_state: Some(DockerProcessState {
+                detail: "running=false exit_code=137 oom_killed=true error=bytes=0 truncated=false text=\"\""
+                    .to_owned(),
+            }),
+        };
+        let http_record = render_restart_phase_diagnostics(
+            &RestartPhaseDiagnostics::default(),
+            &http,
+            "readyz",
+            "timeout",
+        );
+        assert!(http_record.contains("readyz_failure=http_status"));
+        assert!(http_record.contains("readyz_status=\"503 Service Unavailable\""));
+        assert!(http_record.contains("readyz_body=\"bytes=4097 truncated=true"));
+        assert!(http_record.contains("docker_process_state=\"running=false exit_code=137 oom_killed=true"));
+
+        let transport = RestartReadinessDiagnostics {
+            readiness_failure: Some(RestartReadinessFailure::Transport {
+                error: "bytes=17 truncated=false text=\"connection refused\"".to_owned(),
+            }),
+            ..RestartReadinessDiagnostics::default()
+        };
+        assert!(
+            render_restart_phase_diagnostics(
+                &RestartPhaseDiagnostics::default(),
+                &transport,
+                "readyz",
+                "timeout",
+            )
+                .contains("readyz_failure=transport")
+        );
+        let deadline = RestartReadinessDiagnostics {
+            readiness_failure: Some(RestartReadinessFailure::Deadline),
+            ..RestartReadinessDiagnostics::default()
+        };
+        assert!(
+            render_restart_phase_diagnostics(
+                &RestartPhaseDiagnostics::default(),
+                &deadline,
+                "readyz",
+                "timeout",
+            )
+                .contains("readyz_failure=deadline")
+        );
+        assert!(capped_body.len() <= RESTART_READINESS_BODY_MAX_BYTES + 80);
     }
 }
 // DURABLE-WORKLOAD-END
