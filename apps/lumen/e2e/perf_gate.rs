@@ -655,6 +655,10 @@ fn median_statistic_and_ignored_inventory() {
                 false,
             ),
             (
+                "qualifying_receipt_path_must_be_absolute_with_an_existing_directory_parent",
+                false,
+            ),
+            (
                 "approved_index_operation_requires_the_frozen_fourteen_field_schema",
                 false,
             ),
@@ -716,6 +720,10 @@ fn median_statistic_and_ignored_inventory() {
             ),
             (
                 "failure_evidence_keeps_request_chain_and_collects_before_cleanup",
+                false,
+            ),
+            (
+                "restart_total_deadline_covers_restart_port_lookup_and_readiness",
                 false,
             ),
             (
@@ -1270,13 +1278,36 @@ mod durable_workload {
                     "LUMEN_PERF_RECEIPT_PATH must name a new receipt file".to_owned(),
                 ));
             }
+            let receipt_path = PathBuf::from(receipt_path);
+            if !receipt_path.is_absolute() {
+                return Err(HarnessError::InvalidSelection(
+                    "LUMEN_PERF_RECEIPT_PATH must be an absolute path".to_owned(),
+                ));
+            }
+            let parent = receipt_path.parent().ok_or_else(|| {
+                HarnessError::InvalidSelection(
+                    "LUMEN_PERF_RECEIPT_PATH must have a parent directory".to_owned(),
+                )
+            })?;
+            let metadata = fs::metadata(parent).map_err(|error| {
+                HarnessError::InvalidSelection(format!(
+                    "LUMEN_PERF_RECEIPT_PATH parent {} is not an existing directory: {error}",
+                    parent.display()
+                ))
+            })?;
+            if !metadata.is_dir() {
+                return Err(HarnessError::InvalidSelection(format!(
+                    "LUMEN_PERF_RECEIPT_PATH parent {} is not a directory",
+                    parent.display()
+                )));
+            }
             Ok(Self {
                 repository: required_env("LUMEN_PERF_REPOSITORY")?,
                 run_id: required_env("LUMEN_PERF_RUN_ID")?,
                 run_attempt: required_env("LUMEN_PERF_RUN_ATTEMPT")?,
                 commit: required_env("LUMEN_PERF_COMMIT")?,
                 image_reference,
-                receipt_path: PathBuf::from(receipt_path),
+                receipt_path,
             })
         }
 
@@ -2098,13 +2129,24 @@ mod durable_workload {
         }
 
         async fn wait_ready(&self) -> Result<()> {
-            let deadline = Instant::now() + STARTUP_TIMEOUT;
+            self.wait_ready_until(Instant::now() + STARTUP_TIMEOUT)
+                .await
+        }
+
+        async fn wait_ready_until(&self, deadline: Instant) -> Result<()> {
             loop {
-                if let Ok(response) = self
-                    .client
-                    .get(format!("{}/readyz", self.base))
-                    .send()
-                    .await
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(HarnessError::Startup(format!(
+                        "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
+                        STARTUP_TIMEOUT.as_secs()
+                    )));
+                }
+                if let Ok(Ok(response)) = tokio::time::timeout(
+                    remaining,
+                    self.client.get(format!("{}/readyz", self.base)).send(),
+                )
+                .await
                 {
                     if response.status().is_success() {
                         return Ok(());
@@ -2116,7 +2158,11 @@ mod durable_workload {
                         STARTUP_TIMEOUT.as_secs()
                     )));
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(
+                    Duration::from_millis(100)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                )
+                .await;
             }
         }
 
@@ -2199,9 +2245,16 @@ mod durable_workload {
             runner: &mut R,
         ) -> Result<Duration> {
             let started = Instant::now();
-            runner.restart(&self.container).await?;
-            self.refresh_restart_endpoint(runner, Instant::now() + STARTUP_TIMEOUT)
-                .await?;
+            let deadline = started + STARTUP_TIMEOUT;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            tokio::time::timeout(remaining, runner.restart(&self.container))
+                .await
+                .map_err(|_| {
+                    HarnessError::Startup(
+                        "restart command exhausted the total restart deadline".to_owned(),
+                    )
+                })??;
+            self.refresh_restart_endpoint(runner, deadline).await?;
             Ok(started.elapsed())
         }
 
@@ -2227,7 +2280,7 @@ mod durable_workload {
                     self.container, self.base, base
                 );
                 self.base = base;
-                self.wait_ready().await
+                self.wait_ready_until(deadline).await
             })
             .await
             .map_err(|_| {
@@ -5588,6 +5641,53 @@ mod durable_workload {
     }
 
     #[test]
+    fn qualifying_receipt_path_must_be_absolute_with_an_existing_directory_parent() {
+        let root = tempfile::tempdir().expect("create qualifying receipt path fixture");
+        let existing_parent = root.path().join("receipts");
+        fs::create_dir(&existing_parent).expect("create receipt parent");
+        let ordinary_file = root.path().join("ordinary-file");
+        fs::write(&ordinary_file, "not a directory").expect("create ordinary file");
+
+        let variables = [
+            (
+                "LUMEN_PERF_IMAGE",
+                "ghcr.io/example/lumen@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            ("LUMEN_PERF_REPOSITORY", "example/lumen"),
+            ("LUMEN_PERF_RUN_ID", "123"),
+            ("LUMEN_PERF_RUN_ATTEMPT", "1"),
+            ("LUMEN_PERF_COMMIT", "abcdef0"),
+        ];
+        for (name, value) in variables {
+            env::set_var(name, value);
+        }
+        for path in [
+            PathBuf::from("receipts/index-1-flat-cpu.json"),
+            root.path().join("missing").join("index-1-flat-cpu.json"),
+            ordinary_file.join("index-1-flat-cpu.json"),
+        ] {
+            env::set_var("LUMEN_PERF_RECEIPT_PATH", &path);
+            assert!(
+                QualifyingContext::from_environment().is_err(),
+                "qualifying context must reject unsafe receipt path {}",
+                path.display()
+            );
+        }
+        env::set_var(
+            "LUMEN_PERF_RECEIPT_PATH",
+            existing_parent.join("index-1-flat-cpu.json"),
+        );
+        assert!(
+            QualifyingContext::from_environment().is_ok(),
+            "an absolute path below an existing receipt directory must remain valid"
+        );
+        for (name, _) in variables {
+            env::remove_var(name);
+        }
+        env::remove_var("LUMEN_PERF_RECEIPT_PATH");
+    }
+
+    #[test]
     fn approved_index_operation_requires_the_frozen_fourteen_field_schema() {
         let fields = document_fields(7, "hot");
         let operation = approved_index_operation(1, "hot-base-000007".to_owned(), &fields)
@@ -5679,7 +5779,12 @@ mod durable_workload {
         let sample = runtime_sample(Duration::from_millis(10_250), counters, &metrics);
         assert!(sample.starts_with("PERF_RUNTIME_SAMPLE elapsed_ms=10250 "));
         assert!(sample.contains("checkpoints: 10, merges: 5"));
-        for (state, bytes) in [("reserved", 7), ("active", 11), ("frozen", 13), ("total", 31)] {
+        for (state, bytes) in [
+            ("reserved", 7),
+            ("active", 11),
+            ("frozen", 13),
+            ("total", 31),
+        ] {
             assert!(sample.contains(&format!("lumen_pending_change_{state}_bytes {bytes}")));
         }
         assert!(!sample.contains("# HELP"));
@@ -5844,32 +5949,39 @@ mod durable_workload {
         let checkpoint_calls = calls.clone();
         let metric_calls = calls.clone();
         let app = axum::Router::new()
-            .route("/admin/checkpoint", axum::routing::post(move || {
-                let calls = checkpoint_calls.clone();
-                async move {
-                    calls.lock().unwrap().push("checkpoint");
-                    if delay_headers {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                    }
-                    let body = axum::body::Body::from_stream(futures::stream::once(async move {
-                        if delay_body {
+            .route(
+                "/admin/checkpoint",
+                axum::routing::post(move || {
+                    let calls = checkpoint_calls.clone();
+                    async move {
+                        calls.lock().unwrap().push("checkpoint");
+                        if delay_headers {
                             tokio::time::sleep(Duration::from_secs(2)).await;
                         }
-                        Ok::<_, std::convert::Infallible>(body)
-                    }));
-                    let mut response = axum::response::Response::new(body);
-                    *response.status_mut() = status;
-                    response
-                }
-            }))
-            .route("/metrics", axum::routing::get(move || {
-                let calls = metric_calls.clone();
-                let metrics = metrics.clone();
-                async move {
-                    calls.lock().unwrap().push("metrics");
-                    metrics
-                }
-            }));
+                        let body =
+                            axum::body::Body::from_stream(futures::stream::once(async move {
+                                if delay_body {
+                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                }
+                                Ok::<_, std::convert::Infallible>(body)
+                            }));
+                        let mut response = axum::response::Response::new(body);
+                        *response.status_mut() = status;
+                        response
+                    }
+                }),
+            )
+            .route(
+                "/metrics",
+                axum::routing::get(move || {
+                    let calls = metric_calls.clone();
+                    let metrics = metrics.clone();
+                    async move {
+                        calls.lock().unwrap().push("metrics");
+                        metrics
+                    }
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(async move {
@@ -5964,11 +6076,12 @@ mod durable_workload {
                 )
                 .await;
                 let now = tokio::time::Instant::now();
-                let deadline = now + if expired {
-                    Duration::ZERO
-                } else {
-                    Duration::from_millis(25)
-                };
+                let deadline = now
+                    + if expired {
+                        Duration::ZERO
+                    } else {
+                        Duration::from_millis(25)
+                    };
                 let started = Instant::now();
                 let result = checkpoint_seed(&client, &base, deadline).await;
                 task.abort();
@@ -5977,11 +6090,17 @@ mod durable_workload {
                     "setup must stop promptly"
                 );
                 assert!(
-                    matches!(result, Err(HarnessError::SetupTimeout { stage: "seed_checkpoint" })),
+                    matches!(
+                        result,
+                        Err(HarnessError::SetupTimeout {
+                            stage: "seed_checkpoint"
+                        })
+                    ),
                     "{result:?}"
                 );
                 assert_eq!(
-                    calls.lock().unwrap().len(), usize::from(!expired),
+                    calls.lock().unwrap().len(),
+                    usize::from(!expired),
                     "a timed-out checkpoint is never retried"
                 );
             }
@@ -6778,6 +6897,52 @@ mod durable_workload {
             tokio::time::sleep(self.delay).await;
             Ok(self.output.clone())
         }
+    }
+
+    struct SplitBudgetRestartRunner {
+        output: String,
+        restart_delay: Duration,
+        port_delay: Duration,
+    }
+
+    #[async_trait]
+    impl RestartCommandRunner for SplitBudgetRestartRunner {
+        async fn restart(&mut self, _container: &str) -> Result<()> {
+            tokio::time::sleep(self.restart_delay).await;
+            Ok(())
+        }
+
+        async fn published_port(&mut self, _container: &str) -> Result<String> {
+            tokio::time::sleep(self.port_delay).await;
+            Ok(self.output.clone())
+        }
+    }
+
+    #[test]
+    fn restart_total_deadline_covers_restart_port_lookup_and_readiness() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build split restart-deadline regression runtime");
+        runtime.block_on(async {
+            let (mut server, _requests, task) = fake_ready_lumen().await;
+            let mut runner = SplitBudgetRestartRunner {
+                output: server.base.strip_prefix("http://").unwrap().to_owned(),
+                restart_delay: Duration::from_secs(16),
+                port_delay: Duration::from_secs(16),
+            };
+            let result = tokio::time::timeout(
+                Duration::from_secs(35),
+                server.restart_and_wait_ready_with(&mut runner),
+            )
+            .await
+            .expect("the total restart deadline must finish promptly");
+            assert!(
+                matches!(result, Err(HarnessError::Startup(_))),
+                "restart, port lookup, and readiness must share one 30-second deadline: {result:?}"
+            );
+            task.abort();
+        });
     }
 
     #[tokio::test]

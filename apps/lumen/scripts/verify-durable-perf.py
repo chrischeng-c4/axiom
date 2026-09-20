@@ -279,6 +279,8 @@ def validate_measurement(m):
         fail("peak RSS is absent or exceeds 12 GiB")
     if not m["restart_recovered"]:
         fail("restart recovery was not observed")
+    if m["restart_duration_ms"] > 30000:
+        fail("restart duration exceeds the approved 30000ms limit")
     if not m["live_mutation_readback"] or not m["cold_mutation_readback"]:
         fail("live and cold mutation target/content readback are required")
 

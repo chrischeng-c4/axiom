@@ -608,20 +608,20 @@ jobs:
           LUMEN_PERF_RUN_ID: ${{ github.run_id }}
           LUMEN_PERF_RUN_ATTEMPT: ${{ github.run_attempt }}
           LUMEN_PERF_COMMIT: ${{ needs.identity.outputs.commit }}
-          LUMEN_PERF_RECEIPT_PATH: receipts/${{ matrix.cell_id }}.json
+          LUMEN_PERF_RECEIPT_PATH: ${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p receipts
+          mkdir -p "${{ github.workspace }}/receipts"
           cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture
           test -f "$LUMEN_PERF_RECEIPT_PATH"
           test ! -L "$LUMEN_PERF_RECEIPT_PATH"
-          test "$(find receipts -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
+          test "$(find "${{ github.workspace }}/receipts" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
       - name: Upload qualifying durable performance receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lumen-durable-perf-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cell_id }}
-          path: receipts/${{ matrix.cell_id }}.json
+          path: ${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json
           if-no-files-found: error
           overwrite: false
       - name: Verify full run-scoped candidate supply chain

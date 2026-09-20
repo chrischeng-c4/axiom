@@ -24,6 +24,7 @@ pub const COMPLETED_PERCENT: u64 = 95;
 pub const QUERY_P99_LIMIT_MS: u64 = 1_000;
 pub const QUERY_MAX_LIMIT_MS: u64 = 5_000;
 pub const DRAIN_LIMIT_MS: u64 = 60_000;
+pub const RESTART_LIMIT_MS: u64 = 30_000;
 pub const RSS_LIMIT_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 pub const DOCKER_CPUS_MILLI: u64 = 2_500;
 pub const DOCKER_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -1293,6 +1294,12 @@ fn validate_measurement(measurement: &Measurement, limits: &Limits) -> Result<()
             "restart did not recover the durable workload".to_owned(),
         ));
     }
+    if measurement.restart_duration_ms > RESTART_LIMIT_MS {
+        return Err(ReceiptError::Invalid(format!(
+            "restart duration {}ms exceeds the approved {}ms limit",
+            measurement.restart_duration_ms, RESTART_LIMIT_MS
+        )));
+    }
     if !measurement.live_mutation_readback || !measurement.cold_mutation_readback {
         return Err(ReceiptError::Invalid(
             "qualifying receipt lacks live or cold mutation target/content readback".to_owned(),
@@ -2072,6 +2079,18 @@ mod tests {
             early_clock.validate(),
             Err(ReceiptError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn receipt_rejects_restart_duration_above_thirty_seconds() {
+        let mut receipt = receipt(expected_cells().remove(0));
+        receipt.measurement.restart_duration_ms = 30_000;
+        receipt
+            .validate()
+            .expect("a restart that takes exactly thirty seconds remains valid");
+
+        receipt.measurement.restart_duration_ms = 30_001;
+        assert!(matches!(receipt.validate(), Err(ReceiptError::Invalid(_))));
     }
 
     #[test]

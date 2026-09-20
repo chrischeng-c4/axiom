@@ -48,7 +48,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "2f4af9d9c248d0b829350bbe4f18989f075fbe36fdeb6f919aa8e32ac6e8da97";
+    "0fef8d025ad7af39946a13f927d84f83b570462850e4f3dddbb2facc83b9e46f";
 const KIND_E2E_BYTES_SHA256: &str =
     "1e6bb83156af06463fed2ba8408cc0b6ab433ce08a68d92a5b17c934972fdedc";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
@@ -1650,6 +1650,11 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "qualifying_receipt_path_must_be_absolute_with_an_existing_directory_parent"
+                        .into(),
+                    false,
+                ),
+                (
                     "approved_index_operation_requires_the_frozen_fourteen_field_schema".into(),
                     false,
                 ),
@@ -1736,6 +1741,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 (
                     "failure_evidence_keeps_request_chain_and_collects_before_cleanup".into(),
+                    false,
+                ),
+                (
+                    "restart_total_deadline_covers_restart_port_lookup_and_readiness".into(),
                     false,
                 ),
                 (
@@ -1880,7 +1889,7 @@ fn durable_perf_env() -> [(&'static str, &'static str); 10] {
         ("LUMEN_PERF_COMMIT", "${{ needs.identity.outputs.commit }}"),
         (
             "LUMEN_PERF_RECEIPT_PATH",
-            "receipts/${{ matrix.cell_id }}.json",
+            "${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json",
         ),
     ]
 }
@@ -1999,7 +2008,7 @@ fn validate_durable_perf_matrix(workflow: &Yaml, source: &str) -> Result<(), Fin
     let perf_lines = shell_logical_lines(run);
     require(
         active_line_contains(&perf_lines, "set -euo pipefail")
-            && active_line_contains(&perf_lines, "mkdir -p receipts")
+            && active_line_contains(&perf_lines, "mkdir -p \"${{ github.workspace }}/receipts\"")
             && perf_lines
                 .iter()
                 .filter(|line| line.as_str() == RELEASE_PERF_GATE)
@@ -2007,7 +2016,10 @@ fn validate_durable_perf_matrix(workflow: &Yaml, source: &str) -> Result<(), Fin
                 == 1
             && active_line_contains(&perf_lines, "test -f \"$LUMEN_PERF_RECEIPT_PATH\"")
             && active_line_contains(&perf_lines, "test ! -L \"$LUMEN_PERF_RECEIPT_PATH\"")
-            && active_line_contains(&perf_lines, "find receipts -mindepth 1 -maxdepth 1 | wc -l")
+            && active_line_contains(
+                &perf_lines,
+                "find \"${{ github.workspace }}/receipts\" -mindepth 1 -maxdepth 1 | wc -l",
+            )
             && !perf_lines.iter().any(|line| line.contains("--exact")),
         PERF_WORKFLOW,
     )?;
@@ -2027,7 +2039,10 @@ fn validate_durable_perf_matrix(workflow: &Yaml, source: &str) -> Result<(), Fin
             "name",
             "lumen-durable-perf-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cell_id }}",
         ),
-        ("path", "receipts/${{ matrix.cell_id }}.json"),
+        (
+            "path",
+            "${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json",
+        ),
         ("if-no-files-found", "error"),
     ] {
         require(
@@ -2689,20 +2704,20 @@ fn durable_perf_workflow_fixture() -> String {
           LUMEN_PERF_RUN_ID: ${{{{ github.run_id }}}}
           LUMEN_PERF_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}
           LUMEN_PERF_COMMIT: ${{{{ needs.identity.outputs.commit }}}}
-          LUMEN_PERF_RECEIPT_PATH: receipts/${{{{ matrix.cell_id }}}}.json
+          LUMEN_PERF_RECEIPT_PATH: ${{{{ github.workspace }}}}/receipts/${{{{ matrix.cell_id }}}}.json
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p receipts
+          mkdir -p "${{{{ github.workspace }}}}/receipts"
           {RELEASE_PERF_GATE}
           test -f "$LUMEN_PERF_RECEIPT_PATH"
           test ! -L "$LUMEN_PERF_RECEIPT_PATH"
-          test "$(find receipts -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
+          test "$(find "${{{{ github.workspace }}}}/receipts" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
       - name: Upload qualifying durable performance receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: lumen-durable-perf-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}-${{{{ matrix.cell_id }}}}
-          path: receipts/${{{{ matrix.cell_id }}}}.json
+          path: ${{{{ github.workspace }}}}/receipts/${{{{ matrix.cell_id }}}}.json
           if-no-files-found: error
           overwrite: false
   result:
@@ -2840,8 +2855,8 @@ fn durable_performance_release_workflow_is_fail_closed() {
         "shared receipt filename",
         replace_once(
             &source,
-            "LUMEN_PERF_RECEIPT_PATH: receipts/${{ matrix.cell_id }}.json",
-            "LUMEN_PERF_RECEIPT_PATH: receipts/receipt.json",
+            "LUMEN_PERF_RECEIPT_PATH: ${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json",
+            "LUMEN_PERF_RECEIPT_PATH: ${{ github.workspace }}/receipts/receipt.json",
         ),
     );
     assert_rejected(
@@ -2871,6 +2886,56 @@ fn durable_performance_release_workflow_is_fail_closed() {
 
     validate_durable_perf_workflow(&workflow())
         .expect("the checked-in release workflow must run every qualifying cell");
+}
+
+#[test]
+fn durable_performance_receipt_paths_are_absolute_and_consistent() {
+    let source = durable_perf_workflow_fixture();
+    validate_durable_perf_workflow(&source)
+        .expect("synthetic receipt paths are absolute and consistent");
+
+    let assert_rejected = |name: &str, changed: String| {
+        assert_eq!(
+            validate_durable_perf_workflow(&changed),
+            Err(Finding(PERF_WORKFLOW)),
+            "{name} mutation passed"
+        );
+    };
+    assert_rejected(
+        "relative receipt output",
+        replace_once(
+            &source,
+            "LUMEN_PERF_RECEIPT_PATH: ${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json",
+            "LUMEN_PERF_RECEIPT_PATH: receipts/${{ matrix.cell_id }}.json",
+        ),
+    );
+    assert_rejected(
+        "relative receipt directory",
+        replace_once(
+            &source,
+            "mkdir -p \"${{ github.workspace }}/receipts\"",
+            "mkdir -p receipts",
+        ),
+    );
+    assert_rejected(
+        "relative receipt count check",
+        replace_once(
+            &source,
+            "find \"${{ github.workspace }}/receipts\" -mindepth 1 -maxdepth 1 | wc -l",
+            "find receipts -mindepth 1 -maxdepth 1 | wc -l",
+        ),
+    );
+    assert_rejected(
+        "relative receipt upload",
+        replace_once(
+            &source,
+            "path: ${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json",
+            "path: receipts/${{ matrix.cell_id }}.json",
+        ),
+    );
+
+    validate_durable_perf_workflow(&workflow())
+        .expect("the checked-in workflow uses absolute receipt paths consistently");
 }
 
 #[test]
@@ -4314,6 +4379,73 @@ fn durable_perf_fixture_measurement() -> perf_cell_receipt::Measurement {
     }
 }
 
+fn run_durable_perf_verifier(dir: &Path) -> Output {
+    Command::new("python3")
+        .arg(root().join("apps/lumen/scripts/verify-durable-perf.py"))
+        .args([
+            "--receipts-dir",
+            dir.join("perf").to_str().unwrap(),
+            "--repo",
+            "chrischeng-c4/axiom",
+            "--run-id",
+            "7",
+            "--run-attempt",
+            "2",
+            "--commit",
+            "0123456789012345678901234567890123456789",
+            "--image",
+            &durable_perf_fixture_binding().image_reference,
+            "--output",
+            dir.join("durable-perf-summary.json").to_str().unwrap(),
+        ])
+        .output()
+        .expect("run local durable receipt verifier")
+}
+
+fn bind_durable_perf_summary(dir: &Path) {
+    let summary = dir.join("durable-perf-summary.json");
+    let manifest_path = dir.join("final-candidate-manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["performance"] = json!({
+        "schema_version": 1,
+        "summary_file": "durable-perf-summary.json",
+        "summary_sha256": sha(&summary),
+        "receipts_directory": "perf",
+    });
+    write_manifest(&manifest_path, &manifest);
+}
+
+fn set_durable_perf_restart_duration(dir: &Path, duration_ms: u64) {
+    let receipt_path = dir.join("perf/index-1-flat-cpu.json");
+    let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    receipt["measurement"]["restart_duration_ms"] = json!(duration_ms);
+    fs::write(&receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+}
+
+fn remove_durable_perf_aggregate(dir: &Path) {
+    fs::remove_file(dir.join("durable-perf-summary.json")).unwrap();
+    fs::remove_file(dir.join("durable-perf-summary.json.sha256")).unwrap();
+}
+
+fn forge_durable_perf_aggregate(dir: &Path) {
+    let summary_path = dir.join("durable-perf-summary.json");
+    let mut summary: Value = serde_json::from_slice(&fs::read(&summary_path).unwrap()).unwrap();
+    let record = summary["receipts"]
+        .as_array_mut()
+        .expect("aggregate receipt records")
+        .iter_mut()
+        .find(|record| record["file"] == "index-1-flat-cpu.json")
+        .expect("aggregate record for the forged receipt");
+    record["sha256"] = json!(sha(&dir.join("perf/index-1-flat-cpu.json")));
+    fs::write(&summary_path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fs::write(
+        dir.join("durable-perf-summary.json.sha256"),
+        format!("{}\n", sha(&summary_path)),
+    )
+    .unwrap();
+    bind_durable_perf_summary(dir);
+}
+
 fn add_valid_durable_perf_evidence(dir: &Path) {
     let receipts = dir.join("perf");
     fs::create_dir_all(&receipts).unwrap();
@@ -4334,38 +4466,13 @@ fn add_valid_durable_perf_evidence(dir: &Path) {
         perf_cell_receipt::write_new(&receipts.join(format!("{}.json", cell.id)), &receipt)
             .expect("write a unique valid receipt");
     }
-    let summary = dir.join("durable-perf-summary.json");
-    let status = Command::new("python3")
-        .arg(root().join("apps/lumen/scripts/verify-durable-perf.py"))
-        .args([
-            "--receipts-dir",
-            receipts.to_str().unwrap(),
-            "--repo",
-            "chrischeng-c4/axiom",
-            "--run-id",
-            "7",
-            "--run-attempt",
-            "2",
-            "--commit",
-            "0123456789012345678901234567890123456789",
-            "--image",
-            &durable_perf_fixture_binding().image_reference,
-            "--output",
-            summary.to_str().unwrap(),
-        ])
-        .status()
-        .expect("run local durable receipt verifier");
-    assert!(status.success(), "build a valid local durable summary");
-
-    let manifest_path = dir.join("final-candidate-manifest.json");
-    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["performance"] = json!({
-        "schema_version": 1,
-        "summary_file": "durable-perf-summary.json",
-        "summary_sha256": sha(&summary),
-        "receipts_directory": "perf",
-    });
-    write_manifest(&manifest_path, &manifest);
+    let output = run_durable_perf_verifier(dir);
+    assert!(
+        output.status.success(),
+        "build a valid local durable summary: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    bind_durable_perf_summary(dir);
 }
 
 fn final_v061_with_durable_perf_fixture() -> tempfile::TempDir {
@@ -4413,6 +4520,50 @@ fn preflight_v061_receipt_without_jobs_or_performance_remains_valid() {
     assert!(
         output.status.success(),
         "a preflight 0.6.1 manifest must not require final-only performance evidence: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn durable_perf_restart_duration_accepts_exactly_thirty_seconds() {
+    let fixture = final_v061_with_durable_perf_fixture();
+    set_durable_perf_restart_duration(fixture.path(), 30_000);
+    remove_durable_perf_aggregate(fixture.path());
+    let output = run_durable_perf_verifier(fixture.path());
+    assert!(
+        output.status.success(),
+        "restart_duration_ms=30000 must remain a qualifying receipt: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    bind_durable_perf_summary(fixture.path());
+    assert!(
+        run_local_version(fixture.path(), "0.6.1").status.success(),
+        "a locally verified receipt with restart_duration_ms=30000 must remain valid"
+    );
+}
+
+#[test]
+fn durable_perf_restart_duration_above_thirty_seconds_is_rejected_by_python_verifier() {
+    let fixture = final_v061_with_durable_perf_fixture();
+    set_durable_perf_restart_duration(fixture.path(), 30_001);
+    remove_durable_perf_aggregate(fixture.path());
+    let output = run_durable_perf_verifier(fixture.path());
+    assert!(
+        !output.status.success(),
+        "Python verifier accepted restart_duration_ms=30001: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn final_v061_receipt_refuses_forged_aggregate_with_one_overdue_restart() {
+    let fixture = final_v061_with_durable_perf_fixture();
+    set_durable_perf_restart_duration(fixture.path(), 30_001);
+    forge_durable_perf_aggregate(fixture.path());
+    let output = run_local_version(fixture.path(), "0.6.1");
+    assert!(
+        !output.status.success(),
+        "local final verifier accepted a forged sixteen-cell aggregate with one restart_duration_ms=30001: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
