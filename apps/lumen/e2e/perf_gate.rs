@@ -727,6 +727,14 @@ fn median_statistic_and_ignored_inventory() {
                 false,
             ),
             (
+                "restart_diagnostics_emit_complete_record_after_not_ready_polls",
+                false,
+            ),
+            (
+                "restart_diagnostics_keep_partial_records_for_terminal_phase_failures",
+                false,
+            ),
+            (
                 "journal_records_a_real_reqwest_connect_error_with_full_chain",
                 false,
             ),
@@ -744,6 +752,18 @@ fn median_statistic_and_ignored_inventory() {
             ),
             (
                 "qualifying_matrix_keeps_every_mutation_endpoint_and_backend",
+                false,
+            ),
+            (
+                "restart_phase_diagnostics_success_reports_monotonic_phase_elapsed_and_first_ready",
+                false,
+            ),
+            (
+                "restart_phase_diagnostics_keeps_one_total_deadline_and_counts_readiness_attempts",
+                false,
+            ),
+            (
+                "restart_phase_diagnostics_retains_bounded_terminal_records_for_every_phase",
                 false,
             ),
         ]
@@ -855,6 +875,7 @@ mod durable_workload {
     const SNAPSHOT_SECONDS: &str = "15";
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+    const RESTART_DIAGNOSTIC_PREFIX: &str = "PERF_RESTART_DIAGNOSTIC";
     const SETUP_TIMEOUT: Duration = Duration::from_secs(INPUT_SECONDS);
     const DRAIN_TIMEOUT: Duration = Duration::from_millis(perf_cell_receipt::DRAIN_LIMIT_MS);
     // No separate post-input budget is declared. Derive this guard from the
@@ -1392,6 +1413,48 @@ mod durable_workload {
         // this server so a failed durable cell's evidence bundle can name
         // why, not only that, each counted `Outcome::Failed`/`TimedOut`.
         request_error_journal: Arc<Mutex<RequestErrorJournal>>,
+    }
+
+    /// Private, best-effort timing for the restart path.  An absent value
+    /// means that the phase never started or never reached readiness.
+    #[derive(Clone, Copy, Debug, Default)]
+    struct RestartPhaseDiagnostics {
+        total_elapsed: Duration,
+        restart_elapsed: Option<Duration>,
+        port_lookup_elapsed: Option<Duration>,
+        readyz_wait_elapsed: Option<Duration>,
+        readiness_attempts: usize,
+        first_ready_elapsed: Option<Duration>,
+    }
+
+    fn render_restart_phase_diagnostics(
+        diagnostics: &RestartPhaseDiagnostics,
+        phase: &str,
+        outcome: &str,
+    ) -> String {
+        let elapsed = |value: Option<Duration>| match value {
+            Some(value) => value.as_millis().to_string(),
+            None => "null".to_owned(),
+        };
+        format!(
+            "{RESTART_DIAGNOSTIC_PREFIX} phase={phase} outcome={outcome} total_elapsed_ms={} restart_elapsed_ms={} port_lookup_elapsed_ms={} readyz_wait_elapsed_ms={} readiness_attempts={} first_ready_elapsed_ms={}",
+            diagnostics.total_elapsed.as_millis(),
+            elapsed(diagnostics.restart_elapsed),
+            elapsed(diagnostics.port_lookup_elapsed),
+            elapsed(diagnostics.readyz_wait_elapsed),
+            diagnostics.readiness_attempts,
+            elapsed(diagnostics.first_ready_elapsed),
+        )
+    }
+
+    fn emit_restart_phase_diagnostics(
+        diagnostics: &RestartPhaseDiagnostics,
+        phase: &str,
+        outcome: &str,
+    ) -> String {
+        let record = render_restart_phase_diagnostics(diagnostics, phase, outcome);
+        eprintln!("{record}");
+        record
     }
 
     trait CleanupCommandRunner {
@@ -2244,18 +2307,12 @@ mod durable_workload {
             &mut self,
             runner: &mut R,
         ) -> Result<Duration> {
-            let started = Instant::now();
-            let deadline = started + STARTUP_TIMEOUT;
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            tokio::time::timeout(remaining, runner.restart(&self.container))
-                .await
-                .map_err(|_| {
-                    HarnessError::Startup(
-                        "restart command exhausted the total restart deadline".to_owned(),
-                    )
-                })??;
-            self.refresh_restart_endpoint(runner, deadline).await?;
-            Ok(started.elapsed())
+            self.restart_and_wait_ready_with_diagnostic_observer(
+                runner,
+                Instant::now() + STARTUP_TIMEOUT,
+                |_, _| {},
+            )
+            .await
         }
 
         async fn refresh_restart_endpoint<R: RestartCommandRunner>(
@@ -2288,6 +2345,124 @@ mod durable_workload {
                     "published-port refresh and readiness exceeded the remaining {remaining:?} startup budget"
                 ))
             })?
+        }
+
+        async fn restart_and_wait_ready_with_diagnostic_observer<R, Observe>(
+            &mut self,
+            runner: &mut R,
+            deadline: Instant,
+            mut observe: Observe,
+        ) -> Result<Duration>
+        where
+            R: RestartCommandRunner,
+            Observe: FnMut(&str, RestartPhaseDiagnostics),
+        {
+            let started = Instant::now();
+            let mut diagnostics = RestartPhaseDiagnostics::default();
+            let mut emit = |diagnostics: &mut RestartPhaseDiagnostics,
+                            phase: &'static str,
+                            outcome: &'static str| {
+                diagnostics.total_elapsed = started.elapsed();
+                let record = emit_restart_phase_diagnostics(diagnostics, phase, outcome);
+                observe(&record, *diagnostics);
+            };
+
+            let restart_started = Instant::now();
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(remaining, runner.restart(&self.container)).await {
+                Err(_) => {
+                    diagnostics.restart_elapsed = Some(restart_started.elapsed());
+                    emit(&mut diagnostics, "docker-restart", "timeout");
+                    return Err(HarnessError::Startup(
+                        "restart command exhausted the total restart deadline".to_owned(),
+                    ));
+                }
+                Ok(Err(error)) => {
+                    diagnostics.restart_elapsed = Some(restart_started.elapsed());
+                    emit(&mut diagnostics, "docker-restart", "error");
+                    return Err(error);
+                }
+                Ok(Ok(())) => {
+                    diagnostics.restart_elapsed = Some(restart_started.elapsed());
+                }
+            }
+
+            let port_lookup_started = Instant::now();
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let output =
+                match tokio::time::timeout(remaining, runner.published_port(&self.container)).await
+                {
+                    Err(_) => {
+                        diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());
+                        emit(&mut diagnostics, "published-port", "timeout");
+                        return Err(HarnessError::Startup(
+                            "published-port refresh and readiness exhausted the startup budget"
+                                .to_owned(),
+                        ));
+                    }
+                    Ok(Err(error)) => {
+                        diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());
+                        emit(&mut diagnostics, "published-port", "error");
+                        return Err(error);
+                    }
+                    Ok(Ok(output)) => {
+                        diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());
+                        output
+                    }
+                };
+            let base = match published_loopback_base(&output) {
+                Ok(base) => base,
+                Err(error) => {
+                    emit(&mut diagnostics, "published-port", "error");
+                    return Err(error);
+                }
+            };
+            eprintln!(
+                "PERF_RESTART_ENDPOINT container={} previous={} current={}",
+                self.container, self.base, base
+            );
+            self.base = base;
+
+            let readyz_wait_started = Instant::now();
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
+                    emit(&mut diagnostics, "readyz", "timeout");
+                    return Err(HarnessError::Startup(format!(
+                        "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
+                        STARTUP_TIMEOUT.as_secs()
+                    )));
+                }
+                diagnostics.readiness_attempts += 1;
+                if let Ok(Ok(response)) = tokio::time::timeout(
+                    remaining,
+                    self.client.get(format!("{}/readyz", self.base)).send(),
+                )
+                .await
+                {
+                    if response.status().is_success() {
+                        diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
+                        #[rustfmt::skip]
+                        diagnostics.first_ready_elapsed.get_or_insert_with(|| started.elapsed());
+                        emit(&mut diagnostics, "complete", "success");
+                        return Ok(started.elapsed());
+                    }
+                }
+                if Instant::now() >= deadline {
+                    diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
+                    emit(&mut diagnostics, "readyz", "timeout");
+                    return Err(HarnessError::Startup(format!(
+                        "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
+                        STARTUP_TIMEOUT.as_secs()
+                    )));
+                }
+                tokio::time::sleep(
+                    Duration::from_millis(100)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                )
+                .await;
+            }
         }
     }
 
@@ -6788,6 +6963,58 @@ mod durable_workload {
         )
     }
 
+    async fn fake_ready_lumen_with_statuses(
+        statuses: Vec<axum::http::StatusCode>,
+    ) -> (
+        DockerLumen,
+        Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let statuses = Arc::new(statuses);
+        let app = axum::Router::new()
+            .route(
+                "/readyz",
+                axum::routing::get(
+                    |axum::extract::State((requests, statuses)): axum::extract::State<(
+                        Arc<std::sync::atomic::AtomicUsize>,
+                        Arc<Vec<axum::http::StatusCode>>,
+                    )>| async move {
+                        let index = requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        statuses
+                            .get(index)
+                            .copied()
+                            .unwrap_or(axum::http::StatusCode::OK)
+                    },
+                ),
+            )
+            .with_state((Arc::clone(&requests), statuses));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind scripted restart readiness responder");
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            DockerLumen {
+                container: "restart-test-owner".to_owned(),
+                volume: "restart-test-volume".to_owned(),
+                base: format!("http://{address}"),
+                client: reqwest::Client::builder()
+                    .timeout(REQUEST_TIMEOUT)
+                    .build()
+                    .unwrap(),
+                image_reference: "restart-test-image-reference".to_owned(),
+                image_id: "restart-test-image-id".to_owned(),
+                cleanup_armed: false,
+                request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+            },
+            requests,
+            task,
+        )
+    }
+
     #[tokio::test]
     async fn restart_refreshes_published_port_before_readiness() {
         let (mut server, old_requests, old_task) = fake_ready_lumen().await;
@@ -6918,6 +7145,30 @@ mod durable_workload {
         }
     }
 
+    struct DiagnosticRestartRunner {
+        restart_result: Option<Result<()>>,
+        restart_delay: Duration,
+        port_result: Option<Result<String>>,
+        port_delay: Duration,
+    }
+
+    #[async_trait]
+    impl RestartCommandRunner for DiagnosticRestartRunner {
+        async fn restart(&mut self, _container: &str) -> Result<()> {
+            tokio::time::sleep(self.restart_delay).await;
+            self.restart_result
+                .take()
+                .expect("restart should run once in the diagnostic fixture")
+        }
+
+        async fn published_port(&mut self, _container: &str) -> Result<String> {
+            tokio::time::sleep(self.port_delay).await;
+            self.port_result
+                .take()
+                .expect("port lookup should run once in the diagnostic fixture")
+        }
+    }
+
     #[test]
     fn restart_total_deadline_covers_restart_port_lookup_and_readiness() {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -6942,6 +7193,208 @@ mod durable_workload {
                 "restart, port lookup, and readiness must share one 30-second deadline: {result:?}"
             );
             task.abort();
+        });
+    }
+
+    #[test]
+    fn restart_diagnostics_emit_complete_record_after_not_ready_polls() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build complete restart diagnostic runtime");
+        runtime.block_on(async {
+            let (mut server, requests, task) = fake_ready_lumen_with_statuses(vec![
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                axum::http::StatusCode::OK,
+            ])
+            .await;
+            let mut runner = DiagnosticRestartRunner {
+                restart_result: Some(Ok(())),
+                restart_delay: Duration::ZERO,
+                port_result: Some(Ok(server.base.strip_prefix("http://").unwrap().to_owned())),
+                port_delay: Duration::ZERO,
+            };
+            let mut records = Vec::new();
+            let elapsed = server
+                .restart_and_wait_ready_with_diagnostic_observer(
+                    &mut runner,
+                    Instant::now() + Duration::from_secs(1),
+                    |record, diagnostics| records.push((record.to_owned(), diagnostics)),
+                )
+                .await
+                .expect("the third readiness response is healthy");
+            assert_eq!(records.len(), 1);
+            let (record, diagnostics) = &records[0];
+            assert!(record.starts_with("PERF_RESTART_DIAGNOSTIC phase=complete outcome=success"));
+            assert!(record.contains("total_elapsed_ms="));
+            assert!(diagnostics.restart_elapsed.is_some());
+            assert!(diagnostics.port_lookup_elapsed.is_some());
+            assert!(diagnostics.readyz_wait_elapsed.is_some());
+            assert_eq!(diagnostics.readiness_attempts, 3);
+            let first_ready = diagnostics
+                .first_ready_elapsed
+                .expect("record first readiness");
+            assert!(first_ready <= elapsed);
+            assert!(diagnostics.readyz_wait_elapsed.unwrap() <= elapsed);
+            assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 3);
+            task.abort();
+        });
+    }
+
+    #[test]
+    fn restart_diagnostics_keep_partial_records_for_terminal_phase_failures() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build terminal restart diagnostic runtime");
+        runtime.block_on(async {
+            async fn observe_terminal(
+                server: &mut DockerLumen,
+                runner: &mut DiagnosticRestartRunner,
+                deadline: Instant,
+            ) -> (Result<Duration>, Vec<(String, RestartPhaseDiagnostics)>) {
+                let mut records = Vec::new();
+                let result = server
+                    .restart_and_wait_ready_with_diagnostic_observer(
+                        runner,
+                        deadline,
+                        |record, diagnostics| records.push((record.to_owned(), diagnostics)),
+                    )
+                    .await;
+                (result, records)
+            }
+
+            let (mut restart_error_server, _, restart_error_task) = fake_ready_lumen().await;
+            let mut restart_error_runner = DiagnosticRestartRunner {
+                restart_result: Some(Err(HarnessError::Startup("restart failed".to_owned()))),
+                restart_delay: Duration::ZERO,
+                port_result: None,
+                port_delay: Duration::ZERO,
+            };
+            let (result, records) = observe_terminal(
+                &mut restart_error_server,
+                &mut restart_error_runner,
+                Instant::now() + Duration::from_secs(1),
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!(records.len(), 1);
+            let (record, diagnostics) = &records[0];
+            assert!(
+                record.starts_with("PERF_RESTART_DIAGNOSTIC phase=docker-restart outcome=error")
+            );
+            assert!(diagnostics.restart_elapsed.is_some());
+            assert!(diagnostics.port_lookup_elapsed.is_none());
+            assert!(diagnostics.readyz_wait_elapsed.is_none());
+            assert!(diagnostics.first_ready_elapsed.is_none());
+            restart_error_task.abort();
+
+            let (mut restart_timeout_server, _, restart_timeout_task) = fake_ready_lumen().await;
+            let mut restart_timeout_runner = DiagnosticRestartRunner {
+                restart_result: Some(Ok(())),
+                restart_delay: Duration::from_secs(1),
+                port_result: None,
+                port_delay: Duration::ZERO,
+            };
+            let (result, records) = observe_terminal(
+                &mut restart_timeout_server,
+                &mut restart_timeout_runner,
+                Instant::now() + Duration::from_millis(30),
+            )
+            .await;
+            assert!(result.is_err());
+            let (record, diagnostics) = &records[0];
+            assert!(
+                record.starts_with("PERF_RESTART_DIAGNOSTIC phase=docker-restart outcome=timeout")
+            );
+            assert!(diagnostics.restart_elapsed.is_some());
+            assert!(diagnostics.port_lookup_elapsed.is_none());
+            assert!(diagnostics.readyz_wait_elapsed.is_none());
+            assert!(diagnostics.first_ready_elapsed.is_none());
+            restart_timeout_task.abort();
+
+            let (mut port_error_server, _, port_error_task) = fake_ready_lumen().await;
+            let mut port_error_runner = DiagnosticRestartRunner {
+                restart_result: Some(Ok(())),
+                restart_delay: Duration::ZERO,
+                port_result: Some(Err(HarnessError::Startup("port failed".to_owned()))),
+                port_delay: Duration::ZERO,
+            };
+            let (result, records) = observe_terminal(
+                &mut port_error_server,
+                &mut port_error_runner,
+                Instant::now() + Duration::from_secs(1),
+            )
+            .await;
+            assert!(result.is_err());
+            let (record, diagnostics) = &records[0];
+            assert!(
+                record.starts_with("PERF_RESTART_DIAGNOSTIC phase=published-port outcome=error")
+            );
+            assert!(diagnostics.restart_elapsed.is_some());
+            assert!(diagnostics.port_lookup_elapsed.is_some());
+            assert!(diagnostics.readyz_wait_elapsed.is_none());
+            assert!(diagnostics.first_ready_elapsed.is_none());
+            port_error_task.abort();
+
+            let (mut port_timeout_server, _, port_timeout_task) = fake_ready_lumen().await;
+            let mut port_timeout_runner = DiagnosticRestartRunner {
+                restart_result: Some(Ok(())),
+                restart_delay: Duration::ZERO,
+                port_result: Some(Ok(port_timeout_server
+                    .base
+                    .strip_prefix("http://")
+                    .unwrap()
+                    .to_owned())),
+                port_delay: Duration::from_secs(1),
+            };
+            let (result, records) = observe_terminal(
+                &mut port_timeout_server,
+                &mut port_timeout_runner,
+                Instant::now() + Duration::from_millis(30),
+            )
+            .await;
+            assert!(result.is_err());
+            let (record, diagnostics) = &records[0];
+            assert!(
+                record.starts_with("PERF_RESTART_DIAGNOSTIC phase=published-port outcome=timeout")
+            );
+            assert!(diagnostics.restart_elapsed.is_some());
+            assert!(diagnostics.port_lookup_elapsed.is_some());
+            assert!(diagnostics.readyz_wait_elapsed.is_none());
+            assert!(diagnostics.first_ready_elapsed.is_none());
+            port_timeout_task.abort();
+
+            let (mut ready_timeout_server, requests, ready_timeout_task) =
+                fake_ready_lumen_with_statuses(vec![axum::http::StatusCode::SERVICE_UNAVAILABLE])
+                    .await;
+            let mut ready_timeout_runner = DiagnosticRestartRunner {
+                restart_result: Some(Ok(())),
+                restart_delay: Duration::ZERO,
+                port_result: Some(Ok(ready_timeout_server
+                    .base
+                    .strip_prefix("http://")
+                    .unwrap()
+                    .to_owned())),
+                port_delay: Duration::ZERO,
+            };
+            let (result, records) = observe_terminal(
+                &mut ready_timeout_server,
+                &mut ready_timeout_runner,
+                Instant::now() + Duration::from_millis(30),
+            )
+            .await;
+            assert!(result.is_err());
+            let (record, diagnostics) = &records[0];
+            assert!(record.starts_with("PERF_RESTART_DIAGNOSTIC phase=readyz outcome=timeout"));
+            assert!(diagnostics.restart_elapsed.is_some());
+            assert!(diagnostics.port_lookup_elapsed.is_some());
+            assert!(diagnostics.readyz_wait_elapsed.is_some());
+            assert!(diagnostics.readiness_attempts >= 1);
+            assert!(diagnostics.first_ready_elapsed.is_none());
+            assert!(requests.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+            ready_timeout_task.abort();
         });
     }
 
@@ -7344,6 +7797,95 @@ mod durable_workload {
             60_000,
             "each qualifying cell has equal 60,000-operation add, update, and delete thirds"
         );
+    }
+
+    fn restart_diagnostic_production_region(source: &str) -> &str {
+        let start = source
+            .find("const RESTART_DIAGNOSTIC_PREFIX: &str = \"PERF_RESTART_DIAGNOSTIC\";")
+            .expect("restart diagnostic prefix is in the production harness");
+        let end = source
+            .find("fn published_loopback_base")
+            .expect("restart diagnostic production region ends before port parsing");
+        assert!(start < end, "restart diagnostic region is ordered");
+        &source[start..end]
+    }
+
+    fn restart_diagnostic_production_contains(region: &str, expected: &str) -> bool {
+        region.lines().map(str::trim).any(|line| {
+            !line.starts_with("//")
+                && !line.as_bytes().starts_with(&[b'/', b'*'])
+                && line.contains(expected)
+        })
+    }
+
+    /// The proposed private record keeps an absent phase or first successful
+    /// readiness unambiguous. A zero duration must never stand in for either.
+    #[test]
+    fn restart_phase_diagnostics_success_reports_monotonic_phase_elapsed_and_first_ready() {
+        let region = restart_diagnostic_production_region(include_str!("perf_gate.rs"));
+        for expected in [
+            "struct RestartPhaseDiagnostics {",
+            "restart_elapsed: Option<Duration>,",
+            "port_lookup_elapsed: Option<Duration>,",
+            "readyz_wait_elapsed: Option<Duration>,",
+            "readiness_attempts: usize,",
+            "first_ready_elapsed: Option<Duration>,",
+            "None => \"null\".to_owned(),",
+            "eprintln!(\"{record}\");",
+            "Observe: FnMut(&str, RestartPhaseDiagnostics),",
+            "diagnostics.first_ready_elapsed.get_or_insert_with(|| started.elapsed());",
+        ] {
+            assert!(
+                restart_diagnostic_production_contains(region, expected),
+                "missing private restart success diagnostic contract line: {expected}"
+            );
+        }
+    }
+
+    /// All phase durations use the existing monotonic total start and the one
+    /// unchanged deadline. The counter increments before each readiness poll.
+    #[test]
+    fn restart_phase_diagnostics_keeps_one_total_deadline_and_counts_readiness_attempts() {
+        let region = restart_diagnostic_production_region(include_str!("perf_gate.rs"));
+        for expected in [
+            "Instant::now() + STARTUP_TIMEOUT,",
+            "deadline.saturating_duration_since(Instant::now())",
+            "let restart_started = Instant::now();",
+            "diagnostics.restart_elapsed = Some(restart_started.elapsed());",
+            "let port_lookup_started = Instant::now();",
+            "diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());",
+            "let readyz_wait_started = Instant::now();",
+            "diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());",
+            "diagnostics.readiness_attempts += 1;",
+        ] {
+            assert!(
+                restart_diagnostic_production_contains(region, expected),
+                "missing shared-deadline restart diagnostic contract line: {expected}"
+            );
+        }
+    }
+
+    /// Each terminal branch emits a bounded record. It names a phase and an
+    /// outcome, but it does not render Docker stderr, an HTTP body, or a receipt.
+    #[test]
+    fn restart_phase_diagnostics_retains_bounded_terminal_records_for_every_phase() {
+        let region = restart_diagnostic_production_region(include_str!("perf_gate.rs"));
+        for expected in [
+            "fn emit_restart_phase_diagnostics(",
+            "let record = emit_restart_phase_diagnostics(diagnostics, phase, outcome);",
+            "observe(&record, *diagnostics);",
+            "\"complete\", \"success\"",
+            "\"docker-restart\", \"error\"",
+            "\"docker-restart\", \"timeout\"",
+            "\"published-port\", \"error\"",
+            "\"published-port\", \"timeout\"",
+            "\"readyz\", \"timeout\"",
+        ] {
+            assert!(
+                restart_diagnostic_production_contains(region, expected),
+                "missing bounded terminal restart diagnostic contract line: {expected}"
+            );
+        }
     }
 }
 // DURABLE-WORKLOAD-END

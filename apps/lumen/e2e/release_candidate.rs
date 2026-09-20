@@ -1464,6 +1464,13 @@ fn active_line_parser_ignores_comment_markers_inside_literals() {
     );
 }
 
+#[test]
+fn restart_phase_diagnostics_contract_requires_ordered_bounded_terminal_records() {
+    validate_restart_phase_diagnostics_source(&perf_gate_source()).expect(
+        "restart diagnostics must keep each phase elapsed, readiness attempts, and one bounded terminal record without changing the shared deadline",
+    );
+}
+
 fn durable_workload_region(source: &str) -> Result<(&str, &str), Finding> {
     require(
         source.matches(DURABLE_WORKLOAD_BEGIN).count() == 1
@@ -1748,6 +1755,15 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "restart_diagnostics_emit_complete_record_after_not_ready_polls".into(),
+                    false,
+                ),
+                (
+                    "restart_diagnostics_keep_partial_records_for_terminal_phase_failures"
+                        .into(),
+                    false,
+                ),
+                (
                     "journal_records_a_real_reqwest_connect_error_with_full_chain".into(),
                     false,
                 ),
@@ -1767,8 +1783,78 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     "qualifying_matrix_keeps_every_mutation_endpoint_and_backend".into(),
                     false,
                 ),
+                (
+                    "restart_phase_diagnostics_success_reports_monotonic_phase_elapsed_and_first_ready"
+                        .into(),
+                    false,
+                ),
+                (
+                    "restart_phase_diagnostics_keeps_one_total_deadline_and_counts_readiness_attempts"
+                        .into(),
+                    false,
+                ),
+                (
+                    "restart_phase_diagnostics_retains_bounded_terminal_records_for_every_phase"
+                        .into(),
+                    false,
+                ),
             ],
         "PERF_GATE",
+    )
+}
+
+/// The restart budget is one public 30-second deadline. These diagnostics are
+/// private, bounded stderr records only. They must expose where that fixed
+/// budget went without changing a receipt, a timeout, or a public error.
+fn validate_restart_phase_diagnostics_source(source: &str) -> Result<(), Finding> {
+    let start = source
+        .find("const RESTART_DIAGNOSTIC_PREFIX: &str = \"PERF_RESTART_DIAGNOSTIC\";")
+        .ok_or(Finding("RESTART_DIAGNOSTICS"))?;
+    let end = source
+        .find("fn published_loopback_base")
+        .ok_or(Finding("RESTART_DIAGNOSTICS"))?;
+    require(start < end, "RESTART_DIAGNOSTICS")?;
+    let region = source
+        .get(start..end)
+        .ok_or(Finding("RESTART_DIAGNOSTICS"))?;
+    let has = |expected: &str| {
+        region.lines().map(str::trim).any(|line| {
+            !line.starts_with("//") && !line.starts_with("/*") && line.contains(expected)
+        })
+    };
+    let required = [
+        "struct RestartPhaseDiagnostics {",
+        "restart_elapsed: Option<Duration>,",
+        "port_lookup_elapsed: Option<Duration>,",
+        "readyz_wait_elapsed: Option<Duration>,",
+        "readiness_attempts: usize,",
+        "first_ready_elapsed: Option<Duration>,",
+        "None => \"null\".to_owned(),",
+        "fn emit_restart_phase_diagnostics(",
+        "eprintln!(\"{record}\");",
+        "Observe: FnMut(&str, RestartPhaseDiagnostics),",
+        "Instant::now() + STARTUP_TIMEOUT,",
+        "deadline.saturating_duration_since(Instant::now())",
+        "let restart_started = Instant::now();",
+        "diagnostics.restart_elapsed = Some(restart_started.elapsed());",
+        "let port_lookup_started = Instant::now();",
+        "diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());",
+        "let readyz_wait_started = Instant::now();",
+        "diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());",
+        "diagnostics.readiness_attempts += 1;",
+        "diagnostics.first_ready_elapsed.get_or_insert_with(|| started.elapsed());",
+        "let record = emit_restart_phase_diagnostics(diagnostics, phase, outcome);",
+        "observe(&record, *diagnostics);",
+        "\"complete\", \"success\"",
+        "\"docker-restart\", \"error\"",
+        "\"docker-restart\", \"timeout\"",
+        "\"published-port\", \"error\"",
+        "\"published-port\", \"timeout\"",
+        "\"readyz\", \"timeout\"",
+    ];
+    require(
+        required.iter().all(|expected| has(expected)),
+        "RESTART_DIAGNOSTICS",
     )
 }
 
