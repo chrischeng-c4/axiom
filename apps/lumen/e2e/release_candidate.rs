@@ -1798,6 +1798,16 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                         .into(),
                     false,
                 ),
+                (
+                    "restart_readiness_diagnostics_keep_bounded_http_transport_process_and_deadline_evidence"
+                        .into(),
+                    false,
+                ),
+                (
+                    "restart_readiness_diagnostic_record_names_each_failure_kind_and_caps_text"
+                        .into(),
+                    false,
+                ),
             ],
         "PERF_GATE",
     )
