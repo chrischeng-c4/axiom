@@ -913,6 +913,73 @@ mod borrowed_vector_apply_tests {
         }
     }
 
+    #[test]
+    fn normal_live_vector_index_and_replace_record_lock_wait_and_hnsw_add() {
+        for (backend, hnsw_adds_after_index, hnsw_adds_after_replace) in [
+            (VectorBackend::HnswCpu, 1, 2),
+            (VectorBackend::FlatCpu, 0, 0),
+        ]
+        {
+            let engine = vector_engine(backend, false);
+            engine
+                .index(
+                    "docs",
+                    vector_request(
+                        vec![item(
+                            "id",
+                            "vec",
+                            FieldValue::Vector(vec![0.0, 1.0, 2.0]),
+                            Some(1),
+                        )],
+                        None,
+                    ),
+                )
+                .unwrap();
+            assert_eq!(
+                engine
+                    .metrics()
+                    .engine_state_write_lock_wait_seconds_count
+                    .get(),
+                1,
+                "normal live Index acquires the state write lock once"
+            );
+            assert_eq!(
+                engine.metrics().hnsw_add_seconds_count.get(),
+                hnsw_adds_after_index,
+                "normal live Index records only HNSW graph-add work"
+            );
+
+            engine
+                .replace_docs(
+                    "docs",
+                    ReplaceDocsRequest {
+                        docs: vec![ReplaceDocItem {
+                            external_id: "id".to_owned(),
+                            version: Some(2),
+                            fields: BTreeMap::from([(
+                                "vec".to_owned(),
+                                FieldValue::Vector(vec![2.0, 1.0, 0.0]),
+                            )]),
+                        }],
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                engine
+                    .metrics()
+                    .engine_state_write_lock_wait_seconds_count
+                    .get(),
+                2,
+                "normal live Replace acquires the state write lock once"
+            );
+            assert_eq!(
+                engine.metrics().hnsw_add_seconds_count.get(),
+                hnsw_adds_after_replace,
+                "normal live Replace records only HNSW graph-add work"
+            );
+        }
+    }
+
     fn frozen_vector_bits(engine: &Engine, eid: &str) -> Option<Vec<u32>> {
         let frozen = engine.freeze_checkpoint_collections(None).unwrap();
         let row = frozen.capture.frozen_changes["docs"].row("vec", eid)?;

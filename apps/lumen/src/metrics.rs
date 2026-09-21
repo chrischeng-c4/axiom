@@ -546,7 +546,7 @@ struct PendingChangeAccounting {
     high_water: u64,
 }
 
-/// One committed-apply telemetry scope. It stores measurements locally while
+/// One state-writing apply telemetry scope. It stores measurements locally while
 /// the engine state write lock is held, then publishes them only after that
 /// guard drops. This keeps metrics atomics out of the state-lock interval.
 pub(crate) struct CommittedApplyTelemetry<'a> {
@@ -777,14 +777,19 @@ impl Metrics {
         self.observe_hnsw_add_observations(&observations);
     }
 
-    /// Start a committed-apply telemetry scope. Its [`Drop`] publishes only
+    /// Start a state-writing apply telemetry scope. Its [`Drop`] publishes only
     /// after the state write guard declared after it has dropped.
-    pub(crate) fn committed_apply_telemetry(&self) -> CommittedApplyTelemetry<'_> {
+    pub(crate) fn apply_telemetry(&self) -> CommittedApplyTelemetry<'_> {
         CommittedApplyTelemetry {
             metrics: self,
             state_write_lock_wait: None,
             hnsw_adds: ApplyDurationObservations::default(),
         }
+    }
+
+    /// Start a committed-apply telemetry scope.
+    pub(crate) fn committed_apply_telemetry(&self) -> CommittedApplyTelemetry<'_> {
+        self.apply_telemetry()
     }
 
     fn observe_hnsw_add_observations(&self, observations: &ApplyDurationObservations) {
