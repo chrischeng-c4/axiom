@@ -663,6 +663,34 @@ fn median_statistic_and_ignored_inventory() {
                 false,
             ),
             (
+                "interval_trace_histograms_require_complete_finite_monotonic_rows",
+                false,
+            ),
+            (
+                "interval_trace_records_baseline_and_fixed_cadence_deltas",
+                false,
+            ),
+            (
+                "interval_trace_counts_every_429_after_detailed_journal_cap",
+                false,
+            ),
+            (
+                "interval_trace_is_bounded_valid_json_without_raw_data",
+                false,
+            ),
+            (
+                "interval_trace_assigns_bucket_zero_failures_once",
+                false,
+            ),
+            (
+                "interval_trace_preserves_error_totals_when_detail_is_capped",
+                false,
+            ),
+            (
+                "interval_trace_separates_timeouts_from_other_transport_after_detailed_journal_cap",
+                false,
+            ),
+            (
                 "runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments",
                 false,
             ),
@@ -732,6 +760,10 @@ fn median_statistic_and_ignored_inventory() {
             ),
             (
                 "restart_diagnostics_keep_partial_records_for_terminal_phase_failures",
+                false,
+            ),
+            (
+                "restart_failure_trace_writes_timing_and_cold_readback_unavailable",
                 false,
             ),
             (
@@ -827,7 +859,7 @@ mod durable_workload {
     //!   10 QPS, latency, drain, RSS, checkpoint, and merge observations.
     //!   `perf_workload_ledger.rs:1068` records actual request/query drain.
 
-    use std::collections::{BTreeSet, VecDeque};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::env;
     use std::error::Error as StdError;
     use std::fmt::{self, Display};
@@ -905,6 +937,14 @@ mod durable_workload {
     const EVIDENCE_HTTP_BODY_MAX_BYTES: usize = EVIDENCE_ARTIFACT_MAX_BYTES - 1_024;
     const REQUEST_CONCURRENCY: usize = 256;
     const QUERY_CONCURRENCY: usize = 64;
+    const INTERVAL_TRACE_CADENCE: Duration = Duration::from_secs(5);
+    const INTERVAL_TRACE_MAX_SAMPLES: usize = 362;
+    const INTERVAL_TRACE_MAX_BYTES: usize = 512 * 1024;
+    const INTERVAL_TRACE_BUCKET_LABELS: [&str; 12] = [
+        "0.001", "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10",
+    ];
+    const STATE_WRITE_LOCK_HISTOGRAM: &str = "lumen_engine_state_write_lock_wait_seconds";
+    const HNSW_ADD_HISTOGRAM: &str = "lumen_hnsw_add_seconds";
     const CHECKPOINT_COUNTER: &str = "lumen_segment_checkpoint_completed_total";
     const MERGE_COUNTER: &str = "lumen_segment_merge_completed_total";
     const CHECKPOINT_DURATION_COUNT: &str = "lumen_segment_checkpoint_duration_seconds_count";
@@ -1423,6 +1463,12 @@ mod durable_workload {
         // this server so a failed durable cell's evidence bundle can name
         // why, not only that, each counted `Outcome::Failed`/`TimedOut`.
         request_error_journal: Arc<Mutex<RequestErrorJournal>>,
+        // Failure-only parsed capacity samples. This is deliberately separate
+        // from the qualifying receipt and is never written on success.
+        interval_trace: Arc<Mutex<IntervalTrace>>,
+        // This record is populated by the typed restart and cold-readback
+        // paths. It is written only with a failed run's evidence bundle.
+        restart_failure_trace: Arc<Mutex<Option<RestartFailureTrace>>>,
     }
 
     /// Private, best-effort timing for the restart path.  An absent value
@@ -1453,6 +1499,138 @@ mod durable_workload {
     #[derive(Clone, Debug)]
     struct DockerProcessState {
         detail: String,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum RestartFailureTracePhase {
+        DockerRestart,
+        PublishedPort,
+        Readyz,
+        ColdReadback,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum RestartFailureTraceOutcome {
+        Success,
+        Error,
+        Timeout,
+        RestartFailed,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum RestartFailureTraceColdReadback {
+        Pending,
+        Succeeded,
+        Failed,
+        Unavailable,
+    }
+
+    /// Fixed-shape failure evidence for the restart and cold-readback path.
+    /// It deliberately stores no command output, endpoint, status, or body.
+    #[derive(Clone, Copy, Debug)]
+    struct RestartFailureTrace {
+        phase: RestartFailureTracePhase,
+        outcome: RestartFailureTraceOutcome,
+        total_elapsed_ms: u64,
+        restart_elapsed_ms: Option<u64>,
+        port_lookup_elapsed_ms: Option<u64>,
+        readyz_wait_elapsed_ms: Option<u64>,
+        readiness_attempts: u64,
+        first_ready_elapsed_ms: Option<u64>,
+        cold_readback: RestartFailureTraceColdReadback,
+        cold_readback_outcome: Option<RestartFailureTraceOutcome>,
+        cold_readback_elapsed_ms: Option<u64>,
+    }
+
+    impl RestartFailureTracePhase {
+        fn wire_name(self) -> &'static str {
+            match self {
+                Self::DockerRestart => "docker_restart",
+                Self::PublishedPort => "published_port",
+                Self::Readyz => "readyz",
+                Self::ColdReadback => "cold_readback",
+            }
+        }
+    }
+
+    impl RestartFailureTraceOutcome {
+        fn wire_name(self) -> &'static str {
+            match self {
+                Self::Success => "success",
+                Self::Error => "error",
+                Self::Timeout => "timeout",
+                Self::RestartFailed => "restart_failed",
+            }
+        }
+    }
+
+    impl RestartFailureTraceColdReadback {
+        fn wire_name(self) -> &'static str {
+            match self {
+                Self::Pending => "pending",
+                Self::Succeeded => "succeeded",
+                Self::Failed => "failed",
+                Self::Unavailable => "unavailable",
+            }
+        }
+    }
+
+    impl RestartFailureTrace {
+        fn from_restart(
+            phase: RestartFailureTracePhase,
+            outcome: RestartFailureTraceOutcome,
+            diagnostics: RestartPhaseDiagnostics,
+            cold_readback: RestartFailureTraceColdReadback,
+            cold_readback_outcome: Option<RestartFailureTraceOutcome>,
+        ) -> Self {
+            let elapsed_ms = |value: Option<Duration>| value.map(|value| value.as_millis() as u64);
+            Self {
+                phase,
+                outcome,
+                total_elapsed_ms: diagnostics.total_elapsed.as_millis() as u64,
+                restart_elapsed_ms: elapsed_ms(diagnostics.restart_elapsed),
+                port_lookup_elapsed_ms: elapsed_ms(diagnostics.port_lookup_elapsed),
+                readyz_wait_elapsed_ms: elapsed_ms(diagnostics.readyz_wait_elapsed),
+                readiness_attempts: diagnostics.readiness_attempts as u64,
+                first_ready_elapsed_ms: elapsed_ms(diagnostics.first_ready_elapsed),
+                cold_readback,
+                cold_readback_outcome,
+                cold_readback_elapsed_ms: None,
+            }
+        }
+
+        fn with_cold_readback(
+            mut self,
+            cold_readback: RestartFailureTraceColdReadback,
+            outcome: RestartFailureTraceOutcome,
+            elapsed: Duration,
+        ) -> Self {
+            self.phase = RestartFailureTracePhase::ColdReadback;
+            self.outcome = outcome;
+            self.cold_readback = cold_readback;
+            self.cold_readback_outcome = Some(outcome);
+            self.cold_readback_elapsed_ms = Some(elapsed.as_millis() as u64);
+            self
+        }
+
+        fn render(self) -> Result<String> {
+            serde_json::to_string(&json!({
+                "schema_version": 1,
+                "kind": "lumen-perf-restart-cold-readback",
+                "phase": self.phase.wire_name(),
+                "outcome": self.outcome.wire_name(),
+                "total_elapsed_ms": self.total_elapsed_ms,
+                "restart_elapsed_ms": self.restart_elapsed_ms,
+                "port_lookup_elapsed_ms": self.port_lookup_elapsed_ms,
+                "readyz_wait_elapsed_ms": self.readyz_wait_elapsed_ms,
+                "readiness_attempts": self.readiness_attempts,
+                "first_ready_elapsed_ms": self.first_ready_elapsed_ms,
+                "cold_readback": self.cold_readback.wire_name(),
+                "cold_readback_outcome": self.cold_readback_outcome.map(RestartFailureTraceOutcome::wire_name),
+                "cold_readback_elapsed_ms": self.cold_readback_elapsed_ms,
+            }))
+            .map_err(|error| HarnessError::DataInvariant(format!("cannot serialize restart failure trace: {error}")))
+        }
     }
 
     fn bounded_restart_diagnostic_text(bytes: &[u8], total_bytes: u64, truncated: bool) -> String {
@@ -1982,10 +2160,18 @@ mod durable_workload {
     struct RequestErrorJournal {
         records: Vec<RequestErrorRecord>,
         overflow: u64,
+        interval_failures: BTreeMap<u64, IntervalFailureCounts>,
     }
 
     impl RequestErrorJournal {
         fn push(&mut self, record: RequestErrorRecord) {
+            self.interval_failures
+                .entry(
+                    record.elapsed_since_clock_start.as_millis() as u64
+                        / INTERVAL_TRACE_CADENCE.as_millis() as u64,
+                )
+                .or_default()
+                .record(&record);
             if self.records.len() < REQUEST_ERROR_JOURNAL_CAP {
                 self.records.push(record);
             } else {
@@ -2006,6 +2192,417 @@ mod durable_workload {
             report.push_str(&format!("overflow={}\n", journal.overflow));
         }
         report
+    }
+
+    /// Compact failure-only capacity evidence. This never enters a receipt or
+    /// changes a gate. It stores parsed counters only, never a metrics body or
+    /// a request identifier.
+    #[derive(Debug, Default)]
+    struct IntervalTrace {
+        samples: Vec<IntervalTraceSample>,
+        previous: Option<IntervalTraceSnapshot>,
+    }
+
+    #[derive(Debug)]
+    struct IntervalTraceSample {
+        elapsed_ms: u64,
+        phase: &'static str,
+        scrape_state: &'static str,
+        snapshot: Option<IntervalTraceSnapshot>,
+        delta: Option<IntervalTraceDelta>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct IntervalTraceSnapshot {
+        reserved: u64,
+        active: u64,
+        frozen: u64,
+        total: u64,
+        checkpoints: u64,
+        merges: u64,
+        state_write_lock: IntervalHistogram,
+        hnsw_add: IntervalHistogram,
+    }
+
+    #[derive(Debug)]
+    struct IntervalTraceDelta {
+        checkpoints: u64,
+        merges: u64,
+        state_write_lock: IntervalHistogram,
+        hnsw_add: IntervalHistogram,
+    }
+
+    #[derive(Debug, Clone)]
+    struct IntervalHistogram {
+        count: u64,
+        sum_us: u64,
+        /// Prometheus renders cumulative finite buckets. Keep the same fixed
+        /// labels in the trace so a consumer need not see raw metric text.
+        buckets: [u64; INTERVAL_TRACE_BUCKET_LABELS.len()],
+    }
+
+    #[derive(Debug, Default)]
+    struct IntervalFailureCounts {
+        http_429: u64,
+        other_http: u64,
+        timeout: u64,
+        other_transport: u64,
+    }
+
+    impl IntervalFailureCounts {
+        fn record(&mut self, record: &RequestErrorRecord) {
+            match record.status {
+                Some(429) => self.http_429 += 1,
+                Some(_) => self.other_http += 1,
+                None if record.error.is_timeout => self.timeout += 1,
+                None => self.other_transport += 1,
+            }
+        }
+
+        fn json(&self) -> Value {
+            json!({
+                "http_429": self.http_429,
+                "other_http": self.other_http,
+                "timeout": self.timeout,
+                "other_transport": self.other_transport,
+            })
+        }
+    }
+
+    impl IntervalTrace {
+        fn record(&mut self, elapsed: Duration, phase: &'static str, metrics: &str) {
+            if self.samples.len() >= INTERVAL_TRACE_MAX_SAMPLES {
+                return;
+            }
+            let elapsed_ms = elapsed.as_millis() as u64;
+            match IntervalTraceSnapshot::parse(metrics) {
+                Ok(snapshot) => {
+                    let delta = self.previous.as_ref().and_then(|before| {
+                        IntervalTraceDelta::from_snapshots(&snapshot, before).ok()
+                    });
+                    // A backwards cumulative observation is diagnostic data,
+                    // not a reason to move an existing workload gate.
+                    let scrape_state = if self.previous.is_some() && delta.is_none() {
+                        "backwards"
+                    } else {
+                        "ok"
+                    };
+                    if scrape_state == "ok" {
+                        self.previous = Some(snapshot.clone());
+                    }
+                    self.samples.push(IntervalTraceSample {
+                        elapsed_ms,
+                        phase,
+                        scrape_state,
+                        snapshot: Some(snapshot),
+                        delta,
+                    });
+                }
+                Err(_) => self.samples.push(IntervalTraceSample {
+                    elapsed_ms,
+                    phase,
+                    scrape_state: "parse_error",
+                    snapshot: None,
+                    delta: None,
+                }),
+            }
+        }
+
+        fn render(&self, journal: &RequestErrorJournal) -> Result<String> {
+            self.render_bounded(journal, INTERVAL_TRACE_MAX_BYTES)
+        }
+
+        #[cfg(test)]
+        fn render_with_byte_cap(
+            &self,
+            journal: &RequestErrorJournal,
+            max_bytes: usize,
+        ) -> Result<String> {
+            self.render_bounded(journal, max_bytes)
+        }
+
+        fn render_bounded(
+            &self,
+            journal: &RequestErrorJournal,
+            max_bytes: usize,
+        ) -> Result<String> {
+            let mut samples = self
+                .samples
+                .iter()
+                .map(interval_trace_sample_json)
+                .collect::<Vec<_>>();
+            let mut error_sample_indices = BTreeMap::new();
+            for (bucket, failures) in &journal.interval_failures {
+                // The post-seed baseline and the first input scrape can both
+                // be in bucket zero. A bucket's failures belong to exactly one
+                // sample: prefer the input sample, then any sole sample.
+                let existing = samples
+                    .iter()
+                    .position(|sample| {
+                        sample["phase"] == "input"
+                            && sample["elapsed_ms"].as_u64().unwrap_or_default()
+                                / INTERVAL_TRACE_CADENCE.as_millis() as u64
+                                == *bucket
+                    })
+                    .or_else(|| {
+                        samples.iter().position(|sample| {
+                            sample["elapsed_ms"].as_u64().unwrap_or_default()
+                                / INTERVAL_TRACE_CADENCE.as_millis() as u64
+                                == *bucket
+                        })
+                    });
+                let index = match existing {
+                    Some(index) => index,
+                    None => {
+                        samples.push(json!({
+                            "elapsed_ms": bucket * INTERVAL_TRACE_CADENCE.as_millis() as u64,
+                            "phase": "input",
+                            "scrape_state": "not_sampled",
+                            "pending": Value::Null,
+                            "checkpoint": Value::Null,
+                            "merge": Value::Null,
+                            "state_write_lock": Value::Null,
+                            "state_write_lock_delta": Value::Null,
+                            "hnsw_add": Value::Null,
+                            "hnsw_add_delta": Value::Null,
+                            "request_failures": IntervalFailureCounts::default().json(),
+                        }));
+                        samples.len() - 1
+                    }
+                };
+                samples[index]["request_failures"] = failures.json();
+                error_sample_indices.insert(*bucket, index);
+            }
+
+            let mut omitted_request_failure_intervals = Vec::new();
+            while samples.len() > INTERVAL_TRACE_MAX_SAMPLES {
+                let ordinary = samples.iter().rposition(|sample| {
+                    let bucket = sample["elapsed_ms"].as_u64().unwrap_or_default()
+                        / INTERVAL_TRACE_CADENCE.as_millis() as u64;
+                    sample["phase"] != "pre_input" && !error_sample_indices.contains_key(&bucket)
+                });
+                let index = ordinary.unwrap_or(samples.len() - 1);
+                let sample = samples.remove(index);
+                let bucket = sample["elapsed_ms"].as_u64().unwrap_or_default()
+                    / INTERVAL_TRACE_CADENCE.as_millis() as u64;
+                if request_failure_value_is_nonzero(&sample["request_failures"]) {
+                    // A bounded document can drop metric detail, but never the
+                    // only aggregate for a counted failure interval.
+                    omitted_request_failure_intervals.push(json!({
+                        "interval": bucket,
+                        "request_failures": sample["request_failures"],
+                    }));
+                }
+            }
+            loop {
+                let document = json!({
+                    "schema_version": 3,
+                    "kind": "lumen-perf-interval-trace",
+                    "cadence_ms": INTERVAL_TRACE_CADENCE.as_millis() as u64,
+                    "histogram_bucket_labels": INTERVAL_TRACE_BUCKET_LABELS,
+                    "samples": samples,
+                    "omitted_request_failure_intervals": omitted_request_failure_intervals,
+                });
+                let encoded = serde_json::to_string(&document).map_err(|error| {
+                    HarnessError::DataInvariant(format!("cannot serialize interval trace: {error}"))
+                })?;
+                if encoded.len() <= max_bytes || samples.is_empty() {
+                    return Ok(encoded);
+                }
+                let sample = samples.pop().expect("non-empty checked above");
+                let bucket = sample["elapsed_ms"].as_u64().unwrap_or_default()
+                    / INTERVAL_TRACE_CADENCE.as_millis() as u64;
+                if request_failure_value_is_nonzero(&sample["request_failures"]) {
+                    omitted_request_failure_intervals.push(json!({
+                        "interval": bucket,
+                        "request_failures": sample["request_failures"],
+                    }));
+                }
+            }
+        }
+    }
+
+    impl IntervalTraceSnapshot {
+        fn parse(metrics: &str) -> Result<Self> {
+            Ok(Self {
+                reserved: prometheus_counter(metrics, "lumen_pending_change_reserved_bytes")?,
+                active: prometheus_counter(metrics, "lumen_pending_change_active_bytes")?,
+                frozen: prometheus_counter(metrics, "lumen_pending_change_frozen_bytes")?,
+                total: prometheus_counter(metrics, "lumen_pending_change_total_bytes")?,
+                checkpoints: prometheus_counter(metrics, CHECKPOINT_COUNTER)?,
+                merges: prometheus_counter(metrics, MERGE_COUNTER)?,
+                state_write_lock: IntervalHistogram::parse(metrics, STATE_WRITE_LOCK_HISTOGRAM)?,
+                hnsw_add: IntervalHistogram::parse(metrics, HNSW_ADD_HISTOGRAM)?,
+            })
+        }
+    }
+
+    impl IntervalTraceDelta {
+        fn from_snapshots(
+            after: &IntervalTraceSnapshot,
+            before: &IntervalTraceSnapshot,
+        ) -> Result<Self> {
+            Ok(Self {
+                checkpoints: counter_delta(
+                    CHECKPOINT_COUNTER,
+                    after.checkpoints,
+                    before.checkpoints,
+                )?,
+                merges: counter_delta(MERGE_COUNTER, after.merges, before.merges)?,
+                state_write_lock: after.state_write_lock.delta(&before.state_write_lock)?,
+                hnsw_add: after.hnsw_add.delta(&before.hnsw_add)?,
+            })
+        }
+    }
+
+    impl IntervalHistogram {
+        fn parse(metrics: &str, name: &'static str) -> Result<Self> {
+            let mut buckets = [0; INTERVAL_TRACE_BUCKET_LABELS.len()];
+            for (index, label) in INTERVAL_TRACE_BUCKET_LABELS.iter().enumerate() {
+                buckets[index] = prometheus_histogram_value(metrics, name, label)?;
+                if index > 0 && buckets[index] < buckets[index - 1] {
+                    return Err(HarnessError::DataInvariant(format!(
+                        "histogram buckets moved backwards: {name} le={label}"
+                    )));
+                }
+            }
+            let count = prometheus_histogram_scalar(metrics, name, "count")?
+                .parse::<u64>()
+                .map_err(|_| HarnessError::MetricParse {
+                    name,
+                    value: name.to_owned(),
+                })?;
+            let raw_sum = prometheus_histogram_scalar(metrics, name, "sum")?;
+            let sum_seconds = raw_sum
+                .parse::<f64>()
+                .map_err(|_| HarnessError::MetricParse {
+                    name,
+                    value: raw_sum.to_owned(),
+                })?;
+            let sum_us = sum_seconds * 1_000_000.0;
+            if !sum_us.is_finite() || sum_us < 0.0 || sum_us > u64::MAX as f64 {
+                return Err(HarnessError::MetricParse {
+                    name,
+                    value: raw_sum.to_owned(),
+                });
+            }
+            let infinity = prometheus_histogram_value(metrics, name, "+Inf")?;
+            if infinity != count || buckets.last().is_some_and(|last| *last > count) {
+                return Err(HarnessError::DataInvariant(format!(
+                    "histogram count does not match +Inf bucket: {name}"
+                )));
+            }
+            Ok(Self {
+                count,
+                sum_us: sum_us.round() as u64,
+                buckets,
+            })
+        }
+
+        fn delta(&self, before: &Self) -> Result<Self> {
+            let mut buckets = [0; INTERVAL_TRACE_BUCKET_LABELS.len()];
+            for (index, bucket) in buckets.iter_mut().enumerate() {
+                *bucket = counter_delta(
+                    "interval histogram bucket",
+                    self.buckets[index],
+                    before.buckets[index],
+                )?;
+            }
+            Ok(Self {
+                count: counter_delta("interval histogram count", self.count, before.count)?,
+                sum_us: counter_delta("interval histogram sum_us", self.sum_us, before.sum_us)?,
+                buckets,
+            })
+        }
+
+        fn json(&self, buckets_are_deltas: bool) -> Value {
+            let bucket_values = INTERVAL_TRACE_BUCKET_LABELS
+                .iter()
+                .zip(self.buckets)
+                .map(|(label, value)| ((*label).to_owned(), Value::from(value)))
+                .collect::<Map<_, _>>();
+            let mut object = Map::new();
+            object.insert("count".to_owned(), Value::from(self.count));
+            object.insert("sum_us".to_owned(), Value::from(self.sum_us));
+            object.insert(
+                if buckets_are_deltas {
+                    "bucket_deltas".to_owned()
+                } else {
+                    "bucket_totals".to_owned()
+                },
+                Value::Object(bucket_values),
+            );
+            Value::Object(object)
+        }
+    }
+
+    fn prometheus_histogram_value(metrics: &str, name: &'static str, label: &str) -> Result<u64> {
+        let metric = format!("{name}_bucket{{le=\"{label}\"}}");
+        let mut values = metrics.lines().filter_map(|line| {
+            let (candidate, value) =
+                line.split_once(|character: char| character.is_whitespace())?;
+            (candidate == metric).then_some(value.trim())
+        });
+        let value = values
+            .next()
+            .ok_or(HarnessError::MissingRuntimeMetric(name))?;
+        if values.next().is_some() {
+            return Err(HarnessError::DuplicateRuntimeMetric(name));
+        }
+        value.parse::<u64>().map_err(|_| HarnessError::MetricParse {
+            name,
+            value: value.to_owned(),
+        })
+    }
+
+    fn prometheus_histogram_scalar<'a>(
+        metrics: &'a str,
+        name: &'static str,
+        suffix: &str,
+    ) -> Result<&'a str> {
+        let metric = format!("{name}_{suffix}");
+        let mut values = metrics.lines().filter_map(|line| {
+            let (candidate, value) =
+                line.split_once(|character: char| character.is_whitespace())?;
+            (candidate == metric).then_some(value.trim())
+        });
+        let value = values
+            .next()
+            .ok_or(HarnessError::MissingRuntimeMetric(name))?;
+        if values.next().is_some() {
+            return Err(HarnessError::DuplicateRuntimeMetric(name));
+        }
+        if value.is_empty() {
+            return Err(HarnessError::MetricParse {
+                name,
+                value: value.to_owned(),
+            });
+        }
+        Ok(value)
+    }
+
+    fn interval_trace_sample_json(sample: &IntervalTraceSample) -> Value {
+        let snapshot = sample.snapshot.as_ref();
+        let delta = sample.delta.as_ref();
+        json!({
+            "elapsed_ms": sample.elapsed_ms,
+            "phase": sample.phase,
+            "scrape_state": sample.scrape_state,
+            "pending": snapshot.map(|value| json!({"reserved_bytes": value.reserved, "active_bytes": value.active, "frozen_bytes": value.frozen, "total_bytes": value.total})),
+            "checkpoint": snapshot.map(|value| json!({"total": value.checkpoints, "delta": delta.map(|value| value.checkpoints).unwrap_or(0)})),
+            "merge": snapshot.map(|value| json!({"total": value.merges, "delta": delta.map(|value| value.merges).unwrap_or(0)})),
+            "state_write_lock": snapshot.map(|value| value.state_write_lock.json(false)),
+            "state_write_lock_delta": delta.map(|value| value.state_write_lock.json(true)),
+            "hnsw_add": snapshot.map(|value| value.hnsw_add.json(false)),
+            "hnsw_add_delta": delta.map(|value| value.hnsw_add.json(true)),
+            "request_failures": IntervalFailureCounts::default().json(),
+        })
+    }
+
+    fn request_failure_value_is_nonzero(value: &Value) -> bool {
+        ["http_429", "other_http", "timeout", "other_transport"]
+            .iter()
+            .any(|name| value[*name].as_u64().unwrap_or_default() > 0)
     }
 
     fn truncate_evidence_body(body: &str) -> String {
@@ -2102,6 +2699,36 @@ mod durable_workload {
         container: &str,
         volume: &str,
         request_error_report: &str,
+        interval_trace: Option<&str>,
+    ) {
+        finish_failed_docker_run_with_restart_trace(
+            evidence,
+            evidence_runner,
+            probe,
+            cleanup_runner,
+            container,
+            volume,
+            request_error_report,
+            interval_trace,
+            None,
+        )
+        .await;
+    }
+
+    async fn finish_failed_docker_run_with_restart_trace<
+        Evidence: EvidenceCommandRunner + Send,
+        Probe: FailureProbe + Send,
+        Cleanup: CleanupCommandRunner,
+    >(
+        evidence: &FailureEvidenceDirectory,
+        evidence_runner: &mut Evidence,
+        probe: &mut Probe,
+        cleanup_runner: &mut Cleanup,
+        container: &str,
+        volume: &str,
+        request_error_report: &str,
+        interval_trace: Option<&str>,
+        restart_failure_trace: Option<&str>,
     ) {
         evidence.record_container(evidence_runner, container).await;
         evidence.record_result("metrics.txt", probe.metrics().await);
@@ -2109,6 +2736,16 @@ mod durable_workload {
         eprintln!("PERF_REQUEST_ERRORS {request_error_report}");
         if let Err(error) = evidence.write_text("request-errors.txt", request_error_report) {
             eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+        }
+        if let Some(interval_trace) = interval_trace {
+            if let Err(error) = evidence.write_text("interval-trace.json", interval_trace) {
+                eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+            }
+        }
+        if let Some(restart_failure_trace) = restart_failure_trace {
+            if let Err(error) = evidence.write_text("restart-failure-trace.json", restart_failure_trace) {
+                eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+            }
         }
         cleanup_docker_resources(cleanup_runner, container, volume);
     }
@@ -2155,6 +2792,7 @@ mod durable_workload {
                 &self.container,
                 &self.volume,
                 "no request-error journal: failure occurred before the workload client existed\n",
+                None,
             )
             .await;
             self.armed = false;
@@ -2232,6 +2870,8 @@ mod durable_workload {
                     image_id,
                     cleanup_armed: true,
                     request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+                    interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
+                    restart_failure_trace: Arc::new(Mutex::new(None)),
                 })
             })() {
                 Ok(server) => server,
@@ -2368,7 +3008,26 @@ mod durable_workload {
             let mut cleanup_runner = DockerCleanupCommandRunner;
             let request_error_report =
                 render_request_error_journal(&*self.request_error_journal.lock().await);
-            finish_failed_docker_run(
+            let interval_trace = {
+                let trace = self.interval_trace.lock().await;
+                let journal = self.request_error_journal.lock().await;
+                trace.render(&journal).map_err(|error| error.to_string())
+            };
+            if let Err(error) = &interval_trace {
+                eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+            }
+            let restart_failure_trace = self
+                .restart_failure_trace
+                .lock()
+                .await
+                .as_ref()
+                .copied()
+                .map(RestartFailureTrace::render)
+                .transpose();
+            if let Err(error) = &restart_failure_trace {
+                eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+            }
+            finish_failed_docker_run_with_restart_trace(
                 &evidence,
                 &mut evidence_runner,
                 &mut probe,
@@ -2376,6 +3035,11 @@ mod durable_workload {
                 &self.container,
                 &self.volume,
                 &request_error_report,
+                interval_trace.as_deref().ok(),
+                restart_failure_trace
+                    .as_ref()
+                    .ok()
+                    .and_then(|trace| trace.as_deref()),
             )
             .await;
             drop(probe);
@@ -2397,6 +3061,51 @@ mod durable_workload {
                 |_, _| {},
             )
             .await
+        }
+
+        async fn record_restart_failure_trace(
+            &self,
+            phase: RestartFailureTracePhase,
+            outcome: RestartFailureTraceOutcome,
+            diagnostics: RestartPhaseDiagnostics,
+        ) {
+            *self.restart_failure_trace.lock().await = Some(RestartFailureTrace::from_restart(
+                phase,
+                outcome,
+                diagnostics,
+                RestartFailureTraceColdReadback::Unavailable,
+                Some(RestartFailureTraceOutcome::RestartFailed),
+            ));
+        }
+
+        async fn record_restart_success_trace(&self, diagnostics: RestartPhaseDiagnostics) {
+            *self.restart_failure_trace.lock().await = Some(RestartFailureTrace::from_restart(
+                RestartFailureTracePhase::Readyz,
+                RestartFailureTraceOutcome::Success,
+                diagnostics,
+                RestartFailureTraceColdReadback::Pending,
+                None,
+            ));
+        }
+
+        async fn record_cold_readback_trace(&self, succeeded: bool, elapsed: Duration) {
+            let mut trace = self.restart_failure_trace.lock().await;
+            let Some(existing) = *trace else {
+                return;
+            };
+            *trace = Some(existing.with_cold_readback(
+                if succeeded {
+                    RestartFailureTraceColdReadback::Succeeded
+                } else {
+                    RestartFailureTraceColdReadback::Failed
+                },
+                if succeeded {
+                    RestartFailureTraceOutcome::Success
+                } else {
+                    RestartFailureTraceOutcome::Error
+                },
+                elapsed,
+            ));
         }
 
         async fn refresh_restart_endpoint<R: RestartCommandRunner>(
@@ -2469,6 +3178,12 @@ mod durable_workload {
                 Err(_) => {
                     diagnostics.restart_elapsed = Some(restart_started.elapsed());
                     emit(&mut diagnostics, &readiness, "docker-restart", "timeout");
+                    self.record_restart_failure_trace(
+                        RestartFailureTracePhase::DockerRestart,
+                        RestartFailureTraceOutcome::Timeout,
+                        diagnostics,
+                    )
+                    .await;
                     return Err(HarnessError::Startup(
                         "restart command exhausted the total restart deadline".to_owned(),
                     ));
@@ -2476,6 +3191,12 @@ mod durable_workload {
                 Ok(Err(error)) => {
                     diagnostics.restart_elapsed = Some(restart_started.elapsed());
                     emit(&mut diagnostics, &readiness, "docker-restart", "error");
+                    self.record_restart_failure_trace(
+                        RestartFailureTracePhase::DockerRestart,
+                        RestartFailureTraceOutcome::Error,
+                        diagnostics,
+                    )
+                    .await;
                     return Err(error);
                 }
                 Ok(Ok(())) => {
@@ -2491,6 +3212,12 @@ mod durable_workload {
                     Err(_) => {
                         diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());
                         emit(&mut diagnostics, &readiness, "published-port", "timeout");
+                        self.record_restart_failure_trace(
+                            RestartFailureTracePhase::PublishedPort,
+                            RestartFailureTraceOutcome::Timeout,
+                            diagnostics,
+                        )
+                        .await;
                         return Err(HarnessError::Startup(
                             "published-port refresh and readiness exhausted the startup budget"
                                 .to_owned(),
@@ -2499,6 +3226,12 @@ mod durable_workload {
                     Ok(Err(error)) => {
                         diagnostics.port_lookup_elapsed = Some(port_lookup_started.elapsed());
                         emit(&mut diagnostics, &readiness, "published-port", "error");
+                        self.record_restart_failure_trace(
+                            RestartFailureTracePhase::PublishedPort,
+                            RestartFailureTraceOutcome::Error,
+                            diagnostics,
+                        )
+                        .await;
                         return Err(error);
                     }
                     Ok(Ok(output)) => {
@@ -2510,6 +3243,12 @@ mod durable_workload {
                 Ok(base) => base,
                 Err(error) => {
                     emit(&mut diagnostics, &readiness, "published-port", "error");
+                    self.record_restart_failure_trace(
+                        RestartFailureTracePhase::PublishedPort,
+                        RestartFailureTraceOutcome::Error,
+                        diagnostics,
+                    )
+                    .await;
                     return Err(error);
                 }
             };
@@ -2529,6 +3268,12 @@ mod durable_workload {
                         detail: "deadline_before_process_inspect".to_owned(),
                     });
                     emit(&mut diagnostics, &readiness, "readyz", "timeout");
+                    self.record_restart_failure_trace(
+                        RestartFailureTracePhase::Readyz,
+                        RestartFailureTraceOutcome::Timeout,
+                        diagnostics,
+                    )
+                    .await;
                     return Err(HarnessError::Startup(format!(
                         "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
                         STARTUP_TIMEOUT.as_secs()
@@ -2546,6 +3291,7 @@ mod durable_workload {
                         #[rustfmt::skip]
                         diagnostics.first_ready_elapsed.get_or_insert_with(|| started.elapsed());
                         emit(&mut diagnostics, &readiness, "complete", "success");
+                        self.record_restart_success_trace(diagnostics).await;
                         return Ok(started.elapsed());
                     }
                     Ok(Ok(response)) => {
@@ -2603,6 +3349,12 @@ mod durable_workload {
                 if Instant::now() >= deadline {
                     diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
                     emit(&mut diagnostics, &readiness, "readyz", "timeout");
+                    self.record_restart_failure_trace(
+                        RestartFailureTracePhase::Readyz,
+                        RestartFailureTraceOutcome::Timeout,
+                        diagnostics,
+                    )
+                    .await;
                     return Err(HarnessError::Startup(format!(
                         "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
                         STARTUP_TIMEOUT.as_secs()
@@ -3660,7 +4412,7 @@ mod durable_workload {
         client: &reqwest::Client,
         base: &str,
         setup_deadline: tokio::time::Instant,
-    ) -> Result<()> {
+    ) -> Result<String> {
         // Only fixture preparation gets this one awaited checkpoint. The
         // measured workload still has its original five-second request bound,
         // offers the full load, and cannot retry errors. Reuse the existing
@@ -3717,7 +4469,7 @@ mod durable_workload {
                 }
             }
             eprintln!("PERF_SEED_CHECKPOINT persisted=true active_bytes=0 frozen_bytes=0 reserved_bytes=0");
-            Ok(())
+            Ok(metrics)
         })
         .await
         .map_err(|_| timeout())?
@@ -4698,10 +5450,12 @@ mod durable_workload {
         let sampler_client = server.client.clone();
         let sampler_base = server.base.clone();
         let sampler_clock = clock.clone();
+        let sampler_trace = server.interval_trace.clone();
         let sampler = tokio::spawn(async move {
             let mut first = None;
             let mut last = None;
             let mut next_log = Duration::ZERO;
+            let mut next_trace = Duration::ZERO;
             let input_end = input_window;
             while sampler_clock.elapsed() < input_end {
                 let (status, metrics) = fetch_interval_metrics(
@@ -4725,6 +5479,13 @@ mod durable_workload {
                 if elapsed >= next_log {
                     eprintln!("{}", runtime_sample(elapsed, counters, &metrics));
                     next_log = elapsed + Duration::from_secs(10);
+                }
+                if elapsed >= next_trace {
+                    sampler_trace
+                        .lock()
+                        .await
+                        .record(elapsed, "input", &metrics);
+                    next_trace = elapsed + INTERVAL_TRACE_CADENCE;
                 }
                 first.get_or_insert(counters);
                 last = Some(counters);
@@ -5630,14 +6391,25 @@ mod durable_workload {
             Err(error) => return Err(error),
         }
         eprintln!("PERF_STAGE_BEGIN seed_checkpoint");
-        match checkpoint_seed(&server.client, &server.base, setup_deadline).await {
-            Ok(()) => eprintln!("PERF_STAGE_END seed_checkpoint"),
-            Err(error @ HarnessError::SetupTimeout { .. }) => {
-                eprintln!("PERF_STAGE_TIMEOUT seed_checkpoint");
-                return Err(error);
-            }
-            Err(error) => return Err(error),
-        }
+        let seed_checkpoint_metrics =
+            match checkpoint_seed(&server.client, &server.base, setup_deadline).await {
+                Ok(metrics) => {
+                    eprintln!("PERF_STAGE_END seed_checkpoint");
+                    metrics
+                }
+                Err(error @ HarnessError::SetupTimeout { .. }) => {
+                    eprintln!("PERF_STAGE_TIMEOUT seed_checkpoint");
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+        // This is the same mandatory post-seed checkpoint scrape. It is not
+        // another request and it stays outside the measured input window.
+        server.interval_trace.lock().await.record(
+            Duration::ZERO,
+            "pre_input",
+            &seed_checkpoint_metrics,
+        );
         // The clock and metric baseline are created only after seed work is
         // durable. This preparation checkpoint cannot satisfy interval gates.
         let (report, counter_delta, observed_input_duration) =
@@ -5724,13 +6496,18 @@ mod durable_workload {
         .await?;
         eprintln!("PERF_STAGE_END count_query_readback");
         eprintln!("PERF_STAGE_BEGIN cold_readback");
-        post_input_step(
+        let cold_readback_started = Instant::now();
+        let cold_readback = post_input_step(
             post_input_deadline,
             POST_INPUT_TIMEOUT,
             "cold_readback",
             assert_mutation_readback(&server, "cold after restart"),
         )
-        .await?;
+        .await;
+        server
+            .record_cold_readback_trace(cold_readback.is_ok(), cold_readback_started.elapsed())
+            .await;
+        cold_readback?;
         eprintln!("PERF_STAGE_END cold_readback");
         let cold_mutation_readback = true;
         post_input_step(
@@ -5967,6 +6744,8 @@ mod durable_workload {
             image_id: "fake-readback".to_owned(),
             cleanup_armed: false,
             request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+            interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
+            restart_failure_trace: Arc::new(Mutex::new(None)),
         }));
         (server, shutdown_tx)
     }
@@ -6164,6 +6943,342 @@ mod durable_workload {
         .join("\n")
     }
 
+    #[cfg(test)]
+    fn complete_interval_trace_metrics(
+        checkpoints: u64,
+        merges: u64,
+        state_count: u64,
+        state_sum_seconds: &str,
+        hnsw_count: u64,
+        hnsw_sum_seconds: &str,
+    ) -> String {
+        let mut metrics = complete_runtime_metrics(1)
+            .replacen(
+                &format!("{CHECKPOINT_COUNTER} 10"),
+                &format!("{CHECKPOINT_COUNTER} {checkpoints}"),
+                1,
+            )
+            .replacen(
+                &format!("{MERGE_COUNTER} 5"),
+                &format!("{MERGE_COUNTER} {merges}"),
+                1,
+            );
+        metrics.push_str("\nlumen_pending_change_reserved_bytes 7\nlumen_pending_change_active_bytes 11\nlumen_pending_change_frozen_bytes 13\nlumen_pending_change_total_bytes 31");
+        for (name, count, sum) in [
+            (STATE_WRITE_LOCK_HISTOGRAM, state_count, state_sum_seconds),
+            (HNSW_ADD_HISTOGRAM, hnsw_count, hnsw_sum_seconds),
+        ] {
+            for label in INTERVAL_TRACE_BUCKET_LABELS {
+                metrics.push_str(&format!("\n{name}_bucket{{le=\"{label}\"}} {count}"));
+            }
+            metrics.push_str(&format!("\n{name}_bucket{{le=\"+Inf\"}} {count}"));
+            metrics.push_str(&format!("\n{name}_sum {sum}\n{name}_count {count}"));
+        }
+        metrics
+    }
+
+    #[cfg(test)]
+    fn interval_trace_failure_totals(document: &Value) -> [u64; 4] {
+        let mut totals = [0; 4];
+        for key in ["samples", "omitted_request_failure_intervals"] {
+            for item in document[key].as_array().into_iter().flatten() {
+                let failures = &item["request_failures"];
+                for (index, name) in ["http_429", "other_http", "timeout", "other_transport"]
+                    .iter()
+                    .enumerate()
+                {
+                    totals[index] += failures[*name].as_u64().unwrap_or_default();
+                }
+            }
+        }
+        totals
+    }
+
+    #[test]
+    fn interval_trace_histograms_require_complete_finite_monotonic_rows() {
+        let valid = complete_interval_trace_metrics(10, 5, 1, "0.001", 1, "0.002");
+        assert!(IntervalTraceSnapshot::parse(&valid).is_ok());
+        for invalid in [
+            valid.replacen(
+                &format!("{STATE_WRITE_LOCK_HISTOGRAM}_bucket{{le=\"0.001\"}} 1\n"),
+                "",
+                1,
+            ),
+            format!("{valid}\n{HNSW_ADD_HISTOGRAM}_bucket{{le=\"0.001\"}} 1"),
+            valid.replacen(
+                &format!("{HNSW_ADD_HISTOGRAM}_sum 0.002"),
+                &format!("{HNSW_ADD_HISTOGRAM}_sum NaN"),
+                1,
+            ),
+            valid.replacen(
+                &format!("{STATE_WRITE_LOCK_HISTOGRAM}_bucket{{le=\"0.005\"}} 1"),
+                &format!("{STATE_WRITE_LOCK_HISTOGRAM}_bucket{{le=\"0.005\"}} 0"),
+                1,
+            ),
+        ] {
+            assert!(IntervalTraceSnapshot::parse(&invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn interval_trace_records_baseline_and_fixed_cadence_deltas() {
+        let mut trace = IntervalTrace::default();
+        trace.record(
+            Duration::ZERO,
+            "pre_input",
+            &complete_interval_trace_metrics(10, 5, 1, "0.001", 1, "0.002"),
+        );
+        trace.record(
+            INTERVAL_TRACE_CADENCE,
+            "input",
+            &complete_interval_trace_metrics(12, 7, 3, "0.003", 4, "0.008"),
+        );
+        trace.record(
+            INTERVAL_TRACE_CADENCE * 2,
+            "input",
+            &complete_interval_trace_metrics(14, 8, 5, "0.005", 6, "0.012"),
+        );
+        let rendered = trace.render(&RequestErrorJournal::default()).unwrap();
+        let document: Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(document["schema_version"], 3);
+        assert_eq!(document["cadence_ms"], 5_000);
+        assert_eq!(document["samples"].as_array().unwrap().len(), 3);
+        assert_eq!(document["samples"][1]["checkpoint"]["delta"], 2);
+        assert_eq!(
+            document["samples"][1]["state_write_lock_delta"]["sum_us"],
+            2_000
+        );
+        assert_eq!(document["samples"][2]["hnsw_add_delta"]["count"], 2);
+    }
+
+    #[test]
+    fn interval_trace_counts_every_429_after_detailed_journal_cap() {
+        let mut journal = RequestErrorJournal::default();
+        for _ in 0..(REQUEST_ERROR_JOURNAL_CAP + 45) {
+            journal.push(RequestErrorRecord {
+                elapsed_since_clock_start: INTERVAL_TRACE_CADENCE,
+                endpoint: "secret-url-must-not-render".to_owned(),
+                identifier: "secret-id-must-not-render".to_owned(),
+                error: RequestFailure::synthetic("hidden response text".to_owned(), false),
+                status: Some(429),
+                body: Some("hidden body".to_owned()),
+            });
+        }
+        assert_eq!(journal.records.len(), REQUEST_ERROR_JOURNAL_CAP);
+        assert_eq!(journal.overflow, 45);
+        let mut trace = IntervalTrace::default();
+        trace.record(
+            INTERVAL_TRACE_CADENCE,
+            "input",
+            &complete_interval_trace_metrics(10, 5, 1, "0.001", 1, "0.002"),
+        );
+        let rendered = trace.render(&journal).unwrap();
+        let document: Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(document["samples"][0]["request_failures"]["http_429"], 301);
+        assert!(!rendered.contains("secret-id-must-not-render"));
+        assert!(!rendered.contains("hidden response text"));
+    }
+
+    #[test]
+    fn interval_trace_is_bounded_valid_json_without_raw_data() {
+        let mut trace = IntervalTrace::default();
+        let metrics = complete_interval_trace_metrics(10, 5, 1, "0.001", 1, "0.002");
+        for sample in 0..(INTERVAL_TRACE_MAX_SAMPLES + 10) {
+            trace.record(
+                Duration::from_millis(sample as u64 * INTERVAL_TRACE_CADENCE.as_millis() as u64),
+                "input",
+                &metrics,
+            );
+        }
+        let rendered = trace.render(&RequestErrorJournal::default()).unwrap();
+        let document: Value = serde_json::from_str(&rendered).unwrap();
+        assert!(rendered.len() <= INTERVAL_TRACE_MAX_BYTES);
+        assert!(document["samples"].as_array().unwrap().len() <= INTERVAL_TRACE_MAX_SAMPLES);
+        assert!(!rendered.contains("# HELP"));
+        assert!(!rendered.contains("http://"));
+    }
+
+    #[test]
+    fn interval_trace_assigns_bucket_zero_failures_once() {
+        let mut journal = RequestErrorJournal::default();
+        for status in [Some(429), Some(500), None] {
+            journal.push(RequestErrorRecord {
+                elapsed_since_clock_start: Duration::from_millis(1),
+                endpoint: "ignored-endpoint".to_owned(),
+                identifier: "ignored-identifier".to_owned(),
+                error: RequestFailure::synthetic("ignored error".to_owned(), false),
+                status,
+                body: None,
+            });
+        }
+        let mut trace = IntervalTrace::default();
+        let metrics = complete_interval_trace_metrics(10, 5, 1, "0.001", 1, "0.002");
+        trace.record(Duration::ZERO, "pre_input", &metrics);
+        trace.record(Duration::from_millis(1), "input", &metrics);
+
+        let document: Value = serde_json::from_str(&trace.render(&journal).unwrap()).unwrap();
+        assert_eq!(interval_trace_failure_totals(&document), [1, 1, 0, 1]);
+        assert_eq!(document["samples"][0]["request_failures"]["http_429"], 0);
+        assert_eq!(document["samples"][1]["request_failures"]["http_429"], 1);
+    }
+
+    #[test]
+    fn interval_trace_preserves_error_totals_when_detail_is_capped() {
+        let intervals = INTERVAL_TRACE_MAX_SAMPLES + 24;
+        let mut error_only_journal = RequestErrorJournal::default();
+        for bucket in 0..intervals {
+            for (status, timeout) in [
+                (Some(429), false),
+                (Some(500), false),
+                (Some(500), false),
+                (None, true),
+                (None, true),
+                (None, true),
+                (None, false),
+                (None, false),
+                (None, false),
+                (None, false),
+            ] {
+                error_only_journal.push(RequestErrorRecord {
+                    elapsed_since_clock_start: Duration::from_millis(
+                        bucket as u64 * INTERVAL_TRACE_CADENCE.as_millis() as u64,
+                    ),
+                    endpoint: "ignored-endpoint".to_owned(),
+                    identifier: "ignored-identifier".to_owned(),
+                    error: RequestFailure::synthetic("ignored error".to_owned(), timeout),
+                    status,
+                    body: None,
+                });
+            }
+        }
+        let sample_capped: Value = serde_json::from_str(
+            &IntervalTrace::default().render(&error_only_journal).unwrap(),
+        )
+        .unwrap();
+        assert!(sample_capped["samples"].as_array().unwrap().len() <= INTERVAL_TRACE_MAX_SAMPLES);
+        assert!(sample_capped["omitted_request_failure_intervals"]
+            .as_array()
+            .unwrap()
+            .len()
+            > 0);
+        assert_eq!(
+            interval_trace_failure_totals(&sample_capped),
+            [
+                intervals as u64,
+                intervals as u64 * 2,
+                intervals as u64 * 3,
+                intervals as u64 * 4,
+            ]
+        );
+
+        let mut trace = IntervalTrace::default();
+        let mut byte_capped_journal = RequestErrorJournal::default();
+        let metrics = complete_interval_trace_metrics(10, 5, 1, "0.001", 1, "0.002");
+        for bucket in 0..12_u64 {
+            trace.record(
+                Duration::from_millis(bucket * INTERVAL_TRACE_CADENCE.as_millis() as u64),
+                "input",
+                &metrics,
+            );
+            for (status, timeout) in [
+                (Some(429), false),
+                (Some(429), false),
+                (Some(429), false),
+                (Some(429), false),
+                (Some(500), false),
+                (Some(500), false),
+                (Some(500), false),
+                (Some(500), false),
+                (Some(500), false),
+                (None, true),
+                (None, true),
+                (None, true),
+                (None, true),
+                (None, true),
+                (None, true),
+                (None, false),
+                (None, false),
+                (None, false),
+                (None, false),
+                (None, false),
+                (None, false),
+                (None, false),
+            ] {
+                byte_capped_journal.push(RequestErrorRecord {
+                    elapsed_since_clock_start: Duration::from_millis(
+                        bucket * INTERVAL_TRACE_CADENCE.as_millis() as u64,
+                    ),
+                    endpoint: "ignored-endpoint".to_owned(),
+                    identifier: "ignored-identifier".to_owned(),
+                    error: RequestFailure::synthetic("ignored error".to_owned(), timeout),
+                    status,
+                    body: None,
+                });
+            }
+        }
+        let byte_capped_rendered = trace
+            .render_with_byte_cap(&byte_capped_journal, 4 * 1024)
+            .unwrap();
+        let byte_capped: Value = serde_json::from_str(&byte_capped_rendered).unwrap();
+        assert!(byte_capped_rendered.len() <= 4 * 1024);
+        assert!(byte_capped["samples"].as_array().unwrap().len() < 12);
+        assert!(byte_capped["omitted_request_failure_intervals"]
+            .as_array()
+            .unwrap()
+            .len()
+            > 0);
+        // Detail samples can be omitted, but every interval keeps one and
+        // only one aggregate request-failure total in the document.
+        assert_eq!(interval_trace_failure_totals(&byte_capped), [48, 60, 72, 84]);
+    }
+
+    /// Overflow records must retain their distinct timeout and transport
+    /// totals, not merge them into one transport-or-timeout bucket.
+    #[test]
+    fn interval_trace_separates_timeouts_from_other_transport_after_detailed_journal_cap() {
+        let mut journal = RequestErrorJournal::default();
+        for index in 0..REQUEST_ERROR_JOURNAL_CAP {
+            journal.push(RequestErrorRecord {
+                elapsed_since_clock_start: INTERVAL_TRACE_CADENCE,
+                endpoint: "ignored-endpoint".to_owned(),
+                identifier: format!("ignored-{index}"),
+                error: RequestFailure::synthetic("ignored status".to_owned(), false),
+                status: Some(429),
+                body: None,
+            });
+        }
+        for (timeout, detail) in [
+            (true, "request deadline elapsed"),
+            (false, "connection reset by peer"),
+        ] {
+            journal.push(RequestErrorRecord {
+                elapsed_since_clock_start: INTERVAL_TRACE_CADENCE,
+                endpoint: "ignored-endpoint".to_owned(),
+                identifier: "ignored-after-cap".to_owned(),
+                error: RequestFailure::synthetic(detail.to_owned(), timeout),
+                status: None,
+                body: None,
+            });
+        }
+        assert_eq!(journal.records.len(), REQUEST_ERROR_JOURNAL_CAP);
+        assert_eq!(journal.overflow, 2);
+
+        let mut trace = IntervalTrace::default();
+        trace.record(
+            INTERVAL_TRACE_CADENCE,
+            "input",
+            &complete_interval_trace_metrics(10, 5, 1, "0.001", 1, "0.002"),
+        );
+        let document: Value = serde_json::from_str(&trace.render(&journal).unwrap()).unwrap();
+        assert_eq!(document["schema_version"], 3);
+        assert_eq!(interval_trace_failure_totals(&document), [256, 0, 1, 1]);
+        assert_eq!(document["samples"][0]["request_failures"]["timeout"], 1);
+        assert_eq!(
+            document["samples"][0]["request_failures"]["other_transport"],
+            1
+        );
+    }
+
     #[test]
     fn runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments() {
         let metrics = format!(
@@ -6304,6 +7419,8 @@ mod durable_workload {
                 image_id: "fake-setup".to_owned(),
                 cleanup_armed: false,
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+                interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
+                restart_failure_trace: Arc::new(Mutex::new(None)),
             };
             let timeout = Duration::from_millis(25);
             let deadline = tokio::time::Instant::now() + timeout;
@@ -7048,6 +8165,7 @@ mod durable_workload {
                 "container-under-test",
                 "volume-under-test",
                 "record=0 elapsed_ms=0 endpoint=POST /collections/perf-hot/index identifier=request_id=1 status=none timeout=true connect=false request=false body_err=false decode=false\n",
+                Some("{\"schema_version\":3,\"kind\":\"lumen-perf-interval-trace\",\"samples\":[]}"),
             )
             .await;
 
@@ -7069,6 +8187,11 @@ mod durable_workload {
                     "docker volume rm -f volume-under-test".to_owned(),
                 ],
                 "the production failure finalizer must retain every probe before cleanup removes the run-owned resources"
+            );
+            assert_eq!(
+                fs::read_to_string(evidence.path.join("interval-trace.json"))
+                    .expect("trace must exist before the cleanup runner returns"),
+                "{\"schema_version\":3,\"kind\":\"lumen-perf-interval-trace\",\"samples\":[]}"
             );
             assert_eq!(
                 fs::read_to_string(evidence.path.join("docker-logs.txt"))
@@ -7182,6 +8305,8 @@ mod durable_workload {
                 image_id: "restart-test-image-id".to_owned(),
                 cleanup_armed: false,
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+                interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
+                restart_failure_trace: Arc::new(Mutex::new(None)),
             },
             requests,
             task,
@@ -7234,6 +8359,8 @@ mod durable_workload {
                 image_id: "restart-test-image-id".to_owned(),
                 cleanup_armed: false,
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+                interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
+                restart_failure_trace: Arc::new(Mutex::new(None)),
             },
             requests,
             task,
@@ -7623,6 +8750,59 @@ mod durable_workload {
         });
     }
 
+    /// A restart that fails before cold readback must leave a fixed-shape
+    /// timing record. The trace must say cold readback was unavailable, not
+    /// omit that lifecycle stage or infer a successful readback.
+    #[test]
+    fn restart_failure_trace_writes_timing_and_cold_readback_unavailable() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build restart failure trace unit-test runtime");
+        runtime.block_on(async {
+            let (mut server, _, task) = fake_ready_lumen().await;
+            let mut runner = DiagnosticRestartRunner {
+                restart_result: Some(Err(HarnessError::Startup("restart failed".to_owned()))),
+                restart_delay: Duration::ZERO,
+                port_result: None,
+                port_delay: Duration::ZERO,
+            };
+            let mut records = Vec::new();
+            let result = server
+                .restart_and_wait_ready_with_diagnostic_observer(
+                    &mut runner,
+                    Instant::now() + STARTUP_TIMEOUT,
+                    |record, diagnostics| records.push((record.to_owned(), diagnostics)),
+                )
+                .await;
+            assert!(matches!(result, Err(HarnessError::Startup(_))));
+            assert_eq!(records.len(), 1);
+            let (record, diagnostics) = &records[0];
+            assert!(record.starts_with("PERF_RESTART_DIAGNOSTIC phase=docker-restart outcome=error"));
+            assert!(record.contains("total_elapsed_ms="));
+            assert!(diagnostics.restart_elapsed.is_some());
+            assert!(diagnostics.port_lookup_elapsed.is_none());
+            assert!(diagnostics.readyz_wait_elapsed.is_none());
+            task.abort();
+        });
+
+        let region = restart_diagnostic_production_region(include_str!("perf_gate.rs"));
+        for expected in [
+            "enum RestartFailureTracePhase {",
+            "enum RestartFailureTraceOutcome {",
+            "enum RestartFailureTraceColdReadback {",
+            "struct RestartFailureTrace {",
+            "RestartFailureTraceColdReadback::Unavailable",
+            "restart-failure-trace.json",
+            "STARTUP_TIMEOUT",
+        ] {
+            assert!(
+                restart_diagnostic_production_contains(region, expected),
+                "missing fixed-enum restart failure trace contract line: {expected}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn restart_port_lookup_cannot_outlive_the_readiness_budget() {
         let (mut server, requests, task) = fake_ready_lumen().await;
@@ -7909,6 +9089,7 @@ mod durable_workload {
                 "container-under-test",
                 "volume-under-test",
                 &request_error_report,
+                None,
             )
             .await;
 

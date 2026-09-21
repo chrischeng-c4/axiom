@@ -1675,6 +1675,35 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "interval_trace_histograms_require_complete_finite_monotonic_rows".into(),
+                    false,
+                ),
+                (
+                    "interval_trace_records_baseline_and_fixed_cadence_deltas".into(),
+                    false,
+                ),
+                (
+                    "interval_trace_counts_every_429_after_detailed_journal_cap".into(),
+                    false,
+                ),
+                (
+                    "interval_trace_is_bounded_valid_json_without_raw_data".into(),
+                    false,
+                ),
+                (
+                    "interval_trace_assigns_bucket_zero_failures_once".into(),
+                    false,
+                ),
+                (
+                    "interval_trace_preserves_error_totals_when_detail_is_capped".into(),
+                    false,
+                ),
+                (
+                    "interval_trace_separates_timeouts_from_other_transport_after_detailed_journal_cap"
+                        .into(),
+                    false,
+                ),
+                (
                     "runtime_sample_keeps_pending_occupancy_and_durable_progress_without_metric_comments".into(),
                     false,
                 ),
@@ -1770,6 +1799,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 (
                     "restart_diagnostics_keep_partial_records_for_terminal_phase_failures"
                         .into(),
+                    false,
+                ),
+                (
+                    "restart_failure_trace_writes_timing_and_cold_readback_unavailable".into(),
                     false,
                 ),
                 (
@@ -1870,6 +1903,13 @@ fn validate_restart_phase_diagnostics_source(source: &str) -> Result<(), Finding
         "\"published-port\", \"error\"",
         "\"published-port\", \"timeout\"",
         "\"readyz\", \"timeout\"",
+        "enum RestartFailureTracePhase {",
+        "enum RestartFailureTraceOutcome {",
+        "enum RestartFailureTraceColdReadback {",
+        "struct RestartFailureTrace {",
+        "RestartFailureTraceColdReadback::Unavailable",
+        "restart-failure-trace.json",
+        "STARTUP_TIMEOUT",
     ];
     require(
         required.iter().all(|expected| has(expected)),
