@@ -33,6 +33,34 @@ pub struct SegmentCheckpointSink {
     pub aof: Option<crate::coordinator::SharedAof>,
 }
 
+/// Keeps checkpoint-attempt telemetry balanced across every synchronous return
+/// path. It deliberately owns no checkpoint state, so it cannot change save,
+/// trim, or publication ordering.
+struct CheckpointAttempt<'a> {
+    metrics: &'a crate::metrics::Metrics,
+    failed: bool,
+}
+
+impl<'a> CheckpointAttempt<'a> {
+    fn start(metrics: &'a crate::metrics::Metrics) -> Self {
+        metrics.start_segment_checkpoint_attempt();
+        Self {
+            metrics,
+            failed: false,
+        }
+    }
+
+    fn mark_failed(&mut self) {
+        self.failed = true;
+    }
+}
+
+impl Drop for CheckpointAttempt<'_> {
+    fn drop(&mut self) {
+        self.metrics.finish_segment_checkpoint_attempt(self.failed);
+    }
+}
+
 /// Owns one native budget waiter and one Tokio checkpoint task.
 #[doc(hidden)]
 pub struct SegmentCheckpointDriver {
@@ -314,46 +342,53 @@ impl SegmentCheckpointSink {
         &self,
         store: &crate::segment_rdb::SegmentRdbStore,
     ) -> Result<()> {
-        if self
-            .writer
-            .mutation_gate()
-            .is_some_and(|gate| gate.is_restart_required())
-        {
-            return Err(anyhow::Error::new(crate::coordinator::RestartRequired(
-                "checkpoint refused: restart required".into(),
-            )));
-        }
-        let sequence = store.save_with_sequence(&self.engine, self.writer.applied_seq())?;
-        store.prune(3)?;
-        match store.disk_bytes() {
-            Ok(bytes) => self.engine.metrics().set_segment_disk_bytes(bytes),
-            Err(error) => tracing::warn!(%error, "segment disk metric unavailable after prune"),
-        }
-        if let Some(aof) = &self.aof {
-            #[cfg(unix)]
-            let trim = (|| {
-                let mut plan = {
+        let mut attempt = CheckpointAttempt::start(self.engine.metrics());
+        let result = (|| {
+            if self
+                .writer
+                .mutation_gate()
+                .is_some_and(|gate| gate.is_restart_required())
+            {
+                return Err(anyhow::Error::new(crate::coordinator::RestartRequired(
+                    "checkpoint refused: restart required".into(),
+                )));
+            }
+            let sequence = store.save_with_sequence(&self.engine, self.writer.applied_seq())?;
+            store.prune(3)?;
+            match store.disk_bytes() {
+                Ok(bytes) => self.engine.metrics().set_segment_disk_bytes(bytes),
+                Err(error) => tracing::warn!(%error, "segment disk metric unavailable after prune"),
+            }
+            if let Some(aof) = &self.aof {
+                #[cfg(unix)]
+                let trim = (|| {
+                    let mut plan = {
+                        let mut writer = aof
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?;
+                        writer.begin_trim(sequence)?
+                    };
+                    plan.copy_stable_prefix()?;
                     let mut writer = aof
                         .lock()
                         .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?;
-                    writer.begin_trim(sequence)?
-                };
-                plan.copy_stable_prefix()?;
-                let mut writer = aof
+                    writer.finish_trim(plan)
+                })();
+                #[cfg(not(unix))]
+                let trim = aof
                     .lock()
-                    .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?;
-                writer.finish_trim(plan)
-            })();
-            #[cfg(not(unix))]
-            let trim = aof
-                .lock()
-                .map_err(|_| anyhow::anyhow!("aof writer poisoned"))
-                .and_then(|mut writer| writer.truncate_through(sequence));
-            if let Err(error) = trim {
-                tracing::warn!(%error, "AOF trim after checkpoint failed");
+                    .map_err(|_| anyhow::anyhow!("aof writer poisoned"))
+                    .and_then(|mut writer| writer.truncate_through(sequence));
+                if let Err(error) = trim {
+                    tracing::warn!(%error, "AOF trim after checkpoint failed");
+                }
             }
+            Ok(())
+        })();
+        if result.is_err() {
+            attempt.mark_failed();
         }
-        Ok(())
+        result
     }
 
     /// Start the periodic form of checkpoint_now. The budget only supplies
@@ -979,12 +1014,18 @@ mod tests {
             aof: None,
         };
         assert!(sink.checkpoint_now().await.is_err());
+        assert_eq!(engine.metrics().segment_checkpoint_started_total.get(), 1);
+        assert_eq!(engine.metrics().segment_checkpoint_failed_total.get(), 1);
+        assert_eq!(engine.metrics().segment_checkpoint_in_flight.get(), 0);
         assert!(
             budget.snapshot().frozen >= frozen_before_failure,
             "failed save must retain the captured charge"
         );
         admitted_keyword(&engine, "newer", "newer");
         assert!(sink.checkpoint_now().await.unwrap());
+        assert_eq!(engine.metrics().segment_checkpoint_started_total.get(), 2);
+        assert_eq!(engine.metrics().segment_checkpoint_failed_total.get(), 1);
+        assert_eq!(engine.metrics().segment_checkpoint_in_flight.get(), 0);
         let (replayed, sequence) = sink.store.load_latest().unwrap().unwrap();
         assert_eq!(sequence, 1);
         assert!(contains_keyword(&replayed, "captured"));
@@ -1101,6 +1142,9 @@ mod tests {
             .await
             .unwrap()
             .expect("checkpoint must reach the real write pause");
+        assert_eq!(engine.metrics().segment_checkpoint_started_total.get(), 1);
+        assert_eq!(engine.metrics().segment_checkpoint_failed_total.get(), 0);
+        assert_eq!(engine.metrics().segment_checkpoint_in_flight.get(), 1);
         let stop = driver.stop.clone();
         let (finished_tx, mut finished_rx) = oneshot::channel();
         let stopping = tokio::spawn(async move {
@@ -1127,6 +1171,9 @@ mod tests {
             .unwrap()
             .unwrap();
         stopping.await.unwrap();
+        assert_eq!(engine.metrics().segment_checkpoint_started_total.get(), 1);
+        assert_eq!(engine.metrics().segment_checkpoint_failed_total.get(), 0);
+        assert_eq!(engine.metrics().segment_checkpoint_in_flight.get(), 0);
         let (cold, _) = store
             .load_latest()
             .unwrap()

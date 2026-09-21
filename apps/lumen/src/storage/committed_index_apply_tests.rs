@@ -876,6 +876,43 @@ mod borrowed_vector_apply_tests {
         }
     }
 
+    #[test]
+    fn committed_vector_apply_records_lock_wait_and_hnsw_add_by_backend() {
+        for (backend, expected_hnsw_adds) in
+            [(VectorBackend::HnswCpu, 1), (VectorBackend::FlatCpu, 0)]
+        {
+            let engine = vector_engine(backend, false);
+            let (handled, outcome) = borrowed_vector(
+                &engine,
+                &vector_request(
+                    vec![item(
+                        "id",
+                        "vec",
+                        FieldValue::Vector(vec![0.0, 1.0, 2.0]),
+                        Some(1),
+                    )],
+                    None,
+                ),
+                1,
+            );
+            assert!(handled, "Vector must stay on the borrowed fast ledger");
+            assert!(matches!(outcome, Some(Ok(ApplyOutcome::Indexed(_)))));
+            assert_eq!(
+                engine
+                    .metrics()
+                    .engine_state_write_lock_wait_seconds_count
+                    .get(),
+                1,
+                "every committed Vector apply acquires the state write lock once"
+            );
+            assert_eq!(
+                engine.metrics().hnsw_add_seconds_count.get(),
+                expected_hnsw_adds,
+                "only the HNSW backend records live graph-add work"
+            );
+        }
+    }
+
     fn frozen_vector_bits(engine: &Engine, eid: &str) -> Option<Vec<u32>> {
         let frozen = engine.freeze_checkpoint_collections(None).unwrap();
         let row = frozen.capture.frozen_changes["docs"].row("vec", eid)?;

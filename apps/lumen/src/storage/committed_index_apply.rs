@@ -872,7 +872,11 @@ impl Engine {
                 hook();
             }
             let apply = self.capture_barrier.apply();
-            let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+            let mut telemetry = self.metrics.committed_apply_telemetry();
+            let state_write_wait_started = Instant::now();
+            let state_write = self.state.write();
+            telemetry.record_state_write_lock_wait(state_write_wait_started.elapsed());
+            let mut state = state_write.map_err(|_| anyhow!("state poisoned"))?;
             let matches = state.collections.get(collection).is_some_and(|coll| {
                 prepared.plan.matches(
                     &View {
@@ -1031,10 +1035,21 @@ impl Engine {
                     .expect("matched Vector field");
                 index.drop_eid(cell.id, eid);
                 if let Some(row) = row {
-                    let FieldIndex::Vector { idx, bytes, .. } = index else {
+                    let FieldIndex::Vector {
+                        idx, bytes, spec, ..
+                    } = index
+                    else {
                         unreachable!("matched Vector kind")
                     };
-                    if let Err(error) = idx.add(eid, row.raw.as_f32_slice()) {
+                    let add = if matches!(spec.backend, crate::types::VectorBackend::HnswCpu) {
+                        let hnsw_add_started = Instant::now();
+                        let add = idx.add(eid, row.raw.as_f32_slice());
+                        telemetry.record_hnsw_add(hnsw_add_started.elapsed());
+                        add
+                    } else {
+                        idx.add(eid, row.raw.as_f32_slice())
+                    };
+                    if let Err(error) = add {
                         // A backend fault after a validated prepare is not a
                         // business rejection. The partial apply must never be
                         // published or acknowledged as a successful cut.
