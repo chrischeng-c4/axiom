@@ -5270,15 +5270,98 @@ impl Engine {
             for (field_name, field) in &mut coll.fields {
                 if let FieldIndex::Vector { spec, idx, bytes } = field {
                     if spec.backend == crate::types::VectorBackend::HnswCpu {
-                        let (vectors, codebook) = idx.dump_for_snapshot()?;
+                        let field_started = Instant::now();
+                        let snapshot_started = Instant::now();
+                        let (vectors, codebook) = match idx.dump_for_snapshot() {
+                            Ok(snapshot) => snapshot,
+                            Err(error) => {
+                                tracing::error!(
+                                    collection = %collection_name,
+                                    field = %field_name,
+                                    rows = idx.len(),
+                                    cache_result = "not_attempted",
+                                    restore_result = "error",
+                                    snapshot_ms = snapshot_started.elapsed().as_millis() as u64,
+                                    cache_prepare_ms = 0u64,
+                                    cache_fingerprint_ms = 0u64,
+                                    cache_manifest_ms = 0u64,
+                                    cache_payload_hash_ms = 0u64,
+                                    cache_materialize_ms = 0u64,
+                                    hnsw_deserialize_ms = 0u64,
+                                    graph_validate_ms = 0u64,
+                                    fallback_rebuild_ms = 0u64,
+                                    restore_total_ms = 0u64,
+                                    field_total_ms = field_started.elapsed().as_millis() as u64,
+                                    %error,
+                                    "HNSW graph restore timing"
+                                );
+                                return Err(error);
+                            }
+                        };
+                        let snapshot_elapsed = snapshot_started.elapsed();
+                        let rows = vectors.len();
                         *bytes = vectors
                             .iter()
                             .map(|(eid, value)| (eid.len() + value.len() * 4) as u64)
                             .sum();
-                        let directory = cache.map(|root| graph_cache_field_path(root, collection_name, field_name));
-                        *idx = Box::new(HnswCpuIndex::restore_with_graph_cache(
-                            *spec, vectors, codebook, directory.as_deref(),
-                        )?);
+                        let directory = cache
+                            .map(|root| graph_cache_field_path(root, collection_name, field_name));
+                        let (restored, timing) = match HnswCpuIndex::restore_with_graph_cache_timed(
+                            *spec,
+                            vectors,
+                            codebook,
+                            directory.as_deref(),
+                        ) {
+                            Ok(restored) => restored,
+                            Err(failure) => {
+                                let timing = failure.timing;
+                                tracing::error!(
+                                    collection = %collection_name,
+                                    field = %field_name,
+                                    rows,
+                                    cache_result = timing.cache_result.map(|result| result.as_str()).unwrap_or("absent"),
+                                    restore_result = "error",
+                                    snapshot_ms = snapshot_elapsed.as_millis() as u64,
+                                    cache_prepare_ms = timing.cache_prepare.as_millis() as u64,
+                                    cache_fingerprint_ms = timing.cache_fingerprint.as_millis() as u64,
+                                    cache_manifest_ms = timing.cache_manifest.as_millis() as u64,
+                                    cache_payload_hash_ms = timing.cache_payload_hash.as_millis() as u64,
+                                    cache_materialize_ms = timing.cache_materialize.as_millis() as u64,
+                                    hnsw_deserialize_ms = timing.cache_deserialize.as_millis() as u64,
+                                    graph_validate_ms = timing.cache_validate.as_millis() as u64,
+                                    fallback_rebuild_ms = timing.fallback_rebuild.as_millis() as u64,
+                                    restore_total_ms = timing.total.as_millis() as u64,
+                                    field_total_ms = field_started.elapsed().as_millis() as u64,
+                                    error = %failure.error,
+                                    "HNSW graph restore timing"
+                                );
+                                return Err(failure.error);
+                            }
+                        };
+                        let cache_result = timing
+                            .cache_result
+                            .map(|result| result.as_str())
+                            .unwrap_or("absent");
+                        tracing::info!(
+                            collection = %collection_name,
+                            field = %field_name,
+                            rows,
+                            cache_result,
+                            restore_result = if cache_result == "hit" { "hit" } else { "rebuild" },
+                            snapshot_ms = snapshot_elapsed.as_millis() as u64,
+                            cache_prepare_ms = timing.cache_prepare.as_millis() as u64,
+                            cache_fingerprint_ms = timing.cache_fingerprint.as_millis() as u64,
+                            cache_manifest_ms = timing.cache_manifest.as_millis() as u64,
+                            cache_payload_hash_ms = timing.cache_payload_hash.as_millis() as u64,
+                            cache_materialize_ms = timing.cache_materialize.as_millis() as u64,
+                            hnsw_deserialize_ms = timing.cache_deserialize.as_millis() as u64,
+                            graph_validate_ms = timing.cache_validate.as_millis() as u64,
+                            fallback_rebuild_ms = timing.fallback_rebuild.as_millis() as u64,
+                            restore_total_ms = timing.total.as_millis() as u64,
+                            field_total_ms = field_started.elapsed().as_millis() as u64,
+                            "HNSW graph restore timing"
+                        );
+                        *idx = Box::new(restored);
                     }
                 }
             }

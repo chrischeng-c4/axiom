@@ -8,15 +8,49 @@ use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 const BASENAME: &str = "graph";
 const MANIFEST: &str = "manifest.json";
 const FORMAT: &str = "lumen-hnsw-cache-v1/hnsw_rs-0.3.4-dump-v3";
 
+/// Bounded per-field timings for an optional graph-cache restore attempt.
+///
+/// These are diagnostic-only. They deliberately retain every cache-integrity
+/// check so a large cold start can identify its active phase without changing
+/// recovery authority.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct LoadTiming {
+    pub(super) prepare: Duration,
+    pub(super) fingerprint: Duration,
+    pub(super) manifest: Duration,
+    pub(super) payload_hash: Duration,
+    pub(super) materialize: Duration,
+    pub(super) deserialize: Duration,
+    pub(super) validate: Duration,
+}
+
+#[derive(Debug)]
+pub(super) struct LoadFailure {
+    pub(super) error: anyhow::Error,
+    pub(super) timing: LoadTiming,
+}
+
 enum LoadedGraph<'a> {
     L2(Hnsw<'a, f32, DistL2>),
     Cosine(Hnsw<'a, f32, DistDot>),
     Dot(Hnsw<'a, f32, DistDot>),
+}
+
+pub(super) fn load(
+    spec: VectorSpec,
+    vectors: &[(String, Vec<f32>)],
+    codebook: Option<ScalarCodebook>,
+    directory: &Path,
+) -> Result<Option<HnswCpuIndex>> {
+    load_timed(spec, vectors, codebook, directory)
+        .map_err(|failure| failure.error)
+        .map(|(index, _)| index)
 }
 
 // The loader owns every borrowed mapping for exactly as long as the graph.
@@ -228,128 +262,170 @@ pub(super) fn save(inner: &HnswCpuInner, directory: &Path) -> Result<bool> {
     Ok(true)
 }
 
-pub(super) fn load(
+pub(super) fn load_timed(
     spec: VectorSpec,
     vectors: &[(String, Vec<f32>)],
     codebook: Option<ScalarCodebook>,
     directory: &Path,
-) -> Result<Option<HnswCpuIndex>> {
-    if vectors.is_empty() || !directory.exists() {
-        return Ok(None);
+) -> std::result::Result<(Option<HnswCpuIndex>, LoadTiming), LoadFailure> {
+    let mut timing = LoadTiming::default();
+
+    macro_rules! stage {
+        ($field:ident, $body:expr) => {{
+            let started = Instant::now();
+            let result = (|| -> Result<_> { $body })();
+            timing.$field = started.elapsed();
+            result
+        }};
     }
-    real_directory(directory)?;
-    let path = directory.join(MANIFEST);
-    let metadata = std::fs::symlink_metadata(&path)?;
-    // Bound parsing by the authoritative rows, including JSON string escaping.
-    let max_manifest = vectors.iter().fold(1024usize * 1024, |sum, (eid, _)| {
-        sum.saturating_add(eid.len().saturating_mul(6).saturating_add(128))
-    });
-    ensure!(
-        metadata.is_file()
-            && !metadata.file_type().is_symlink()
-            && metadata.len() <= max_manifest as u64,
-        "invalid graph cache manifest file"
-    );
-    let manifest: Manifest = serde_json::from_slice(&std::fs::read(path)?)?;
-    ensure!(
-        manifest.format == FORMAT && manifest.platform == platform(),
-        "incompatible graph cache"
-    );
-    ensure!(
-        manifest.fingerprint == fingerprint(spec, vectors, codebook)?,
-        "graph cache differs from durable vectors"
-    );
-    ensure!(
-        manifest.ids.len() == vectors.len()
-            && manifest.points >= vectors.len()
-            && manifest.points <= vectors.len().saturating_mul(2),
-        "invalid cached graph population"
-    );
-    ensure!(
-        manifest.next_id >= manifest.points && manifest.next_id < usize::MAX,
-        "invalid cached allocator"
-    );
-    for (name, expected_size, expected_hash) in [
-        (
-            "graph.hnsw.graph",
-            manifest.graph_bytes,
-            &manifest.graph_sha256,
-        ),
-        (
-            "graph.hnsw.data",
-            manifest.data_bytes,
-            &manifest.data_sha256,
-        ),
-    ] {
-        let (size, hash) = file_hash(&directory.join(name), false)?;
-        ensure!(
-            size == expected_size && &hash == expected_hash,
-            "graph cache payload checksum mismatch"
-        );
-    }
-    let mut store = VectorStore::new(spec);
-    store.codebook = codebook;
-    let mut ordered: Vec<_> = vectors.iter().collect();
-    ordered.sort_by(|left, right| left.0.cmp(&right.0));
-    let mut eid_to_id = HashMap::with_capacity(vectors.len());
-    let mut id_to_eid = HashMap::with_capacity(vectors.len());
-    let mut expected_points = HashMap::with_capacity(vectors.len());
-    for ((eid, vector), (cached_eid, id)) in ordered.into_iter().zip(&manifest.ids) {
-        ensure!(
-            eid == cached_eid && *id < manifest.next_id,
-            "graph cache identity mismatch"
-        );
-        ensure!(
-            id_to_eid.insert(*id, eid.clone()).is_none(),
-            "duplicate cached graph identity"
-        );
-        ensure!(
-            eid_to_id.insert(eid.clone(), *id).is_none(),
-            "duplicate durable vector identity"
-        );
-        store.put(eid, vector)?;
-        let decoded = store
-            .get_decoded(eid)
-            .context("cached store vector missing")?;
-        expected_points.insert(
-            *id,
-            if spec.metric == VectorMetric::Cosine {
-                normalize_unit_safe(&decoded)
+
+    let result = (|| -> Result<Option<HnswCpuIndex>> {
+        let available = stage!(prepare, {
+            if vectors.is_empty() || !directory.exists() {
+                Ok(false)
             } else {
-                decoded
-            },
+                real_directory(directory).map(|()| true)
+            }
+        });
+        if !available? {
+            return Ok(None);
+        }
+
+        let path = directory.join(MANIFEST);
+        let manifest: Manifest = stage!(manifest, {
+            let metadata = std::fs::symlink_metadata(&path)?;
+            // Bound parsing by the authoritative rows, including JSON string escaping.
+            let max_manifest = vectors.iter().fold(1024usize * 1024, |sum, (eid, _)| {
+                sum.saturating_add(eid.len().saturating_mul(6).saturating_add(128))
+            });
+            ensure!(
+                metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.len() <= max_manifest as u64,
+                "invalid graph cache manifest file"
+            );
+            let manifest: Manifest = serde_json::from_slice(&std::fs::read(&path)?)?;
+            ensure!(
+                manifest.format == FORMAT && manifest.platform == platform(),
+                "incompatible graph cache"
+            );
+            Ok::<_, anyhow::Error>(manifest)
+        })?;
+        let expected_fingerprint = stage!(fingerprint, fingerprint(spec, vectors, codebook))?;
+        ensure!(
+            manifest.fingerprint == expected_fingerprint,
+            "graph cache differs from durable vectors"
         );
-    }
-    let owned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        OwnedGraph::try_new(MutBorrow::new(HnswIo::new(directory, BASENAME)), |owner| {
-            let loader = owner.borrow_mut();
-            Ok::<_, anyhow::Error>(match spec.metric {
-                VectorMetric::L2 => LoadedGraph::L2(loader.load_hnsw::<f32, DistL2>()?),
-                VectorMetric::Cosine => LoadedGraph::Cosine(loader.load_hnsw::<f32, DistDot>()?),
-                VectorMetric::Dot => LoadedGraph::Dot(loader.load_hnsw::<f32, DistDot>()?),
+        ensure!(
+            manifest.ids.len() == vectors.len()
+                && manifest.points >= vectors.len()
+                && manifest.points <= vectors.len().saturating_mul(2),
+            "invalid cached graph population"
+        );
+        ensure!(
+            manifest.next_id >= manifest.points && manifest.next_id < usize::MAX,
+            "invalid cached allocator"
+        );
+
+        stage!(payload_hash, {
+            for (name, expected_size, expected_hash) in [
+                (
+                    "graph.hnsw.graph",
+                    manifest.graph_bytes,
+                    &manifest.graph_sha256,
+                ),
+                (
+                    "graph.hnsw.data",
+                    manifest.data_bytes,
+                    &manifest.data_sha256,
+                ),
+            ] {
+                let (size, hash) = file_hash(&directory.join(name), false)?;
+                ensure!(
+                    size == expected_size && &hash == expected_hash,
+                    "graph cache payload checksum mismatch"
+                );
+            }
+            Ok::<_, anyhow::Error>(())
+        })?;
+
+        let (store, eid_to_id, id_to_eid, expected_points) = stage!(materialize, {
+            let mut store = VectorStore::new(spec);
+            store.codebook = codebook;
+            let mut ordered: Vec<_> = vectors.iter().collect();
+            ordered.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut eid_to_id = HashMap::with_capacity(vectors.len());
+            let mut id_to_eid = HashMap::with_capacity(vectors.len());
+            let mut expected_points = HashMap::with_capacity(vectors.len());
+            for ((eid, vector), (cached_eid, id)) in ordered.into_iter().zip(&manifest.ids) {
+                ensure!(
+                    eid == cached_eid && *id < manifest.next_id,
+                    "graph cache identity mismatch"
+                );
+                ensure!(
+                    id_to_eid.insert(*id, eid.clone()).is_none(),
+                    "duplicate cached graph identity"
+                );
+                ensure!(
+                    eid_to_id.insert(eid.clone(), *id).is_none(),
+                    "duplicate durable vector identity"
+                );
+                store.put(eid, vector)?;
+                let decoded = store
+                    .get_decoded(eid)
+                    .context("cached store vector missing")?;
+                expected_points.insert(
+                    *id,
+                    if spec.metric == VectorMetric::Cosine {
+                        normalize_unit_safe(&decoded)
+                    } else {
+                        decoded
+                    },
+                );
+            }
+            Ok::<_, anyhow::Error>((store, eid_to_id, id_to_eid, expected_points))
+        })?;
+        let owned = stage!(deserialize, {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                OwnedGraph::try_new(MutBorrow::new(HnswIo::new(directory, BASENAME)), |owner| {
+                    let loader = owner.borrow_mut();
+                    Ok::<_, anyhow::Error>(match spec.metric {
+                        VectorMetric::L2 => LoadedGraph::L2(loader.load_hnsw::<f32, DistL2>()?),
+                        VectorMetric::Cosine => {
+                            LoadedGraph::Cosine(loader.load_hnsw::<f32, DistDot>()?)
+                        }
+                        VectorMetric::Dot => LoadedGraph::Dot(loader.load_hnsw::<f32, DistDot>()?),
+                    })
+                })
+            }))
+            .map_err(|_| anyhow!("optional HNSW loader rejected malformed graph"))?
+        })?;
+        stage!(validate, {
+            owned.with_dependent(|_, graph| match graph {
+                LoadedGraph::L2(h) => {
+                    validate_points(h, manifest.points, manifest.next_id, &expected_points)
+                }
+                LoadedGraph::Cosine(h) | LoadedGraph::Dot(h) => {
+                    validate_points(h, manifest.points, manifest.next_id, &expected_points)
+                }
             })
-        })
-    }))
-    .map_err(|_| anyhow!("optional HNSW loader rejected malformed graph"))??;
-    owned.with_dependent(|_, graph| match graph {
-        LoadedGraph::L2(h) => {
-            validate_points(h, manifest.points, manifest.next_id, &expected_points)
-        }
-        LoadedGraph::Cosine(h) | LoadedGraph::Dot(h) => {
-            validate_points(h, manifest.points, manifest.next_id, &expected_points)
-        }
-    })?;
-    Ok(Some(HnswCpuIndex {
-        inner: RwLock::new(HnswCpuInner {
-            store,
-            eid_to_id,
-            id_to_eid,
-            next_id: manifest.next_id,
-            hnsw: HnswBackend::Cached(Box::new(owned)),
-            ef_search: hnsw_search_ef(),
-        }),
-        exact_scan_fallbacks: AtomicU64::new(0),
-    }))
+        })?;
+        Ok(Some(HnswCpuIndex {
+            inner: RwLock::new(HnswCpuInner {
+                store,
+                eid_to_id,
+                id_to_eid,
+                next_id: manifest.next_id,
+                hnsw: HnswBackend::Cached(Box::new(owned)),
+                ef_search: hnsw_search_ef(),
+            }),
+            exact_scan_fallbacks: AtomicU64::new(0),
+        }))
+    })();
+
+    result
+        .map(|index| (index, timing))
+        .map_err(|error| LoadFailure { error, timing })
 }
 
 fn validate_points<D: hnsw_rs::anndists::dist::Distance<f32> + Send + Sync>(
@@ -559,6 +635,50 @@ mod tests {
         assert_eq!(
             recovered.search_knn(&[0.173, 0.2], 10).unwrap(),
             index.search_knn(&[0.173, 0.2], 10).unwrap()
+        );
+    }
+
+    #[test]
+    fn graph_cache_restore_timing_distinguishes_hit_and_rejected_fallback() {
+        let (spec, index) = fixture(VectorMetric::L2);
+        let directory = tempfile::tempdir().unwrap();
+        let (vectors, codebook) = index.dump_for_snapshot().unwrap();
+        let expected = index.search_knn(&[0.173, 0.2], 10).unwrap();
+        save(&index.inner.read().unwrap(), directory.path()).unwrap();
+
+        let (loaded, hit_timing) = HnswCpuIndex::restore_with_graph_cache_timed(
+            spec,
+            vectors.clone(),
+            codebook,
+            Some(directory.path()),
+        )
+        .unwrap();
+        assert_eq!(hit_timing.cache_result, Some(HnswGraphCacheResult::Hit));
+        assert_eq!(hit_timing.fallback_rebuild, Duration::ZERO);
+        assert!(hit_timing.total >= hit_timing.cache_deserialize);
+        assert_eq!(loaded.search_knn(&[0.173, 0.2], 10).unwrap(), expected);
+
+        std::fs::write(directory.path().join("graph.hnsw.graph"), b"corrupt").unwrap();
+        let (rebuilt, rejected_timing) = HnswCpuIndex::restore_with_graph_cache_timed(
+            spec,
+            vectors,
+            codebook,
+            Some(directory.path()),
+        )
+        .unwrap();
+        assert_eq!(
+            rejected_timing.cache_result,
+            Some(HnswGraphCacheResult::Rejected)
+        );
+        assert!(
+            rejected_timing.cache_payload_hash > Duration::ZERO,
+            "a rejected payload must retain its completed timing"
+        );
+        assert!(rejected_timing.total >= rejected_timing.fallback_rebuild);
+        assert_eq!(
+            rebuilt.search_knn(&[0.173, 0.2], 10).unwrap(),
+            expected,
+            "a rejected optional cache must retain the authoritative recovery outcome"
         );
     }
 
