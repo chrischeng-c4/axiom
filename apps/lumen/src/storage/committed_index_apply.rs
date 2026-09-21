@@ -965,6 +965,7 @@ impl Engine {
                         &prepared.text_placeholder,
                         &cell.field,
                         Some(row),
+                        None,
                     )?;
                 }
                 coll.next_field_dirty_revision = coll.next_field_dirty_revision.saturating_add(1);

@@ -62,7 +62,7 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::composed_segment::TextPostingAt;
-use crate::metrics::Metrics;
+use crate::metrics::{CommittedApplyTelemetry, Metrics};
 use crate::routing::VirtualBucketShardMap;
 use crate::segment::SortedIdCursor;
 use crate::tokenize;
@@ -5858,25 +5858,34 @@ impl Engine {
         prepared_text: Option<&text_preparation::PreparedTextRows>,
     ) -> Result<IndexResponse> {
         let _apply = self.capture_barrier.apply();
-        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut telemetry = self.metrics.apply_telemetry();
         let outcome = {
-            let coll = state
-                .collections
-                .get_mut(collection_id)
-                .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-            Self::index_collection(
-                &self.metrics,
-                collection_id,
-                coll,
-                req,
-                charge,
-                prepared_text,
-            )
+            let state_write_wait_started = Instant::now();
+            let state_write = self.state.write();
+            telemetry.record_state_write_lock_wait(state_write_wait_started.elapsed());
+            let mut state = state_write.map_err(|_| anyhow!("state poisoned"))?;
+            let outcome = {
+                let coll = state
+                    .collections
+                    .get_mut(collection_id)
+                    .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+                Self::index_collection(
+                    &self.metrics,
+                    collection_id,
+                    coll,
+                    req,
+                    charge,
+                    prepared_text,
+                    &mut telemetry,
+                )
+            };
+            // Keep the live gauge correct even when a malformed batch partially
+            // applied before returning its error: it must describe the real local
+            // index, not merely successfully acknowledged writes.
+            self.publish_storage_bytes(&state);
+            outcome
         };
-        // Keep the live gauge correct even when a malformed batch partially
-        // applied before returning its error: it must describe the real local
-        // index, not merely successfully acknowledged writes.
-        self.publish_storage_bytes(&state);
+        drop(telemetry);
         outcome
     }
 
@@ -5887,6 +5896,7 @@ impl Engine {
         req: IndexRequest,
         charge: Option<&crate::change_budget::RetainedCharge>,
         prepared_text: Option<&text_preparation::PreparedTextRows>,
+        telemetry: &mut CommittedApplyTelemetry<'_>,
     ) -> Result<IndexResponse> {
         if req.items.len() > MAX_INDEX_ITEMS {
             return Err(StorageError::BulkLimit {
@@ -6009,6 +6019,7 @@ impl Engine {
                         &items[pos].value,
                         field,
                         prepared_text.and_then(|rows| rows.get(pos, field)),
+                        Some(&mut *telemetry),
                     ) {
                         Ok(bytes) => bytes,
                         Err(e) => {
@@ -6276,22 +6287,31 @@ impl Engine {
         prepared_text: Option<&text_preparation::PreparedTextRows>,
     ) -> Result<ReplaceDocsResponse> {
         let _apply = self.capture_barrier.apply();
-        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut telemetry = self.metrics.apply_telemetry();
         let outcome = {
-            let coll = state
-                .collections
-                .get_mut(collection_id)
-                .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-            Self::replace_docs_collection(
-                &self.metrics,
-                collection_id,
-                coll,
-                req,
-                charge,
-                prepared_text,
-            )
+            let state_write_wait_started = Instant::now();
+            let state_write = self.state.write();
+            telemetry.record_state_write_lock_wait(state_write_wait_started.elapsed());
+            let mut state = state_write.map_err(|_| anyhow!("state poisoned"))?;
+            let outcome = {
+                let coll = state
+                    .collections
+                    .get_mut(collection_id)
+                    .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+                Self::replace_docs_collection(
+                    &self.metrics,
+                    collection_id,
+                    coll,
+                    req,
+                    charge,
+                    prepared_text,
+                    &mut telemetry,
+                )
+            };
+            self.publish_storage_bytes(&state);
+            outcome
         };
-        self.publish_storage_bytes(&state);
+        drop(telemetry);
         outcome
     }
 
@@ -6302,6 +6322,7 @@ impl Engine {
         req: ReplaceDocsRequest,
         charge: Option<&crate::change_budget::RetainedCharge>,
         prepared_text: Option<&text_preparation::PreparedTextRows>,
+        telemetry: &mut CommittedApplyTelemetry<'_>,
     ) -> Result<ReplaceDocsResponse> {
         if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
             return Err(StorageError::BulkLimit {
@@ -6323,8 +6344,15 @@ impl Engine {
         let mut total_bytes = 0u64;
         let mut any_written = false;
         for (ordinal, item) in req.docs.into_iter().enumerate() {
-            let (result, bytes) =
-                Self::replace_one_doc(collection_id, coll, item, ordinal, charge, prepared_text);
+            let (result, bytes) = Self::replace_one_doc(
+                collection_id,
+                coll,
+                item,
+                ordinal,
+                charge,
+                prepared_text,
+                telemetry,
+            );
             if let ReplaceDocResult::Ok {
                 fields_written,
                 fields_skipped,
@@ -6373,6 +6401,7 @@ impl Engine {
         ordinal: usize,
         charge: Option<&crate::change_budget::RetainedCharge>,
         prepared_text: Option<&text_preparation::PreparedTextRows>,
+        telemetry: &mut CommittedApplyTelemetry<'_>,
     ) -> (ReplaceDocResult, u64) {
         let (id, new_doc_in_request) = coll
             .interner
@@ -6481,6 +6510,7 @@ impl Engine {
                 value,
                 field_name,
                 prepared_text.and_then(|rows| rows.get(ordinal, field_name)),
+                Some(&mut *telemetry),
             ) {
                 Ok(bytes) => bytes,
                 Err(e) => {
@@ -8102,9 +8132,10 @@ fn apply_prepared_value(
     value: &FieldValue,
     field: &str,
     prepared: Option<&Arc<staged_text_row::StagedTextRow>>,
+    telemetry: Option<&mut CommittedApplyTelemetry<'_>>,
 ) -> Result<u64> {
     let Some(row) = prepared else {
-        return apply_value(fi, id, eid, value, field);
+        return apply_value(fi, id, eid, value, field, telemetry);
     };
     let FieldIndex::Text { idx, .. } = fi else {
         bail!("prepared Text field changed after validation");
@@ -8123,6 +8154,7 @@ fn apply_value(
     eid: &str,
     value: &FieldValue,
     field_name: &str,
+    telemetry: Option<&mut CommittedApplyTelemetry<'_>>,
 ) -> Result<u64> {
     match (fi, value) {
         (FieldIndex::Text { analyzer, idx }, FieldValue::String(s)) => {
@@ -8233,7 +8265,13 @@ fn apply_value(
                     v.len()
                 );
             }
-            idx.add(eid, v)?;
+            let hnsw_add_started =
+                (spec.backend == crate::types::VectorBackend::HnswCpu).then(Instant::now);
+            let add = idx.add(eid, v);
+            if let (Some(started), Some(telemetry)) = (hnsw_add_started, telemetry) {
+                telemetry.record_hnsw_add(started.elapsed());
+            }
+            add?;
             let approx = (spec.dim as u64) * 4 + eid.len() as u64;
             *bytes += approx;
             Ok(approx)
