@@ -17,7 +17,7 @@ const RUN_ID: &str = "123";
 const RELEASE_WORKFLOW_SHA256: &str =
     "b316b4f893b6a3dabe2e67fdc14df994c84376a8148277a64aa5c0b18bac3ab0";
 const PROMOTION_VERIFIER_BYTES_SHA256: &str =
-    "c5e1101e537479be12c9bbfb7a6fc9e8a356dd42b13909a2b5fe9a14895b0ed5";
+    "43d7151493ba0847bf66856a1c27ed7be97187f3ef1b10a7fb7e0ae690e202de";
 const CHECKOUT: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const COSIGN_INSTALLER: &str = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6";
 const SETUP_BUILDX: &str = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f";
@@ -575,7 +575,22 @@ const CANDIDATE_EXECUTION_NAMES: &[&str] = &[
     "final candidate receipt",
     "kind e2e (amd64)",
     "kind e2e (arm64)",
-    "verify exact candidate gates",
+    "verify exact candidate gates (index-1-flat-cpu)",
+    "verify exact candidate gates (index-100-flat-cpu)",
+    "verify exact candidate gates (index-1000-flat-cpu)",
+    "verify exact candidate gates (replace-1-flat-cpu)",
+    "verify exact candidate gates (replace-32-flat-cpu)",
+    "verify exact candidate gates (unindex-1-flat-cpu)",
+    "verify exact candidate gates (unindex-100-flat-cpu)",
+    "verify exact candidate gates (unindex-1000-flat-cpu)",
+    "verify exact candidate gates (index-1-hnsw-cpu)",
+    "verify exact candidate gates (index-100-hnsw-cpu)",
+    "verify exact candidate gates (index-1000-hnsw-cpu)",
+    "verify exact candidate gates (replace-1-hnsw-cpu)",
+    "verify exact candidate gates (replace-32-hnsw-cpu)",
+    "verify exact candidate gates (unindex-1-hnsw-cpu)",
+    "verify exact candidate gates (unindex-100-hnsw-cpu)",
+    "verify exact candidate gates (unindex-1000-hnsw-cpu)",
     "verify service and Raft library gates",
 ];
 
@@ -793,6 +808,56 @@ fn execute_verifier_function_with_arg(
         .arg(function)
         .arg(argument)
         .arg(&input_path)
+        .output()
+        .unwrap()
+}
+
+fn execute_verifier_function_with_env(
+    verifier: &str,
+    function: &str,
+    input: &str,
+    env: &[(&str, &str)],
+) -> Output {
+    let temp = TempDir::new("pagination-env");
+    let script_path = temp.0.join("verifier.sh");
+    let input_path = temp.0.join("input.json");
+    fs::write(&script_path, verifier).unwrap();
+    fs::write(&input_path, input).unwrap();
+    let mut command = Command::new("bash");
+    command
+        .args(["-c", "source \"$1\"; \"$2\" < \"$3\""])
+        .arg("bash")
+        .arg(&script_path)
+        .arg(function)
+        .arg(&input_path);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.output().unwrap()
+}
+
+fn execute_validate_receipt(
+    fixture: &ReleaseFixture,
+    manifest: &Path,
+    tag: &str,
+    attempt: &str,
+) -> Output {
+    let verifier = include_str!("../scripts/verify-release-artifacts.sh");
+    let temp = TempDir::new("validate-receipt");
+    let script = temp.0.join("verifier.sh");
+    fs::write(&script, verifier).unwrap();
+    Command::new("bash")
+        .args(["-c", "source \"$1\"; validate_receipt \"$2\" \"$3\" \"$4\""])
+        .arg("bash")
+        .arg(&script)
+        .arg(manifest)
+        .arg(manifest.with_extension("json.sha256"))
+        .arg(&fixture.candidate)
+        .env("TAG", tag)
+        .env("COMMIT", COMMIT)
+        .env("CANDIDATE_RUN_ID", RUN_ID)
+        .env("CANDIDATE_ATTEMPT", attempt)
+        .env("REPO", "chrischeng-c4/axiom")
         .output()
         .unwrap()
 }
@@ -4010,6 +4075,54 @@ fn candidate_execution_inventory_is_exact_and_fail_closed() {
         validate_candidate_execution_bindings(&nested).is_err(),
         "nested no-op inventory passed executable oracle"
     );
+}
+
+#[test]
+fn candidate_execution_inventory_rejects_obsolete_unmatrixed_gate_name() {
+    let verifier = include_str!("../scripts/verify-release-artifacts.sh");
+    let mut obsolete = CANDIDATE_EXECUTION_NAMES.to_vec();
+    obsolete[13] = "verify exact candidate gates";
+    assert!(
+        execute_candidate_fetch(verifier, &candidate_jobs(CANDIDATE_EXECUTION_NAMES, None)),
+        "exact 28-name fixture must be valid before obsolete-name mutation"
+    );
+    assert!(
+        !execute_candidate_fetch(verifier, &candidate_jobs(&obsolete, None)),
+        "obsolete un-matrixed candidate gate name was accepted"
+    );
+}
+
+#[test]
+fn promotion_requires_durable_performance_receipt_bound_to_0_6_1_identity() {
+    let fixture = gke_receipt_fixture_for("0.6.1");
+    let manifest_path = fixture.release.candidate.join("final-candidate-manifest.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["performance"] = json!({"schema_version":1,"summary_file":"durable-perf-summary.json","summary_sha256":"b".repeat(64),"receipts_directory":"perf"});
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    refresh_sha256_sidecar(&manifest_path);
+    let mut receipt: serde_json::Value = serde_json::from_slice(&fs::read(&fixture.receipt).unwrap()).unwrap();
+    receipt["candidate"]["manifest_sha256"] = json!(sha256(&manifest_path));
+    rewrite_receipt(&fixture, &receipt);
+    let output = run_gke_receipt_fixture(&fixture);
+    assert!(output.status.success(), "valid durable performance binding was rejected: {}", String::from_utf8_lossy(&output.stderr));
+    for name in ["missing", "schema", "summary file", "summary hash", "receipts directory", "extra key"] {
+        let mut mutated = manifest.clone();
+        match name {
+            "missing" => { mutated.as_object_mut().unwrap().remove("performance"); }
+            "schema" => mutated["performance"]["schema_version"] = json!(2),
+            "summary file" => mutated["performance"]["summary_file"] = json!("other.json"),
+            "summary hash" => mutated["performance"]["summary_sha256"] = json!("not-a-hash"),
+            "receipts directory" => mutated["performance"]["receipts_directory"] = json!("other"),
+            "extra key" => mutated["performance"]["extra"] = json!(true),
+            _ => unreachable!(),
+        }
+        fs::write(&manifest_path, serde_json::to_vec(&mutated).unwrap()).unwrap();
+        refresh_sha256_sidecar(&manifest_path);
+        let mut mutated_receipt = receipt.clone();
+        mutated_receipt["candidate"]["manifest_sha256"] = json!(sha256(&manifest_path));
+        rewrite_receipt(&fixture, &mutated_receipt);
+        assert!(!run_gke_receipt_fixture(&fixture).status.success(), "performance {name} mutation passed");
+    }
 }
 
 #[test]
