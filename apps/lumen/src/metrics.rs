@@ -422,6 +422,14 @@ pub struct Metrics {
     /// Completed durable segment checkpoints. This remains zero until the
     /// segment checkpoint path calls [`Metrics::observe_segment_checkpoint`].
     pub segment_checkpoint_completed_total: Counter,
+    /// Checkpoint attempts that entered the shared synchronous checkpoint
+    /// wrapper, including attempts that later fail before publication.
+    pub segment_checkpoint_started_total: Counter,
+    /// Checkpoint attempts that returned an error from the shared synchronous
+    /// checkpoint wrapper.
+    pub segment_checkpoint_failed_total: Counter,
+    /// Checkpoint attempts currently inside the shared synchronous wrapper.
+    pub segment_checkpoint_in_flight: Gauge,
     /// Actual bytes durably published by completed segment checkpoints.
     pub segment_checkpoint_bytes_total: Counter,
     /// Sum of completed segment checkpoint durations in microseconds. Rendered
@@ -499,6 +507,16 @@ pub struct Metrics {
         [[[Counter; APPLY_SECONDS_BUCKET_COUNT]; APPLY_KIND_COUNT]; 3],
     pub coordinator_stage_seconds_us_sum: [[Counter; APPLY_KIND_COUNT]; 3],
     pub coordinator_stage_seconds_count: [[Counter; APPLY_KIND_COUNT]; 3],
+    /// Exclusive finite-bucket observations for time spent waiting to acquire
+    /// the committed-apply engine state write lock.
+    pub engine_state_write_lock_wait_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
+    pub engine_state_write_lock_wait_seconds_us_sum: Counter,
+    pub engine_state_write_lock_wait_seconds_count: Counter,
+    /// Exclusive finite-bucket observations for live HNSW graph additions in
+    /// committed apply. Flat CPU additions do not record this family.
+    pub hnsw_add_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
+    pub hnsw_add_seconds_us_sum: Counter,
+    pub hnsw_add_seconds_count: Counter,
     /// Linux `/proc/self/status` `VmHWM` in bytes at the latest scrape. This
     /// is meaningful only while `process_rss_high_water_available` is `1`.
     pub process_rss_high_water_bytes: Gauge,
@@ -526,6 +544,59 @@ struct PendingChangeAccounting {
     frozen: u64,
     total: u64,
     high_water: u64,
+}
+
+/// One committed-apply telemetry scope. It stores measurements locally while
+/// the engine state write lock is held, then publishes them only after that
+/// guard drops. This keeps metrics atomics out of the state-lock interval.
+pub(crate) struct CommittedApplyTelemetry<'a> {
+    metrics: &'a Metrics,
+    state_write_lock_wait: Option<Duration>,
+    hnsw_adds: ApplyDurationObservations,
+}
+
+impl CommittedApplyTelemetry<'_> {
+    /// Store the state-write wait without touching global metrics.
+    pub(crate) fn record_state_write_lock_wait(&mut self, elapsed: Duration) {
+        debug_assert!(self.state_write_lock_wait.is_none());
+        self.state_write_lock_wait = Some(elapsed);
+    }
+
+    /// Record one HNSW graph-add duration without touching global metrics.
+    pub(crate) fn record_hnsw_add(&mut self, elapsed: Duration) {
+        self.hnsw_adds.record(elapsed);
+    }
+}
+
+impl Drop for CommittedApplyTelemetry<'_> {
+    fn drop(&mut self) {
+        if let Some(elapsed) = self.state_write_lock_wait {
+            self.metrics.observe_engine_state_write_lock_wait(elapsed);
+        }
+        self.metrics.observe_hnsw_add_observations(&self.hnsw_adds);
+    }
+}
+
+/// Stack-local histogram observations for one committed-apply scope.
+#[derive(Default)]
+struct ApplyDurationObservations {
+    buckets: [u64; APPLY_SECONDS_BUCKET_COUNT],
+    micros_sum: u64,
+    count: u64,
+}
+
+impl ApplyDurationObservations {
+    fn record(&mut self, elapsed: Duration) {
+        let micros = duration_to_micros(elapsed);
+        if let Some(bucket_idx) = APPLY_SECONDS_BUCKETS_US
+            .iter()
+            .position(|&(_, bound_us)| micros <= bound_us)
+        {
+            self.buckets[bucket_idx] = self.buckets[bucket_idx].wrapping_add(1);
+        }
+        self.micros_sum = self.micros_sum.wrapping_add(micros);
+        self.count = self.count.wrapping_add(1);
+    }
 }
 
 impl Metrics {
@@ -566,6 +637,24 @@ impl Metrics {
         let hold_us = duration_to_micros(capture_lock_hold);
         self.segment_capture_lock_us_sum.add(hold_us);
         self.segment_capture_lock_count.incr();
+    }
+
+    /// Mark one shared synchronous checkpoint attempt as started. The caller
+    /// must pair this with [`Metrics::finish_segment_checkpoint_attempt`].
+    pub fn start_segment_checkpoint_attempt(&self) {
+        self.segment_checkpoint_started_total.incr();
+        self.segment_checkpoint_in_flight
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Mark one shared synchronous checkpoint attempt as finished. Failed
+    /// attempts remain distinct from durable completions and their bytes.
+    pub fn finish_segment_checkpoint_attempt(&self, failed: bool) {
+        if failed {
+            self.segment_checkpoint_failed_total.incr();
+        }
+        self.segment_checkpoint_in_flight
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Record one successfully completed durable segment merge. The merge
@@ -668,6 +757,43 @@ impl Metrics {
         }
         self.coordinator_stage_seconds_us_sum[stage_idx][kind_idx].add(us);
         self.coordinator_stage_seconds_count[stage_idx][kind_idx].incr();
+    }
+
+    /// Record only the wait to acquire the committed-apply engine state write
+    /// lock. This is separate from work performed while the lock is held.
+    pub fn observe_engine_state_write_lock_wait(&self, elapsed: Duration) {
+        observe_apply_duration_histogram(
+            &self.engine_state_write_lock_wait_seconds_buckets,
+            &self.engine_state_write_lock_wait_seconds_us_sum,
+            &self.engine_state_write_lock_wait_seconds_count,
+            elapsed,
+        );
+    }
+
+    /// Record only one live HNSW graph-add call in committed apply.
+    pub fn observe_hnsw_add(&self, elapsed: Duration) {
+        let mut observations = ApplyDurationObservations::default();
+        observations.record(elapsed);
+        self.observe_hnsw_add_observations(&observations);
+    }
+
+    /// Start a committed-apply telemetry scope. Its [`Drop`] publishes only
+    /// after the state write guard declared after it has dropped.
+    pub(crate) fn committed_apply_telemetry(&self) -> CommittedApplyTelemetry<'_> {
+        CommittedApplyTelemetry {
+            metrics: self,
+            state_write_lock_wait: None,
+            hnsw_adds: ApplyDurationObservations::default(),
+        }
+    }
+
+    fn observe_hnsw_add_observations(&self, observations: &ApplyDurationObservations) {
+        observe_apply_duration_observations(
+            &self.hnsw_add_seconds_buckets,
+            &self.hnsw_add_seconds_us_sum,
+            &self.hnsw_add_seconds_count,
+            observations,
+        );
     }
 
     /// Set the byte size of the current durable segment files on disk.
@@ -1032,6 +1158,24 @@ impl Metrics {
                 self.segment_checkpoint_completed_total.get(),
             ),
             Sample::new(
+                "lumen_segment_checkpoint_started_total",
+                "counter",
+                "Total durable segment checkpoint attempts that entered the shared checkpoint wrapper.",
+                self.segment_checkpoint_started_total.get(),
+            ),
+            Sample::new(
+                "lumen_segment_checkpoint_failed_total",
+                "counter",
+                "Total durable segment checkpoint attempts that returned an error from the shared checkpoint wrapper.",
+                self.segment_checkpoint_failed_total.get(),
+            ),
+            Sample::new(
+                "lumen_segment_checkpoint_in_flight",
+                "gauge",
+                "Current durable segment checkpoint attempts inside the shared checkpoint wrapper.",
+                self.segment_checkpoint_in_flight.get(),
+            ),
+            Sample::new(
                 "lumen_segment_checkpoint_bytes_total",
                 "counter",
                 "Total actual bytes durably published by completed segment checkpoints.",
@@ -1159,6 +1303,22 @@ impl Metrics {
         out.push_str(&self.render_merge_phase_breakdown());
         out.push_str(&self.render_coordinator_apply_histogram());
         out.push_str(&self.render_coordinator_stage_histogram());
+        render_apply_duration_histogram(
+            &mut out,
+            "lumen_engine_state_write_lock_wait_seconds",
+            "Time spent waiting to acquire the committed-apply engine state write lock, in seconds.",
+            &self.engine_state_write_lock_wait_seconds_buckets,
+            &self.engine_state_write_lock_wait_seconds_us_sum,
+            &self.engine_state_write_lock_wait_seconds_count,
+        );
+        render_apply_duration_histogram(
+            &mut out,
+            "lumen_hnsw_add_seconds",
+            "Time spent in live HNSW graph additions during committed apply, in seconds.",
+            &self.hnsw_add_seconds_buckets,
+            &self.hnsw_add_seconds_us_sum,
+            &self.hnsw_add_seconds_count,
+        );
         out
     }
 
@@ -1340,6 +1500,65 @@ fn duration_to_micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
+/// Record one observation in an unlabelled histogram that shares the bounded
+/// apply-latency buckets. The stored buckets are exclusive; rendering makes
+/// them cumulative as Prometheus requires.
+fn observe_apply_duration_histogram(
+    buckets: &[Counter; APPLY_SECONDS_BUCKET_COUNT],
+    micros_sum: &Counter,
+    count: &Counter,
+    elapsed: Duration,
+) {
+    let micros = duration_to_micros(elapsed);
+    if let Some(bucket_idx) = APPLY_SECONDS_BUCKETS_US
+        .iter()
+        .position(|&(_, bound_us)| micros <= bound_us)
+    {
+        buckets[bucket_idx].incr();
+    }
+    micros_sum.add(micros);
+    count.incr();
+}
+
+/// Merge a stack-local batch of committed-apply observations after its state
+/// write lock has dropped. Each bucket remains an exclusive bucket.
+fn observe_apply_duration_observations(
+    buckets: &[Counter; APPLY_SECONDS_BUCKET_COUNT],
+    micros_sum: &Counter,
+    count: &Counter,
+    observations: &ApplyDurationObservations,
+) {
+    for (bucket, observed) in buckets.iter().zip(observations.buckets) {
+        bucket.add(observed);
+    }
+    micros_sum.add(observations.micros_sum);
+    count.add(observations.count);
+}
+
+/// Render one unlabelled bounded histogram that uses
+/// [`APPLY_SECONDS_BUCKETS_US`] and an explicit `+Inf` count.
+fn render_apply_duration_histogram(
+    out: &mut String,
+    name: &str,
+    help: &str,
+    buckets: &[Counter; APPLY_SECONDS_BUCKET_COUNT],
+    micros_sum: &Counter,
+    count: &Counter,
+) {
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} histogram");
+    let mut cumulative = 0u64;
+    for ((le, _), bucket) in APPLY_SECONDS_BUCKETS_US.iter().zip(buckets.iter()) {
+        cumulative += bucket.get();
+        let _ = writeln!(out, "{name}_bucket{{le=\"{le}\"}} {cumulative}");
+    }
+    let total = count.get();
+    let _ = writeln!(out, "{name}_bucket{{le=\"+Inf\"}} {total}");
+    let sum_seconds = micros_sum.get() as f64 / 1_000_000.0;
+    let _ = writeln!(out, "{name}_sum {sum_seconds}");
+    let _ = writeln!(out, "{name}_count {total}");
+}
+
 fn render_duration_histogram(
     out: &mut String,
     base: &str,
@@ -1417,6 +1636,80 @@ mod tests {
     }
 
     #[test]
+    fn committed_apply_wait_and_hnsw_add_histograms_render_fixed_buckets() {
+        let metrics = Metrics::new();
+        let initial = metrics.render();
+        for expected in [
+            "lumen_engine_state_write_lock_wait_seconds_bucket{le=\"0.001\"} 0",
+            "lumen_engine_state_write_lock_wait_seconds_bucket{le=\"+Inf\"} 0",
+            "lumen_engine_state_write_lock_wait_seconds_sum 0",
+            "lumen_engine_state_write_lock_wait_seconds_count 0",
+            "lumen_hnsw_add_seconds_bucket{le=\"0.001\"} 0",
+            "lumen_hnsw_add_seconds_bucket{le=\"+Inf\"} 0",
+            "lumen_hnsw_add_seconds_sum 0",
+            "lumen_hnsw_add_seconds_count 0",
+        ] {
+            assert!(
+                initial.contains(expected),
+                "missing initial {expected:?} in:\n{initial}"
+            );
+        }
+
+        metrics.observe_engine_state_write_lock_wait(Duration::from_millis(2));
+        metrics.observe_hnsw_add(Duration::from_secs(11));
+        let out = metrics.render();
+        for expected in [
+            "lumen_engine_state_write_lock_wait_seconds_bucket{le=\"0.001\"} 0",
+            "lumen_engine_state_write_lock_wait_seconds_bucket{le=\"0.005\"} 1",
+            "lumen_engine_state_write_lock_wait_seconds_bucket{le=\"10\"} 1",
+            "lumen_engine_state_write_lock_wait_seconds_bucket{le=\"+Inf\"} 1",
+            "lumen_engine_state_write_lock_wait_seconds_sum 0.002",
+            "lumen_engine_state_write_lock_wait_seconds_count 1",
+            "lumen_hnsw_add_seconds_bucket{le=\"0.001\"} 0",
+            "lumen_hnsw_add_seconds_bucket{le=\"10\"} 0",
+            "lumen_hnsw_add_seconds_bucket{le=\"+Inf\"} 1",
+            "lumen_hnsw_add_seconds_sum 11",
+            "lumen_hnsw_add_seconds_count 1",
+        ] {
+            assert!(
+                out.contains(expected),
+                "missing observed {expected:?} in:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_attempt_metrics_render_initial_and_failed_values() {
+        let metrics = Metrics::new();
+        let initial = metrics.render();
+        for expected in [
+            "lumen_segment_checkpoint_started_total 0",
+            "lumen_segment_checkpoint_failed_total 0",
+            "lumen_segment_checkpoint_in_flight 0",
+        ] {
+            assert!(
+                initial.contains(expected),
+                "missing initial {expected:?} in:\n{initial}"
+            );
+        }
+
+        metrics.start_segment_checkpoint_attempt();
+        assert_eq!(metrics.segment_checkpoint_in_flight.get(), 1);
+        metrics.finish_segment_checkpoint_attempt(true);
+        let out = metrics.render();
+        for expected in [
+            "lumen_segment_checkpoint_started_total 1",
+            "lumen_segment_checkpoint_failed_total 1",
+            "lumen_segment_checkpoint_in_flight 0",
+        ] {
+            assert!(
+                out.contains(expected),
+                "missing observed {expected:?} in:\n{out}"
+            );
+        }
+    }
+
+    #[test]
     fn render_emits_every_metric() {
         let m = Metrics::new();
         m.incr_index(3, 100);
@@ -1445,6 +1738,9 @@ mod tests {
             "lumen_storage_degraded",
             "lumen_storage_full_errors_total",
             "lumen_segment_checkpoint_completed_total",
+            "lumen_segment_checkpoint_started_total",
+            "lumen_segment_checkpoint_failed_total",
+            "lumen_segment_checkpoint_in_flight",
             "lumen_segment_checkpoint_duration_seconds_count",
             "lumen_segment_checkpoint_duration_seconds_sum",
             "lumen_segment_capture_lock_seconds_count",
@@ -1832,6 +2128,8 @@ lumen_raft_leader_known{shard=\"2\"} 1\n";
             "lumen_pending_change_high_water_bytes",
             "lumen_coordinator_apply_seconds",
             "lumen_coordinator_apply_items_total",
+            "lumen_engine_state_write_lock_wait_seconds",
+            "lumen_hnsw_add_seconds",
         ] {
             assert!(
                 appended.contains(name),
