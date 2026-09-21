@@ -852,15 +852,15 @@ impl VectorIndex for HnswCpuIndex {
         // We always feed the *decoded* vector to HNSW so the same graph
         // works whether SQ is on or off. The codebook only affects
         // storage and recall, not the graph topology.
-        let v_for_graph: Vec<f32> = if inner.store.codebook.is_some() {
-            inner
+        if inner.store.codebook.is_some() {
+            let decoded = inner
                 .store
                 .get_decoded(external_id)
-                .ok_or_else(|| anyhow!("just-inserted vector vanished"))?
+                .ok_or_else(|| anyhow!("just-inserted vector vanished"))?;
+            inner.hnsw.insert(&decoded, id);
         } else {
-            vector.to_vec()
-        };
-        inner.hnsw.insert(&v_for_graph, id);
+            inner.hnsw.insert(vector, id);
+        }
         if let Some(old_id) = inner.eid_to_id.insert(external_id.to_string(), id) {
             inner.id_to_eid.remove(&old_id);
         }
@@ -2312,6 +2312,24 @@ mod tests {
         let (eid, v) = &data[10];
         let hits = idx.search_knn(v, 1).unwrap();
         assert_eq!(hits[0].0, *eid);
+    }
+
+    #[test]
+    fn one_item_insert_search_and_reopen_works_with_and_without_sq() {
+        for quantize in [None, Some(VectorQuantize::Sq)] {
+            let spec = spec(3, VectorMetric::L2, quantize);
+            let idx = HnswCpuIndex::new(spec);
+            let vector = [1.0_f32, 2.0, 3.0];
+            idx.add("one", &vector).unwrap();
+            assert_eq!(idx.search_knn(&vector, 1).unwrap()[0].0, "one");
+
+            let dir = tempfile::tempdir().unwrap();
+            let segment = dir.path().join("vectors.lseg");
+            let row_eids = idx.seal_to_segment_prod(&segment).unwrap().unwrap();
+            let reader = std::sync::Arc::new(crate::segment::SegmentReader::open(&segment).unwrap());
+            let reopened = HnswCpuIndex::open_from_segment(spec, reader, row_eids).unwrap();
+            assert_eq!(reopened.search_knn(&vector, 1).unwrap()[0].0, "one");
+        }
     }
 
     #[test]
