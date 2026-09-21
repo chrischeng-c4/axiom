@@ -2170,17 +2170,35 @@ mod tests {
             merge_before,
             "a base-only one-item HNSW fixture must not claim merge completion"
         );
+        let top_up_owner = budget.owner();
+        let top_up = top_up_owner
+            .try_reserve(LIMIT - budget.snapshot().total)
+            .expect("restore the forced-full condition for the negative control");
+        let second_refused = coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "refused".into(),
+                req: hnsw_schema(),
+            })
+            .await
+            .unwrap_err();
+        assert!(second_refused
+            .downcast_ref::<PendingChangeCapacity>()
+            .is_some());
+        assert_eq!(wal.latest_seq().await.unwrap(), 2);
+        assert_eq!(coord.applied_seq(), 2);
+        drop(filler);
+        drop(top_up);
+
         let retry = coord
             .submit(RaftLogEntry::CreateCollection {
                 collection_id: "refused".into(),
                 req: hnsw_schema(),
             })
             .await
-            .expect("capacity relief must admit the retry while filler remains held");
+            .expect("capacity relief must admit the retry after filler release");
         assert!(matches!(retry, ApplyOutcome::Created(_)));
         assert_eq!(wal.latest_seq().await.unwrap(), 3);
         assert_eq!(coord.applied_seq(), 3);
-        drop(filler);
 
         let lock_before = engine
             .metrics()
