@@ -80,7 +80,7 @@ validate_receipt() {
   read -r expected name extra <"$sidecar" || fail "cannot read final receipt sidecar"
   [[ "$expected" == "$actual" && "$name" == "${manifest##*/}" && -z "${extra:-}" ]] || fail "final receipt sidecar does not bind exact bytes"
   jq -e --arg repo "$REPO" --arg tag "$TAG" --arg version "${TAG#lumen@}" --arg commit "$COMMIT" --arg run "$CANDIDATE_RUN_ID" '
-    (keys | sort) == ["artifacts","candidate_tag","commit","image","jobs","pr","repository","run_attempt","run_id","run_url","sboms","schema","source_ref","tag","version","workflow_id","workflow_path","workflow_ref"] and
+    (keys | sort) == ((["artifacts","candidate_tag","commit","image","jobs","pr","repository","run_attempt","run_id","run_url","sboms","schema","source_ref","tag","version","workflow_id","workflow_path","workflow_ref"] + (if $version == "0.6.1" then ["performance"] else [] end)) | sort) and
     .schema == "cclab.lumen.candidate-manifest.v3" and .repository == $repo and .version == $version and .tag == $tag and .commit == $commit and
     .run_id == $run and .source_ref == "refs/heads/main" and .workflow_path == ".github/workflows/lumen-release-candidate.yml" and
     .workflow_ref == ($repo + "/.github/workflows/lumen-release-candidate.yml@refs/heads/main") and
@@ -92,7 +92,8 @@ validate_receipt() {
       ([.root_digest,.amd64_digest,.arm64_digest] | all(test("^sha256:[0-9a-f]{64}$")))
     )) and
     (.artifacts | type == "array" and length == 5 and all(.[]; .archive == ("lumen-" + .target + ".tar.gz") and .sidecar == (.archive + ".sha256") and (.archive_sha256 | test("^[0-9a-f]{64}$")) and (.sidecar_sha256 | test("^[0-9a-f]{64}$")))) and
-    (.sboms.amd64.file == "spdx-amd64.json" and (.sboms.amd64.sha256 | test("^[0-9a-f]{64}$")) and .sboms.arm64.file == "spdx-arm64.json" and (.sboms.arm64.sha256 | test("^[0-9a-f]{64}$")))
+    (.sboms.amd64.file == "spdx-amd64.json" and (.sboms.amd64.sha256 | test("^[0-9a-f]{64}$")) and .sboms.arm64.file == "spdx-arm64.json" and (.sboms.arm64.sha256 | test("^[0-9a-f]{64}$"))) and
+    (if $version == "0.6.1" then (.performance | ((keys | sort) == ["receipts_directory","schema_version","summary_file","summary_sha256"] and .schema_version == 1 and .summary_file == "durable-perf-summary.json" and (.summary_sha256 | test("^[0-9a-f]{64}$")) and .receipts_directory == "perf")) else true end)
   ' "$manifest" >/dev/null || fail "candidate final receipt contract changed"
   while IFS= read -r target; do
     archive="$(jq -er --arg t "$target" '.artifacts[] | select(.target == $t) | .archive' "$manifest")"
@@ -174,8 +175,8 @@ flatten_paginated_jobs() { jq -cs '[.[] | .jobs[]]'; }
 flatten_paginated_artifacts() { jq -cs '[.[] | .artifacts[]]'; }
 validate_candidate_job_inventory() {
   jq -e '
-    length == 13 and all(.[]; .status == "completed" and .conclusion == "success") and
-    ([.[].name] | sort == ["bind candidate inputs","build (aarch64-apple-darwin)","build (aarch64-unknown-linux-gnu)","build (aarch64-unknown-linux-musl)","build (x86_64-unknown-linux-gnu)","build (x86_64-unknown-linux-musl)","build candidate image and attest","candidate identity","final candidate receipt","kind e2e (amd64)","kind e2e (arm64)","verify exact candidate gates","verify service and Raft library gates"])
+    length == 28 and all(.[]; .status == "completed" and .conclusion == "success") and
+    ([.[].name] | sort == ["bind candidate inputs","build (aarch64-apple-darwin)","build (aarch64-unknown-linux-gnu)","build (aarch64-unknown-linux-musl)","build (x86_64-unknown-linux-gnu)","build (x86_64-unknown-linux-musl)","build candidate image and attest","candidate identity","final candidate receipt","kind e2e (amd64)","kind e2e (arm64)","verify exact candidate gates (index-1-flat-cpu)","verify exact candidate gates (index-1-hnsw-cpu)","verify exact candidate gates (index-100-flat-cpu)","verify exact candidate gates (index-100-hnsw-cpu)","verify exact candidate gates (index-1000-flat-cpu)","verify exact candidate gates (index-1000-hnsw-cpu)","verify exact candidate gates (replace-1-flat-cpu)","verify exact candidate gates (replace-1-hnsw-cpu)","verify exact candidate gates (replace-32-flat-cpu)","verify exact candidate gates (replace-32-hnsw-cpu)","verify exact candidate gates (unindex-1-flat-cpu)","verify exact candidate gates (unindex-1-hnsw-cpu)","verify exact candidate gates (unindex-100-flat-cpu)","verify exact candidate gates (unindex-100-hnsw-cpu)","verify exact candidate gates (unindex-1000-flat-cpu)","verify exact candidate gates (unindex-1000-hnsw-cpu)","verify service and Raft library gates"])
   ' >/dev/null || fail "candidate attempt does not contain the exact successful execution set"
 }
 
