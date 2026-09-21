@@ -3565,8 +3565,17 @@ async fn serve(args: ServeArgs) -> Result<()> {
         } else if let Some(store) = &segment_store {
             // Segment mode: reopen every collection from the newest checkpoint
             // INTO `engine` (no whole-collection load), replacing the CBOR restore.
+            let checkpoint_reopen_started = std::time::Instant::now();
             let (outcome, deferred) = store
                 .reopen_for_aof_replay(&engine)
+                .map_err(|error| {
+                    tracing::error!(
+                        checkpoint_reopen_ms = checkpoint_reopen_started.elapsed().as_millis() as u64,
+                        %error,
+                        "segment checkpoint startup decision"
+                    );
+                    error
+                })
                 .context("load latest segment checkpoint")?;
             deferred_graph_restore = deferred;
             let generation = outcome.generation.as_ref().map(|name| name.as_str());
@@ -3576,6 +3585,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 checkpoint_seq = ?outcome.checkpoint_sequence,
                 recovered_legacy_aside = outcome.recovered_legacy_aside,
                 staging_cleaned = outcome.staging_cleaned,
+                checkpoint_reopen_ms = checkpoint_reopen_started.elapsed().as_millis() as u64,
                 "segment checkpoint startup decision"
             );
             outcome.checkpoint_sequence.unwrap_or(0)

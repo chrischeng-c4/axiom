@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
@@ -489,6 +490,58 @@ pub struct HnswCpuIndex {
     exact_scan_fallbacks: AtomicU64,
 }
 
+/// Diagnostic-only outcome for one HNSW restore attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HnswGraphCacheResult {
+    Hit,
+    Absent,
+    Rejected,
+}
+
+impl HnswGraphCacheResult {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::Absent => "absent",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+/// Timings for one authoritative HNSW restoration. They are emitted by the
+/// storage layer and do not alter graph-cache acceptance or fallback behavior.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HnswRestoreTiming {
+    pub(crate) cache_result: Option<HnswGraphCacheResult>,
+    pub(crate) cache_prepare: Duration,
+    pub(crate) cache_fingerprint: Duration,
+    pub(crate) cache_manifest: Duration,
+    pub(crate) cache_payload_hash: Duration,
+    pub(crate) cache_materialize: Duration,
+    pub(crate) cache_deserialize: Duration,
+    pub(crate) cache_validate: Duration,
+    pub(crate) fallback_rebuild: Duration,
+    pub(crate) total: Duration,
+}
+
+impl HnswRestoreTiming {
+    fn record_cache_timing(&mut self, cache: graph_cache::LoadTiming) {
+        self.cache_prepare = cache.prepare;
+        self.cache_fingerprint = cache.fingerprint;
+        self.cache_manifest = cache.manifest;
+        self.cache_payload_hash = cache.payload_hash;
+        self.cache_materialize = cache.materialize;
+        self.cache_deserialize = cache.deserialize;
+        self.cache_validate = cache.validate;
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct HnswRestoreFailure {
+    pub(crate) error: anyhow::Error,
+    pub(crate) timing: HnswRestoreTiming,
+}
+
 struct HnswCpuInner {
     store: VectorStore,
     /// external_id ↔ internal id (HNSW DataId).
@@ -607,17 +660,48 @@ impl HnswCpuIndex {
         codebook: Option<ScalarCodebook>,
         directory: Option<&std::path::Path>,
     ) -> Result<Self> {
+        Self::restore_with_graph_cache_timed(spec, vectors, codebook, directory)
+            .map(|(index, _)| index)
+            .map_err(|failure| failure.error)
+    }
+
+    pub(crate) fn restore_with_graph_cache_timed(
+        spec: VectorSpec,
+        vectors: Vec<(String, Vec<f32>)>,
+        codebook: Option<ScalarCodebook>,
+        directory: Option<&std::path::Path>,
+    ) -> std::result::Result<(Self, HnswRestoreTiming), HnswRestoreFailure> {
+        let started = Instant::now();
+        let mut timing = HnswRestoreTiming::default();
         if let Some(directory) = directory {
-            match graph_cache::load(spec, &vectors, codebook, directory) {
-                Ok(Some(index)) => {
+            match graph_cache::load_timed(spec, &vectors, codebook, directory) {
+                Ok((Some(index), cache_timing)) => {
+                    timing.cache_result = Some(HnswGraphCacheResult::Hit);
+                    timing.record_cache_timing(cache_timing);
+                    timing.total = started.elapsed();
                     tracing::info!(rows = vectors.len(), "HNSW graph cache loaded");
-                    return Ok(index);
+                    return Ok((index, timing));
                 }
-                Ok(None) => {}
-                Err(error) => tracing::warn!(%error, "ignoring optional HNSW graph cache"),
+                Ok((None, cache_timing)) => {
+                    timing.cache_result = Some(HnswGraphCacheResult::Absent);
+                    timing.record_cache_timing(cache_timing);
+                }
+                Err(failure) => {
+                    timing.cache_result = Some(HnswGraphCacheResult::Rejected);
+                    timing.record_cache_timing(failure.timing);
+                    tracing::warn!(error = %failure.error, "ignoring optional HNSW graph cache");
+                }
             }
+        } else {
+            timing.cache_result = Some(HnswGraphCacheResult::Absent);
         }
-        Self::restore(spec, vectors, codebook)
+        let rebuild_started = Instant::now();
+        let rebuilt = Self::restore(spec, vectors, codebook);
+        timing.fallback_rebuild = rebuild_started.elapsed();
+        timing.total = started.elapsed();
+        rebuilt
+            .map(|index| (index, timing))
+            .map_err(|error| HnswRestoreFailure { error, timing })
     }
 
     /// Construct a fresh, empty CPU HNSW index for the given spec.
