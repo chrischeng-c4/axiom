@@ -617,6 +617,14 @@ jobs:
           test -f "$LUMEN_PERF_RECEIPT_PATH"
           test ! -L "$LUMEN_PERF_RECEIPT_PATH"
           test "$(find "${{ github.workspace }}/receipts" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
+      - name: Upload failed durable performance evidence
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lumen-durable-perf-failure-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cell_id }}
+          path: /tmp/lumen-perf-failure-*
+          if-no-files-found: ignore
+          overwrite: false
       - name: Upload qualifying durable performance receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

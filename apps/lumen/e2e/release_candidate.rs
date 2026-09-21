@@ -48,7 +48,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "0fef8d025ad7af39946a13f927d84f83b570462850e4f3dddbb2facc83b9e46f";
+    "137b3608ad07af3f7bf80faed3cdc73e49470e5b05630e785dc55101666145f0";
 const KIND_E2E_BYTES_SHA256: &str =
     "1e6bb83156af06463fed2ba8408cc0b6ab433ce08a68d92a5b17c934972fdedc";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
@@ -1064,6 +1064,7 @@ fn validate_gate_step_inventory(workflow: &Yaml) -> Result<(), Finding> {
                 "Run cloud-free Kustomize acceptance gate",
                 "Run required Lumen product gates without GKE",
                 "Run qualifying durable performance cell",
+                "Upload failed durable performance evidence",
                 "Upload qualifying durable performance receipt",
                 "Verify full run-scoped candidate supply chain",
             ][..],
@@ -1162,10 +1163,18 @@ fn validate_fail_closed_gate_conditions(workflow: &Yaml) -> Result<(), Finding> 
                     .get(&key("name"))
                     .and_then(Yaml::as_str)
                     .is_some_and(|step_name| PRODUCT_GATED_STEP_NAMES.contains(&step_name));
+            let failure_evidence = name == "verify-candidate"
+                && step.get(&key("name")).and_then(Yaml::as_str)
+                    == Some("Upload failed durable performance evidence");
             if product_gated {
                 require(
                     step.get(&key("if")).and_then(Yaml::as_str)
                         == Some("${{ matrix.product_gates }}"),
+                    "CONDITIONS",
+                )?;
+            } else if failure_evidence {
+                require(
+                    step.get(&key("if")).and_then(Yaml::as_str) == Some("${{ failure() }}"),
                     "CONDITIONS",
                 )?;
             } else {
@@ -1941,6 +1950,7 @@ fn validate_scale_matrix_sources(
 
 const PERF_WORKFLOW: &str = "PERF_WORKFLOW";
 const PERF_FINAL_RECEIPT: &str = "PERF_FINAL_RECEIPT";
+const PERF_FAILURE_EVIDENCE: &str = "PERF_FAILURE_EVIDENCE";
 const PRODUCT_GATED_STEP_NAMES: &[&str] = &[
     "Install verified Terraform 1.9.4",
     "Install verified kubectl v1.37.0",
@@ -2068,6 +2078,8 @@ fn validate_durable_perf_matrix(workflow: &Yaml, source: &str) -> Result<(), Fin
                 condition == Some("${{ matrix.product_gates }}"),
                 PERF_WORKFLOW,
             )?;
+        } else if name == Some("Upload failed durable performance evidence") {
+            require(condition == Some("${{ failure() }}"), PERF_WORKFLOW)?;
         } else {
             require(condition.is_none(), PERF_WORKFLOW)?;
         }
@@ -2293,6 +2305,55 @@ fn validate_durable_perf_workflow(source: &str) -> Result<(), Finding> {
     let workflow: Yaml = serde_yaml::from_str(source).map_err(|_| Finding(PERF_WORKFLOW))?;
     validate_durable_perf_matrix(&workflow, source)?;
     validate_durable_perf_final_binding(&workflow)
+}
+
+fn validate_failed_perf_evidence_upload(workflow: &Yaml) -> Result<(), Finding> {
+    let steps = field(
+        job(workflow, "verify-candidate").ok_or(Finding(PERF_FAILURE_EVIDENCE))?,
+        "steps",
+    )
+    .and_then(Yaml::as_sequence)
+    .ok_or(Finding(PERF_FAILURE_EVIDENCE))?;
+    let perf_index = steps
+        .iter()
+        .position(|step| {
+            field(step, "name").and_then(Yaml::as_str)
+                == Some("Run qualifying durable performance cell")
+        })
+        .ok_or(Finding(PERF_FAILURE_EVIDENCE))?;
+    let upload = steps
+        .get(perf_index + 1)
+        .ok_or(Finding(PERF_FAILURE_EVIDENCE))?;
+    require(
+        exact_mapping_keys(upload, &["name", "if", "uses", "with"])
+            && field(upload, "name").and_then(Yaml::as_str)
+                == Some("Upload failed durable performance evidence")
+            && field(upload, "if").and_then(Yaml::as_str) == Some("${{ failure() }}")
+            && field(upload, "uses").and_then(Yaml::as_str)
+                == Some("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"),
+        PERF_FAILURE_EVIDENCE,
+    )?;
+    let upload_with = field(upload, "with")
+        .and_then(Yaml::as_mapping)
+        .ok_or(Finding(PERF_FAILURE_EVIDENCE))?;
+    for (name, value) in [
+        (
+            "name",
+            "lumen-durable-perf-failure-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cell_id }}",
+        ),
+        ("path", "/tmp/lumen-perf-failure-*"),
+        ("if-no-files-found", "ignore"),
+    ] {
+        require(
+            upload_with.get(&key(name)).and_then(Yaml::as_str) == Some(value),
+            PERF_FAILURE_EVIDENCE,
+        )?;
+    }
+    require(
+        upload_with.get(&key("overwrite")).and_then(Yaml::as_bool) == Some(false)
+            && upload_with.len() == 4,
+        PERF_FAILURE_EVIDENCE,
+    )
 }
 
 fn validate_durable_final_verifier(source: &str) -> Result<(), Finding> {
@@ -2633,6 +2694,9 @@ fn validate_workflow_semantics(source: &str, dockerfile: &str) -> Result<(), Fin
 fn validate_workflow(source: &str, dockerfile: &str) -> Result<(), Finding> {
     validate_workflow_semantics(source, dockerfile)?;
     validate_durable_perf_workflow(source)?;
+    let workflow: Yaml =
+        serde_yaml::from_str(source).map_err(|_| Finding(PERF_FAILURE_EVIDENCE))?;
+    validate_failed_perf_evidence_upload(&workflow)?;
     require(
         sha256_bytes(source.as_bytes()) == WORKFLOW_BYTES_SHA256,
         "WORKFLOW_BYTES",
@@ -3032,6 +3096,41 @@ fn durable_performance_receipt_paths_are_absolute_and_consistent() {
 
     validate_durable_perf_workflow(&workflow())
         .expect("the checked-in workflow uses absolute receipt paths consistently");
+}
+
+#[test]
+fn failed_perf_cell_evidence_upload_is_failure_only_and_scoped() {
+    let source = workflow();
+    let workflow: Yaml = serde_yaml::from_str(&source).expect("candidate workflow YAML");
+    validate_failed_perf_evidence_upload(&workflow)
+        .expect("a failed durable performance cell uploads only its bounded evidence bundle");
+
+    for (name, from, to) in [
+        (
+            "successful cell upload",
+            "if: ${{ failure() }}",
+            "if: ${{ success() }}",
+        ),
+        (
+            "workspace upload",
+            "path: /tmp/lumen-perf-failure-*",
+            "path: ${{ github.workspace }}",
+        ),
+        (
+            "unscoped artifact name",
+            "name: lumen-durable-perf-failure-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cell_id }}",
+            "name: lumen-durable-perf-failure-evidence",
+        ),
+    ] {
+        let changed = replace_once(&source, from, to);
+        let changed: Yaml =
+            serde_yaml::from_str(&changed).expect("mutated candidate workflow YAML");
+        assert_eq!(
+            validate_failed_perf_evidence_upload(&changed),
+            Err(Finding(PERF_FAILURE_EVIDENCE)),
+            "{name} mutation passed"
+        );
+    }
 }
 
 #[test]
