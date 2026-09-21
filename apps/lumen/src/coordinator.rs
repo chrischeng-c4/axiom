@@ -1517,6 +1517,7 @@ mod tests {
     use crate::change_budget::ChangeBudget;
     use crate::types::{
         CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
+        VectorBackend, VectorMetric,
     };
     use crate::wal::{MemWal, WalLog, WalStream};
     use std::collections::BTreeMap as Map;
@@ -1601,6 +1602,23 @@ mod tests {
                 dim: None,
                 metric: None,
                 backend: None,
+                quantize: None,
+            },
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    fn hnsw_schema() -> CreateCollectionRequest {
+        let mut fields = Map::new();
+        fields.insert(
+            "embedding".to_owned(),
+            FieldSpec {
+                field_type: FieldType::Vector,
+                analyzer: None,
+                multi: None,
+                dim: Some(2),
+                metric: Some(VectorMetric::L2),
+                backend: Some(VectorBackend::HnswCpu),
                 quantize: None,
             },
         );
@@ -2082,6 +2100,144 @@ mod tests {
         );
         assert_eq!(wal.latest_seq().await.unwrap(), 0);
         assert_eq!(coord.applied_seq(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn hnsw_capacity_refusal_trace_keeps_applied_source_until_relief() {
+        const LIMIT: usize = 4 * 1024 * 1024;
+        let budget = ChangeBudget::with_hard_limit(LIMIT);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let wal = Arc::new(MemWal::new());
+        let _slow = wal.subscribe_admitted(0).await.unwrap();
+        let coord = WriteCoordinator::start(wal.clone(), engine.clone());
+
+        coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "hnsw".into(),
+                req: hnsw_schema(),
+            })
+            .await
+            .unwrap();
+        coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "hnsw".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "one".into(),
+                        field: "embedding".into(),
+                        value: FieldValue::Vector(vec![1.0, 2.0]),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap();
+        let before = budget.snapshot().total;
+        let filler_owner = budget.owner();
+        let filler = filler_owner.try_reserve(LIMIT - before).unwrap();
+
+        let refused = coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "refused".into(),
+                req: hnsw_schema(),
+            })
+            .await
+            .unwrap_err();
+        assert!(refused.downcast_ref::<PendingChangeCapacity>().is_some());
+        assert_eq!(wal.latest_seq().await.unwrap(), 2);
+        assert_eq!(coord.applied_seq(), 2);
+
+        let checkpoint_before = engine.metrics().segment_checkpoint_completed_total.get();
+        let merge_before = engine.metrics().segment_merge_completed_total.get();
+        // The refusal starts the relief owner. It must complete checkpoint
+        // publication while the filler remains held. A base-only one-item
+        // HNSW fixture has no merge candidate, so merge stays unchanged.
+        let staged = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while engine.metrics().segment_checkpoint_completed_total.get() <= checkpoint_before
+                || budget.snapshot().total == LIMIT
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(
+            staged.is_ok(),
+            "capacity relief must stage the applied source and checkpoint"
+        );
+        assert_eq!(
+            engine.metrics().segment_merge_completed_total.get(),
+            merge_before,
+            "a base-only one-item HNSW fixture must not claim merge completion"
+        );
+        let top_up_owner = budget.owner();
+        let top_up = top_up_owner
+            .try_reserve(LIMIT - budget.snapshot().total)
+            .expect("restore the forced-full condition for the negative control");
+        let second_refused = coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "refused".into(),
+                req: hnsw_schema(),
+            })
+            .await
+            .unwrap_err();
+        assert!(second_refused
+            .downcast_ref::<PendingChangeCapacity>()
+            .is_some());
+        assert_eq!(wal.latest_seq().await.unwrap(), 2);
+        assert_eq!(coord.applied_seq(), 2);
+        drop(filler);
+        drop(top_up);
+
+        let retry = coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "refused".into(),
+                req: hnsw_schema(),
+            })
+            .await
+            .expect("capacity relief must admit the retry after filler release");
+        assert!(matches!(retry, ApplyOutcome::Created(_)));
+        assert_eq!(wal.latest_seq().await.unwrap(), 3);
+        assert_eq!(coord.applied_seq(), 3);
+
+        let lock_before = engine
+            .metrics()
+            .engine_state_write_lock_wait_seconds_count
+            .get();
+        let hnsw_before = engine.metrics().hnsw_add_seconds_count.get();
+        coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "hnsw".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "two".into(),
+                        field: "embedding".into(),
+                        value: FieldValue::Vector(vec![3.0, 4.0]),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+            .await
+            .expect("post-relief HNSW index must apply");
+        let lock_delta = engine
+            .metrics()
+            .engine_state_write_lock_wait_seconds_count
+            .get()
+            - lock_before;
+        let hnsw_delta = engine.metrics().hnsw_add_seconds_count.get() - hnsw_before;
+        assert!(hnsw_delta > 0, "post-relief index must record an HNSW add");
+        assert!(
+            lock_delta <= hnsw_delta,
+            "state-lock waits ({lock_delta}) must not exceed HNSW adds ({hnsw_delta})"
+        );
+        assert_eq!(
+            coord.applied_seq(),
+            4,
+            "post-relief HNSW index must publish after the successful retry"
+        );
+        assert_eq!(engine.stats("hnsw").unwrap().documents_indexed, 2);
+        assert!(!coord.is_restart_required());
     }
 
     #[tokio::test]
