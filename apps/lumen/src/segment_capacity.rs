@@ -67,7 +67,7 @@ impl PublicationFence {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Work {
     Checkpoint,
     Merge,
@@ -81,6 +81,8 @@ struct Requests {
     merge: bool,
     stopped: bool,
     error: Option<String>,
+    #[cfg(test)]
+    operations: Vec<Work>,
 }
 
 pub(crate) struct Endpoint {
@@ -270,6 +272,16 @@ fn run(sink: Arc<SegmentCheckpointSink>, endpoint: Arc<Endpoint>) {
             work
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            #[cfg(test)]
+            {
+                let mut state = endpoint.requests.lock().unwrap_or_else(|p| p.into_inner());
+                if checkpoint {
+                    state.operations.push(Work::Checkpoint);
+                }
+                if merge {
+                    state.operations.push(Work::Merge);
+                }
+            }
             let store = sink
                 .store
                 .as_ref()
@@ -387,22 +399,8 @@ fn run_budget_relay(
             // `wait_for` blocks this independent native thread until the one
             // existing owner completes, retries, or is superseded. No Engine,
             // accounting, or apply lock is held here.
-            if endpoint.wait_for(Work::Checkpoint).is_err() {
+            if relay_cycle(&engine, &endpoint, state.checkpoint_request_revision).is_err() {
                 return;
-            }
-            // A local capacity refusal needs both publication and compaction.
-            // The checkpoint frees only the frozen layer; without the merge,
-            // repeated refusals can fill the segment budget again before the
-            // next request arrives. Coalesce both operations by the same
-            // request revision so one refusal cannot enqueue an unbounded
-            // stream of maintenance work.
-            if endpoint.wait_for(Work::Merge).is_err() {
-                return;
-            }
-            // Clear only the request observed before this cycle. A newer
-            // request may have arrived while checkpointing or merging.
-            if let Some(request_revision) = state.checkpoint_request_revision {
-                engine.consume_checkpoint_request(request_revision);
             }
             continue;
         }
@@ -417,6 +415,18 @@ fn run_budget_relay(
         let _ = wake.wait_for_change_timeout(observed, Duration::from_millis(50));
         observed = wake.epoch();
     }
+}
+
+fn relay_cycle(engine: &Engine, endpoint: &Endpoint, request_revision: Option<u64>) -> Result<()> {
+    endpoint.wait_for(Work::Checkpoint)?;
+    // A local capacity refusal needs both publication and compaction. The
+    // checkpoint frees only the frozen layer; without the merge, repeated
+    // refusals can fill the segment budget again before the next request.
+    endpoint.wait_for(Work::Merge)?;
+    if let Some(request_revision) = request_revision {
+        engine.consume_checkpoint_request(request_revision);
+    }
+    Ok(())
 }
 
 /// Caller-owned lazy fallback. Constructor and file IO run before apply; its
@@ -747,6 +757,87 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn relay_cycle_checkpoints_merges_then_consumes_request() {
+        let engine = engine();
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(root.path()).unwrap());
+        let mut owner = Owner::start(sink(engine.clone(), store), true).unwrap().unwrap();
+        engine.request_pending_checkpoint();
+        let revision = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        relay_cycle(&engine, &owner.endpoint(), Some(revision)).unwrap();
+        assert!(engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .is_none());
+        let requests = owner.endpoint.requests.lock().unwrap();
+        assert_eq!(requests.requested, 2);
+        assert_eq!(requests.completed, 2);
+        assert_eq!(requests.operations, [Work::Checkpoint, Work::Merge]);
+        drop(requests);
+        owner.join().unwrap();
+    }
+
+    #[test]
+    fn stale_relay_revision_cannot_consume_successor_request() {
+        let engine = engine();
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(root.path()).unwrap());
+        let mut owner = Owner::start(sink(engine.clone(), store), true).unwrap().unwrap();
+        engine.request_pending_checkpoint();
+        let first = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        engine.consume_checkpoint_request(first);
+        engine.request_pending_checkpoint();
+        let successor = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        assert!(successor > first);
+        relay_cycle(&engine, &owner.endpoint(), Some(first)).unwrap();
+        assert_eq!(
+            engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision),
+            Some(successor)
+        );
+        owner.join().unwrap();
+    }
+
+    #[test]
+    fn relay_cycle_error_keeps_request_pending() {
+        let engine = engine();
+        engine.request_pending_checkpoint();
+        let revision = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        let endpoint = Endpoint {
+            requests: Mutex::new(Requests {
+                completed: 1,
+                error: Some("terminal checkpoint failure".into()),
+                ..Requests::default()
+            }),
+            changed: Condvar::new(),
+            fence: PublicationFence {
+                registry: Weak::new(),
+                token: 0,
+            },
+        };
+        assert!(relay_cycle(&engine, &endpoint, Some(revision)).is_err());
+        assert_eq!(
+            engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision),
+            Some(revision)
+        );
     }
 
     #[test]

@@ -266,6 +266,15 @@ impl CheckpointSchedule {
 }
 
 impl SegmentCheckpointSink {
+    fn complete_periodic_checkpoint(
+        schedule: &mut CheckpointSchedule,
+        after: Snapshot,
+        owner_before: Option<crate::change_budget::OwnerCapacityState>,
+        owner_after: Option<crate::change_budget::OwnerCapacityState>,
+    ) {
+        schedule.completed_success(Instant::now(), after, owner_before, owner_after);
+    }
+
     /// Standalone shutdown-only preparation. The caller owns its absolute
     /// timeout. A detached native thread cannot make Tokio runtime shutdown
     /// wait forever for optional graph IO; incomplete files remain cache misses.
@@ -450,13 +459,8 @@ impl SegmentCheckpointSink {
                         Ok(_) => {
                             let after = budget.snapshot();
                             let owner_after = self.engine.capacity_owner_state();
-                            if let Some(request_revision) =
-                                owner_after.and_then(|owner| owner.checkpoint_request_revision)
-                            {
-                                self.engine.consume_checkpoint_request(request_revision);
-                            }
-                            schedule.completed_success(
-                                Instant::now(),
+                            Self::complete_periodic_checkpoint(
+                                &mut schedule,
                                 after,
                                 owner_before,
                                 owner_after,
@@ -468,7 +472,7 @@ impl SegmentCheckpointSink {
                             }
                             tracing::warn!(error = %format!("{error:#}"), "periodic segment checkpoint failed");
                             // Failed checkpoints retain the normal period
-                            // backoff and consume the pre-attempt request.
+                            // backoff and leave the request pending.
                             schedule.completed(Instant::now(), pending);
                         }
                     }
@@ -494,6 +498,7 @@ impl SegmentCheckpointSink {
             capacity_owner,
         }
     }
+
 }
 
 fn spawn_budget_waiter(
@@ -691,6 +696,64 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+
+    #[test]
+    fn periodic_success_bookkeeping_does_not_consume_capacity_request() {
+        let budget = crate::change_budget::ChangeBudget::with_hard_limit(
+            crate::change_budget::CHECKPOINT_TRIGGER * 2,
+        );
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine
+            .create_collection(
+                "docs",
+                serde_json::from_value(serde_json::json!({
+                    "fields": {"kw":{"type":"keyword"}}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        engine
+            .index(
+                "docs",
+                serde_json::from_value(serde_json::json!({
+                    "items":[{"external_id":"one","field":"kw","value":"retained"}]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let _held = budget
+            .owner()
+            .try_reserve(crate::change_budget::CHECKPOINT_TRIGGER)
+            .unwrap()
+            .commit_retained()
+            .unwrap();
+        engine.request_pending_checkpoint();
+        let request_revision = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .expect("capacity request revision");
+        let root = tempfile::tempdir().unwrap();
+        let store = crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap();
+        let sink = SegmentCheckpointSink {
+            engine: engine.clone(),
+            store: Arc::new(store),
+            writer: Arc::new(EngineWatermarkSink::new(engine.clone())),
+            aof: None,
+        };
+        sink.checkpoint_sync(&sink.store).unwrap();
+        let mut schedule = CheckpointSchedule::new(Duration::from_secs(1), Instant::now());
+        let before = engine.capacity_owner_state();
+        SegmentCheckpointSink::complete_periodic_checkpoint(
+            &mut schedule,
+            budget.snapshot(),
+            before,
+            engine.capacity_owner_state(),
+        );
+        assert!(engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .is_some_and(|revision| revision == request_revision));
+    }
 
     #[tokio::test]
     async fn shutdown_graph_cache_preserves_current_and_durable_aof_tail() {
