@@ -33,6 +33,25 @@ pub struct SegmentCheckpointSink {
     pub aof: Option<crate::coordinator::SharedAof>,
 }
 
+/// Identifies the scheduler that started a durable checkpoint. This is trace
+/// data only; all variants use the same checkpoint implementation.
+#[derive(Clone, Copy)]
+pub(crate) enum CheckpointTraceOrigin {
+    Manual,
+    Periodic,
+    CapacityOwner,
+}
+
+impl CheckpointTraceOrigin {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Periodic => "periodic",
+            Self::CapacityOwner => "capacity_owner",
+        }
+    }
+}
+
 /// Keeps checkpoint-attempt telemetry balanced across every synchronous return
 /// path. It deliberately owns no checkpoint state, so it cannot change save,
 /// trim, or publication ordering.
@@ -179,11 +198,10 @@ impl CheckpointSchedule {
                     .is_none_or(|last| *revision > last)
             })
             .is_some_and(|revision| {
-                pending.checkpoint_needed()
-                    && {
-                        self.last_request_revision = Some(revision);
-                        true
-                    }
+                pending.checkpoint_needed() && {
+                    self.last_request_revision = Some(revision);
+                    true
+                }
             });
         if newer_capacity_request {
             return true;
@@ -280,7 +298,10 @@ impl SegmentCheckpointSink {
     /// wait forever for optional graph IO; incomplete files remain cache misses.
     #[doc(hidden)]
     pub async fn save_shutdown_graph_cache(self: Arc<Self>) -> Result<usize> {
-        let gate = self.writer.mutation_gate().context("shutdown cache requires a writer fence")?;
+        let gate = self
+            .writer
+            .mutation_gate()
+            .context("shutdown cache requires a writer fence")?;
         let permit = gate.exclusive().await?;
         let (send, receive) = oneshot::channel();
         std::thread::Builder::new()
@@ -312,6 +333,7 @@ impl SegmentCheckpointSink {
     async fn checkpoint_with_fence(
         &self,
         fence: Option<crate::segment_capacity::PublicationFence>,
+        origin: CheckpointTraceOrigin,
     ) -> Result<bool> {
         let sink_engine = self.engine.clone();
         let sink_store = self.store.clone();
@@ -340,7 +362,7 @@ impl SegmentCheckpointSink {
                 Some(fence) => sink.store.as_ref().clone().with_publication_fence(fence),
                 None => sink.store.as_ref().clone(),
             };
-            sink.checkpoint_sync(&store)
+            sink.checkpoint_sync_with_origin(&store, origin)
         })
         .await
         .context("checkpoint task panicked")??;
@@ -350,6 +372,19 @@ impl SegmentCheckpointSink {
     pub(crate) fn checkpoint_sync(
         &self,
         store: &crate::segment_rdb::SegmentRdbStore,
+    ) -> Result<()> {
+        let origin = if store.has_publication_fence() {
+            CheckpointTraceOrigin::CapacityOwner
+        } else {
+            CheckpointTraceOrigin::Manual
+        };
+        self.checkpoint_sync_with_origin(store, origin)
+    }
+
+    fn checkpoint_sync_with_origin(
+        &self,
+        store: &crate::segment_rdb::SegmentRdbStore,
+        origin: CheckpointTraceOrigin,
     ) -> Result<()> {
         let mut attempt = CheckpointAttempt::start(self.engine.metrics());
         let result = (|| {
@@ -362,7 +397,11 @@ impl SegmentCheckpointSink {
                     "checkpoint refused: restart required".into(),
                 )));
             }
-            let sequence = store.save_with_sequence(&self.engine, self.writer.applied_seq())?;
+            let sequence = store.save_with_sequence_diagnostic(
+                &self.engine,
+                self.writer.applied_seq(),
+                origin.label(),
+            )?;
             store.prune(3)?;
             match store.disk_bytes() {
                 Ok(bytes) => self.engine.metrics().set_segment_disk_bytes(bytes),
@@ -455,7 +494,13 @@ impl SegmentCheckpointSink {
                 let successor_attempt = schedule.take_successor(owner_before);
                 let ordinary_attempt = schedule.should_attempt(now, pending, work_revision);
                 if successor_attempt || ordinary_attempt {
-                    match self.checkpoint_with_fence(periodic_fence.clone()).await {
+                    match self
+                        .checkpoint_with_fence(
+                            periodic_fence.clone(),
+                            CheckpointTraceOrigin::Periodic,
+                        )
+                        .await
+                    {
                         Ok(_) => {
                             let after = budget.snapshot();
                             let owner_after = self.engine.capacity_owner_state();
@@ -498,7 +543,6 @@ impl SegmentCheckpointSink {
             capacity_owner,
         }
     }
-
 }
 
 fn spawn_budget_waiter(
@@ -528,7 +572,8 @@ fn spawn_budget_waiter(
 #[async_trait::async_trait]
 impl crate::api::CheckpointSink for SegmentCheckpointSink {
     async fn checkpoint_now(&self) -> Result<bool> {
-        self.checkpoint_with_fence(None).await
+        self.checkpoint_with_fence(None, CheckpointTraceOrigin::Manual)
+            .await
     }
 }
 
@@ -763,7 +808,10 @@ mod tests {
         let tail = root.path().join("aof.log");
         let aof = Arc::new(Mutex::new(AofWriter::open(&tail).unwrap()));
         let writer = crate::coordinator::WriteCoordinator::start_from_with_aof(
-            Arc::new(crate::wal::MemWal::new()), engine.clone(), 0, aof.clone(),
+            Arc::new(crate::wal::MemWal::new()),
+            engine.clone(),
+            0,
+            aof.clone(),
         );
         writer.submit(RaftLogEntry::CreateCollection {
             collection_id: "v".into(),
@@ -772,23 +820,37 @@ mod tests {
             })).unwrap(),
         }).await.unwrap();
         let sink = Arc::new(SegmentCheckpointSink {
-            engine, store, writer: writer.clone(), aof: Some(aof.clone()),
+            engine,
+            store,
+            writer: writer.clone(),
+            aof: Some(aof.clone()),
         });
         sink.checkpoint_now().await.unwrap();
         let current = std::fs::read(root.path().join("CURRENT")).unwrap();
-        writer.submit(RaftLogEntry::Index {
-            collection_id: "v".into(),
-            req: serde_json::from_value(serde_json::json!({"items": [{
-                "external_id": "tail", "field": "v", "value": [1.0, 2.0, 3.0]
-            }]})).unwrap(),
-        }).await.unwrap();
+        writer
+            .submit(RaftLogEntry::Index {
+                collection_id: "v".into(),
+                req: serde_json::from_value(serde_json::json!({"items": [{
+                    "external_id": "tail", "field": "v", "value": [1.0, 2.0, 3.0]
+                }]}))
+                .unwrap(),
+            })
+            .await
+            .unwrap();
         aof.lock().unwrap().sync().unwrap();
         let before = std::fs::read(&tail).unwrap();
         assert!(!before.is_empty());
         assert_eq!(sink.save_shutdown_graph_cache().await.unwrap(), 1);
-        assert_eq!(std::fs::read(root.path().join("CURRENT")).unwrap(), current,
-            "shutdown cache must not rewrite CURRENT when a durable AOF exists");
-        assert_eq!(std::fs::read(tail).unwrap(), before, "cache must not trim the authoritative tail");
+        assert_eq!(
+            std::fs::read(root.path().join("CURRENT")).unwrap(),
+            current,
+            "shutdown cache must not rewrite CURRENT when a durable AOF exists"
+        );
+        assert_eq!(
+            std::fs::read(tail).unwrap(),
+            before,
+            "cache must not trim the authoritative tail"
+        );
     }
 
     #[tokio::test]
@@ -796,19 +858,32 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let engine = Arc::new(Engine::new());
         let writer = crate::coordinator::WriteCoordinator::start(
-            Arc::new(crate::wal::MemWal::new()), engine.clone(),
+            Arc::new(crate::wal::MemWal::new()),
+            engine.clone(),
         );
         let gate = writer.mutation_gate();
         let in_flight = gate.shared().await.unwrap();
         let sink = Arc::new(SegmentCheckpointSink {
             engine,
             store: Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap()),
-            writer, aof: None,
+            writer,
+            aof: None,
         });
-        assert!(tokio::time::timeout(Duration::from_millis(25), sink.clone().save_shutdown_graph_cache()).await.is_err());
+        assert!(tokio::time::timeout(
+            Duration::from_millis(25),
+            sink.clone().save_shutdown_graph_cache()
+        )
+        .await
+        .is_err());
         assert!(!root.path().join("hnsw-graph-cache").exists());
         drop(in_flight);
-        assert_eq!(tokio::time::timeout(Duration::from_secs(2), sink.save_shutdown_graph_cache()).await.unwrap().unwrap(), 0);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), sink.save_shutdown_graph_cache())
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

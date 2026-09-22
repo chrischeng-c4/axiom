@@ -639,6 +639,10 @@ fn median_statistic_and_ignored_inventory() {
             ("median_statistic_and_ignored_inventory", false),
             ("docker_run_forwards_recovery_profile_only_when_set", false),
             (
+                "docker_run_forwards_diagnostic_environment_only_for_diagnostic_mode",
+                false,
+            ),
+            (
                 "restart_command_timeout_kills_and_reaps_a_stuck_child",
                 false,
             ),
@@ -2995,6 +2999,7 @@ mod durable_workload {
         volume: &str,
         image: &str,
         recovery_profile: Option<&str>,
+        diagnostic: bool,
     ) -> Vec<String> {
         let resource_args = [
             "--cpus",
@@ -3034,6 +3039,14 @@ mod durable_workload {
                 format!("LUMEN_RECOVERY_PROFILE={recovery_profile}"),
             ]);
         }
+        if diagnostic {
+            args.extend([
+                "-e".to_owned(),
+                "LUMEN_PERF_DIAGNOSTIC=1".to_owned(),
+                "-e".to_owned(),
+                "LUMEN_LOG_FORMAT=json".to_owned(),
+            ]);
+        }
         args.extend([
             "-p".to_owned(),
             "127.0.0.1::7373".to_owned(),
@@ -3049,7 +3062,7 @@ mod durable_workload {
 
     #[test]
     fn docker_run_forwards_recovery_profile_only_when_set() {
-        let without_profile = docker_run_args("container", "volume", "image", None);
+        let without_profile = docker_run_args("container", "volume", "image", None, false);
         assert!(
             !without_profile
                 .iter()
@@ -3057,13 +3070,36 @@ mod durable_workload {
             "an unset recovery profile must not alter Docker's environment"
         );
 
-        let with_profile = docker_run_args("container", "volume", "image", Some("1"));
+        let with_profile = docker_run_args("container", "volume", "image", Some("1"), false);
         assert!(
             with_profile
                 .windows(2)
                 .any(|pair| pair == ["-e", "LUMEN_RECOVERY_PROFILE=1"]),
             "an explicitly set recovery profile must reach docker run"
         );
+    }
+
+    #[test]
+    fn docker_run_forwards_diagnostic_environment_only_for_diagnostic_mode() {
+        let diagnostic = docker_run_args("container", "volume", "image", None, true);
+        for environment in ["LUMEN_PERF_DIAGNOSTIC=1", "LUMEN_LOG_FORMAT=json"] {
+            assert!(
+                diagnostic
+                    .windows(2)
+                    .any(|pair| pair == ["-e", environment]),
+                "diagnostic mode must forward {environment}"
+            );
+        }
+
+        let qualifying = docker_run_args("container", "volume", "image", None, false);
+        for environment in ["LUMEN_PERF_DIAGNOSTIC=1", "LUMEN_LOG_FORMAT=json"] {
+            assert!(
+                !qualifying
+                    .windows(2)
+                    .any(|pair| pair == ["-e", environment]),
+                "qualifying mode must not forward {environment}"
+            );
+        }
     }
 
     impl DockerLumen {
@@ -3090,6 +3126,7 @@ mod durable_workload {
                     &volume,
                     &image,
                     env::var("LUMEN_RECOVERY_PROFILE").ok().as_deref(),
+                    env::var("LUMEN_PERF_DIAGNOSTIC").ok().as_deref() == Some("1"),
                 );
                 docker_owned(&run_args)?;
                 let image_id = verify_image_identity(&image)?;

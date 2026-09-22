@@ -357,6 +357,37 @@ enum SaveAttempt {
     FreshCapture,
 }
 
+/// Timing that starts before a root save permit is requested. A checkpoint
+/// always takes this permit before it freezes a cut, so capture-to-gate wait is
+/// structurally zero and is emitted as such in the diagnostic event.
+#[derive(Clone, Copy)]
+struct SaveGateTrace {
+    wait_ns: u64,
+    acquired_at: Instant,
+}
+
+impl SaveGateTrace {
+    fn acquire(gate: &Arc<SaveGate>) -> (save_gate::SavePermit, Self) {
+        let started = Instant::now();
+        let permit = gate.lock_owned();
+        (
+            permit,
+            Self {
+                wait_ns: duration_ns(started.elapsed()),
+                acquired_at: Instant::now(),
+            },
+        )
+    }
+}
+
+fn duration_ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+fn checkpoint_diagnostic_enabled() -> bool {
+    std::env::var("LUMEN_PERF_DIAGNOSTIC").as_deref() == Ok("1")
+}
+
 #[derive(Clone, Copy)]
 enum StagingSelection {
     Generic,
@@ -484,6 +515,10 @@ impl SegmentRdbStore {
     ) -> Self {
         self.publication_fence = Some(fence);
         self
+    }
+
+    pub(crate) fn has_publication_fence(&self) -> bool {
+        self.publication_fence.is_some()
     }
 
     pub(crate) fn request_capacity_merge(&self, engine: &Arc<Engine>) -> Result<u64> {
@@ -658,6 +693,28 @@ impl SegmentRdbStore {
             .ok_or_else(|| anyhow!("saved checkpoint has an invalid generation name"))
     }
 
+    /// Save with one trace-only scheduler label. The label does not affect
+    /// checkpoint selection, bytes, locking, publication, or acknowledgement.
+    pub(crate) fn save_with_sequence_diagnostic(
+        &self,
+        engine: &Arc<Engine>,
+        up_to_seq: u64,
+        origin: &'static str,
+    ) -> Result<u64> {
+        let trace_origin = checkpoint_diagnostic_enabled().then_some(origin);
+        let name = self.save_inner_traced(
+            engine,
+            up_to_seq,
+            false,
+            StagingSelection::CurrentIfDurable,
+            trace_origin,
+        )?;
+        parse_revision_name(name.as_str())
+            .map(|(sequence, _)| sequence)
+            .or_else(|| parse_legacy_name(name.as_str()))
+            .ok_or_else(|| anyhow!("saved checkpoint has an invalid generation name"))
+    }
+
     /// Save a generation for a restore operation.
     ///
     /// Unlike [`Self::save`], this never silently ignores a stale sequence and
@@ -673,7 +730,23 @@ impl SegmentRdbStore {
         required: bool,
         selection: StagingSelection,
     ) -> Result<GenerationName> {
-        let permit = self.save_gate.lock_owned();
+        self.save_inner_traced(engine, up_to_seq, required, selection, None)
+    }
+
+    fn save_inner_traced(
+        &self,
+        engine: &Arc<Engine>,
+        up_to_seq: u64,
+        required: bool,
+        selection: StagingSelection,
+        trace_origin: Option<&'static str>,
+    ) -> Result<GenerationName> {
+        let (permit, gate_trace) = if trace_origin.is_some() {
+            let (permit, trace) = SaveGateTrace::acquire(&self.save_gate);
+            (permit, Some(trace))
+        } else {
+            (self.save_gate.lock_owned(), None)
+        };
         self.save_inner_permitted_selected(
             engine,
             up_to_seq,
@@ -682,6 +755,8 @@ impl SegmentRdbStore {
             SaveIntent::Ordinary,
             None,
             selection,
+            trace_origin,
+            gate_trace,
         )
     }
 
@@ -702,6 +777,8 @@ impl SegmentRdbStore {
             intent,
             archive_pin,
             StagingSelection::Generic,
+            None,
+            None,
         )
     }
 
@@ -714,14 +791,18 @@ impl SegmentRdbStore {
         intent: SaveIntent,
         mut archive_pin: Option<&mut Option<SegmentArchivePin>>,
         selection: StagingSelection,
+        trace_origin: Option<&'static str>,
+        gate_trace: Option<SaveGateTrace>,
     ) -> Result<GenerationName> {
         let mut capacity_deadline = None;
         let mut permit = Some(permit);
+        let mut gate_trace = gate_trace;
         let mut idle_revision = None;
         loop {
             let guard = permit
                 .take()
                 .expect("each checkpoint attempt must own the save permit");
+            let attempt_gate_trace = gate_trace.take();
             match self.save_inner_permitted_attempt(
                 engine,
                 up_to_seq,
@@ -732,13 +813,21 @@ impl SegmentRdbStore {
                 idle_revision,
                 capacity_deadline,
                 selection,
+                trace_origin,
+                attempt_gate_trace,
             )? {
                 SaveAttempt::Complete(name) => return Ok(name),
                 SaveAttempt::FreshCapture => {
                     // The pending cut was published. Its fresh successor can
                     // request work, while retaining any existing wait deadline.
                     idle_revision = None;
-                    permit = Some(self.save_gate.lock_owned());
+                    if trace_origin.is_some() {
+                        let (next_permit, next_trace) = SaveGateTrace::acquire(&self.save_gate);
+                        permit = Some(next_permit);
+                        gate_trace = Some(next_trace);
+                    } else {
+                        permit = Some(self.save_gate.lock_owned());
+                    }
                 }
                 SaveAttempt::CapacityWait(revision) => {
                     let deadline = *capacity_deadline
@@ -750,7 +839,13 @@ impl SegmentRdbStore {
                         background::CapacityWait::Published => idle_revision = None,
                         background::CapacityWait::Idle => idle_revision = Some(revision),
                     }
-                    permit = Some(self.save_gate.lock_owned());
+                    if trace_origin.is_some() {
+                        let (next_permit, next_trace) = SaveGateTrace::acquire(&self.save_gate);
+                        permit = Some(next_permit);
+                        gate_trace = Some(next_trace);
+                    } else {
+                        permit = Some(self.save_gate.lock_owned());
+                    }
                 }
             }
         }
@@ -767,6 +862,8 @@ impl SegmentRdbStore {
         idle_revision: Option<u64>,
         capacity_deadline: Option<Instant>,
         selection: StagingSelection,
+        trace_origin: Option<&'static str>,
+        gate_trace: Option<SaveGateTrace>,
     ) -> Result<SaveAttempt> {
         let requested_sequence = up_to_seq;
         let started = std::time::Instant::now();
@@ -787,79 +884,89 @@ impl SegmentRdbStore {
             .as_ref()
             .map_or(1, |manifest| manifest.next_collection_generation);
         let predecessor = PendingPredecessor::from_current(current.as_ref());
-        let (mut pending, capture_stamp, up_to_seq, retried_pending) = if let Some(pending) = self
-            .take_matching_pending(engine, &predecessor)
-            .with_context(|| "take matching pending checkpoint".to_owned())?
-        {
-            let stamp = pending.pending().stamp;
-            let sequence = pending.pending().sequence;
-            (pending, stamp, sequence, true)
-        } else {
-            if intent == SaveIntent::ExactRaft {
-                bail!("exact Raft checkpoint lost its captured epoch; cannot recapture");
-            }
-            let capture_lease = engine
-                .capture_barrier
-                .capture(up_to_seq)
-                .map_err(|error| anyhow!(error))?;
-            let capture_lease = MeasuredCapture::new(capture_lease, &capture_hold_ns);
-            // Check while apply is excluded, before taking any journal ownership.
-            // The worker cannot advance a predecessor while frozen work waits.
-            if let Some(manifest) = &prior_manifest {
-                if self.needs_delta_capacity(
-                    engine,
-                    manifest,
-                    &current.as_ref().expect("manifest has CURRENT").path,
-                )? {
-                    let revision = self.request_merge_for_capacity_retry(
-                        engine,
-                        idle_revision,
-                        capacity_deadline,
-                    )?;
-                    drop(capture_lease);
-                    drop(_guard);
-                    return Ok(SaveAttempt::CapacityWait(revision));
+        let (mut pending, capture_stamp, up_to_seq, retried_pending, frozen_cut_bytes) =
+            if let Some(pending) = self
+                .take_matching_pending(engine, &predecessor)
+                .with_context(|| "take matching pending checkpoint".to_owned())?
+            {
+                let stamp = pending.pending().stamp;
+                let sequence = pending.pending().sequence;
+                (pending, stamp, sequence, true, 0)
+            } else {
+                if intent == SaveIntent::ExactRaft {
+                    bail!("exact Raft checkpoint lost its captured epoch; cannot recapture");
                 }
-            }
-            let capture_stamp = capture_lease.stamp();
-            // Callers may label prepared/imported snapshots with an explicit cut.
-            // Never label live data below a record completed while capture waited.
-            let sequence = up_to_seq.max(capture_stamp.sequence);
-            if let Some(current) = &current {
-                if sequence < current.sequence && intent != SaveIntent::RaftRestore {
-                    if required {
-                        bail!(
+                let capture_lease = engine
+                    .capture_barrier
+                    .capture(up_to_seq)
+                    .map_err(|error| anyhow!(error))?;
+                let capture_lease = MeasuredCapture::new(capture_lease, &capture_hold_ns);
+                // Check while apply is excluded, before taking any journal ownership.
+                // The worker cannot advance a predecessor while frozen work waits.
+                if let Some(manifest) = &prior_manifest {
+                    if self.needs_delta_capacity(
+                        engine,
+                        manifest,
+                        &current.as_ref().expect("manifest has CURRENT").path,
+                    )? {
+                        let revision = self.request_merge_for_capacity_retry(
+                            engine,
+                            idle_revision,
+                            capacity_deadline,
+                        )?;
+                        drop(capture_lease);
+                        drop(_guard);
+                        return Ok(SaveAttempt::CapacityWait(revision));
+                    }
+                }
+                let capture_stamp = capture_lease.stamp();
+                // Callers may label prepared/imported snapshots with an explicit cut.
+                // Never label live data below a record completed while capture waited.
+                let sequence = up_to_seq.max(capture_stamp.sequence);
+                if let Some(current) = &current {
+                    if sequence < current.sequence && intent != SaveIntent::RaftRestore {
+                        if required {
+                            bail!(
                                 "required segment generation sequence {sequence} is below CURRENT sequence {}",
                                 current.sequence
                             );
+                        }
+                        return Ok(SaveAttempt::Complete(current.name.clone()));
                     }
-                    return Ok(SaveAttempt::Complete(current.name.clone()));
                 }
-            }
-            engine.prepare_checkpoint_namespace(&self.root, floor)?;
-            let frozen = engine.freeze_checkpoint_collections(
-                current.as_ref().map(|record| record.path.as_path()),
-            )?;
-            let layer_window = engine.layer_maintenance.freeze();
-            drop(capture_lease);
-            (
-                PendingFrozenLease {
-                    slot: self.pending_frozen.clone(),
-                    pending: Some(PendingFrozenCheckpoint {
-                        engine: Arc::downgrade(engine),
-                        stamp: capture_stamp,
-                        sequence,
-                        predecessor,
-                        frozen,
-                        detached_capture_ns: 0,
-                        _layer_window: layer_window,
-                    }),
-                },
-                capture_stamp,
-                sequence,
-                false,
-            )
-        };
+                engine.prepare_checkpoint_namespace(&self.root, floor)?;
+                let frozen_before = trace_origin
+                    .and_then(|_| engine.capacity_owner_state().map(|state| state.frozen));
+                let frozen = engine.freeze_checkpoint_collections(
+                    current.as_ref().map(|record| record.path.as_path()),
+                )?;
+                let frozen_cut_bytes = frozen_before
+                    .zip(
+                        trace_origin
+                            .and_then(|_| engine.capacity_owner_state().map(|state| state.frozen)),
+                    )
+                    .map_or(0, |(before, after)| after.saturating_sub(before));
+                let layer_window = engine.layer_maintenance.freeze();
+                drop(capture_lease);
+                (
+                    PendingFrozenLease {
+                        slot: self.pending_frozen.clone(),
+                        pending: Some(PendingFrozenCheckpoint {
+                            engine: Arc::downgrade(engine),
+                            stamp: capture_stamp,
+                            sequence,
+                            predecessor,
+                            frozen,
+                            detached_capture_ns: 0,
+                            _layer_window: layer_window,
+                        }),
+                    },
+                    capture_stamp,
+                    sequence,
+                    false,
+                    u64::try_from(frozen_cut_bytes).unwrap_or(u64::MAX),
+                )
+            };
         capture_hold_ns.fetch_add(
             pending.pending().detached_capture_ns,
             std::sync::atomic::Ordering::Relaxed,
@@ -1027,6 +1134,7 @@ impl SegmentRdbStore {
         }
         // Retain owner exclusion through durable publication AND live binding.
         // A replacement owner never observes a half-installed catalog.
+        let publish_started = trace_origin.map(|_| Instant::now());
         let mut owner_publication = None;
         let commit = staged.commit_with_publication_guard(&self.generations, || {
             owner_publication = self
@@ -1057,6 +1165,7 @@ impl SegmentRdbStore {
                 format!("activate segment generation seq {up_to_seq} revision {revision}")
             });
         }
+        let publish_ns = publish_started.map(|started| duration_ns(started.elapsed()));
         *self
             .verified_catalog
             .lock()
@@ -1064,6 +1173,7 @@ impl SegmentRdbStore {
             Some((staged_record.name.clone(), serde_json::to_vec(&manifest)?));
         // Publication is durable. Bind only collections whose captured tuple
         // still matches; concurrent mutations retain their dirty state.
+        let acknowledge_started = trace_origin.map(|_| Instant::now());
         let binding = engine
             .capture_barrier
             .capture(up_to_seq)
@@ -1083,6 +1193,7 @@ impl SegmentRdbStore {
             })?;
         engine.acknowledge_record_charges(&capture)?;
         drop(binding);
+        let acknowledge_ns = acknowledge_started.map(|started| duration_ns(started.elapsed()));
         engine.metrics().observe_segment_checkpoint(
             written_bytes,
             started.elapsed(),
@@ -1113,6 +1224,38 @@ impl SegmentRdbStore {
             if let Err(error) = self.request_merge(engine) {
                 tracing::warn!(%error, "could not request segment merge after durable checkpoint");
             }
+        }
+        if let Some(checkpoint_origin) = trace_origin {
+            let gate_trace = gate_trace.expect("diagnostic checkpoints time the save gate");
+            let save_gate_hold_ns = duration_ns(gate_trace.acquired_at.elapsed());
+            let capacity_request_revision = engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision);
+            let root_merge = self.background.trace_state();
+            tracing::info!(
+                event = "segment_checkpoint_diagnostic",
+                checkpoint_origin,
+                checkpoint_sequence = up_to_seq,
+                checkpoint_revision = revision,
+                frozen_cut_bytes,
+                frozen_cut_reused = retried_pending,
+                // The root gate is deliberately acquired before the capture
+                // barrier. Keep this explicit zero in the trace so operators
+                // do not infer that a frozen cut waits behind another save.
+                capture_to_save_gate_wait_ns = 0u64,
+                save_gate_wait_ns = gate_trace.wait_ns,
+                save_gate_hold_ns,
+                publish_ns = publish_ns.expect("diagnostic checkpoints time publication"),
+                acknowledge_ns =
+                    acknowledge_ns.expect("diagnostic checkpoints time acknowledgement"),
+                capacity_request_pending = capacity_request_revision.is_some(),
+                capacity_request_revision = capacity_request_revision.unwrap_or_default(),
+                root_merge_queued = root_merge.queued,
+                root_merge_running = root_merge.running,
+                root_merge_requested = root_merge.requested,
+                root_merge_published_revision = root_merge.published_revision,
+                "segment checkpoint diagnostic"
+            );
         }
         if follow_with_fresh_capture {
             return Ok(SaveAttempt::FreshCapture);
@@ -4668,9 +4811,15 @@ mod tests {
             std::fs::create_dir(&partial).unwrap();
             std::fs::write(partial.join("sentinel"), b"keep until authority is known").unwrap();
             let result = super::SegmentRdbStore::new(root.path());
-            assert!(result.is_err(), "a cache cannot authorize empty initialization without CURRENT (kind {kind})");
+            assert!(
+                result.is_err(),
+                "a cache cannot authorize empty initialization without CURRENT (kind {kind})"
+            );
             assert!(!root.path().join("CURRENT").exists());
-            assert_eq!(std::fs::read(partial.join("sentinel")).unwrap(), b"keep until authority is known");
+            assert_eq!(
+                std::fs::read(partial.join("sentinel")).unwrap(),
+                b"keep until authority is known"
+            );
             assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
         }
     }
@@ -4686,13 +4835,87 @@ mod tests {
         let retained = cache.join("unknown-entry");
         std::fs::create_dir(&retained).unwrap();
         std::fs::write(retained.join("sentinel"), b"keep").unwrap();
-        assert_eq!(store.save_hnsw_graph_caches(&crate::storage::Engine::new()).unwrap(), 0);
+        assert_eq!(
+            store
+                .save_hnsw_graph_caches(&crate::storage::Engine::new())
+                .unwrap(),
+            0
+        );
         assert!(!obsolete.exists());
         assert_eq!(std::fs::read(retained.join("sentinel")).unwrap(), b"keep");
         assert!(root.path().join("CURRENT").is_file());
     }
 
     use super::*;
+
+    struct DiagnosticEnvironment {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl DiagnosticEnvironment {
+        fn set(enabled: bool) -> Self {
+            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            let lock = LOCK
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var_os("LUMEN_PERF_DIAGNOSTIC");
+            if enabled {
+                std::env::set_var("LUMEN_PERF_DIAGNOSTIC", "1");
+            } else {
+                std::env::remove_var("LUMEN_PERF_DIAGNOSTIC");
+            }
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for DiagnosticEnvironment {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var("LUMEN_PERF_DIAGNOSTIC", previous);
+            } else {
+                std::env::remove_var("LUMEN_PERF_DIAGNOSTIC");
+            }
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct DiagnosticTraceWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct DiagnosticTraceWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for DiagnosticTraceWriterGuard {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for DiagnosticTraceWriter {
+        type Writer = DiagnosticTraceWriterGuard;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            DiagnosticTraceWriterGuard(self.0.clone())
+        }
+    }
+
+    impl DiagnosticTraceWriter {
+        fn records(&self) -> Vec<serde_json::Value> {
+            String::from_utf8(self.0.lock().unwrap().clone())
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        }
+    }
 
     fn cohort_catalog(root: &Path, fields: &[(&str, usize, usize)]) -> CollectionCatalog {
         let mut segments = Vec::new();
@@ -4781,9 +5004,9 @@ mod tests {
                     .collect::<Vec<_>>(),
                 "field ordering stays deterministic"
             );
-            assert!(selected.iter().all(|candidate| {
-                !candidate.includes_base && candidate.inputs.len() == 2
-            }));
+            assert!(selected
+                .iter()
+                .all(|candidate| { !candidate.includes_base && candidate.inputs.len() == 2 }));
             if selected.len() > 8 {
                 assert!(
                     selected.len() * 2 * delta_bytes <= 24 * 1024 * 1024,
@@ -5002,10 +5225,8 @@ mod tests {
             .cloned()
             .expect("second save must retain a delta for the cap fixture");
         let template_rows = template.local_rows.clone().unwrap();
-        let template_reader = crate::segment::SegmentReader::open(
-            &generation_path.join(&template.path),
-        )
-        .unwrap();
+        let template_reader =
+            crate::segment::SegmentReader::open(&generation_path.join(&template.path)).unwrap();
         assert_eq!(template_reader.n_docs(), template_rows.count);
         assert_eq!(template_reader.applied_seq(), template.applied_seq.unwrap());
         let template_applied_seq = template.applied_seq.unwrap();
@@ -5046,29 +5267,26 @@ mod tests {
             delta.applied_seq = Some(template_applied_seq);
             rows.count = template_row_count;
             delta.local_rows = Some(rows.clone());
-            std::fs::create_dir_all(
-                generation_path.join(&delta.path).parent().unwrap(),
-            )
-            .unwrap();
-            std::fs::create_dir_all(
-                generation_path.join(&rows.path).parent().unwrap(),
-            )
-            .unwrap();
+            std::fs::create_dir_all(generation_path.join(&delta.path).parent().unwrap()).unwrap();
+            std::fs::create_dir_all(generation_path.join(&rows.path).parent().unwrap()).unwrap();
             let delta_path = generation_path.join(&delta.path);
             if !delta_path.exists() {
                 std::fs::hard_link(generation_path.join(&template.path), &delta_path).unwrap();
             }
             let rows_path = generation_path.join(&rows.path);
             if !rows_path.exists() {
-                std::fs::hard_link(
-                    generation_path.join(&template_rows.path),
-                    &rows_path,
-                )
-                .unwrap();
+                std::fs::hard_link(generation_path.join(&template_rows.path), &rows_path).unwrap();
             }
             collection.segments.push(delta);
         }
-        assert_eq!(collection.segments.iter().filter(|segment| matches!(segment.kind, SegmentKind::Delta)).count(), 17);
+        assert_eq!(
+            collection
+                .segments
+                .iter()
+                .filter(|segment| matches!(segment.kind, SegmentKind::Delta))
+                .count(),
+            17
+        );
         let error = validate_catalog_references(&generation_path, &manifest).unwrap_err();
         assert!(
             error
@@ -5740,6 +5958,74 @@ mod tests {
         assert_eq!(
             engine.metrics().segment_merge_completed_total.get() - merge_count_before,
             1
+        );
+    }
+
+    fn checkpoint_diagnostic_records(enabled: bool) -> Vec<serde_json::Value> {
+        use tracing_subscriber::prelude::*;
+
+        let _environment = DiagnosticEnvironment::set(enabled);
+        let writer = DiagnosticTraceWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .with_writer(writer.clone()),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "one", "trace-value");
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+
+        assert_eq!(
+            store
+                .save_with_sequence_diagnostic(&engine, 1, "periodic")
+                .unwrap(),
+            1
+        );
+        drop(_guard);
+        writer.records()
+    }
+
+    #[test]
+    fn checkpoint_diagnostic_trace_is_machine_readable() {
+        let record = checkpoint_diagnostic_records(true)
+            .into_iter()
+            .find(|record| record["fields"]["event"] == "segment_checkpoint_diagnostic")
+            .expect("durable checkpoint must emit its diagnostic trace");
+        let fields = record["fields"]
+            .as_object()
+            .expect("diagnostic trace fields must be JSON object");
+        assert_eq!(fields["checkpoint_origin"], "periodic");
+        assert_eq!(fields["checkpoint_sequence"], 1);
+        assert_eq!(fields["capture_to_save_gate_wait_ns"], 0);
+        for name in [
+            "frozen_cut_bytes",
+            "save_gate_wait_ns",
+            "save_gate_hold_ns",
+            "publish_ns",
+            "acknowledge_ns",
+            "capacity_request_pending",
+            "capacity_request_revision",
+            "root_merge_queued",
+            "root_merge_running",
+            "root_merge_requested",
+            "root_merge_published_revision",
+        ] {
+            assert!(fields.contains_key(name), "missing diagnostic field {name}");
+        }
+    }
+
+    #[test]
+    fn checkpoint_diagnostic_trace_is_absent_without_exact_environment_flag() {
+        let records = checkpoint_diagnostic_records(false);
+        assert!(
+            !records
+                .iter()
+                .any(|record| record["fields"]["event"] == "segment_checkpoint_diagnostic"),
+            "ordinary checkpoints must not emit a diagnostic trace"
         );
     }
 

@@ -1645,6 +1645,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "docker_run_forwards_diagnostic_environment_only_for_diagnostic_mode".into(),
+                    false,
+                ),
+                (
                     "restart_command_timeout_kills_and_reaps_a_stuck_child".into(),
                     false,
                 ),
