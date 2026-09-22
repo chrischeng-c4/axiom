@@ -3257,6 +3257,43 @@ struct RaftPeerServer {
     task: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
+#[cfg(feature = "raft-wal")]
+async fn close_raft_peer_listener_within(
+    mut peer_server: RaftPeerServer,
+    deadline: server_lifecycle::ShutdownDeadline,
+) {
+    let _ = peer_server.shutdown_tx.send(());
+    match tokio::time::timeout_at(deadline.expires_at, &mut peer_server.task).await {
+        Ok(Ok(Ok(()))) => tracing::info!(
+            event = "raft_peer_listener_closed",
+            message = "raft_peer_listener_closed",
+        ),
+        Ok(Ok(Err(error))) => tracing::warn!(%error, "raft peer listener failed during shutdown"),
+        Ok(Err(error)) => tracing::warn!(%error, "raft peer listener task panicked during shutdown"),
+        Err(_) => {
+            peer_server.task.abort();
+            let _ = peer_server.task.await;
+            tracing::info!(event = "raft_peer_listener_aborted", message = "raft_peer_listener_aborted");
+        }
+    }
+}
+
+#[cfg(feature = "raft-wal")]
+async fn finish_raft_listener_shutdown(
+    action: shutdown::PeerListenerAction,
+    peer_server: RaftPeerServer,
+    deadline: server_lifecycle::ShutdownDeadline,
+    shutdown_result: Result<()>,
+) -> Result<()> {
+    close_raft_peer_listener_within(peer_server, deadline).await;
+    match action {
+        shutdown::PeerListenerAction::CloseAfterReport => shutdown_result,
+        shutdown::PeerListenerAction::AbortAfterReport => {
+            shutdown_result.context("raft shutdown is incomplete")
+        }
+    }
+}
+
 /// Complete the Raft part of shutdown before changing the peer listener.
 ///
 /// The report is logged before either listener action. The caller continues
@@ -3267,7 +3304,7 @@ async fn shutdown_raft_within(
     peer_server: Option<RaftPeerServer>,
     deadline: server_lifecycle::ShutdownDeadline,
 ) -> Result<()> {
-    use shutdown::{PeerListenerAction, RaftShutdownCoordinator};
+    use shutdown::RaftShutdownCoordinator;
 
     let report = host.shutdown_within(deadline).await;
     let event = RaftShutdownCoordinator::event(&report, deadline.total.as_millis() as u64);
@@ -3282,44 +3319,11 @@ async fn shutdown_raft_within(
     );
 
     let shutdown_result = report.clone().into_result();
-    let Some(mut peer_server) = peer_server else {
+    let Some(peer_server) = peer_server else {
         return shutdown_result;
     };
-    match event.listener_action {
-        PeerListenerAction::CloseAfterReport => {
-            let _ = peer_server.shutdown_tx.send(());
-            match tokio::time::timeout_at(deadline.expires_at, &mut peer_server.task).await {
-                Ok(Ok(Ok(()))) => {
-                    tracing::info!(
-                        event = "raft_peer_listener_closed",
-                        message = "raft_peer_listener_closed",
-                    );
-                    shutdown_result
-                }
-                Ok(Ok(Err(error))) => {
-                    Err(error).context("raft peer listener failed during shutdown")
-                }
-                Ok(Err(error)) => Err(anyhow::anyhow!(error))
-                    .context("raft peer listener task panicked during shutdown"),
-                Err(_) => {
-                    peer_server.task.abort();
-                    tracing::info!(
-                        event = "raft_peer_listener_aborted",
-                        message = "raft_peer_listener_aborted",
-                    );
-                    anyhow::bail!("raft peer listener did not close before shutdown deadline")
-                }
-            }
-        }
-        PeerListenerAction::AbortAfterReport => {
-            peer_server.task.abort();
-            tracing::info!(
-                event = "raft_peer_listener_aborted",
-                message = "raft_peer_listener_aborted",
-            );
-            shutdown_result.context("raft shutdown is incomplete")
-        }
-    }
+    finish_raft_listener_shutdown(event.listener_action, peer_server, deadline, shutdown_result)
+        .await
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
@@ -4116,7 +4120,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // deadline, rather than adding the adapter's default drain timeout after
     // the deadline has already expired.
     let (http_shutdown_tx, http_shutdown_rx) = tokio::sync::oneshot::channel();
-    let http_server = match serving_tls {
+    let mut http_server = match serving_tls {
         // #3113 R1/R9: the configuration is read per accepted connection, so
         // a renewed leaf reaches connection N+1 with no rebind and no restart.
         // `None` from the source refuses the connection — there is deliberately
@@ -4141,6 +4145,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // the race with Kubernetes' SIGKILL.
     let shutdown = async move {
         service_http::wait_shutdown_signal().await;
+        let deadline = server_lifecycle::ShutdownDeadline::from_now(grace, Duration::ZERO)
+            .expect("zero reserve must fit the Lumen shutdown grace");
+        let _ = http_shutdown_tx.send(());
         #[cfg(feature = "raft-wal")]
         if let Some(host) = shutdown_raft_host.as_ref() {
             host.quiesce_proposals();
@@ -4159,22 +4166,19 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
         }
 
-        let deadline = server_lifecycle::ShutdownDeadline::from_now(grace, Duration::ZERO)
-            .expect("zero reserve must fit the Lumen shutdown grace");
-        // Start listener drain now. Raft shutdown below runs in this same
-        // signal-time window. The supervisor cancels the legacy adapter at
-        // this absolute deadline, so its fixed relative timeout cannot extend
-        // the caller-visible grace period.
-        let _ = http_shutdown_tx.send(());
         if let Some(sink) = shutdown_checkpoint_sink {
             if let Some(driver) = &mut segment_checkpoint_driver {
                 driver.request_stop();
             }
-            match tokio::time::timeout(deadline.remaining(), sink.save_shutdown_graph_cache()).await {
-                Ok(Ok(0)) => tracing::debug!("no HNSW shutdown cache needed"),
-                Ok(Ok(fields)) => tracing::info!(fields, "HNSW shutdown cache saved"),
-                Ok(Err(error)) => tracing::warn!(%error, "optional HNSW shutdown cache unavailable"),
-                Err(_) => tracing::warn!("optional HNSW shutdown cache reached the shutdown deadline"),
+            if deadline.remaining().is_zero() {
+                tracing::warn!("optional HNSW shutdown cache skipped after shutdown deadline");
+            } else {
+                match tokio::time::timeout_at(deadline.expires_at, sink.save_shutdown_graph_cache()).await {
+                    Ok(Ok(0)) => tracing::debug!("no HNSW shutdown cache needed"),
+                    Ok(Ok(fields)) => tracing::info!(fields, "HNSW shutdown cache saved"),
+                    Ok(Err(error)) => tracing::warn!(%error, "optional HNSW shutdown cache unavailable"),
+                    Err(_) => tracing::warn!("optional HNSW shutdown cache reached the shutdown deadline"),
+                }
             }
         }
         #[cfg(feature = "raft-wal")]
@@ -4186,16 +4190,17 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
         }
         tracing::info!(grace_secs = grace.as_secs(), "draining");
-        tokio::time::sleep(deadline.remaining()).await;
-        tracing::info!("grace expired; shutting down");
+        match tokio::time::timeout_at(deadline.expires_at, &mut http_server).await {
+            Ok(Ok(())) => tracing::info!("http server drained; shutting down"),
+            Ok(Err(error)) => tracing::warn!(%error, "http server task failed during drain"),
+            Err(_) => {
+                http_server.abort();
+                let _ = http_server.await;
+                tracing::info!("grace expired; shutting down");
+            }
+        }
     };
     shutdown.await;
-    // `service_http::{serve,serve_tls}` are compatibility adapters with a
-    // fixed five-second post-signal drain. Their own drain began above, but
-    // this caller owns the absolute termination deadline. Abort only after
-    // the Raft terminal report and its peer-listener decision have completed.
-    http_server.abort();
-    let _ = http_server.await;
     if let Some(error) = shutdown_error
         .lock()
         .expect("shutdown error slot poisoned")
@@ -4487,6 +4492,36 @@ mod tests {
         QueryNode, SearchRequest, TermQuery,
     };
     use std::collections::BTreeMap;
+
+    #[cfg(feature = "raft-wal")]
+    #[tokio::test]
+    async fn abort_after_report_closes_peer_normally_before_deadline() {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            shutdown_rx.await.expect("listener receives shutdown");
+            closed_tx.send(()).expect("record normal listener exit");
+            Ok(())
+        });
+        let peer_server = RaftPeerServer { shutdown_tx, task };
+        let deadline = server_lifecycle::ShutdownDeadline::from_now(
+            Duration::from_secs(1),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        let result = finish_raft_listener_shutdown(
+            shutdown::PeerListenerAction::AbortAfterReport,
+            peer_server,
+            deadline,
+            Err(anyhow::anyhow!("incomplete report")),
+        )
+        .await;
+
+        closed_rx.await.expect("listener must finish normally");
+        let error = result.expect_err("incomplete report remains an error");
+        assert!(error.to_string().contains("raft shutdown is incomplete"));
+    }
 
     fn test_schema() -> CreateCollectionRequest {
         serde_json::from_value(serde_json::json!({
