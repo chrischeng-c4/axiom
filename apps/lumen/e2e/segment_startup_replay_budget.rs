@@ -31,11 +31,13 @@
 mod serve_budget_support;
 
 use serve_budget_support::{
-    aof_sequences, assert_keyword_hit, assert_pending_metrics, assert_safe_aof_tail,
-    checkpoint_sequence, raw_payload_bytes, replay_event_u64, stats_documents,
-    write_large_aof_tail, LumenProcess, ServeMode, LARGE_VALUE_COUNT, PENDING_HARD_BYTES,
+    aof_sequences, append_large_aof_tail, assert_keyword_hit, assert_pending_metrics,
+    assert_safe_aof_tail, checkpoint_generation_name, checkpoint_generation_names,
+    checkpoint_sequence, persist_segment_checkpoint, raw_payload_bytes, replay_event_u64,
+    stats_documents, write_large_aof_tail, LumenProcess, ServeMode, LARGE_VALUE_COUNT,
+    PENDING_HARD_BYTES, STARTUP_DEADLINE,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn idle_segment_sigterm_drains_before_default_grace_and_cold_restarts() {
@@ -51,8 +53,10 @@ fn idle_segment_sigterm_drains_before_default_grace_and_cold_restarts() {
     // HTTP drain before this 30-second upper bound, then retain its durable
     // segment data for a cold restart.
     let default_grace = Duration::from_secs(30);
+    let sigterm_started = Instant::now();
+    let shutdown_deadline = sigterm_started + default_grace;
     process.send_sigterm();
-    let (shutdown_elapsed, shutdown_logs) = process.wait_for_exit(default_grace);
+    let (shutdown_elapsed, shutdown_logs) = process.wait_for_exit_before(shutdown_deadline);
     assert!(
         shutdown_logs.contains("http server drained; shutting down"),
         "SIGTERM must report normal HTTP drain completion, not only early process exit; logs:\n{shutdown_logs}",
@@ -67,7 +71,11 @@ fn idle_segment_sigterm_drains_before_default_grace_and_cold_restarts() {
     assert_safe_aof_tail(&original_sequences, &surviving_sequences, current_sequence);
 
     let mut cold = LumenProcess::spawn(Some(root.path()), ServeMode::Segment, 300);
-    cold.wait_until_ready(300);
+    cold.wait_until_ready_before(300, shutdown_deadline);
+    assert!(
+        Instant::now() < shutdown_deadline,
+        "SIGTERM exit, cold segment recovery, and /readyz must share one 30-second deadline"
+    );
     assert_eq!(
         stats_documents(&cold),
         LARGE_VALUE_COUNT as u64,
@@ -139,6 +147,99 @@ fn segment_aof_replay_over_budget_charges_during_bootstrap_and_cold_restarts() {
     for ordinal in [0, LARGE_VALUE_COUNT / 2, LARGE_VALUE_COUNT - 1] {
         assert_keyword_hit(&cold, ordinal);
     }
+}
+
+#[test]
+fn multi_generation_segment_checkpoint_recovers_a_retained_aof_tail_before_readyz_deadline() {
+    const BASE_ORDINALS: [usize; 3] = [0, LARGE_VALUE_COUNT / 2, LARGE_VALUE_COUNT - 1];
+    const TAIL_ORDINALS: [usize; 2] = [LARGE_VALUE_COUNT, LARGE_VALUE_COUNT + 1];
+
+    let root = tempfile::tempdir().expect("multi-generation segment recovery root");
+    let base_sequences = write_large_aof_tail(root.path());
+    let last_base_sequence = *base_sequences
+        .last()
+        .expect("base AOF fixture must contain a last sequence");
+
+    let mut live = LumenProcess::spawn(Some(root.path()), ServeMode::Segment, 300);
+    live.wait_until_ready(300);
+    assert_eq!(
+        stats_documents(&live),
+        LARGE_VALUE_COUNT as u64,
+        "first recovery must expose every selected base document before checkpointing again",
+    );
+    for ordinal in BASE_ORDINALS {
+        assert_keyword_hit(&live, ordinal);
+    }
+
+    let first_generations = checkpoint_generation_names(root.path());
+    assert!(
+        !first_generations.is_empty(),
+        "over-budget bootstrap must publish its first persisted segment generation"
+    );
+    assert!(
+        checkpoint_sequence(root.path()) <= last_base_sequence,
+        "first generation cannot cover a sequence past the complete base AOF"
+    );
+    let first_current_generation = checkpoint_generation_name(root.path());
+
+    persist_segment_checkpoint(&live);
+    let complete_base_sequence = checkpoint_sequence(root.path());
+    assert_eq!(
+        complete_base_sequence, last_base_sequence,
+        "second persisted generation must cover the complete base AOF before tail creation",
+    );
+    let complete_generations = checkpoint_generation_names(root.path());
+    assert!(
+        complete_generations.len() >= 2,
+        "manual publication must leave a multi-generation persisted segment root: {complete_generations:?}"
+    );
+    assert_ne!(
+        checkpoint_generation_name(root.path()),
+        first_current_generation,
+        "manual publication must advance CURRENT to a new immutable generation"
+    );
+    for ordinal in BASE_ORDINALS {
+        assert_keyword_hit(&live, ordinal);
+    }
+    let _ = live.stop_and_logs();
+
+    let tail_sequences =
+        append_large_aof_tail(root.path(), complete_base_sequence + 1, &TAIL_ORDINALS);
+    let mut all_sequences = base_sequences;
+    all_sequences.extend(&tail_sequences);
+    assert_eq!(
+        aof_sequences(root.path()),
+        tail_sequences,
+        "only the strict-synced tail may remain after the complete base checkpoint",
+    );
+    assert_safe_aof_tail(&all_sequences, &tail_sequences, complete_base_sequence);
+
+    let readyz_deadline = Instant::now() + STARTUP_DEADLINE;
+    let mut cold = LumenProcess::spawn(Some(root.path()), ServeMode::Segment, 300);
+    cold.wait_until_ready_before(300, readyz_deadline);
+    assert!(
+        Instant::now() < readyz_deadline,
+        "multi-generation cold recovery and /readyz must finish within the existing 30-second absolute startup deadline"
+    );
+    assert_eq!(
+        stats_documents(&cold),
+        (LARGE_VALUE_COUNT + TAIL_ORDINALS.len()) as u64,
+        "cold recovery must join all selected base values with every retained tail value",
+    );
+    for ordinal in BASE_ORDINALS.into_iter().chain(TAIL_ORDINALS) {
+        assert_keyword_hit(&cold, ordinal);
+    }
+    assert_eq!(
+        checkpoint_sequence(root.path()),
+        complete_base_sequence,
+        "small retained tail must replay without replacing the complete base generation",
+    );
+    assert_eq!(
+        aof_sequences(root.path()),
+        tail_sequences,
+        "cold recovery must retain every tail frame that remains later than CURRENT",
+    );
+    assert_safe_aof_tail(&all_sequences, &tail_sequences, complete_base_sequence);
 }
 
 mod large_aof_codec_compatibility {

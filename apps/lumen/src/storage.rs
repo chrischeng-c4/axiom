@@ -85,6 +85,145 @@ const SEARCH_RESULT_CACHE_MAX: usize = 256;
 type FastHashMap<K, V> = FxHashMap<K, V>;
 type FastHashSet<K> = rustc_hash::FxHashSet<K>;
 
+/// Opt-in, aggregate-only measurements for a durable checkpoint recovery.
+///
+/// This deliberately keeps no checkpoint paths, collection names, field names,
+/// external IDs, or document values.  The caller owns the one structured log
+/// line emitted after recovery has completed.
+#[derive(Clone)]
+pub(crate) struct RecoveryProfile {
+    enabled: bool,
+    inner: Arc<Mutex<RecoveryProfileData>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RecoveryPhase {
+    LayoutValidation,
+    ManifestDecode,
+    BaseRowsDecode,
+    FlatCompatibilityTree,
+    EngineReopen,
+    DeltaDecodeApply,
+    CheckpointHnswGraph,
+    IdentityHydration,
+}
+
+impl RecoveryPhase {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::LayoutValidation => "layout_validation",
+            Self::ManifestDecode => "manifest_decode",
+            Self::BaseRowsDecode => "base_rows_decode",
+            Self::FlatCompatibilityTree => "flat_compatibility_tree",
+            Self::EngineReopen => "engine_reopen",
+            Self::DeltaDecodeApply => "delta_decode_apply",
+            Self::CheckpointHnswGraph => "checkpoint_hnsw_graph",
+            Self::IdentityHydration => "identity_hydration",
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RecoveryProfileData {
+    pub collection_open_count: u64,
+    pub collection_open_total_ms: u64,
+    pub collection_open_max_ms: u64,
+    pub vector_flat_open_count: u64,
+    pub vector_flat_open_ms: u64,
+    pub vector_hnsw_open_count: u64,
+    pub vector_hnsw_open_ms: u64,
+    pub coverage_rebuild_ms: u64,
+}
+
+impl RecoveryProfile {
+    pub(crate) fn from_env() -> Self {
+        Self::new(std::env::var_os("LUMEN_RECOVERY_PROFILE").is_some_and(|value| value == "1"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::new(true)
+    }
+
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            inner: Arc::new(Mutex::new(RecoveryProfileData::default())),
+        }
+    }
+
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn phase_start<T>(&self, phase: RecoveryPhase, work: impl FnOnce() -> T) -> T {
+        if self.enabled {
+            tracing::info!(phase = phase.label(), state = "start", "recovery phase");
+        }
+        work()
+    }
+
+    pub(crate) fn reset(&self) {
+        if self.enabled {
+            *self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = RecoveryProfileData::default();
+        }
+    }
+
+    pub(crate) fn collection_opened(&self, elapsed: Duration) {
+        if self.enabled {
+            let elapsed_ms = elapsed.as_millis() as u64;
+            let mut data = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            data.collection_open_count += 1;
+            data.collection_open_total_ms += elapsed_ms;
+            data.collection_open_max_ms = data.collection_open_max_ms.max(elapsed_ms);
+        }
+    }
+
+    pub(crate) fn vector_opened(&self, backend: crate::types::VectorBackend, elapsed: Duration) {
+        if self.enabled {
+            let elapsed_ms = elapsed.as_millis() as u64;
+            let mut data = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match backend {
+                crate::types::VectorBackend::FlatCpu => {
+                    data.vector_flat_open_count += 1;
+                    data.vector_flat_open_ms += elapsed_ms;
+                }
+                crate::types::VectorBackend::HnswCpu => {
+                    data.vector_hnsw_open_count += 1;
+                    data.vector_hnsw_open_ms += elapsed_ms;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn coverage_rebuilt(&self, elapsed: Duration) {
+        if self.enabled {
+            self.inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .coverage_rebuild_ms += elapsed.as_millis() as u64;
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> Option<RecoveryProfileData> {
+        self.enabled.then(|| {
+            self.inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        })
+    }
+}
+
 // #3992 deterministic test oracle.  This is thread-local so concurrent unit
 // tests and the asynchronous reclaimer cannot affect the caller-thread check.
 // The truncate test uses an unavailable worker and requires this to remain
@@ -15117,6 +15256,7 @@ impl Collection {
             false,
             CheckpointLayout::Legacy,
             None,
+            None,
         )
     }
 
@@ -15127,6 +15267,7 @@ impl Collection {
         defer_hnsw: bool,
         layout: CheckpointLayout,
         mapped_rows: Option<&BTreeMap<String, Vec<String>>>,
+        recovery_profile: Option<&RecoveryProfile>,
     ) -> Result<Self> {
         #[cfg(test)]
         CHECKPOINT_COLLECTION_OPENS.with(|count| count.set(count.get() + 1));
@@ -15169,7 +15310,18 @@ impl Collection {
             } else {
                 None
             };
+            let vector_started = recovery_profile
+                .filter(|profile| profile.enabled())
+                .and_then(|_| (spec.field_type == FieldType::Vector).then(Instant::now));
             let mut fi = FieldIndex::open_from_segment(spec, dir, &stem, vec_row_eids, defer_hnsw)?;
+            if let (Some(profile), Some(started)) = (recovery_profile, vector_started) {
+                profile.vector_opened(
+                    spec.vector_spec()?
+                        .expect("vector field has a spec")
+                        .backend,
+                    started.elapsed(),
+                );
+            }
             if let Some(rows) = mapped_rows.and_then(|fields| fields.get(name)) {
                 if spec.field_type != FieldType::Vector {
                     let ids = rows
@@ -15179,7 +15331,13 @@ impl Collection {
                     map_loaded_base_rows(&mut fi, ids)?;
                 }
             }
+            let coverage_started = recovery_profile
+                .filter(|profile| profile.enabled())
+                .map(|_| Instant::now());
             record_field_coverage(&fi, name, &interner, &mut eid_fields);
+            if let (Some(profile), Some(started)) = (recovery_profile, coverage_started) {
+                profile.coverage_rebuilt(started.elapsed());
+            }
             fields.insert(name.clone(), fi);
         }
 
@@ -16233,7 +16391,7 @@ impl Engine {
         dir: &std::path::Path,
         defer_hnsw: bool,
     ) -> Result<u64> {
-        self.reopen_from_segment_dir_with_base_rows(dir, defer_hnsw, &BTreeMap::new())
+        self.reopen_from_segment_dir_with_base_rows(dir, defer_hnsw, &BTreeMap::new(), None)
     }
 
     pub(crate) fn reopen_from_segment_dir_with_base_rows(
@@ -16241,6 +16399,7 @@ impl Engine {
         dir: &std::path::Path,
         defer_hnsw: bool,
         mapped_rows: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+        recovery_profile: Option<&RecoveryProfile>,
     ) -> Result<u64> {
         let _apply = self.capture_barrier.apply();
         if !dir.exists() {
@@ -16266,6 +16425,7 @@ impl Engine {
                 .map_err(|e| anyhow!("decode checkpoint schema {}: {e}", schema_path.display()))?;
             let name = collection_name_from_dir(&coll_dir)
                 .ok_or_else(|| anyhow!("undecodable checkpoint subdir {}", coll_dir.display()))?;
+            let collection_started = recovery_profile.map(|_| Instant::now());
             let mut coll = Collection::open_from_segments_with_vectors(
                 &coll_dir,
                 sidecar.fields,
@@ -16273,7 +16433,11 @@ impl Engine {
                 defer_hnsw,
                 sidecar.segment_layout,
                 mapped_rows.get(&name),
+                recovery_profile,
             )?;
+            if let (Some(profile), Some(started)) = (recovery_profile, collection_started) {
+                profile.collection_opened(started.elapsed());
+            }
             coll.collection_generation = state.allocate_collection_generation()?;
             max_seq = max_seq.max(sidecar.applied_seq);
             state.collections.insert(name, coll);
@@ -22182,6 +22346,63 @@ mod segment_vector_diff_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_profile_is_opt_in_and_keeps_only_aggregate_counts_and_timings() {
+        let disabled = RecoveryProfile::new(false);
+        disabled.collection_opened(Duration::from_millis(9));
+        assert!(
+            disabled.snapshot().is_none(),
+            "disabled recovery must not report"
+        );
+
+        let profile = RecoveryProfile::for_test();
+        profile.collection_opened(Duration::from_millis(3));
+        profile.collection_opened(Duration::from_millis(9));
+        profile.vector_opened(
+            crate::types::VectorBackend::FlatCpu,
+            Duration::from_millis(2),
+        );
+        profile.vector_opened(
+            crate::types::VectorBackend::HnswCpu,
+            Duration::from_millis(4),
+        );
+        profile.coverage_rebuilt(Duration::from_millis(5));
+
+        let report = profile.snapshot().expect("explicit opt-in must report");
+        assert_eq!(report.collection_open_count, 2);
+        assert_eq!(report.collection_open_total_ms, 12);
+        assert_eq!(report.collection_open_max_ms, 9);
+        assert_eq!(report.vector_flat_open_count, 1);
+        assert_eq!(report.vector_flat_open_ms, 2);
+        assert_eq!(report.vector_hnsw_open_count, 1);
+        assert_eq!(report.vector_hnsw_open_ms, 4);
+        assert_eq!(report.coverage_rebuild_ms, 5);
+    }
+
+    #[test]
+    fn recovery_phase_start_runs_work_for_enabled_and_disabled_profiles() {
+        let disabled = RecoveryProfile::new(false);
+        let mut disabled_work = false;
+        let disabled_result = disabled.phase_start(RecoveryPhase::CheckpointHnswGraph, || {
+            disabled_work = true;
+            7
+        });
+        assert_eq!(disabled_result, 7);
+        assert!(disabled_work);
+        assert!(disabled.snapshot().is_none());
+
+        let enabled = RecoveryProfile::for_test();
+        let mut enabled_work = false;
+        let enabled_result = enabled.phase_start(RecoveryPhase::CheckpointHnswGraph, || {
+            enabled_work = true;
+            11
+        });
+        assert_eq!(enabled_result, 11);
+        assert!(enabled_work);
+        assert!(enabled.snapshot().is_some());
+    }
+
     #[test]
     fn hash_snapshot_keeps_sealed_base_values() {
         let dir = tempfile::tempdir().unwrap();

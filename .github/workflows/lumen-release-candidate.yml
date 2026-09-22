@@ -601,6 +601,7 @@ jobs:
           CARGO_INCREMENTAL: '0'
           LUMEN_PERF_IMAGE: ${{ needs.ghcr-image-and-attest.outputs.image_repo }}@${{ needs.ghcr-image-and-attest.outputs.root_digest }}
           LUMEN_PERF_QUALIFYING_CELL: '1'
+          LUMEN_RECOVERY_PROFILE: '1'
           LUMEN_PERF_ENDPOINT: ${{ matrix.endpoint }}
           LUMEN_PERF_BATCH: ${{ matrix.batch }}
           LUMEN_PERF_BACKEND: ${{ matrix.backend }}

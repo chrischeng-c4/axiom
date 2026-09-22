@@ -48,7 +48,7 @@ const ACTIONS: &[&str] = &[
     "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 ];
 const WORKFLOW_BYTES_SHA256: &str =
-    "137b3608ad07af3f7bf80faed3cdc73e49470e5b05630e785dc55101666145f0";
+    "44075cc9f740d9fa0db18a74481bffafaae410b24ee2463d2670d1294880b54f";
 const KIND_E2E_BYTES_SHA256: &str =
     "1e6bb83156af06463fed2ba8408cc0b6ab433ce08a68d92a5b17c934972fdedc";
 const RELEASE_PERF_GATE: &str = "cargo test --release --locked -p lumen --test perf_gate -- --ignored --test-threads=1 --nocapture";
@@ -1534,21 +1534,18 @@ fn validate_perf_workload_ledger_source(source: &str) -> Result<(), Finding> {
 
 fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
     let (coarse, durable) = durable_workload_region(source)?;
-    require(
-        coarse.contains("const TRUNCATE_LARGE_DOCUMENTS: usize = 100_000;")
-            && coarse.contains("const READ_DOCUMENTS: usize = 100_000;")
-            && !coarse.contains("500_000")
-            && !coarse.contains("500k")
-            && coarse.contains("fn number_range_request(start: usize)")
-            && coarse.contains("gte: Some(RangeBound::Number(start as f64))")
-            && coarse
-                .contains("fn sorted_number_request(cursor: Option<String>, lower_bound: usize)")
-            && coarse.contains("gte: Some(RangeBound::Number(lower_bound as f64))")
-            && coarse.contains("let mut range_start = READ_RANGE_START;")
-            && coarse.contains("let mut sort_lower_bound = READ_SORT_LOWER_BOUND;")
-            && coarse.contains("let mut cursor_lower_bound = READ_CURSOR_LOWER_BOUND;"),
-        "PERF_GATE",
-    )?;
+    let coarse_ok = coarse.contains("const TRUNCATE_LARGE_DOCUMENTS: usize = 100_000;")
+        && coarse.contains("const READ_DOCUMENTS: usize = 100_000;")
+        && !coarse.contains("500_000")
+        && !coarse.contains("500k")
+        && coarse.contains("fn number_range_request(start: usize)")
+        && coarse.contains("gte: Some(RangeBound::Number(start as f64))")
+        && coarse.contains("fn sorted_number_request(cursor: Option<String>, lower_bound: usize)")
+        && coarse.contains("gte: Some(RangeBound::Number(lower_bound as f64))")
+        && coarse.contains("let mut range_start = READ_RANGE_START;")
+        && coarse.contains("let mut sort_lower_bound = READ_SORT_LOWER_BOUND;")
+        && coarse.contains("let mut cursor_lower_bound = READ_CURSOR_LOWER_BOUND;");
+    require(coarse_ok, "PERF_GATE")?;
     let durable_required = [
         "#[path = \"support/perf_cell_receipt.rs\"]",
         "mod perf_cell_receipt;",
@@ -1606,12 +1603,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
         "run_case(config)",
         "assert_eq!(cases.len(), 16);",
     ];
-    require(
-        durable_required
-            .iter()
-            .all(|expected| has_active_line(durable, expected)),
-        "PERF_GATE",
-    )?;
+    let durable_ok = durable_required
+        .iter()
+        .all(|expected| has_active_line(durable, expected));
+    require(durable_ok, "PERF_GATE")?;
     let ngram_positive = active_source_region(
         durable,
         "\"title_ngram\" | \"body_ngram\" | \"summary_ngram\" => {",
@@ -1635,9 +1630,7 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
         }),
         "PERF_GATE",
     )?;
-    require(
-        perf_gate_inventory(source)
-            == vec![
+    let expected_inventory = vec![
                 ("index_throughput_floor".into(), true),
                 ("match_query_latency_floor".into(), true),
                 ("term_query_latency_floor".into(), true),
@@ -1647,6 +1640,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 ("number_read_costs_on_100k_documents".into(), true),
                 ("median_statistic_and_ignored_inventory".into(), false),
+                (
+                    "docker_run_forwards_recovery_profile_only_when_set".into(),
+                    false,
+                ),
                 (
                     "restart_command_timeout_kills_and_reaps_a_stuck_child".into(),
                     false,
@@ -1894,9 +1891,14 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                         .into(),
                     false,
                 ),
-            ],
-        "PERF_GATE",
-    )
+                (
+                    "workload_slots_are_absolute_for_independent_queries_and_paced_mutations"
+                        .into(),
+                    false,
+                ),
+            ];
+    let actual_inventory = perf_gate_inventory(source);
+    require(actual_inventory == expected_inventory, "PERF_GATE")
 }
 
 /// The restart budget is one public 30-second deadline. These diagnostics are
@@ -2063,7 +2065,7 @@ fn step_named<'a>(steps: &'a [Yaml], name: &str) -> Result<&'a Yaml, Finding> {
     Ok(matches[0])
 }
 
-fn durable_perf_env() -> [(&'static str, &'static str); 10] {
+fn durable_perf_env() -> [(&'static str, &'static str); 11] {
     [
         (
             "LUMEN_PERF_IMAGE",
@@ -2077,6 +2079,7 @@ fn durable_perf_env() -> [(&'static str, &'static str); 10] {
         ("LUMEN_PERF_RUN_ID", "${{ github.run_id }}"),
         ("LUMEN_PERF_RUN_ATTEMPT", "${{ github.run_attempt }}"),
         ("LUMEN_PERF_COMMIT", "${{ needs.identity.outputs.commit }}"),
+        ("LUMEN_RECOVERY_PROFILE", "1"),
         (
             "LUMEN_PERF_RECEIPT_PATH",
             "${{ github.workspace }}/receipts/${{ matrix.cell_id }}.json",
@@ -2948,6 +2951,7 @@ fn durable_perf_workflow_fixture() -> String {
           LUMEN_PERF_RUN_ID: ${{{{ github.run_id }}}}
           LUMEN_PERF_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}
           LUMEN_PERF_COMMIT: ${{{{ needs.identity.outputs.commit }}}}
+          LUMEN_RECOVERY_PROFILE: "1"
           LUMEN_PERF_RECEIPT_PATH: ${{{{ github.workspace }}}}/receipts/${{{{ matrix.cell_id }}}}.json
         shell: bash
         run: |
@@ -3077,6 +3081,26 @@ fn durable_performance_release_workflow_is_fail_closed() {
             &source,
             "          LUMEN_PERF_QUALIFYING_CELL: \"1\"",
             "          LUMEN_PERF_QUALIFYING_CELL: \"1\"\n          LUMEN_PERF_DIAGNOSTIC: \"1\"",
+        ),
+    );
+    assert_rejected(
+        "missing recovery profile",
+        replace_once(&source, "          LUMEN_RECOVERY_PROFILE: \"1\"\n", ""),
+    );
+    assert_rejected(
+        "wrong recovery profile zero",
+        replace_once(
+            &source,
+            "          LUMEN_RECOVERY_PROFILE: \"1\"",
+            "          LUMEN_RECOVERY_PROFILE: \"0\"",
+        ),
+    );
+    assert_rejected(
+        "wrong recovery profile value",
+        replace_once(
+            &source,
+            "          LUMEN_RECOVERY_PROFILE: \"1\"",
+            "          LUMEN_RECOVERY_PROFILE: \"2\"",
         ),
     );
     assert_rejected(

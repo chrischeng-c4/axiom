@@ -637,6 +637,7 @@ fn median_statistic_and_ignored_inventory() {
             ),
             ("number_read_costs_on_100k_documents", true),
             ("median_statistic_and_ignored_inventory", false),
+            ("docker_run_forwards_recovery_profile_only_when_set", false),
             (
                 "restart_command_timeout_kills_and_reaps_a_stuck_child",
                 false,
@@ -846,6 +847,10 @@ fn median_statistic_and_ignored_inventory() {
                 "readyz_readiness_trace_pre_poll_restart_failure_creates_no_trace_artifact",
                 false,
             ),
+            (
+                "workload_slots_are_absolute_for_independent_queries_and_paced_mutations",
+                false,
+            ),
         ]
     );
 
@@ -979,6 +984,8 @@ mod durable_workload {
     const EVIDENCE_HTTP_BODY_MAX_BYTES: usize = EVIDENCE_ARTIFACT_MAX_BYTES - 1_024;
     const REQUEST_CONCURRENCY: usize = 256;
     const QUERY_CONCURRENCY: usize = 64;
+    const MUTATION_SLOT: Duration = Duration::from_millis(10);
+    const QUERY_SLOT: Duration = Duration::from_millis(100);
     const INTERVAL_TRACE_CADENCE: Duration = Duration::from_secs(5);
     const INTERVAL_TRACE_MAX_SAMPLES: usize = 362;
     const INTERVAL_TRACE_MAX_BYTES: usize = 512 * 1024;
@@ -2983,6 +2990,82 @@ mod durable_workload {
         }
     }
 
+    fn docker_run_args(
+        container: &str,
+        volume: &str,
+        image: &str,
+        recovery_profile: Option<&str>,
+    ) -> Vec<String> {
+        let resource_args = [
+            "--cpus",
+            DOCKER_CPUS,
+            "--memory",
+            DOCKER_MEMORY,
+            "--memory-swap",
+            DOCKER_MEMORY,
+        ];
+        let mut args = vec![
+            "run".to_owned(),
+            "-d".to_owned(),
+            "--rm".to_owned(),
+            "--name".to_owned(),
+            container.to_owned(),
+            "--mount".to_owned(),
+            format!("type=volume,src={volume},dst=/var/lib/lumen/data"),
+            "-e".to_owned(),
+            "LUMEN_AUTH=off".to_owned(),
+            "-e".to_owned(),
+            "LUMEN_WAL=embedded".to_owned(),
+            "-e".to_owned(),
+            "LUMEN_PERSISTENCE=segment".to_owned(),
+            "-e".to_owned(),
+            "LUMEN_DATA_DIR=/var/lib/lumen/data".to_owned(),
+            "-e".to_owned(),
+            format!("LUMEN_SNAPSHOT_SECS={SNAPSHOT_SECONDS}"),
+        ];
+        let insert_at = 5;
+        args.splice(
+            insert_at..insert_at,
+            resource_args.iter().map(|arg| (*arg).to_owned()),
+        );
+        if let Some(recovery_profile) = recovery_profile {
+            args.extend([
+                "-e".to_owned(),
+                format!("LUMEN_RECOVERY_PROFILE={recovery_profile}"),
+            ]);
+        }
+        args.extend([
+            "-p".to_owned(),
+            "127.0.0.1::7373".to_owned(),
+            image.to_owned(),
+        ]);
+        args
+    }
+
+    fn docker_owned(args: &[String]) -> Result<String> {
+        let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+        docker(&borrowed)
+    }
+
+    #[test]
+    fn docker_run_forwards_recovery_profile_only_when_set() {
+        let without_profile = docker_run_args("container", "volume", "image", None);
+        assert!(
+            !without_profile
+                .iter()
+                .any(|arg| arg.starts_with("LUMEN_RECOVERY_PROFILE=")),
+            "an unset recovery profile must not alter Docker's environment"
+        );
+
+        let with_profile = docker_run_args("container", "volume", "image", Some("1"));
+        assert!(
+            with_profile
+                .windows(2)
+                .any(|pair| pair == ["-e", "LUMEN_RECOVERY_PROFILE=1"]),
+            "an explicitly set recovery profile must reach docker run"
+        );
+    }
+
     impl DockerLumen {
         async fn start() -> Result<Self> {
             let image = required_env("LUMEN_PERF_IMAGE")?;
@@ -3002,34 +3085,13 @@ mod durable_workload {
             docker(&["volume", "create", &volume])?;
             let mut cleanup = DockerCleanup::new(container.clone(), volume.clone());
             let mut server = match (|| -> Result<Self> {
-                docker(&[
-                    "run",
-                    "-d",
-                    "--rm",
-                    "--name",
+                let run_args = docker_run_args(
                     &container,
-                    "--cpus",
-                    DOCKER_CPUS,
-                    "--memory",
-                    DOCKER_MEMORY,
-                    "--memory-swap",
-                    DOCKER_MEMORY,
-                    "--mount",
-                    &format!("type=volume,src={volume},dst=/var/lib/lumen/data"),
-                    "-e",
-                    "LUMEN_AUTH=off",
-                    "-e",
-                    "LUMEN_WAL=embedded",
-                    "-e",
-                    "LUMEN_PERSISTENCE=segment",
-                    "-e",
-                    "LUMEN_DATA_DIR=/var/lib/lumen/data",
-                    "-e",
-                    &format!("LUMEN_SNAPSHOT_SECS={SNAPSHOT_SECONDS}"),
-                    "-p",
-                    "127.0.0.1::7373",
+                    &volume,
                     &image,
-                ])?;
+                    env::var("LUMEN_RECOVERY_PROFILE").ok().as_deref(),
+                );
+                docker_owned(&run_args)?;
                 let image_id = verify_image_identity(&image)?;
                 let port_output = docker(&["port", &container, "7373/tcp"])?;
                 let base = published_loopback_base(&port_output)?;
@@ -5832,6 +5894,19 @@ mod durable_workload {
                 "input_workload",
                 async {
                     tokio::time::sleep_until(clock.deadline(Duration::from_secs(second))).await;
+                    // Offer the independently scheduled queries before mutation
+                    // preparation. A slow mutation pump must not postpone their
+                    // absolute 100 ms slots.
+                    offer_queries(
+                        &clock,
+                        &ledger,
+                        &mut queries,
+                        server,
+                        second,
+                        input_deadline,
+                        input_window,
+                    )
+                    .await?;
                     match second % 3 {
                         0 => {
                             offer_additions(
@@ -5879,16 +5954,7 @@ mod durable_workload {
                             .await?;
                         }
                     }
-                    offer_queries(
-                        &clock,
-                        &ledger,
-                        &mut queries,
-                        server,
-                        second,
-                        input_deadline,
-                        input_window,
-                    )
-                    .await
+                    Ok(())
                 },
             )
             .await;
@@ -5992,6 +6058,24 @@ mod durable_workload {
         Ok((report, deltas, observed_input_duration))
     }
 
+    fn absolute_slot(second: u64, offset: usize, cadence: Duration) -> Duration {
+        Duration::from_secs(second)
+            .checked_add(
+                cadence
+                    .checked_mul(offset.try_into().expect("slot offset fits u32"))
+                    .expect("slot offset cannot overflow duration"),
+            )
+            .expect("workload slot cannot overflow duration")
+    }
+
+    fn mutation_slot(second: u64, offset: usize) -> Duration {
+        absolute_slot(second, offset, MUTATION_SLOT)
+    }
+
+    fn query_slot(second: u64, offset: usize) -> Duration {
+        absolute_slot(second, offset, QUERY_SLOT)
+    }
+
     async fn offer_additions(
         ledger: &Arc<Mutex<WorkloadLedger>>,
         clock: &Clock,
@@ -6006,6 +6090,8 @@ mod durable_workload {
     ) -> Result<()> {
         let add_base = second / 3 * DOCOPS_PER_SECOND as u64;
         for offset in 0..DOCOPS_PER_SECOND {
+            let scheduled_at = mutation_slot(second, offset);
+            tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let operation = *operation_id;
             *operation_id += 1;
@@ -6036,6 +6122,7 @@ mod durable_workload {
                 ledger,
                 clock,
                 server,
+                scheduled_at,
                 input_deadline,
                 input_timeout,
             )
@@ -6058,6 +6145,8 @@ mod durable_workload {
     ) -> Result<()> {
         let update_base = second / 3 * DOCOPS_PER_SECOND as u64;
         for offset in 0..DOCOPS_PER_SECOND {
+            let scheduled_at = mutation_slot(second, offset);
+            tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let operation = *operation_id;
             *operation_id += 1;
@@ -6081,6 +6170,7 @@ mod durable_workload {
                 ledger,
                 clock,
                 server,
+                scheduled_at,
                 input_deadline,
                 input_timeout,
             )
@@ -6103,6 +6193,8 @@ mod durable_workload {
     ) -> Result<()> {
         let delete_base = second / 3 * DOCOPS_PER_SECOND as u64;
         for offset in 0..DOCOPS_PER_SECOND {
+            let scheduled_at = mutation_slot(second, offset);
+            tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let operation = *operation_id;
             *operation_id += 1;
@@ -6122,6 +6214,7 @@ mod durable_workload {
                 ledger,
                 clock,
                 server,
+                scheduled_at,
                 input_deadline,
                 input_timeout,
             )
@@ -6137,6 +6230,7 @@ mod durable_workload {
         ledger: &Arc<Mutex<WorkloadLedger>>,
         clock: &Clock,
         server: &DockerLumen,
+        scheduled_at: Duration,
         input_deadline: tokio::time::Instant,
         input_timeout: Duration,
     ) -> Result<()> {
@@ -6144,7 +6238,6 @@ mod durable_workload {
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let id = *request_id;
             *request_id += 1;
-            let scheduled_at = clock.elapsed();
             pump.push(
                 send_index(
                     server.client.clone(),
@@ -6171,6 +6264,7 @@ mod durable_workload {
         ledger: &Arc<Mutex<WorkloadLedger>>,
         clock: &Clock,
         server: &DockerLumen,
+        scheduled_at: Duration,
         input_deadline: tokio::time::Instant,
         input_timeout: Duration,
     ) -> Result<()> {
@@ -6178,7 +6272,6 @@ mod durable_workload {
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let id = *request_id;
             *request_id += 1;
-            let scheduled_at = clock.elapsed();
             pump.push(
                 send_replace(
                     server.client.clone(),
@@ -6205,6 +6298,7 @@ mod durable_workload {
         ledger: &Arc<Mutex<WorkloadLedger>>,
         clock: &Clock,
         server: &DockerLumen,
+        scheduled_at: Duration,
         input_deadline: tokio::time::Instant,
         input_timeout: Duration,
     ) -> Result<()> {
@@ -6212,7 +6306,6 @@ mod durable_workload {
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
             let id = *request_id;
             *request_id += 1;
-            let scheduled_at = clock.elapsed();
             pump.push(
                 send_unindex(
                     server.client.clone(),
@@ -6243,8 +6336,7 @@ mod durable_workload {
     ) -> Result<()> {
         for offset in 0..QUERY_QPS {
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
-            let scheduled_at =
-                Duration::from_secs(second) + Duration::from_millis((offset * 100) as u64);
+            let scheduled_at = query_slot(second, offset);
             let (class, collection, body) = query_for(second, offset);
             let client = server.client.clone();
             let base = server.base.clone();
@@ -10207,6 +10299,34 @@ mod durable_workload {
                 );
                 task.abort();
             });
+    }
+
+    #[test]
+    fn workload_slots_are_absolute_for_independent_queries_and_paced_mutations() {
+        let second = 17;
+        let mutation_slots = (0..DOCOPS_PER_SECOND)
+            .map(|offset| mutation_slot(second, offset))
+            .collect::<Vec<_>>();
+        let query_slots = (0..QUERY_QPS)
+            .map(|offset| query_slot(second, offset))
+            .collect::<Vec<_>>();
+
+        assert_eq!(mutation_slots[0], Duration::from_secs(second));
+        assert_eq!(mutation_slots[99], Duration::from_millis(17_990));
+        assert_eq!(query_slots[0], Duration::from_secs(second));
+        assert_eq!(query_slots[9], Duration::from_millis(17_900));
+        assert!(
+            mutation_slots
+                .windows(2)
+                .all(|slots| slots[1] - slots[0] == MUTATION_SLOT),
+            "each mutation document must keep its absolute 10 ms slot"
+        );
+        assert!(
+            query_slots
+                .windows(2)
+                .all(|slots| slots[1] - slots[0] == QUERY_SLOT),
+            "each query offer must keep its independent absolute 100 ms slot"
+        );
     }
 }
 // DURABLE-WORKLOAD-END
