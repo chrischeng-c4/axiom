@@ -543,7 +543,6 @@ impl SegmentCheckpointSink {
             capacity_owner,
         }
     }
-
 }
 
 fn spawn_budget_waiter(
