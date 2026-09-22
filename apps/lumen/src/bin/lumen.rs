@@ -38,6 +38,13 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
+fn recovery_phase_start<T>(phase: &'static str, work: impl FnOnce() -> T) -> T {
+    if std::env::var_os("LUMEN_RECOVERY_PROFILE").is_some_and(|value| value == "1") {
+        tracing::info!(phase, state = "start", "recovery phase");
+    }
+    work()
+}
+
 use lumen::auth::{AuthConfig, AuthProfile};
 use lumen::coordinator::WriteCoordinator;
 use lumen::rdb::{LocalFsRdbStore, RdbSnapshot, RdbStore};
@@ -3630,8 +3637,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 let checkpoints_before = engine.metrics().segment_checkpoint_completed_total.get();
                 let replay_engine = engine.clone();
                 let replay_path = aof_path.clone();
-                let replayed = tokio::task::spawn_blocking(move || {
-                    lumen::aof::replay_aof_into(&replay_engine, &replay_path, start_seq)
+                let replayed = recovery_phase_start("aof_replay", || {
+                    tokio::task::spawn_blocking(move || {
+                        lumen::aof::replay_aof_into(&replay_engine, &replay_path, start_seq)
+                    })
                 })
                 .await
                 .context("AOF replay worker failed")?
@@ -3673,7 +3682,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if deferred_graph_restore {
         // The shutdown cache can be newer than CURRENT. Match it only after
         // replaying durable AOF records, while no request can observe staging.
-        let store = segment_store.as_ref().expect("deferred graph restore needs a segment store").clone();
+        let store = segment_store
+            .as_ref()
+            .expect("deferred graph restore needs a segment store")
+            .clone();
         let recovered = engine.clone();
         tokio::task::spawn_blocking(move || store.finish_aof_graph_restore(&recovered))
             .await

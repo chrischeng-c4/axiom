@@ -32,7 +32,7 @@ use storage_durable::{
 };
 
 use crate::capture_barrier::CaptureStamp;
-use crate::storage::{Engine, FrozenCheckpoint};
+use crate::storage::{Engine, FrozenCheckpoint, RecoveryPhase, RecoveryProfile};
 
 #[path = "segment_background_merge.rs"]
 mod background;
@@ -277,6 +277,23 @@ pub struct SegmentRdbStore {
     background: Arc<background::RootWork>,
     root_guard: Option<CheckpointRootGuard>,
     publication_fence: Option<crate::segment_capacity::PublicationFence>,
+    recovery_profile: RecoveryProfile,
+    recovery_timings: Arc<Mutex<RecoveryTimings>>,
+}
+
+/// Aggregate timings for the pre-bind portion of durable recovery.
+///
+/// Keep this intentionally scalar-only. The profile must never retain or emit
+/// paths, collection IDs, field names, document IDs, or document values.
+#[derive(Default)]
+struct RecoveryTimings {
+    layout_validation_ms: u64,
+    manifest_decode_ms: u64,
+    base_decode_ms: u64,
+    delta_decode_ms: u64,
+    reopen_ms: u64,
+    identity_hydration_ms: u64,
+    vector_finish_ms: u64,
 }
 
 /// Keeps one immutable generation present while an external snapshot writer
@@ -495,6 +512,55 @@ impl SegmentRdbStore {
         }
     }
 
+    fn reset_recovery_profile(&self) {
+        self.recovery_profile.reset();
+        if self.recovery_profile.enabled() {
+            *self
+                .recovery_timings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = RecoveryTimings::default();
+        }
+    }
+
+    fn add_recovery_timing(&self, update: impl FnOnce(&mut RecoveryTimings)) {
+        if self.recovery_profile.enabled() {
+            update(
+                &mut self
+                    .recovery_timings
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            );
+        }
+    }
+
+    fn emit_recovery_profile(&self) {
+        let Some(profile) = self.recovery_profile.snapshot() else {
+            return;
+        };
+        let timings = self
+            .recovery_timings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        tracing::info!(
+            layout_validation_ms = timings.layout_validation_ms,
+            manifest_decode_ms = timings.manifest_decode_ms,
+            base_decode_ms = timings.base_decode_ms,
+            delta_decode_ms = timings.delta_decode_ms,
+            reopen_ms = timings.reopen_ms,
+            collection_open_count = profile.collection_open_count,
+            collection_open_total_ms = profile.collection_open_total_ms,
+            collection_open_max_ms = profile.collection_open_max_ms,
+            vector_flat_open_count = profile.vector_flat_open_count,
+            vector_flat_open_ms = profile.vector_flat_open_ms,
+            vector_hnsw_open_count = profile.vector_hnsw_open_count,
+            vector_hnsw_open_ms = profile.vector_hnsw_open_ms,
+            coverage_rebuild_ms = profile.coverage_rebuild_ms,
+            identity_hydration_ms = timings.identity_hydration_ms,
+            vector_finish_ms = timings.vector_finish_ms,
+            "segment durable recovery profile"
+        );
+    }
+
     /// Open or create the checkpoint root.
     ///
     /// A genuinely empty root receives the explicit empty `CURRENT` sentinel.
@@ -536,6 +602,8 @@ impl SegmentRdbStore {
             generations,
             bootstrap: StartupBootstrap::ExistingCurrent { staging_cleaned: 0 },
             verified_catalog: Arc::new(Mutex::new(None)),
+            recovery_profile: RecoveryProfile::from_env(),
+            recovery_timings: Arc::new(Mutex::new(RecoveryTimings::default())),
         };
         let _guard = store.save_gate.lock_owned();
         let bootstrap = store.prepare_startup_root()?;
@@ -1074,7 +1142,20 @@ impl SegmentRdbStore {
     #[doc(hidden)]
     pub fn finish_aof_graph_restore(&self, engine: &Engine) -> Result<()> {
         let _guard = self.save_gate.lock_owned();
-        engine.finish_checkpoint_vectors_with_graph_cache(Some(&self.root.join(HNSW_GRAPH_CACHE_DIR)))
+        let started = self.recovery_profile.enabled().then(Instant::now);
+        self.recovery_profile
+            .phase_start(RecoveryPhase::CheckpointHnswGraph, || {
+                engine.finish_checkpoint_vectors_with_graph_cache(Some(
+                    &self.root.join(HNSW_GRAPH_CACHE_DIR),
+                ))
+            })?;
+        if let Some(started) = started {
+            self.add_recovery_timing(|timings| {
+                timings.vector_finish_ms = started.elapsed().as_millis() as u64;
+            });
+        }
+        self.emit_recovery_profile();
+        Ok(())
     }
 
     fn verify_predecessor_catalog(
@@ -1215,13 +1296,21 @@ impl SegmentRdbStore {
     /// `finish_aof_graph_restore` after AOF replay and before serving queries.
     /// Ordinary checkpoint readers and Raft keep the eager restore path.
     #[doc(hidden)]
-    pub fn reopen_for_aof_replay(&self, engine: &Arc<Engine>) -> Result<(SegmentStartupOutcome, bool)> {
+    pub fn reopen_for_aof_replay(
+        &self,
+        engine: &Arc<Engine>,
+    ) -> Result<(SegmentStartupOutcome, bool)> {
         let deferred = self.has_hnsw_graph_cache();
-        Ok((self.reopen_into_with_graph_policy(engine, deferred)?, deferred))
+        Ok((
+            self.reopen_into_with_graph_policy(engine, deferred)?,
+            deferred,
+        ))
     }
 
     fn reopen_into_with_graph_policy(
-        &self, engine: &Arc<Engine>, defer_until_aof: bool,
+        &self,
+        engine: &Arc<Engine>,
+        defer_until_aof: bool,
     ) -> Result<SegmentStartupOutcome> {
         let _guard = self.save_gate.lock_owned();
         match self.generations.read_current() {
@@ -1846,9 +1935,23 @@ impl SegmentRdbStore {
     }
 
     fn reopen_record_with_graph_policy(
-        &self, engine: &Arc<Engine>, record: &GenerationRecord, defer_until_aof: bool,
+        &self,
+        engine: &Arc<Engine>,
+        record: &GenerationRecord,
+        defer_until_aof: bool,
     ) -> Result<u64> {
-        let collections = validate_generation_layout(record)?;
+        self.reset_recovery_profile();
+        let layout_started = self.recovery_profile.enabled().then(Instant::now);
+        let collections = self
+            .recovery_profile
+            .phase_start(RecoveryPhase::LayoutValidation, || {
+                validate_generation_layout(record)
+            })?;
+        if let Some(started) = layout_started {
+            self.add_recovery_timing(|timings| {
+                timings.layout_validation_ms = started.elapsed().as_millis() as u64;
+            });
+        }
         let replacement = Engine::new();
         self.reopen_once_with_graph_policy(&replacement, record, collections, defer_until_aof)?;
         self.retain_root_for(&replacement);
@@ -1857,6 +1960,9 @@ impl SegmentRdbStore {
         self.background
             .pin_loaded_engine(record.name.as_str().to_owned(), &replacement)?;
         engine.activate_replacement(replacement)?;
+        if !defer_until_aof {
+            self.emit_recovery_profile();
+        }
         Ok(record.sequence)
     }
 
@@ -1884,69 +1990,113 @@ impl SegmentRdbStore {
         collections: usize,
         defer_until_aof: bool,
     ) -> Result<()> {
+        let manifest_started = self.recovery_profile.enabled().then(Instant::now);
         let manifest = if record.legacy {
             None
         } else {
-            Some(read_generation_manifest(&record.path)?)
+            Some(
+                self.recovery_profile
+                    .phase_start(RecoveryPhase::ManifestDecode, || {
+                        read_generation_manifest(&record.path)
+                    })?,
+            )
         };
+        if let Some(started) = manifest_started {
+            self.add_recovery_timing(|timings| {
+                timings.manifest_decode_ms = started.elapsed().as_millis() as u64;
+            });
+        }
         let graph_cache = self.root.join(HNSW_GRAPH_CACHE_DIR);
-        let graph_cache = std::fs::symlink_metadata(&graph_cache).ok()
+        let graph_cache = std::fs::symlink_metadata(&graph_cache)
+            .ok()
             .filter(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
             .map(|_| graph_cache);
-        let defer_hnsw = defer_until_aof || manifest.as_ref().is_some_and(|manifest| {
-            (graph_cache.is_some() && matches!(manifest.schema_version, GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3))
-            || manifest.collections.iter().any(|collection| {
-                collection.segments.iter().any(|segment| {
-                    (matches!(segment.kind, SegmentKind::Delta) || segment.local_rows.is_some())
-                        && segment
-                            .field
-                            .as_ref()
-                            .and_then(|field| collection.schema.get(field))
-                            .and_then(|spec| spec.get("type"))
-                            .and_then(serde_json::Value::as_str)
-                            == Some("vector")
-                })
-            })
-        });
-        let mut mapped_bases = BTreeMap::<String, BTreeMap<String, Vec<String>>>::new();
-        for collection in manifest.iter().flat_map(|manifest| &manifest.collections) {
-            for segment in &collection.segments {
-                if !matches!(segment.kind, SegmentKind::Base) {
-                    continue;
-                }
-                if let Some(local) = &segment.local_rows {
-                    let rows = crate::segment::decode_sparse_local_rows(
-                        &record.path.join(&local.path),
-                        local.count,
-                    )?;
-                    let ids = (0..local.count)
-                        .map(|row| {
-                            rows.external_id(row)
-                                .map(str::to_owned)
-                                .ok_or_else(|| anyhow!("mapped base row is missing"))
+        let defer_hnsw = defer_until_aof
+            || manifest.as_ref().is_some_and(|manifest| {
+                (graph_cache.is_some()
+                    && matches!(
+                        manifest.schema_version,
+                        GENERATION_MANIFEST_V2 | GENERATION_MANIFEST_V3
+                    ))
+                    || manifest.collections.iter().any(|collection| {
+                        collection.segments.iter().any(|segment| {
+                            (matches!(segment.kind, SegmentKind::Delta)
+                                || segment.local_rows.is_some())
+                                && segment
+                                    .field
+                                    .as_ref()
+                                    .and_then(|field| collection.schema.get(field))
+                                    .and_then(|spec| spec.get("type"))
+                                    .and_then(serde_json::Value::as_str)
+                                    == Some("vector")
                         })
-                        .collect::<Result<_>>()?;
-                    mapped_bases
-                        .entry(collection.collection_id.clone())
-                        .or_default()
-                        .insert(
-                            segment
-                                .field
-                                .clone()
-                                .ok_or_else(|| anyhow!("mapped base has no field"))?,
-                            ids,
-                        );
+                    })
+            });
+        let base_decode_started = self.recovery_profile.enabled().then(Instant::now);
+        let mut mapped_bases = BTreeMap::<String, BTreeMap<String, Vec<String>>>::new();
+        self.recovery_profile
+            .phase_start(RecoveryPhase::BaseRowsDecode, || -> Result<()> {
+                for collection in manifest.iter().flat_map(|manifest| &manifest.collections) {
+                    for segment in &collection.segments {
+                        if !matches!(segment.kind, SegmentKind::Base) {
+                            continue;
+                        }
+                        if let Some(local) = &segment.local_rows {
+                            let rows = crate::segment::decode_sparse_local_rows(
+                                &record.path.join(&local.path),
+                                local.count,
+                            )?;
+                            let ids = (0..local.count)
+                                .map(|row| {
+                                    rows.external_id(row)
+                                        .map(str::to_owned)
+                                        .ok_or_else(|| anyhow!("mapped base row is missing"))
+                                })
+                                .collect::<Result<_>>()?;
+                            mapped_bases
+                                .entry(collection.collection_id.clone())
+                                .or_default()
+                                .insert(
+                                    segment
+                                        .field
+                                        .clone()
+                                        .ok_or_else(|| anyhow!("mapped base has no field"))?,
+                                    ids,
+                                );
+                        }
+                    }
                 }
-            }
+                Ok(())
+            })?;
+        if let Some(started) = base_decode_started {
+            self.add_recovery_timing(|timings| {
+                timings.base_decode_ms = started.elapsed().as_millis() as u64;
+            });
         }
-        let compatibility_tree = manifest
-            .as_ref()
-            .filter(|manifest| manifest.schema_version == GENERATION_MANIFEST_V3)
-            .map(|manifest| materialize_flat_reopen_tree(&record.path, manifest))
-            .transpose()?;
-        let reopened = engine
-            .reopen_from_segment_dir_with_base_rows(&record.path, defer_hnsw, &mapped_bases)
-            .with_context(|| format!("reopen checkpoint {}", record.path.display()));
+        let compatibility_tree =
+            self.recovery_profile
+                .phase_start(RecoveryPhase::FlatCompatibilityTree, || {
+                    manifest
+                        .as_ref()
+                        .filter(|manifest| manifest.schema_version == GENERATION_MANIFEST_V3)
+                        .map(|manifest| materialize_flat_reopen_tree(&record.path, manifest))
+                        .transpose()
+                })?;
+        let reopen_started = self.recovery_profile.enabled().then(Instant::now);
+        let reopened = self
+            .recovery_profile
+            .phase_start(RecoveryPhase::EngineReopen, || {
+                engine
+                    .reopen_from_segment_dir_with_base_rows(
+                        &record.path,
+                        defer_hnsw,
+                        &mapped_bases,
+                        self.recovery_profile
+                            .enabled()
+                            .then_some(&self.recovery_profile),
+                    )
+                    .with_context(|| format!("reopen checkpoint {}", record.path.display()))
+            });
         if let Some(tree) = compatibility_tree {
             for path in tree {
                 let _ = std::fs::remove_dir_all(path);
@@ -1990,69 +2140,108 @@ impl SegmentRdbStore {
                 field_deltas: Arc::new(BTreeMap::new()),
                 record_cut: None,
             };
-            for collection in &manifest.collections {
-                for segment in &collection.segments {
-                    if matches!(segment.kind, SegmentKind::Delta) {
-                        let local = segment
-                            .local_rows
-                            .as_ref()
-                            .ok_or_else(|| anyhow!("delta has no row map"))?;
-                        let ids = crate::segment::decode_sparse_local_rows(
-                            &record.path.join(&local.path),
-                            local.count,
-                        )?;
-                        let reader = std::sync::Arc::new(crate::segment::SegmentReader::open(
-                            &record.path.join(&segment.path),
-                        )?);
-                        let field = segment
-                            .field
-                            .as_deref()
-                            .ok_or_else(|| anyhow!("delta has no field"))?;
-                        let spec: crate::types::FieldSpec = serde_json::from_value(
-                            collection
-                                .schema
-                                .get(field)
-                                .cloned()
-                                .ok_or_else(|| anyhow!("delta field missing"))?,
-                        )?;
-                        let external_ids = (0..local.count)
-                            .map(|row| {
-                                ids.external_id(row)
-                                    .map(str::to_owned)
-                                    .ok_or_else(|| anyhow!("missing local row"))
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-                        if spec.field_type == crate::types::FieldType::Vector
-                            && spec.vector_spec()?.is_some_and(|vector| {
-                                vector.backend != crate::types::VectorBackend::FlatCpu
-                            })
-                        {
-                            let values = read_delta_values(&reader, &spec)?;
-                            let rows = external_ids.into_iter().zip(values).collect();
-                            engine.apply_checkpoint_delta(
-                                &collection.collection_id,
-                                field,
-                                rows,
-                            )?;
-                        } else {
-                            engine.attach_checkpoint_delta_reader(
-                                &collection.collection_id,
-                                field,
-                                reader,
-                                external_ids,
-                            )?;
+            let delta_decode_started = self.recovery_profile.enabled().then(Instant::now);
+            self.recovery_profile.phase_start(
+                RecoveryPhase::DeltaDecodeApply,
+                || -> Result<()> {
+                    for collection in &manifest.collections {
+                        for segment in &collection.segments {
+                            if matches!(segment.kind, SegmentKind::Delta) {
+                                let local = segment
+                                    .local_rows
+                                    .as_ref()
+                                    .ok_or_else(|| anyhow!("delta has no row map"))?;
+                                let ids = crate::segment::decode_sparse_local_rows(
+                                    &record.path.join(&local.path),
+                                    local.count,
+                                )?;
+                                let reader =
+                                    std::sync::Arc::new(crate::segment::SegmentReader::open(
+                                        &record.path.join(&segment.path),
+                                    )?);
+                                let field = segment
+                                    .field
+                                    .as_deref()
+                                    .ok_or_else(|| anyhow!("delta has no field"))?;
+                                let spec: crate::types::FieldSpec = serde_json::from_value(
+                                    collection
+                                        .schema
+                                        .get(field)
+                                        .cloned()
+                                        .ok_or_else(|| anyhow!("delta field missing"))?,
+                                )?;
+                                let external_ids = (0..local.count)
+                                    .map(|row| {
+                                        ids.external_id(row)
+                                            .map(str::to_owned)
+                                            .ok_or_else(|| anyhow!("missing local row"))
+                                    })
+                                    .collect::<Result<Vec<_>>>()?;
+                                if spec.field_type == crate::types::FieldType::Vector
+                                    && spec.vector_spec()?.is_some_and(|vector| {
+                                        vector.backend != crate::types::VectorBackend::FlatCpu
+                                    })
+                                {
+                                    let values = read_delta_values(&reader, &spec)?;
+                                    let rows = external_ids.into_iter().zip(values).collect();
+                                    engine.apply_checkpoint_delta(
+                                        &collection.collection_id,
+                                        field,
+                                        rows,
+                                    )?;
+                                } else {
+                                    engine.attach_checkpoint_delta_reader(
+                                        &collection.collection_id,
+                                        field,
+                                        reader,
+                                        external_ids,
+                                    )?;
+                                }
+                            }
                         }
                     }
-                }
+                    Ok(())
+                },
+            )?;
+            if let Some(started) = delta_decode_started {
+                self.add_recovery_timing(|timings| {
+                    timings.delta_decode_ms = started.elapsed().as_millis() as u64;
+                });
             }
             if defer_hnsw && !defer_until_aof {
-                if let Some(cache) = graph_cache.as_deref() {
-                    engine.finish_checkpoint_vectors_with_graph_cache(Some(cache))?;
-                } else {
-                    engine.finish_checkpoint_vectors()?;
+                let vector_finish_started = self.recovery_profile.enabled().then(Instant::now);
+                self.recovery_profile.phase_start(
+                    RecoveryPhase::CheckpointHnswGraph,
+                    || -> Result<()> {
+                        if let Some(cache) = graph_cache.as_deref() {
+                            engine.finish_checkpoint_vectors_with_graph_cache(Some(cache))?;
+                        } else {
+                            engine.finish_checkpoint_vectors()?;
+                        }
+                        Ok(())
+                    },
+                )?;
+                if let Some(started) = vector_finish_started {
+                    self.add_recovery_timing(|timings| {
+                        timings.vector_finish_ms = started.elapsed().as_millis() as u64;
+                    });
                 }
             }
-            engine.hydrate_checkpoint_identities(&record.path, &capture)?;
+            let identity_hydration_started = self.recovery_profile.enabled().then(Instant::now);
+            self.recovery_profile
+                .phase_start(RecoveryPhase::IdentityHydration, || {
+                    engine.hydrate_checkpoint_identities(&record.path, &capture)
+                })?;
+            if let Some(started) = identity_hydration_started {
+                self.add_recovery_timing(|timings| {
+                    timings.identity_hydration_ms = started.elapsed().as_millis() as u64;
+                });
+            }
+            if let Some(started) = reopen_started {
+                self.add_recovery_timing(|timings| {
+                    timings.reopen_ms = started.elapsed().as_millis() as u64;
+                });
+            }
             return Ok(());
         }
         if collections == 0 {
@@ -2070,6 +2259,11 @@ impl SegmentRdbStore {
             );
         }
         engine.bind_legacy_checkpoint_origin(&record.path)?;
+        if let Some(started) = reopen_started {
+            self.add_recovery_timing(|timings| {
+                timings.reopen_ms = started.elapsed().as_millis() as u64;
+            });
+        }
         Ok(())
     }
 

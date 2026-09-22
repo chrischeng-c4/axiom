@@ -155,6 +155,12 @@ impl LumenProcess {
 
     pub fn wait_until_ready(&mut self, snapshot_secs: u64) {
         let deadline = Instant::now() + STARTUP_DEADLINE;
+        self.wait_until_ready_before(snapshot_secs, deadline);
+    }
+
+    /// Wait for `/readyz` within a caller-owned monotonic deadline. This lets
+    /// a shutdown oracle share one budget across process exit and cold start.
+    pub fn wait_until_ready_before(&mut self, snapshot_secs: u64, deadline: Instant) {
         loop {
             if let Some(status) = self.child().try_wait().expect("poll lumen child") {
                 let logs = self.finish_exited_child();
@@ -287,7 +293,11 @@ impl LumenProcess {
     #[cfg(unix)]
     pub fn send_sigterm(&mut self) {
         let pid = self.child().id() as libc::pid_t;
-        assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0, "signal owned Lumen child");
+        assert_eq!(
+            unsafe { libc::kill(pid, libc::SIGTERM) },
+            0,
+            "signal owned Lumen child"
+        );
     }
 
     /// Wait for a SIGTERM shutdown without replacing the server's configured
@@ -297,17 +307,26 @@ impl LumenProcess {
     #[cfg(unix)]
     pub fn wait_for_exit(&mut self, grace: Duration) -> (Duration, String) {
         let started = Instant::now();
-        let deadline = started + grace;
+        self.wait_for_exit_before(started + grace)
+    }
+
+    /// Wait for a SIGTERM exit within a caller-owned monotonic deadline.
+    #[cfg(unix)]
+    pub fn wait_for_exit_before(&mut self, deadline: Instant) -> (Duration, String) {
+        let started = Instant::now();
         loop {
             if let Some(status) = self.child().try_wait().expect("poll lumen shutdown") {
                 let elapsed = started.elapsed();
                 let logs = self.finish_exited_child();
-                assert!(status.success(), "Lumen SIGTERM shutdown failed ({status}): {logs}");
+                assert!(
+                    status.success(),
+                    "Lumen SIGTERM shutdown failed ({status}): {logs}"
+                );
                 return (elapsed, logs);
             }
             assert!(
                 Instant::now() < deadline,
-                "Lumen did not exit within its configured grace period ({grace:?})"
+                "Lumen did not exit before the caller-owned shutdown deadline"
             );
             thread::sleep(POLL_INTERVAL);
         }
@@ -417,6 +436,23 @@ pub fn index_large_keyword(process: &LumenProcess, ordinal: usize) -> HttpRespon
     )
 }
 
+/// Commit the currently applied segment state through the public durability
+/// boundary. The response proves that this process has a segment store, rather
+/// than merely accepting the route in a non-durable serving mode.
+pub fn persist_segment_checkpoint(process: &LumenProcess) {
+    let response = process.post_json("/admin/checkpoint", &json!({}));
+    assert_eq!(
+        response.status, 200,
+        "manual segment checkpoint must succeed: {}",
+        response.body
+    );
+    assert_eq!(
+        response.body["persisted"], true,
+        "manual segment checkpoint must report durable publication: {}",
+        response.body
+    );
+}
+
 pub fn stats_documents(process: &LumenProcess) -> u64 {
     let response = process.get_text(&format!("/collections/{COLLECTION}/stats"));
     serde_json::from_str::<Value>(&response).expect("decode collection stats")["documents_indexed"]
@@ -520,6 +556,34 @@ pub fn write_large_aof_tail(root: &Path) -> Vec<u64> {
     aof_sequences(root)
 }
 
+/// Append a strict-synced tail after an already-published segment generation.
+/// This simulates a crash boundary: CURRENT covers the base, while these
+/// records must remain authoritative AOF input for the next cold process.
+pub fn append_large_aof_tail(root: &Path, first_sequence: u64, ordinals: &[usize]) -> Vec<u64> {
+    let mut aof = AofWriter::open(root.join("aof.log")).expect("reopen AOF for retained tail");
+    for (offset, ordinal) in ordinals.iter().copied().enumerate() {
+        let sequence = first_sequence + offset as u64;
+        aof.append(
+            sequence,
+            &WalRecord::new(RaftLogEntry::Index {
+                collection_id: COLLECTION.into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: capacity_external_id(ordinal),
+                        field: FIELD.into(),
+                        value: FieldValue::String(large_keyword_value(ordinal)),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            }),
+        )
+        .expect("append retained large AOF tail frame");
+    }
+    aof.sync_strict().expect("strict-sync retained AOF tail");
+    aof_sequences(root)
+}
+
 pub fn aof_sequences(root: &Path) -> Vec<u64> {
     let mut sequences = Vec::new();
     AofReader::replay(root.join("aof.log"), 0, |sequence, _record| {
@@ -536,6 +600,31 @@ pub fn checkpoint_sequence(root: &Path) -> u64 {
         .expect("read segment CURRENT")
         .expect("replay checkpoint must publish CURRENT")
         .sequence
+}
+
+pub fn checkpoint_generation_name(root: &Path) -> String {
+    SegmentRdbStore::new(root)
+        .expect("open segment checkpoint root")
+        .load_current_generation()
+        .expect("read segment CURRENT")
+        .expect("replay checkpoint must publish CURRENT")
+        .name
+        .as_str()
+        .to_owned()
+}
+
+pub fn checkpoint_generation_names(root: &Path) -> Vec<String> {
+    let mut names = std::fs::read_dir(root)
+        .expect("read segment checkpoint root")
+        .map(|entry| entry.expect("read segment checkpoint entry"))
+        .filter_map(|entry| {
+            let file_type = entry.file_type().expect("read checkpoint entry type");
+            let name = entry.file_name().into_string().ok()?;
+            (file_type.is_dir() && name.starts_with("gen-")).then_some(name)
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    names
 }
 
 pub fn assert_safe_aof_tail(original: &[u64], surviving: &[u64], checkpoint_seq: u64) {
