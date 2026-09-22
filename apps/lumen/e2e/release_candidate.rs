@@ -1579,8 +1579,8 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
         "let report = ledger.validate().map_err(HarnessError::Workload)?;",
         "counter_delta.checkpoints > 0,",
         "counter_delta.merges > 0,",
-        "let restart_elapsed = post_input_step(",
-        "server.restart_and_wait_ready(),",
+        "async fn post_input_restart_step(",
+        "let restart_elapsed = server.post_input_restart_step(post_input_deadline).await?;",
         "fn semantic_wrong_field_query(",
         "let mismatch = semantic_wrong_field_query(field, value, fingerprint, document.number)?;",
         "if response_contains_id(&mismatch_response, &document.external_id) {",
@@ -1847,6 +1847,50 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 (
                     "restart_readiness_diagnostic_record_names_each_failure_kind_and_caps_text"
+                        .into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_late_binds_and_distinguishes_repeated_nonready"
+                        .into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_caps_rows_and_counts_omissions".into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_does_not_retain_raw_errors_or_bodies".into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_success_does_not_create_trace_or_change_receipt"
+                        .into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_renders_ordered_safe_listener_bound_terminal_failure"
+                        .into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_rejects_non_monotonic_poll_timing".into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_caps_rows_and_reports_all_omissions".into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_rendering_excludes_body_error_and_url_data".into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_is_written_before_cleanup_on_failure".into(),
+                    false,
+                ),
+                (
+                    "readyz_readiness_trace_pre_poll_restart_failure_creates_no_trace_artifact"
                         .into(),
                     false,
                 ),

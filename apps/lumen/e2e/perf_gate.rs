@@ -806,6 +806,46 @@ fn median_statistic_and_ignored_inventory() {
                 "restart_readiness_diagnostic_record_names_each_failure_kind_and_caps_text",
                 false,
             ),
+            (
+                "readyz_readiness_trace_late_binds_and_distinguishes_repeated_nonready",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_caps_rows_and_counts_omissions",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_does_not_retain_raw_errors_or_bodies",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_success_does_not_create_trace_or_change_receipt",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_renders_ordered_safe_listener_bound_terminal_failure",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_rejects_non_monotonic_poll_timing",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_caps_rows_and_reports_all_omissions",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_rendering_excludes_body_error_and_url_data",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_is_written_before_cleanup_on_failure",
+                false,
+            ),
+            (
+                "readyz_readiness_trace_pre_poll_restart_failure_creates_no_trace_artifact",
+                false,
+            ),
         ]
     );
 
@@ -916,6 +956,8 @@ mod durable_workload {
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
     const RESTART_DIAGNOSTIC_PREFIX: &str = "PERF_RESTART_DIAGNOSTIC";
+    const READYZ_READINESS_TRACE_FILE: &str = "readyz-readiness-trace.txt";
+    const READYZ_READINESS_TRACE_MAX_ROWS: usize = 512;
     const RESTART_READINESS_BODY_MAX_BYTES: usize = 4 * 1024;
     const RESTART_DIAGNOSTIC_TEXT_MAX_BYTES: usize = 4 * 1024;
     const SETUP_TIMEOUT: Duration = Duration::from_secs(INPUT_SECONDS);
@@ -1469,6 +1511,132 @@ mod durable_workload {
         // This record is populated by the typed restart and cold-readback
         // paths. It is written only with a failed run's evidence bundle.
         restart_failure_trace: Arc<Mutex<Option<RestartFailureTrace>>>,
+        readyz_readiness_trace: Arc<std::sync::Mutex<Option<ReadyzReadinessTrace>>>,
+    }
+
+    #[derive(Clone, Debug)]
+    enum ReadyzReadinessTraceRow {
+        HttpStatus { elapsed: Duration, status: u16 },
+        ConnectError { elapsed: Duration },
+        RequestTimeout { elapsed: Duration },
+        TransportError { elapsed: Duration },
+        Cancelled { elapsed: Duration },
+    }
+
+    #[derive(Clone, Debug)]
+    struct ReadyzReadinessTrace {
+        listener: String,
+        rows: Vec<ReadyzReadinessTraceRow>,
+        omitted_rows: u64,
+        terminal: Option<&'static str>,
+        last_elapsed: Option<Duration>,
+    }
+
+    impl Default for ReadyzReadinessTrace {
+        fn default() -> Self {
+            Self::new("post-restart-readyz")
+        }
+    }
+
+    impl ReadyzReadinessTrace {
+        fn new(listener: impl Into<String>) -> Self {
+            Self {
+                listener: listener.into(),
+                rows: Vec::new(),
+                omitted_rows: 0,
+                terminal: None,
+                last_elapsed: None,
+            }
+        }
+        fn push(
+            &mut self,
+            elapsed: Duration,
+            row: ReadyzReadinessTraceRow,
+        ) -> std::result::Result<(), String> {
+            if self.last_elapsed.is_some_and(|last| elapsed < last) {
+                return Err("readiness poll elapsed time regressed".to_owned());
+            }
+            self.last_elapsed = Some(elapsed);
+            if self.rows.len() < READYZ_READINESS_TRACE_MAX_ROWS {
+                self.rows.push(row);
+            } else {
+                self.omitted_rows += 1;
+            }
+            Ok(())
+        }
+        fn record_nonready(
+            &mut self,
+            elapsed: Duration,
+            status: u16,
+        ) -> std::result::Result<(), String> {
+            self.push(
+                elapsed,
+                ReadyzReadinessTraceRow::HttpStatus { elapsed, status },
+            )
+        }
+        fn record_timeout(&mut self, elapsed: Duration) -> std::result::Result<(), String> {
+            self.push(elapsed, ReadyzReadinessTraceRow::RequestTimeout { elapsed })
+        }
+        fn record_transport_error(&mut self, elapsed: Duration) -> std::result::Result<(), String> {
+            self.push(elapsed, ReadyzReadinessTraceRow::TransportError { elapsed })
+        }
+        #[cfg(test)]
+        fn record_transport(&mut self, elapsed: Duration) -> std::result::Result<(), String> {
+            self.record_transport_error(elapsed)
+        }
+        #[cfg(test)]
+        fn record_deadline(&mut self, elapsed: Duration) -> std::result::Result<(), String> {
+            self.terminal = Some("request_timeout");
+            self.record_timeout(elapsed)
+        }
+        fn record_cancelled(&mut self, elapsed: Duration) -> std::result::Result<(), String> {
+            self.terminal = Some("cancelled");
+            self.push(elapsed, ReadyzReadinessTraceRow::Cancelled { elapsed })
+        }
+        fn render_failure(&self) -> Option<String> {
+            let terminal = self.terminal?;
+            let mut out = format!(
+                "schema_version=1\nphase=readyz\nlistener={}\nrestart_command=docker restart\n",
+                self.listener
+            );
+            for (index, row) in self.rows.iter().enumerate() {
+                match row {
+                    ReadyzReadinessTraceRow::HttpStatus { elapsed, status } => {
+                        out.push_str(&format!(
+                            "poll={} elapsed_ms={} category=http_status:{}\n",
+                            index + 1,
+                            elapsed.as_millis(),
+                            status
+                        ))
+                    }
+                    ReadyzReadinessTraceRow::ConnectError { elapsed } => out.push_str(&format!(
+                        "poll={} elapsed_ms={} category=connect_error\n",
+                        index + 1,
+                        elapsed.as_millis()
+                    )),
+                    ReadyzReadinessTraceRow::RequestTimeout { elapsed } => out.push_str(&format!(
+                        "poll={} elapsed_ms={} category=request_timeout\n",
+                        index + 1,
+                        elapsed.as_millis()
+                    )),
+                    ReadyzReadinessTraceRow::TransportError { elapsed } => out.push_str(&format!(
+                        "poll={} elapsed_ms={} category=transport_error\n",
+                        index + 1,
+                        elapsed.as_millis()
+                    )),
+                    ReadyzReadinessTraceRow::Cancelled { elapsed } => out.push_str(&format!(
+                        "poll={} elapsed_ms={} category=cancelled\n",
+                        index + 1,
+                        elapsed.as_millis()
+                    )),
+                }
+            }
+            out.push_str(&format!(
+                "polls_omitted={}\nterminal={}",
+                self.omitted_rows, terminal
+            ));
+            Some(out)
+        }
     }
 
     /// Private, best-effort timing for the restart path.  An absent value
@@ -1659,7 +1827,12 @@ mod durable_workload {
         };
         let (readyz_failure, readyz_status, readyz_body, readyz_transport_error) =
             match readiness.readiness_failure.as_ref() {
-                None => ("none".to_owned(), "null".to_owned(), "null".to_owned(), "null".to_owned()),
+                None => (
+                    "none".to_owned(),
+                    "null".to_owned(),
+                    "null".to_owned(),
+                    "null".to_owned(),
+                ),
                 Some(RestartReadinessFailure::HttpStatus { status, body }) => (
                     "http_status".to_owned(),
                     status.clone(),
@@ -2743,7 +2916,9 @@ mod durable_workload {
             }
         }
         if let Some(restart_failure_trace) = restart_failure_trace {
-            if let Err(error) = evidence.write_text("restart-failure-trace.json", restart_failure_trace) {
+            if let Err(error) =
+                evidence.write_text("restart-failure-trace.json", restart_failure_trace)
+            {
                 eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
             }
         }
@@ -2872,6 +3047,7 @@ mod durable_workload {
                     request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                     interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                     restart_failure_trace: Arc::new(Mutex::new(None)),
+                    readyz_readiness_trace: Arc::new(std::sync::Mutex::new(None)),
                 })
             })() {
                 Ok(server) => server,
@@ -2995,17 +3171,46 @@ mod durable_workload {
         }
 
         async fn finish_failure(&mut self, error: &HarnessError) {
-            let evidence =
-                match FailureEvidenceDirectory::create(&self.container, &self.volume, error) {
-                    Ok(evidence) => evidence,
-                    Err(capture_error) => {
-                        eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
-                        return;
-                    }
-                };
             let mut evidence_runner = DockerEvidenceCommandRunner;
-            let mut probe = DockerFailureProbe { server: self };
             let mut cleanup_runner = DockerCleanupCommandRunner;
+            self.finish_failure_with(
+                error,
+                &env::temp_dir(),
+                &mut evidence_runner,
+                &mut cleanup_runner,
+            )
+            .await;
+        }
+
+        async fn finish_failure_with<E, C>(
+            &mut self,
+            error: &HarnessError,
+            evidence_root: &Path,
+            evidence_runner: &mut E,
+            cleanup_runner: &mut C,
+        ) -> Option<PathBuf>
+        where
+            E: EvidenceCommandRunner + Send,
+            C: CleanupCommandRunner,
+        {
+            let evidence = match FailureEvidenceDirectory::create_in(
+                evidence_root,
+                &self.container,
+                &self.volume,
+                error,
+            ) {
+                Ok(evidence) => evidence,
+                Err(capture_error) => {
+                    eprintln!("PERF_FAILURE_EVIDENCE_ERROR {capture_error}");
+                    return None;
+                }
+            };
+            eprintln!(
+                "PERF_FAILURE_EVIDENCE path={} container={} volume={}",
+                evidence.path.display(),
+                self.container,
+                self.volume
+            );
             let request_error_report =
                 render_request_error_journal(&*self.request_error_journal.lock().await);
             let interval_trace = {
@@ -3027,11 +3232,33 @@ mod durable_workload {
             if let Err(error) = &restart_failure_trace {
                 eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
             }
+            let readyz_readiness_trace = {
+                let mut guard = self
+                    .readyz_readiness_trace
+                    .lock()
+                    .expect("readyz trace mutex");
+                if matches!(error, HarnessError::PostInputTimeout { .. }) {
+                    if let Some(trace) = guard.as_mut().filter(|trace| trace.terminal.is_none()) {
+                        let elapsed =
+                            trace.last_elapsed.unwrap_or_default() + Duration::from_millis(1);
+                        let _ = trace.record_cancelled(elapsed);
+                    }
+                }
+                guard
+                    .as_ref()
+                    .and_then(ReadyzReadinessTrace::render_failure)
+            };
+            if let Some(trace) = readyz_readiness_trace.as_deref() {
+                if let Err(error) = evidence.write_text(READYZ_READINESS_TRACE_FILE, trace) {
+                    eprintln!("PERF_FAILURE_EVIDENCE_WRITE_ERROR {error}");
+                }
+            }
+            let mut probe = DockerFailureProbe { server: self };
             finish_failed_docker_run_with_restart_trace(
                 &evidence,
-                &mut evidence_runner,
+                evidence_runner,
                 &mut probe,
-                &mut cleanup_runner,
+                cleanup_runner,
                 &self.container,
                 &self.volume,
                 &request_error_report,
@@ -3044,11 +3271,73 @@ mod durable_workload {
             .await;
             drop(probe);
             self.cleanup_armed = false;
+            Some(evidence.path)
+        }
+
+        fn record_readyz_readiness_failure(&self, elapsed: Duration, row: ReadyzReadinessTraceRow) {
+            let mut guard = self
+                .readyz_readiness_trace
+                .lock()
+                .expect("readyz trace mutex");
+            let trace = guard.get_or_insert_with(ReadyzReadinessTrace::default);
+            if let Err(error) = trace.push(elapsed, row) {
+                eprintln!("PERF_READYZ_TRACE_ERROR {error}");
+            }
+        }
+
+        fn record_readyz_readiness_deadline(&self, elapsed: Duration) {
+            let mut guard = self
+                .readyz_readiness_trace
+                .lock()
+                .expect("readyz trace mutex");
+            let trace = guard.get_or_insert_with(ReadyzReadinessTrace::default);
+            trace.terminal = Some("request_timeout");
+            if let Err(error) = trace.record_timeout(elapsed) {
+                eprintln!("PERF_READYZ_TRACE_ERROR {error}");
+            }
+        }
+
+        fn clear_readyz_readiness_trace(&self) {
+            *self
+                .readyz_readiness_trace
+                .lock()
+                .expect("readyz trace mutex") = None;
         }
 
         async fn restart_and_wait_ready(&mut self) -> Result<Duration> {
             self.restart_and_wait_ready_with(&mut DockerRestartCommandRunner)
                 .await
+        }
+
+        /// Runs the restart inside the one post-input deadline.  Keeping this
+        /// as one seam lets the case finalizer observe the real timeout result
+        /// after the restart future is dropped.
+        async fn post_input_restart_step(
+            &mut self,
+            deadline: tokio::time::Instant,
+        ) -> Result<Duration> {
+            post_input_step(
+                deadline,
+                POST_INPUT_TIMEOUT,
+                "restart",
+                self.restart_and_wait_ready(),
+            )
+            .await
+        }
+
+        async fn post_input_restart_step_with<R: RestartCommandRunner + Send>(
+            &mut self,
+            deadline: tokio::time::Instant,
+            timeout: Duration,
+            runner: &mut R,
+        ) -> Result<Duration> {
+            post_input_step(
+                deadline,
+                timeout,
+                "restart",
+                self.restart_and_wait_ready_with(runner),
+            )
+            .await
         }
 
         async fn restart_and_wait_ready_with<R: RestartCommandRunner + Send>(
@@ -3262,6 +3551,7 @@ mod durable_workload {
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
+                    self.record_readyz_readiness_deadline(started.elapsed());
                     diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
                     readiness.readiness_failure = Some(RestartReadinessFailure::Deadline);
                     readiness.docker_process_state = Some(DockerProcessState {
@@ -3287,6 +3577,7 @@ mod durable_workload {
                 .await
                 {
                     Ok(Ok(response)) if response.status().is_success() => {
+                        self.clear_readyz_readiness_trace();
                         diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
                         #[rustfmt::skip]
                         diagnostics.first_ready_elapsed.get_or_insert_with(|| started.elapsed());
@@ -3295,6 +3586,14 @@ mod durable_workload {
                         return Ok(started.elapsed());
                     }
                     Ok(Ok(response)) => {
+                        let elapsed = started.elapsed();
+                        self.record_readyz_readiness_failure(
+                            elapsed,
+                            ReadyzReadinessTraceRow::HttpStatus {
+                                elapsed,
+                                status: response.status().as_u16(),
+                            },
+                        );
                         let status = response.status().to_string();
                         let body_deadline = deadline.saturating_duration_since(Instant::now());
                         readiness.readiness_failure = Some(
@@ -3322,22 +3621,33 @@ mod durable_workload {
                         );
                     }
                     Ok(Err(error)) => {
+                        let elapsed = started.elapsed();
+                        self.record_readyz_readiness_failure(
+                            elapsed,
+                            if error.is_connect() {
+                                ReadyzReadinessTraceRow::ConnectError { elapsed }
+                            } else {
+                                ReadyzReadinessTraceRow::TransportError { elapsed }
+                            },
+                        );
                         readiness.readiness_failure = Some(RestartReadinessFailure::Transport {
                             error: bounded_restart_diagnostic_error(error),
                         });
                     }
                     Err(_) => {
+                        let elapsed = started.elapsed();
+                        self.record_readyz_readiness_failure(
+                            elapsed,
+                            ReadyzReadinessTraceRow::RequestTimeout { elapsed },
+                        );
                         readiness.readiness_failure = Some(RestartReadinessFailure::Deadline);
                     }
                 }
                 if readiness.docker_process_state.is_none() {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     readiness.docker_process_state = Some(
-                        match tokio::time::timeout(
-                            remaining,
-                            runner.process_state(&self.container),
-                        )
-                        .await
+                        match tokio::time::timeout(remaining, runner.process_state(&self.container))
+                            .await
                         {
                             Ok(state) => state,
                             Err(_) => DockerProcessState {
@@ -3347,6 +3657,7 @@ mod durable_workload {
                     );
                 }
                 if Instant::now() >= deadline {
+                    self.record_readyz_readiness_deadline(started.elapsed());
                     diagnostics.readyz_wait_elapsed = Some(readyz_wait_started.elapsed());
                     emit(&mut diagnostics, &readiness, "readyz", "timeout");
                     self.record_restart_failure_trace(
@@ -3462,7 +3773,10 @@ mod durable_workload {
                 Ok(Ok(values)) => values,
                 Ok(Err(error)) => {
                     return DockerProcessState {
-                        detail: format!("inspect_error={}", bounded_restart_diagnostic_error(error)),
+                        detail: format!(
+                            "inspect_error={}",
+                            bounded_restart_diagnostic_error(error)
+                        ),
                     };
                 }
                 Err(_) => {
@@ -6359,8 +6673,31 @@ mod durable_workload {
     async fn run_case(config: CaseConfig) -> Result<CompletedCase> {
         let mut server = DockerLumen::start().await?;
         let result = run_case_with_server(&mut server, config).await;
+        finish_case_result(&mut server, result).await
+    }
+
+    async fn finish_case_result<T>(server: &mut DockerLumen, result: Result<T>) -> Result<T> {
         if let Err(error) = &result {
             server.finish_failure(error).await;
+        }
+        result
+    }
+
+    async fn finish_case_result_with<T, E, C>(
+        server: &mut DockerLumen,
+        result: Result<T>,
+        evidence_root: &Path,
+        evidence_runner: &mut E,
+        cleanup_runner: &mut C,
+    ) -> Result<T>
+    where
+        E: EvidenceCommandRunner + Send,
+        C: CleanupCommandRunner,
+    {
+        if let Err(error) = &result {
+            server
+                .finish_failure_with(error, evidence_root, evidence_runner, cleanup_runner)
+                .await;
         }
         result
     }
@@ -6449,13 +6786,7 @@ mod durable_workload {
         )
         .await?;
         eprintln!("PERF_STAGE_BEGIN restart");
-        let restart_elapsed = post_input_step(
-            post_input_deadline,
-            POST_INPUT_TIMEOUT,
-            "restart",
-            server.restart_and_wait_ready(),
-        )
-        .await?;
+        let restart_elapsed = server.post_input_restart_step(post_input_deadline).await?;
         eprintln!("PERF_STAGE_END restart");
         // The restart opens the segment payload after the measured checkpoint
         // and merge work. This is the first post-restart data-plane observation:
@@ -6746,6 +7077,7 @@ mod durable_workload {
             request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
             interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
             restart_failure_trace: Arc::new(Mutex::new(None)),
+            readyz_readiness_trace: Arc::new(std::sync::Mutex::new(None)),
         }));
         (server, shutdown_tx)
     }
@@ -7152,15 +7484,19 @@ mod durable_workload {
             }
         }
         let sample_capped: Value = serde_json::from_str(
-            &IntervalTrace::default().render(&error_only_journal).unwrap(),
+            &IntervalTrace::default()
+                .render(&error_only_journal)
+                .unwrap(),
         )
         .unwrap();
         assert!(sample_capped["samples"].as_array().unwrap().len() <= INTERVAL_TRACE_MAX_SAMPLES);
-        assert!(sample_capped["omitted_request_failure_intervals"]
-            .as_array()
-            .unwrap()
-            .len()
-            > 0);
+        assert!(
+            sample_capped["omitted_request_failure_intervals"]
+                .as_array()
+                .unwrap()
+                .len()
+                > 0
+        );
         assert_eq!(
             interval_trace_failure_totals(&sample_capped),
             [
@@ -7222,14 +7558,19 @@ mod durable_workload {
         let byte_capped: Value = serde_json::from_str(&byte_capped_rendered).unwrap();
         assert!(byte_capped_rendered.len() <= 4 * 1024);
         assert!(byte_capped["samples"].as_array().unwrap().len() < 12);
-        assert!(byte_capped["omitted_request_failure_intervals"]
-            .as_array()
-            .unwrap()
-            .len()
-            > 0);
+        assert!(
+            byte_capped["omitted_request_failure_intervals"]
+                .as_array()
+                .unwrap()
+                .len()
+                > 0
+        );
         // Detail samples can be omitted, but every interval keeps one and
         // only one aggregate request-failure total in the document.
-        assert_eq!(interval_trace_failure_totals(&byte_capped), [48, 60, 72, 84]);
+        assert_eq!(
+            interval_trace_failure_totals(&byte_capped),
+            [48, 60, 72, 84]
+        );
     }
 
     /// Overflow records must retain their distinct timeout and transport
@@ -7421,6 +7762,7 @@ mod durable_workload {
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                 interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                 restart_failure_trace: Arc::new(Mutex::new(None)),
+                readyz_readiness_trace: Arc::new(std::sync::Mutex::new(None)),
             };
             let timeout = Duration::from_millis(25);
             let deadline = tokio::time::Instant::now() + timeout;
@@ -7940,6 +8282,70 @@ mod durable_workload {
     }
 
     #[cfg(test)]
+    struct TraceCheckingCleanupRunner {
+        evidence_root: PathBuf,
+        events: Arc<StdMutex<Vec<String>>>,
+        checked_trace: bool,
+    }
+
+    #[cfg(test)]
+    impl CleanupCommandRunner for TraceCheckingCleanupRunner {
+        fn run_cleanup(&mut self, args: Vec<String>) {
+            if !self.checked_trace && args.first().is_some_and(|arg| arg == "rm") {
+                let evidence = fs::read_dir(&self.evidence_root)
+                    .expect("read real failure evidence root before Docker cleanup")
+                    .find_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .expect("failure finalizer creates one evidence directory");
+                let trace = fs::read_to_string(evidence.join(READYZ_READINESS_TRACE_FILE))
+                    .expect("readiness trace exists before Docker cleanup");
+                assert!(trace.contains("category=http_status:503"));
+                assert!(trace.contains("category=cancelled"));
+                assert!(trace.ends_with("terminal=cancelled"));
+                self.events
+                    .lock()
+                    .expect("record readiness trace ordering")
+                    .push("trace-present-before:docker rm".to_owned());
+                self.checked_trace = true;
+            }
+            self.events
+                .lock()
+                .expect("record fake cleanup command")
+                .push(format!("docker {}", args.join(" ")));
+        }
+    }
+
+    /// This is the narrow execution seam for the readiness failure case. It
+    /// keeps the real post-input timeout and shared case finalizer joined while
+    /// tests replace only Docker command runners.
+    #[cfg(test)]
+    async fn run_restart_post_input_case_with_failure_finalizer<R, E, C>(
+        server: &mut DockerLumen,
+        deadline: tokio::time::Instant,
+        timeout: Duration,
+        restart_runner: &mut R,
+        evidence_root: &Path,
+        evidence_runner: &mut E,
+        cleanup_runner: &mut C,
+    ) -> Result<Duration>
+    where
+        R: RestartCommandRunner + Send,
+        E: EvidenceCommandRunner + Send,
+        C: CleanupCommandRunner,
+    {
+        let result = server
+            .post_input_restart_step_with(deadline, timeout, restart_runner)
+            .await;
+        finish_case_result_with(
+            server,
+            result,
+            evidence_root,
+            evidence_runner,
+            cleanup_runner,
+        )
+        .await
+    }
+
+    #[cfg(test)]
     async fn read_in_memory_evidence(
         bytes: Vec<u8>,
         limit: usize,
@@ -8307,6 +8713,7 @@ mod durable_workload {
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                 interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                 restart_failure_trace: Arc::new(Mutex::new(None)),
+                readyz_readiness_trace: Arc::new(std::sync::Mutex::new(None)),
             },
             requests,
             task,
@@ -8361,6 +8768,64 @@ mod durable_workload {
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                 interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                 restart_failure_trace: Arc::new(Mutex::new(None)),
+                readyz_readiness_trace: Arc::new(std::sync::Mutex::new(None)),
+            },
+            requests,
+            task,
+        )
+    }
+
+    async fn fake_ready_lumen_with_503_then_pending() -> (
+        DockerLumen,
+        Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .route(
+                "/readyz",
+                axum::routing::get(
+                    |axum::extract::State(requests): axum::extract::State<
+                        Arc<std::sync::atomic::AtomicUsize>,
+                    >| async move {
+                        if requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                            axum::response::IntoResponse::into_response((
+                                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                                "unsafe-readyz-body-must-not-render",
+                            ))
+                        } else {
+                            std::future::pending::<()>().await;
+                            axum::response::IntoResponse::into_response(axum::http::StatusCode::OK)
+                        }
+                    },
+                ),
+            )
+            .with_state(Arc::clone(&requests));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind 503 then pending readiness responder");
+        let address = listener.local_addr().expect("read fake readiness address");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve 503 then pending readiness responder");
+        });
+        (
+            DockerLumen {
+                container: "restart-test-owner".to_owned(),
+                volume: "restart-test-volume".to_owned(),
+                base: format!("http://{address}"),
+                client: reqwest::Client::builder()
+                    .timeout(REQUEST_TIMEOUT)
+                    .build()
+                    .expect("build fake readiness client"),
+                image_reference: "restart-test-image-reference".to_owned(),
+                image_id: "restart-test-image-id".to_owned(),
+                cleanup_armed: false,
+                request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
+                interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
+                restart_failure_trace: Arc::new(Mutex::new(None)),
+                readyz_readiness_trace: Arc::new(std::sync::Mutex::new(None)),
             },
             requests,
             task,
@@ -8778,7 +9243,9 @@ mod durable_workload {
             assert!(matches!(result, Err(HarnessError::Startup(_))));
             assert_eq!(records.len(), 1);
             let (record, diagnostics) = &records[0];
-            assert!(record.starts_with("PERF_RESTART_DIAGNOSTIC phase=docker-restart outcome=error"));
+            assert!(
+                record.starts_with("PERF_RESTART_DIAGNOSTIC phase=docker-restart outcome=error")
+            );
             assert!(record.contains("total_elapsed_ms="));
             assert!(diagnostics.restart_elapsed.is_some());
             assert!(diagnostics.port_lookup_elapsed.is_none());
@@ -9311,7 +9778,7 @@ mod durable_workload {
             "HttpStatus",
             "Transport",
             "Deadline",
-            "runner.process_state(&self.container),",
+            "tokio::time::timeout(remaining, runner.process_state(&self.container))",
         ] {
             assert!(
                 restart_diagnostic_production_contains(region, expected),
@@ -9346,7 +9813,8 @@ mod durable_workload {
         assert!(http_record.contains("readyz_failure=http_status"));
         assert!(http_record.contains("readyz_status=\"503 Service Unavailable\""));
         assert!(http_record.contains("readyz_body=\"bytes=4097 truncated=true"));
-        assert!(http_record.contains("docker_process_state=\"running=false exit_code=137 oom_killed=true"));
+        assert!(http_record
+            .contains("docker_process_state=\"running=false exit_code=137 oom_killed=true"));
 
         let transport = RestartReadinessDiagnostics {
             readiness_failure: Some(RestartReadinessFailure::Transport {
@@ -9354,29 +9822,391 @@ mod durable_workload {
             }),
             ..RestartReadinessDiagnostics::default()
         };
-        assert!(
-            render_restart_phase_diagnostics(
-                &RestartPhaseDiagnostics::default(),
-                &transport,
-                "readyz",
-                "timeout",
-            )
-                .contains("readyz_failure=transport")
-        );
+        assert!(render_restart_phase_diagnostics(
+            &RestartPhaseDiagnostics::default(),
+            &transport,
+            "readyz",
+            "timeout",
+        )
+        .contains("readyz_failure=transport"));
         let deadline = RestartReadinessDiagnostics {
             readiness_failure: Some(RestartReadinessFailure::Deadline),
             ..RestartReadinessDiagnostics::default()
         };
-        assert!(
-            render_restart_phase_diagnostics(
-                &RestartPhaseDiagnostics::default(),
-                &deadline,
-                "readyz",
-                "timeout",
-            )
-                .contains("readyz_failure=deadline")
-        );
+        assert!(render_restart_phase_diagnostics(
+            &RestartPhaseDiagnostics::default(),
+            &deadline,
+            "readyz",
+            "timeout",
+        )
+        .contains("readyz_failure=deadline"));
         assert!(capped_body.len() <= RESTART_READINESS_BODY_MAX_BYTES + 80);
+    }
+
+    /// A trace begins only after the first failed readiness poll. It keeps each
+    /// later non-ready poll as a separate classified row. A later 2xx must not
+    /// turn the retry history into a success-path artifact.
+    #[test]
+    fn readyz_readiness_trace_late_binds_and_distinguishes_repeated_nonready() {
+        let mut trace = ReadyzReadinessTrace::new("post-restart-readyz");
+        trace
+            .record_nonready(Duration::from_millis(4), 503)
+            .unwrap();
+        trace
+            .record_nonready(Duration::from_millis(9), 503)
+            .unwrap();
+        trace.record_cancelled(Duration::from_millis(15)).unwrap();
+        let rendered = trace.render_failure().unwrap();
+        assert!(rendered.contains("poll=1 elapsed_ms=4 category=http_status:503"));
+        assert!(rendered.contains("poll=2 elapsed_ms=9 category=http_status:503"));
+        assert!(rendered.ends_with("terminal=cancelled"));
+    }
+
+    /// Failure evidence must retain at most 512 readiness rows. The omitted
+    /// counter proves that an active readiness loop did not silently drop data.
+    #[test]
+    fn readyz_readiness_trace_caps_rows_and_counts_omissions() {
+        let mut trace = ReadyzReadinessTrace::new("post-restart-readyz");
+        for poll in 0..513_u64 {
+            trace
+                .record_nonready(Duration::from_millis(poll), 503)
+                .unwrap();
+        }
+        trace.record_cancelled(Duration::from_millis(513)).unwrap();
+        let rendered = trace.render_failure().unwrap();
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.starts_with("poll="))
+                .count(),
+            512
+        );
+        assert!(rendered.contains("polls_omitted=2"));
+    }
+
+    /// The readiness trace is a classification record. It must not retain an
+    /// HTTP body, endpoint text, or a transport error string from the failed
+    /// probe.
+    #[test]
+    fn readyz_readiness_trace_does_not_retain_raw_errors_or_bodies() {
+        let mut trace = ReadyzReadinessTrace::new("post-restart-readyz");
+        trace
+            .record_nonready(Duration::from_millis(4), 503)
+            .unwrap();
+        trace.record_transport(Duration::from_millis(9)).unwrap();
+        trace.record_cancelled(Duration::from_millis(15)).unwrap();
+        let rendered = trace.render_failure().unwrap();
+        for forbidden in ["body=", "error=", "http://", "https://", "/readyz"] {
+            assert!(!rendered.contains(forbidden));
+        }
+    }
+
+    /// A real local readyz endpoint may return 503 before it becomes healthy.
+    /// The later 2xx clears the shared failure-only trace without an artifact.
+    #[test]
+    fn readyz_readiness_trace_success_does_not_create_trace_or_change_receipt() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build readiness test runtime")
+            .block_on(async {
+                let (mut server, requests, task) = fake_ready_lumen_with_statuses(vec![
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    axum::http::StatusCode::OK,
+                ])
+                .await;
+                let mut runner = ScriptedRestartRunner {
+                    calls: Vec::new(),
+                    port_result: Some(Ok(format!(
+                        "{}\n",
+                        server.base.strip_prefix("http://").expect("loopback base")
+                    ))),
+                };
+
+                server
+                    .restart_and_wait_ready_with(&mut runner)
+                    .await
+                    .expect("a later local 2xx satisfies restart readiness");
+
+                assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 2);
+                assert_eq!(
+                    runner.calls,
+                    [
+                        "restart restart-test-owner",
+                        "port restart-test-owner 7373/tcp"
+                    ]
+                );
+                assert!(
+                    server
+                        .readyz_readiness_trace
+                        .lock()
+                        .expect("read shared readiness trace")
+                        .is_none(),
+                    "a real 2xx must discard earlier 503 trace rows"
+                );
+                task.abort();
+            });
+    }
+
+    /// The failure-only trace is line-oriented evidence. It binds the stable
+    /// readyz listener, keeps the poll categories in arrival order, and ends
+    /// at one terminal readiness failure with monotonic elapsed times.
+    #[test]
+    fn readyz_readiness_trace_renders_ordered_safe_listener_bound_terminal_failure() {
+        let mut trace = ReadyzReadinessTrace::new("post-restart-readyz");
+        trace
+            .record_nonready(Duration::from_millis(4), 503)
+            .expect("first failed poll is accepted");
+        trace
+            .record_transport(Duration::from_millis(9))
+            .expect("transport poll follows the first non-ready response");
+        trace
+            .record_deadline(Duration::from_millis(15))
+            .expect("deadline is the terminal readiness poll");
+
+        let rendered = trace
+            .render_failure()
+            .expect("terminal failure renders one readiness trace");
+        let lines = rendered.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "schema_version=1");
+        assert_eq!(lines[1], "phase=readyz");
+        assert_eq!(lines[2], "listener=post-restart-readyz");
+        assert_eq!(lines[3], "restart_command=docker restart");
+        assert_eq!(lines[4], "poll=1 elapsed_ms=4 category=http_status:503");
+        assert_eq!(lines[5], "poll=2 elapsed_ms=9 category=transport_error");
+        assert_eq!(lines[6], "poll=3 elapsed_ms=15 category=request_timeout");
+        assert_eq!(lines[7], "polls_omitted=0");
+        assert_eq!(lines[8], "terminal=request_timeout");
+    }
+
+    /// A clock regression must not make a readiness trace claim a false order.
+    #[test]
+    fn readyz_readiness_trace_rejects_non_monotonic_poll_timing() {
+        let mut trace = ReadyzReadinessTrace::new("post-restart-readyz");
+        trace
+            .record_nonready(Duration::from_millis(9), 503)
+            .expect("first poll is accepted");
+        assert!(
+            trace.record_transport(Duration::from_millis(8)).is_err(),
+            "a later readiness poll with an earlier elapsed time must fail closed"
+        );
+    }
+
+    /// The bounded trace keeps the first 512 rows and reports every later poll
+    /// through one omission counter instead of allocating unbounded evidence.
+    #[test]
+    fn readyz_readiness_trace_caps_rows_and_reports_all_omissions() {
+        let mut trace = ReadyzReadinessTrace::new("post-restart-readyz");
+        for poll in 0..521_u64 {
+            trace
+                .record_nonready(Duration::from_millis(poll), 503)
+                .expect("monotonic non-ready poll is accepted");
+        }
+        trace
+            .record_deadline(Duration::from_millis(521))
+            .expect("terminal deadline is accepted after capped rows");
+        let rendered = trace
+            .render_failure()
+            .expect("capped terminal failure still renders evidence");
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.starts_with("poll="))
+                .count(),
+            512,
+            "the retained readiness evidence has a fixed 512-row cap"
+        );
+        assert!(
+            rendered.contains("polls_omitted=10"),
+            "nine capped non-ready polls plus the terminal deadline are counted"
+        );
+        assert!(rendered.ends_with("terminal=request_timeout"));
+    }
+
+    /// Rendered trace data is safe metadata only. It must not put a request
+    /// body, a transport error, or a loopback URL in the failure artifact.
+    #[test]
+    fn readyz_readiness_trace_rendering_excludes_body_error_and_url_data() {
+        let mut trace = ReadyzReadinessTrace::new("post-restart-readyz");
+        trace
+            .record_nonready(Duration::from_millis(4), 503)
+            .expect("non-ready status is safe metadata");
+        trace
+            .record_transport(Duration::from_millis(9))
+            .expect("transport category has no raw error payload");
+        trace
+            .record_deadline(Duration::from_millis(15))
+            .expect("terminal category has no raw error payload");
+        let rendered = trace
+            .render_failure()
+            .expect("terminal failure renders safe trace metadata");
+        for forbidden in [
+            "body=",
+            "error=",
+            "http://",
+            "https://",
+            "127.0.0.1",
+            "/readyz",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "rendered readiness trace must not contain {forbidden:?}"
+            );
+        }
+    }
+
+    /// A real post-input cancellation drops the hanging restart future. The
+    /// shared trace must still reach the standard failure finalizer before its
+    /// Docker cleanup boundary.
+    #[test]
+    fn readyz_readiness_trace_is_written_before_cleanup_on_failure() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build readiness test runtime")
+            .block_on(async {
+                let (mut server, requests, task) = fake_ready_lumen_with_503_then_pending().await;
+                let mut restart = ScriptedRestartRunner {
+                    calls: Vec::new(),
+                    port_result: Some(Ok(format!(
+                        "{}\n",
+                        server.base.strip_prefix("http://").expect("loopback base")
+                    ))),
+                };
+                let timeout = Duration::from_millis(500);
+                let evidence_root = tempfile::tempdir().expect("create failure evidence root");
+                let events = Arc::new(StdMutex::new(Vec::new()));
+                let mut evidence_runner = FakeEvidenceRunner {
+                    results: VecDeque::from([
+                        Ok("local docker logs\n".to_owned()),
+                        Ok("local docker inspect\n".to_owned()),
+                    ]),
+                    events: Arc::clone(&events),
+                };
+                let mut cleanup_runner = TraceCheckingCleanupRunner {
+                    evidence_root: evidence_root.path().to_owned(),
+                    events: Arc::clone(&events),
+                    checked_trace: false,
+                };
+                let result = run_restart_post_input_case_with_failure_finalizer(
+                    &mut server,
+                    tokio::time::Instant::now() + timeout,
+                    timeout,
+                    &mut restart,
+                    evidence_root.path(),
+                    &mut evidence_runner,
+                    &mut cleanup_runner,
+                )
+                .await;
+                assert!(matches!(
+                    result,
+                    Err(HarnessError::PostInputTimeout {
+                        stage: "restart",
+                        ..
+                    })
+                ));
+                assert!(
+                    requests.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+                    "the local readiness endpoint must return 503 before its hanging poll"
+                );
+                assert_eq!(
+                    restart.calls,
+                    [
+                        "restart restart-test-owner",
+                        "port restart-test-owner 7373/tcp"
+                    ]
+                );
+
+                let evidence = fs::read_dir(evidence_root.path())
+                    .expect("list real failure evidence")
+                    .find_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .expect("one real failure evidence directory");
+                let trace = fs::read_to_string(evidence.join(READYZ_READINESS_TRACE_FILE))
+                    .expect("read real readiness trace artifact");
+                for expected in [
+                    "schema_version=1",
+                    "phase=readyz",
+                    "listener=post-restart-readyz",
+                    "restart_command=docker restart",
+                    "category=http_status:503",
+                    "category=cancelled",
+                    "polls_omitted=0",
+                    "terminal=cancelled",
+                ] {
+                    assert!(trace.contains(expected), "missing {expected:?} in {trace}");
+                }
+                for forbidden in ["unsafe-readyz-body-must-not-render", "http://", "/readyz"] {
+                    assert!(
+                        !trace.contains(forbidden),
+                        "the safe readiness trace must not contain {forbidden:?}"
+                    );
+                }
+                assert_eq!(
+                    events.lock().expect("read finalizer events").as_slice(),
+                    [
+                        format!(
+                            "docker logs --tail {} restart-test-owner",
+                            EVIDENCE_LOG_TAIL_LINES
+                        ),
+                        "docker inspect restart-test-owner".to_owned(),
+                        "trace-present-before:docker rm".to_owned(),
+                        "docker rm -f restart-test-owner".to_owned(),
+                        "docker volume rm -f restart-test-volume".to_owned(),
+                    ]
+                );
+                task.abort();
+            });
+    }
+
+    /// A failed restart command never reaches the readyz listener. The regular
+    /// failure bundle still exists, but it must not contain a readiness trace.
+    #[test]
+    fn readyz_readiness_trace_pre_poll_restart_failure_creates_no_trace_artifact() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build readiness test runtime")
+            .block_on(async {
+                let (mut server, requests, task) = fake_ready_lumen().await;
+                let mut restart = DiagnosticRestartRunner {
+                    restart_result: Some(Err(HarnessError::Startup("restart failed".to_owned()))),
+                    restart_delay: Duration::ZERO,
+                    port_result: Some(Ok("127.0.0.1:1".to_owned())),
+                    port_delay: Duration::ZERO,
+                };
+                let evidence_root = tempfile::tempdir().expect("create pre-poll evidence root");
+                let events = Arc::new(StdMutex::new(Vec::new()));
+                let mut evidence_runner = FakeEvidenceRunner {
+                    results: VecDeque::from([
+                        Ok("local docker logs\n".to_owned()),
+                        Ok("local docker inspect\n".to_owned()),
+                    ]),
+                    events: Arc::clone(&events),
+                };
+                let mut cleanup_runner = FakeCleanupRunner { events };
+                let timeout = Duration::from_millis(100);
+                let result = run_restart_post_input_case_with_failure_finalizer(
+                    &mut server,
+                    tokio::time::Instant::now() + timeout,
+                    timeout,
+                    &mut restart,
+                    evidence_root.path(),
+                    &mut evidence_runner,
+                    &mut cleanup_runner,
+                )
+                .await;
+                assert!(matches!(result, Err(HarnessError::Startup(_))));
+                assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+                let evidence = fs::read_dir(evidence_root.path())
+                    .expect("list regular pre-poll failure evidence")
+                    .find_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .expect("regular failure evidence exists");
+                assert!(
+                    !evidence.join(READYZ_READINESS_TRACE_FILE).exists(),
+                    "a pre-poll restart failure leaves no readiness trace artifact"
+                );
+                task.abort();
+            });
     }
 }
 // DURABLE-WORKLOAD-END
