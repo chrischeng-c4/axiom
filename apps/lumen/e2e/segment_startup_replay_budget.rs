@@ -35,6 +35,47 @@ use serve_budget_support::{
     checkpoint_sequence, raw_payload_bytes, replay_event_u64, stats_documents,
     write_large_aof_tail, LumenProcess, ServeMode, LARGE_VALUE_COUNT, PENDING_HARD_BYTES,
 };
+use std::time::Duration;
+
+#[test]
+fn idle_segment_sigterm_drains_before_default_grace_and_cold_restarts() {
+    let root = tempfile::tempdir().expect("segment graceful-shutdown root");
+    let original_sequences = write_large_aof_tail(root.path());
+    let mut process = LumenProcess::spawn(Some(root.path()), ServeMode::Segment, 300);
+    process.wait_until_ready(300);
+    assert_eq!(stats_documents(&process), LARGE_VALUE_COUNT as u64);
+    assert_keyword_hit(&process, 0);
+    assert_keyword_hit(&process, LARGE_VALUE_COUNT - 1);
+
+    // Do not shorten the production default. The server must finish an idle
+    // HTTP drain before this 30-second upper bound, then retain its durable
+    // segment data for a cold restart.
+    let default_grace = Duration::from_secs(30);
+    process.send_sigterm();
+    let (shutdown_elapsed, shutdown_logs) = process.wait_for_exit(default_grace);
+    assert!(
+        shutdown_logs.contains("http server drained; shutting down"),
+        "SIGTERM must report normal HTTP drain completion, not only early process exit; logs:\n{shutdown_logs}",
+    );
+    assert!(
+        shutdown_elapsed < default_grace,
+        "idle SIGTERM shutdown must not sleep through the full default grace: {shutdown_elapsed:?}"
+    );
+
+    let current_sequence = checkpoint_sequence(root.path());
+    let surviving_sequences = aof_sequences(root.path());
+    assert_safe_aof_tail(&original_sequences, &surviving_sequences, current_sequence);
+
+    let mut cold = LumenProcess::spawn(Some(root.path()), ServeMode::Segment, 300);
+    cold.wait_until_ready(300);
+    assert_eq!(
+        stats_documents(&cold),
+        LARGE_VALUE_COUNT as u64,
+        "cold segment startup must recover all durable records after graceful shutdown",
+    );
+    assert_keyword_hit(&cold, 0);
+    assert_keyword_hit(&cold, LARGE_VALUE_COUNT - 1);
+}
 
 #[test]
 fn segment_aof_replay_over_budget_charges_during_bootstrap_and_cold_restarts() {

@@ -121,6 +121,9 @@ impl LumenProcess {
                 "json",
             ])
             .env("LUMEN_AUTH", "off")
+            // Make the child test the production default, even when the
+            // surrounding test runner has configured a different grace.
+            .env_remove("LUMEN_GRACE_SECS")
             .env_remove("RUST_LOG")
             .env_remove("LUMEN_LOG_FORMAT")
             .stdout(Stdio::from(
@@ -285,6 +288,29 @@ impl LumenProcess {
     pub fn send_sigterm(&mut self) {
         let pid = self.child().id() as libc::pid_t;
         assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0, "signal owned Lumen child");
+    }
+
+    /// Wait for a SIGTERM shutdown without replacing the server's configured
+    /// grace period with a shorter test timeout. The returned duration is used
+    /// only to prove that an idle server does not consume the full default
+    /// grace when its HTTP drain is already complete.
+    #[cfg(unix)]
+    pub fn wait_for_exit(&mut self, grace: Duration) -> (Duration, String) {
+        let started = Instant::now();
+        let deadline = started + grace;
+        loop {
+            if let Some(status) = self.child().try_wait().expect("poll lumen shutdown") {
+                let elapsed = started.elapsed();
+                let logs = self.finish_exited_child();
+                assert!(status.success(), "Lumen SIGTERM shutdown failed ({status}): {logs}");
+                return (elapsed, logs);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Lumen did not exit within its configured grace period ({grace:?})"
+            );
+            thread::sleep(POLL_INTERVAL);
+        }
     }
 
     fn finish_exited_child(&mut self) -> String {
