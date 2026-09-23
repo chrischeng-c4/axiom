@@ -98,7 +98,7 @@ jobs:
           resolved_repo_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")"
           image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
           architecture="$(docker image inspect --format '{{.Architecture}}' "$IMAGE")"
-          oci_revision="$(docker image inspect --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}' "$IMAGE")"
+          oci_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")"
           [[ "$resolved_repo_digest" =~ ^ghcr\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$ ]] || { echo 'pulled image did not resolve to the expected repository digest' >&2; exit 1; }
           [[ "$resolved_repo_digest" == "$IMAGE" ]] || { echo 'pulled image digest differs from the requested immutable image' >&2; exit 1; }
           [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'selected AMD64 image ID is invalid' >&2; exit 1; }
