@@ -635,6 +635,15 @@ impl Fallback {
         engine: &Arc<Engine>,
         configured: Option<Arc<SegmentRdbStore>>,
     ) -> Result<()> {
+        if slot.is_some() && engine.layer_maintenance.owner().is_some() {
+            // The caller already owns the relay for this live endpoint.  Do
+            // not replace the slot: dropping its old fallback stops that
+            // owner while its capacity waiters are still pending.
+            return Ok(());
+        }
+        // A prior fallback can remain after its owner stops. Drop it before
+        // creating the replacement so its stopped relay cannot outlive it.
+        let _ = slot.take();
         if let Some(endpoint) = engine.layer_maintenance.owner() {
             // A configured bootstrap owner may already exist before replay
             // creates its caller-owned fallback.  Keep the owner as the sole
@@ -1396,6 +1405,47 @@ mod tests {
             !Arc::ptr_eq(&old, &replacement) && !replacement.is_stopped(),
             "a stopped fallback slot must not suppress a replacement owner"
         );
+    }
+
+    #[test]
+    fn fallback_ensure_reuses_active_relay_for_one_capacity_request() {
+        let engine = engine();
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(dir.path()).unwrap());
+        let mut fallback = None;
+        Fallback::ensure(&mut fallback, &engine, Some(store)).unwrap();
+        let endpoint = engine.layer_maintenance.owner().unwrap();
+
+        Fallback::ensure(&mut fallback, &engine, None).unwrap();
+        assert!(Arc::ptr_eq(
+            &endpoint,
+            &engine.layer_maintenance.owner().unwrap()
+        ));
+
+        engine.request_pending_checkpoint();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let request_cleared = engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision)
+                .is_none();
+            let requests = endpoint.requests.lock().unwrap();
+            if request_cleared && requests.completed == 2 {
+                break;
+            }
+            drop(requests);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let requests = endpoint.requests.lock().unwrap();
+        assert_eq!(requests.requested, 2);
+        assert_eq!(requests.completed, 2);
+        assert_eq!(requests.operations, [Work::Checkpoint, Work::Merge]);
+        drop(requests);
+        assert!(engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .is_none());
     }
 
     #[test]
