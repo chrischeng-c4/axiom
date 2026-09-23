@@ -714,6 +714,10 @@ fn median_statistic_and_ignored_inventory() {
                 false,
             ),
             ("seed_backpressure_retry_honors_absolute_setup_deadline", false),
+            (
+                "hnsw_cache_seal_requires_a_strict_hnsw_receipt_and_sends_no_body",
+                false,
+            ),
             ("seed_checkpoint_requires_one_persisted_drained_publication", false),
             ("seed_checkpoint_honors_setup_and_body_deadlines", false),
             ("request_deadline_is_the_approved_five_seconds", false),
@@ -1239,6 +1243,18 @@ mod durable_workload {
                 Self::HnswCpu => "hnsw-cpu",
             }
         }
+
+        fn requires_hnsw_cache_seal(self) -> bool {
+            matches!(self, Self::HnswCpu)
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct HnswCacheSealReceipt {
+        cache_fields: u64,
+        durability: &'static str,
+        mutation_epoch: u64,
+        mutation_apply_revision: u64,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -5011,6 +5027,117 @@ mod durable_workload {
         .map_err(|_| timeout())?
     }
 
+    fn parse_hnsw_cache_seal_receipt(value: Value) -> Result<HnswCacheSealReceipt> {
+        let object = value.as_object().ok_or_else(|| {
+            HarnessError::DataInvariant("restart cache seal receipt must be a JSON object".to_owned())
+        })?;
+        let keys = ["sealed", "cache_fields", "durability", "mutation_stamp"];
+        if object.len() != keys.len() || keys.iter().any(|key| !object.contains_key(*key)) {
+            return Err(HarnessError::DataInvariant(
+                "restart cache seal receipt has an unexpected JSON shape".to_owned(),
+            ));
+        }
+        if object.get("sealed").and_then(Value::as_bool) != Some(true) {
+            return Err(HarnessError::DataInvariant(
+                "restart cache seal receipt does not confirm sealed=true".to_owned(),
+            ));
+        }
+        let cache_fields = object
+            .get("cache_fields")
+            .and_then(Value::as_u64)
+            .filter(|fields| *fields >= 1)
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "restart cache seal receipt must report cache_fields >= 1".to_owned(),
+                )
+            })?;
+        let durability = match object.get("durability").and_then(Value::as_str) {
+            Some("aof_synced") => "aof_synced",
+            Some("checkpoint_committed") => "checkpoint_committed",
+            _ => {
+                return Err(HarnessError::DataInvariant(
+                    "restart cache seal receipt has an invalid durability boundary".to_owned(),
+                ))
+            }
+        };
+        let stamp = object
+            .get("mutation_stamp")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "restart cache seal receipt lacks mutation_stamp".to_owned(),
+                )
+            })?;
+        let stamp_keys = ["epoch", "apply_revision"];
+        if stamp.len() != stamp_keys.len()
+            || stamp_keys.iter().any(|key| !stamp.contains_key(*key))
+        {
+            return Err(HarnessError::DataInvariant(
+                "restart cache seal receipt has an unexpected mutation_stamp shape".to_owned(),
+            ));
+        }
+        let mutation_epoch = stamp
+            .get("epoch")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "restart cache seal receipt mutation_stamp.epoch must be an integer".to_owned(),
+                )
+            })?;
+        let mutation_apply_revision = stamp
+            .get("apply_revision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                HarnessError::DataInvariant(
+                    "restart cache seal receipt mutation_stamp.apply_revision must be an integer"
+                        .to_owned(),
+                )
+            })?;
+        Ok(HnswCacheSealReceipt {
+            cache_fields,
+            durability,
+            mutation_epoch,
+            mutation_apply_revision,
+        })
+    }
+
+    fn cache_seal_receipt_line(receipt: &HnswCacheSealReceipt) -> String {
+        json!({
+            "schema": "lumen.perf-cache-seal-receipt.v1",
+            "sealed": true,
+            "cache_fields": receipt.cache_fields,
+            "durability": receipt.durability,
+            "mutation_stamp": {
+                "epoch": receipt.mutation_epoch,
+                "apply_revision": receipt.mutation_apply_revision,
+            },
+        })
+        .to_string()
+    }
+
+    async fn seal_hnsw_cache(
+        client: &reqwest::Client,
+        base: &str,
+    ) -> Result<HnswCacheSealReceipt> {
+        let response = client
+            .post(format!("{base}/admin/restart:seal-hnsw-cache"))
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(HarnessError::request_failure)?;
+        let status = response.status();
+        if status != reqwest::StatusCode::OK {
+            return Err(HarnessError::Http(format!(
+                "restart cache seal returned {status}"
+            )));
+        }
+        let value = response
+            .json::<Value>()
+            .await
+            .map_err(HarnessError::request_failure)?;
+        parse_hnsw_cache_seal_receipt(value)
+    }
+
     async fn create_collection(
         server: &DockerLumen,
         collection: &str,
@@ -7053,6 +7180,18 @@ mod durable_workload {
             },
         )
         .await?;
+        if config.vector_backend.requires_hnsw_cache_seal() {
+            eprintln!("PERF_STAGE_BEGIN hnsw_cache_seal");
+            let receipt = post_input_step(
+                post_input_deadline,
+                POST_INPUT_TIMEOUT,
+                "hnsw_cache_seal",
+                seal_hnsw_cache(&server.client, &server.base),
+            )
+            .await?;
+            eprintln!("PERF_CACHE_SEAL_RECEIPT {}", cache_seal_receipt_line(&receipt));
+            eprintln!("PERF_STAGE_END hnsw_cache_seal");
+        }
         eprintln!("PERF_STAGE_BEGIN restart");
         let restart_elapsed = server.post_input_restart_step(post_input_deadline).await?;
         eprintln!("PERF_STAGE_END restart");
@@ -8122,6 +8261,101 @@ mod durable_workload {
             axum::serve(listener, app).await.unwrap();
         });
         (format!("http://{address}"), calls, task)
+    }
+
+    #[cfg(test)]
+    async fn fake_hnsw_cache_seal_server(
+        status: reqwest::StatusCode,
+        response_body: &'static str,
+    ) -> (
+        String,
+        Arc<StdMutex<Vec<usize>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let bodies = Arc::new(StdMutex::new(Vec::new()));
+        let received_bodies = bodies.clone();
+        let app = axum::Router::new().route(
+            "/admin/restart:seal-hnsw-cache",
+            axum::routing::post(move |request_body: axum::body::Bytes| {
+                let received_bodies = received_bodies.clone();
+                async move {
+                    received_bodies.lock().unwrap().push(request_body.len());
+                    let mut response =
+                        axum::response::Response::new(axum::body::Body::from(response_body));
+                    *response.status_mut() = status;
+                    response
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), bodies, task)
+    }
+
+    #[test]
+    fn hnsw_cache_seal_requires_a_strict_hnsw_receipt_and_sends_no_body() {
+        assert!(!VectorBackend::FlatCpu.requires_hnsw_cache_seal());
+        assert!(VectorBackend::HnswCpu.requires_hnsw_cache_seal());
+
+        let valid = json!({
+            "sealed": true,
+            "cache_fields": 1,
+            "durability": "aof_synced",
+            "mutation_stamp": {"epoch": 7, "apply_revision": 42},
+        });
+        let parsed = parse_hnsw_cache_seal_receipt(valid.clone()).unwrap();
+        let line: Value = serde_json::from_str(&cache_seal_receipt_line(&parsed)).unwrap();
+        assert_eq!(line["schema"], "lumen.perf-cache-seal-receipt.v1");
+        assert_eq!(line["sealed"], true);
+        assert_eq!(line["cache_fields"], 1);
+        assert_eq!(line["durability"], "aof_synced");
+        assert_eq!(line["mutation_stamp"], json!({"epoch": 7, "apply_revision": 42}));
+        for invalid in [
+            json!({"sealed": false, "cache_fields": 1, "durability": "aof_synced", "mutation_stamp": {"epoch": 7, "apply_revision": 42}}),
+            json!({"sealed": true, "cache_fields": 0, "durability": "aof_synced", "mutation_stamp": {"epoch": 7, "apply_revision": 42}}),
+            json!({"sealed": true, "cache_fields": 1, "durability": "volatile", "mutation_stamp": {"epoch": 7, "apply_revision": 42}}),
+            json!({"sealed": true, "cache_fields": 1, "durability": "aof_synced", "mutation_stamp": {"epoch": 7}}),
+            json!({"sealed": true, "cache_fields": 1, "durability": "aof_synced", "mutation_stamp": {"epoch": 7, "apply_revision": 42}, "extra": true}),
+        ] {
+            assert!(
+                matches!(
+                    parse_hnsw_cache_seal_receipt(invalid),
+                    Err(HarnessError::DataInvariant(_))
+                ),
+                "malformed seal receipt must fail closed"
+            );
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (base, bodies, task) = fake_hnsw_cache_seal_server(
+                reqwest::StatusCode::OK,
+                r#"{"sealed":true,"cache_fields":1,"durability":"checkpoint_committed","mutation_stamp":{"epoch":9,"apply_revision":43}}"#,
+            )
+            .await;
+            let result = seal_hnsw_cache(&reqwest::Client::new(), &base).await;
+            task.abort();
+            assert_eq!(
+                result.unwrap(),
+                HnswCacheSealReceipt {
+                    cache_fields: 1,
+                    durability: "checkpoint_committed",
+                    mutation_epoch: 9,
+                    mutation_apply_revision: 43,
+                }
+            );
+            assert_eq!(
+                *bodies.lock().unwrap(),
+                vec![0],
+                "the seal call must use an empty request body"
+            );
+        });
     }
 
     #[test]

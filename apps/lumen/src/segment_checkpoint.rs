@@ -3,8 +3,9 @@
 
 use crate::storage::Engine;
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use tokio::sync::mpsc::error::TrySendError;
@@ -15,6 +16,21 @@ use crate::change_budget::{BudgetWake, ChangeBudget, Snapshot};
 
 const WAITER_SHUTDOWN_POLL: Duration = Duration::from_millis(50);
 static NEXT_MANUAL_CHECKPOINT_ATTEMPT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// A successfully sealed cache is valid only for this exact live engine and
+/// store allocation. Weak references prevent a dropped test/server allocation
+/// from leaving a stale marker if its address is later reused. This process
+/// memory is intentionally never written to the checkpoint or graph cache.
+struct HnswCacheSealMarker {
+    engine: Weak<Engine>,
+    store: Weak<crate::segment_rdb::SegmentRdbStore>,
+    stamp: crate::capture_barrier::MutationStamp,
+}
+
+type HnswCacheSealKey = (usize, usize);
+
+static HNSW_CACHE_SEALS: OnceLock<Mutex<HashMap<HnswCacheSealKey, HnswCacheSealMarker>>> =
+    OnceLock::new();
 
 /// Real [`crate::api::CheckpointSink`] wiring for segment-persistence mode
 /// (#1389): forces the same synchronous stage-then-rename checkpoint the
@@ -285,6 +301,142 @@ impl CheckpointSchedule {
 }
 
 impl SegmentCheckpointSink {
+    fn hnsw_cache_seal_key(&self) -> HnswCacheSealKey {
+        (
+            Arc::as_ptr(&self.engine) as usize,
+            Arc::as_ptr(&self.store) as usize,
+        )
+    }
+
+    fn current_hnsw_cache_seal(&self) -> bool {
+        let stamp = self.engine.capture_barrier.mutation_stamp();
+        let Ok(mut markers) = HNSW_CACHE_SEALS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        else {
+            return false;
+        };
+        markers.retain(|_, marker| {
+            marker.engine.upgrade().is_some() && marker.store.upgrade().is_some()
+        });
+        markers
+            .get(&self.hnsw_cache_seal_key())
+            .is_some_and(|marker| {
+                marker.stamp == stamp
+                    && marker
+                        .engine
+                        .upgrade()
+                        .is_some_and(|engine| Arc::ptr_eq(&engine, &self.engine))
+                    && marker
+                        .store
+                        .upgrade()
+                        .is_some_and(|store| Arc::ptr_eq(&store, &self.store))
+            })
+    }
+
+    fn record_hnsw_cache_seal(&self, stamp: crate::capture_barrier::MutationStamp) -> Result<()> {
+        let mut markers = HNSW_CACHE_SEALS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|_| anyhow::anyhow!("HNSW cache seal marker poisoned"))?;
+        markers.insert(
+            self.hnsw_cache_seal_key(),
+            HnswCacheSealMarker {
+                engine: Arc::downgrade(&self.engine),
+                store: Arc::downgrade(&self.store),
+                stamp,
+            },
+        );
+        Ok(())
+    }
+
+    /// An unsuccessful seal must not let a prior receipt suppress shutdown's
+    /// normal graph-cache write. A poisoned marker lock is also fail-closed:
+    /// `current_hnsw_cache_seal` treats it as no marker.
+    fn clear_hnsw_cache_seal(&self) {
+        if let Ok(mut markers) = HNSW_CACHE_SEALS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            markers.remove(&self.hnsw_cache_seal_key());
+        }
+    }
+
+    #[cfg(test)]
+    fn has_current_hnsw_cache_seal(&self) -> bool {
+        self.current_hnsw_cache_seal()
+    }
+
+    /// Publish a planned-restart cache while ordinary writers and direct
+    /// reshard mutations are held behind the existing exclusive writer gate.
+    /// A background checkpoint can still advance the capture stamp, so the
+    /// marker is recorded only when the one-lock stamps before and after cache
+    /// publication match exactly.
+    pub async fn seal_hnsw_graph_cache(
+        self: Arc<Self>,
+    ) -> Result<crate::api::HnswCacheSealReceipt> {
+        let gate = self.writer.mutation_gate().ok_or_else(|| {
+            anyhow::Error::new(crate::api::HnswCacheSealUnavailable(
+                "HNSW restart cache sealing requires the standalone writer fence".to_string(),
+            ))
+        })?;
+        let permit = gate.exclusive().await?;
+        let (send, receive) = oneshot::channel();
+        std::thread::Builder::new()
+            .name("lumen-hnsw-restart-cache-seal".into())
+            .spawn(move || {
+                let _permit = permit;
+                self.clear_hnsw_cache_seal();
+                let result = (|| {
+                    if !self.engine.has_hnsw_graphs()? {
+                        return Err(anyhow::Error::new(crate::api::HnswCacheSealUnavailable(
+                            "no live HNSW graph is available for the planned restart".to_string(),
+                        )));
+                    }
+                    let mut before = self.engine.capture_barrier.mutation_stamp();
+                    let durability = if let Some(aof) = &self.aof {
+                        aof.lock()
+                            .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
+                            .sync()?;
+                        crate::api::HnswCacheDurability::AofSynced
+                    } else {
+                        // The fallback must commit a complete authoritative
+                        // checkpoint before exposing an optional graph cache.
+                        self.checkpoint_sync(&self.store)?;
+                        // This checkpoint deliberately advances the barrier.
+                        // Begin the graph-publication comparison after its own
+                        // durable mutation has completed.
+                        before = self.engine.capture_barrier.mutation_stamp();
+                        crate::api::HnswCacheDurability::CheckpointCommitted
+                    };
+                    let cache_fields = self.store.save_hnsw_graph_caches(&self.engine)?;
+                    if cache_fields == 0 {
+                        return Err(anyhow::Error::new(crate::api::HnswCacheSealUnavailable(
+                            "no HNSW graph cache fields were published".to_string(),
+                        )));
+                    }
+                    let after = self.engine.capture_barrier.mutation_stamp();
+                    if after != before {
+                        return Err(anyhow::Error::new(crate::api::HnswCacheSealInvalidated(
+                            "live mutation stamp changed while HNSW cache sealing ran".to_string(),
+                        )));
+                    }
+                    self.record_hnsw_cache_seal(after)?;
+                    Ok(crate::api::HnswCacheSealReceipt {
+                        cache_fields,
+                        durability,
+                        mutation_epoch: after.epoch,
+                        mutation_apply_revision: after.apply_revision,
+                    })
+                })();
+                let _ = send.send(result);
+            })
+            .context("start HNSW restart cache seal worker")?;
+        receive
+            .await
+            .context("HNSW restart cache seal worker stopped")?
+    }
+
     fn complete_periodic_checkpoint(
         schedule: &mut CheckpointSchedule,
         after: Snapshot,
@@ -310,6 +462,9 @@ impl SegmentCheckpointSink {
             .spawn(move || {
                 let _permit = permit;
                 let result = (|| {
+                    if self.current_hnsw_cache_seal() {
+                        return Ok(0);
+                    }
                     if !self.engine.has_hnsw_graphs()? && !self.store.has_hnsw_graph_cache() {
                         return Ok(0);
                     }
@@ -614,6 +769,17 @@ impl crate::api::CheckpointSink for SegmentCheckpointSink {
         self.checkpoint_with_fence(None, CheckpointTraceOrigin::Manual)
             .await
     }
+
+    async fn seal_hnsw_graph_cache(&self) -> Result<crate::api::HnswCacheSealReceipt> {
+        Arc::new(SegmentCheckpointSink {
+            engine: self.engine.clone(),
+            store: self.store.clone(),
+            writer: self.writer.clone(),
+            aof: self.aof.clone(),
+        })
+        .seal_hnsw_graph_cache()
+        .await
+    }
 }
 
 /// A read-only `WriteSink` for bootstrap pending-change spill checkpoints.
@@ -778,6 +944,7 @@ mod tests {
     };
     use crate::wal::WalRecord;
     use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
 
@@ -890,6 +1057,193 @@ mod tests {
             before,
             "cache must not trim the authoritative tail"
         );
+    }
+
+    #[tokio::test]
+    async fn sealed_hnsw_cache_is_reused_only_until_the_next_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        let store = Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap());
+        let tail = root.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(AofWriter::open(&tail).unwrap()));
+        let writer = crate::coordinator::WriteCoordinator::start_from_with_aof(
+            Arc::new(crate::wal::MemWal::new()),
+            engine.clone(),
+            0,
+            aof.clone(),
+        );
+        writer
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "v".into(),
+                req: serde_json::from_value(serde_json::json!({
+                    "fields": {"v": {"type": "vector", "dim": 3, "metric": "l2", "backend": "hnsw-cpu"}}
+                }))
+                .unwrap(),
+            })
+            .await
+            .unwrap();
+        writer
+            .submit(RaftLogEntry::Index {
+                collection_id: "v".into(),
+                req: serde_json::from_value(serde_json::json!({"items": [{
+                    "external_id": "one", "field": "v", "value": [1.0, 2.0, 3.0]
+                }]}))
+                .unwrap(),
+            })
+            .await
+            .unwrap();
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store,
+            writer: writer.clone(),
+            aof: Some(aof),
+        });
+
+        let receipt = sink.clone().seal_hnsw_graph_cache().await.unwrap();
+        assert_eq!(receipt.cache_fields, 1);
+        assert_eq!(
+            receipt.durability,
+            crate::api::HnswCacheDurability::AofSynced
+        );
+        assert!(sink.has_current_hnsw_cache_seal());
+        assert_eq!(sink.clone().save_shutdown_graph_cache().await.unwrap(), 0);
+
+        writer
+            .submit(RaftLogEntry::Index {
+                collection_id: "v".into(),
+                req: serde_json::from_value(serde_json::json!({"items": [{
+                    "external_id": "two", "field": "v", "value": [4.0, 5.0, 6.0]
+                }]}))
+                .unwrap(),
+            })
+            .await
+            .unwrap();
+        assert!(!sink.has_current_hnsw_cache_seal());
+    }
+
+    #[tokio::test]
+    async fn failed_hnsw_cache_seal_clears_a_prior_marker() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        let writer = crate::coordinator::WriteCoordinator::start(
+            Arc::new(crate::wal::MemWal::new()),
+            engine.clone(),
+        );
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store: Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap()),
+            writer,
+            aof: None,
+        });
+        sink.record_hnsw_cache_seal(engine.capture_barrier.mutation_stamp())
+            .unwrap();
+        assert!(sink.has_current_hnsw_cache_seal());
+
+        let error = sink.clone().seal_hnsw_graph_cache().await.unwrap_err();
+        assert!(error
+            .downcast_ref::<crate::api::HnswCacheSealUnavailable>()
+            .is_some());
+        assert!(!sink.has_current_hnsw_cache_seal());
+    }
+
+    #[tokio::test]
+    async fn sealed_hnsw_cache_is_invalidated_by_direct_reshard_and_restore_calls() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        let store = Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap());
+        let tail = root.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(AofWriter::open(&tail).unwrap()));
+        let writer = crate::coordinator::WriteCoordinator::start_from_with_aof(
+            Arc::new(crate::wal::MemWal::new()),
+            engine.clone(),
+            0,
+            aof.clone(),
+        );
+        writer
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "v".into(),
+                req: serde_json::from_value(serde_json::json!({
+                    "fields": {"v": {"type": "vector", "dim": 3, "metric": "l2", "backend": "hnsw-cpu"}}
+                }))
+                .unwrap(),
+            })
+            .await
+            .unwrap();
+        writer
+            .submit(RaftLogEntry::Index {
+                collection_id: "v".into(),
+                req: serde_json::from_value(serde_json::json!({"items": [{
+                    "external_id": "one", "field": "v", "value": [1.0, 2.0, 3.0]
+                }]}))
+                .unwrap(),
+            })
+            .await
+            .unwrap();
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store,
+            writer: writer.clone(),
+            aof: Some(aof),
+        });
+        let applied_seq = writer.applied_seq();
+
+        let seal = |sink: Arc<SegmentCheckpointSink>| async move {
+            assert_eq!(
+                sink.clone()
+                    .seal_hnsw_graph_cache()
+                    .await
+                    .unwrap()
+                    .cache_fields,
+                1
+            );
+            assert!(sink.has_current_hnsw_cache_seal());
+        };
+
+        seal(sink.clone()).await;
+        assert!(engine
+            .apply_reshard_batch(
+                crate::storage::SnapshotV1 {
+                    version: 0,
+                    collections: BTreeMap::new(),
+                },
+                None,
+            )
+            .is_err());
+        assert_eq!(writer.applied_seq(), applied_seq);
+        assert!(!sink.has_current_hnsw_cache_seal());
+
+        seal(sink.clone()).await;
+        assert!(engine
+            .apply_reshard_prune_chunk(crate::reshard::ReshardPruneChunk {
+                to_map_version: 1,
+                bucket: 0,
+                virtual_bucket_count: 1,
+                collection_id: "v".into(),
+                chunk_index: 0,
+                total_chunks: 0,
+                keep_ids: BTreeSet::new(),
+            })
+            .is_err());
+        assert_eq!(writer.applied_seq(), applied_seq);
+        assert!(!sink.has_current_hnsw_cache_seal());
+
+        seal(sink.clone()).await;
+        let one_shard = crate::routing::VirtualBucketShardMap::balanced(1, 1, 1).unwrap();
+        assert_eq!(
+            engine
+                .evict_not_owned(&one_shard, 0)
+                .unwrap()
+                .documents_evicted,
+            0
+        );
+        assert_eq!(writer.applied_seq(), applied_seq);
+        assert!(!sink.has_current_hnsw_cache_seal());
+
+        seal(sink.clone()).await;
+        engine.restore(engine.snapshot().unwrap()).unwrap();
+        assert_eq!(writer.applied_seq(), applied_seq);
+        assert!(!sink.has_current_hnsw_cache_seal());
+        assert_eq!(sink.save_shutdown_graph_cache().await.unwrap(), 1);
     }
 
     #[tokio::test]

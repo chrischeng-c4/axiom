@@ -59,6 +59,14 @@ pub(crate) struct CaptureStamp {
     pub(crate) epoch: u64,
 }
 
+/// A process-local identity for the live mutation state. A cache seal records
+/// this under the writer fence and may only be reused while it is unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MutationStamp {
+    pub(crate) epoch: u64,
+    pub(crate) apply_revision: u64,
+}
+
 pub(crate) struct ApplyLease<'a> {
     barrier: &'a CaptureBarrier,
     _thread_affine: PhantomData<Rc<()>>,
@@ -113,6 +121,16 @@ impl CaptureBarrier {
             .lock()
             .expect("capture barrier poisoned")
             .apply_revision
+    }
+
+    /// Read both cache-seal invalidation values while holding one state lock.
+    /// Separate reads could combine an old epoch with a new apply revision.
+    pub(crate) fn mutation_stamp(&self) -> MutationStamp {
+        let state = self.state.lock().expect("capture barrier poisoned");
+        MutationStamp {
+            epoch: state.epoch,
+            apply_revision: state.apply_revision,
+        }
     }
 
     pub(crate) fn is_uncertain(&self) -> bool {
@@ -401,6 +419,34 @@ mod tests {
         let timing = barrier.timing();
         assert_eq!(timing.capture.count, 2);
         assert!(timing.capture.total_ns >= timing.capture.max_ns);
+    }
+
+    #[test]
+    fn mutation_stamp_reads_epoch_and_apply_revision_together() {
+        let barrier = CaptureBarrier::default();
+        assert_eq!(
+            barrier.mutation_stamp(),
+            MutationStamp {
+                epoch: 0,
+                apply_revision: 0,
+            }
+        );
+        drop(barrier.apply());
+        assert_eq!(
+            barrier.mutation_stamp(),
+            MutationStamp {
+                epoch: 0,
+                apply_revision: 1,
+            }
+        );
+        barrier.apply().replace_epoch();
+        assert_eq!(
+            barrier.mutation_stamp(),
+            MutationStamp {
+                epoch: 1,
+                apply_revision: 2,
+            }
+        );
     }
 
     #[test]

@@ -1745,6 +1745,11 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "hnsw_cache_seal_requires_a_strict_hnsw_receipt_and_sends_no_body"
+                        .into(),
+                    false,
+                ),
+                (
                     "seed_checkpoint_requires_one_persisted_drained_publication".into(),
                     false,
                 ),

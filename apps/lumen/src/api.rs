@@ -26,7 +26,7 @@ use axum::{
     Router,
 };
 use futures::{StreamExt, TryStreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use service_http::{MetricsProvider, ReadinessHook};
 use tokio::sync::Semaphore;
 use utoipa::{
@@ -235,6 +235,82 @@ pub trait CheckpointSink: Send + Sync {
     /// on disk to fall behind). `Err` on a real write failure, which callers
     /// (the reshard driver) must treat as "not yet durable" and retry.
     async fn checkpoint_now(&self) -> Result<bool>;
+
+    /// Publish an optional HNSW recovery cache under a durable mutation
+    /// boundary. Only segment persistence implements this: a memory-only or
+    /// non-segment process must refuse the planned-restart optimization rather
+    /// than claim a cache it cannot make durable.
+    async fn seal_hnsw_graph_cache(&self) -> Result<HnswCacheSealReceipt> {
+        Err(anyhow::Error::new(HnswCacheSealUnavailable(
+            "HNSW restart cache sealing requires configured segment persistence".to_string(),
+        )))
+    }
+}
+
+/// Durable boundary named in a successful planned-restart HNSW cache receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HnswCacheDurability {
+    AofSynced,
+    CheckpointCommitted,
+}
+
+impl HnswCacheDurability {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AofSynced => "aof_synced",
+            Self::CheckpointCommitted => "checkpoint_committed",
+        }
+    }
+}
+
+/// Process-local receipt for an optional HNSW recovery cache publication.
+/// The wire handler below emits its intentionally fixed JSON shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HnswCacheSealReceipt {
+    pub cache_fields: usize,
+    pub durability: HnswCacheDurability,
+    pub mutation_epoch: u64,
+    pub mutation_apply_revision: u64,
+}
+
+/// The server has no configured segment cache root or no live HNSW graph to
+/// seal. A caller can retry after its planned restart input becomes available.
+#[derive(Debug)]
+pub(crate) struct HnswCacheSealUnavailable(pub(crate) String);
+
+impl std::fmt::Display for HnswCacheSealUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for HnswCacheSealUnavailable {}
+
+/// A concurrent checkpoint or replacement changed the live capture stamp
+/// while an optional cache was being written. The cache cannot be reused.
+#[derive(Debug)]
+pub(crate) struct HnswCacheSealInvalidated(pub(crate) String);
+
+impl std::fmt::Display for HnswCacheSealInvalidated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for HnswCacheSealInvalidated {}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct HnswCacheSealMutationStamp {
+    epoch: u64,
+    apply_revision: u64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct HnswCacheSealResponse {
+    sealed: bool,
+    cache_fields: usize,
+    durability: &'static str,
+    mutation_stamp: HnswCacheSealMutationStamp,
 }
 
 /// Restore backend for the administrative restore operation.
@@ -807,6 +883,7 @@ impl AppState {
         reshard_evict,
         reshard_fence,
         admin_checkpoint,
+        admin_restart_seal_hnsw_cache,
     ),
     components(schemas(
         CreateCollectionRequest,
@@ -871,6 +948,8 @@ impl AppState {
         crate::raft::ClusterStateView,
         crate::raft::PeerAddr,
         crate::raft::RaftRole,
+        HnswCacheSealMutationStamp,
+        HnswCacheSealResponse,
     )),
     modifiers(&SecurityAddon),
     security(("bearerAuth" = []))
@@ -1028,6 +1107,10 @@ pub fn router_with_admission(
         .route("/admin/reshard:evict", post(reshard_evict))
         .route("/admin/reshard:fence", post(reshard_fence))
         .route("/admin/checkpoint", post(admin_checkpoint))
+        .route(
+            "/admin/restart:seal-hnsw-cache",
+            post(admin_restart_seal_hnsw_cache),
+        )
         .layer(from_fn(record_subject_to_span))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
@@ -2971,6 +3054,94 @@ async fn admin_checkpoint(
     Ok(Json(serde_json::json!({ "persisted": persisted })))
 }
 
+/// `POST /admin/restart:seal-hnsw-cache`: publish the optional HNSW graph
+/// bytes that a planned restart may use after it replays the authoritative
+/// checkpoint and AOF. It takes no request body. The response is deliberately
+/// strict because the performance harness treats any missing field as a failed
+/// restart preparation rather than guessing that a cache is usable.
+#[utoipa::path(
+    post,
+    path = "/admin/restart:seal-hnsw-cache",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "HNSW graph cache sealed at a durable mutation boundary", body = HnswCacheSealResponse),
+        (status = 401, description = "Authentication required", body = ApiError),
+        (status = 403, description = "Missing admin role", body = ApiError),
+        (status = 409, description = "No current HNSW graph is sealable or the graph changed during sealing", body = ApiError),
+        (status = 500, description = "HNSW cache sealing failed", body = ApiError),
+        (status = 503, description = "Restart required", body = ApiError),
+        (status = 507, description = "Node storage is full", body = ApiError)
+    )
+)]
+async fn admin_restart_seal_hnsw_cache(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Json<HnswCacheSealResponse>, ApiErr> {
+    auth.ensure_admin(Role::Admin).await?;
+    enforce_storage_writable(&state)?;
+    let receipt = state
+        .checkpoint
+        .seal_hnsw_graph_cache()
+        .await
+        .map_err(hnsw_cache_seal_api_error)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "admin_restart_seal_hnsw_cache",
+        subject = auth.subject().unwrap_or("anonymous"),
+        cache_fields = receipt.cache_fields,
+        durability = receipt.durability.as_str(),
+        mutation_epoch = receipt.mutation_epoch,
+        mutation_apply_revision = receipt.mutation_apply_revision,
+    );
+    Ok(Json(HnswCacheSealResponse {
+        sealed: true,
+        cache_fields: receipt.cache_fields,
+        durability: receipt.durability.as_str(),
+        mutation_stamp: HnswCacheSealMutationStamp {
+            epoch: receipt.mutation_epoch,
+            apply_revision: receipt.mutation_apply_revision,
+        },
+    }))
+}
+
+fn hnsw_cache_seal_api_error(error: anyhow::Error) -> ApiErr {
+    if error.downcast_ref::<HnswCacheSealUnavailable>().is_some() {
+        return ApiErr::new(
+            StatusCode::CONFLICT,
+            "planned_restart_cache_unavailable",
+            error.to_string(),
+        );
+    }
+    if error.downcast_ref::<HnswCacheSealInvalidated>().is_some() {
+        return ApiErr::new(
+            StatusCode::CONFLICT,
+            "planned_restart_cache_invalidated",
+            error.to_string(),
+        );
+    }
+    if error.downcast_ref::<RestartRequired>().is_some() {
+        return ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "restart_required",
+            error.to_string(),
+        );
+    }
+    if crate::coordinator::is_storage_full(&error)
+        || error.downcast_ref::<StorageFullError>().is_some()
+    {
+        return ApiErr::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "storage_full",
+            error.to_string(),
+        );
+    }
+    ApiErr::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "planned_restart_cache_failed",
+        error.to_string(),
+    )
+}
+
 fn default_fence_ttl_secs() -> u64 {
     300
 }
@@ -3444,6 +3615,54 @@ mod restore_sink_tests {
             "fields": { "value": { "type": "keyword" } }
         }))
         .expect("valid collection request")
+    }
+
+    async fn assert_hnsw_cache_seal_error(
+        error: anyhow::Error,
+        expected_status: StatusCode,
+        expected_code: &str,
+    ) {
+        let response = hnsw_cache_seal_api_error(error).into_response();
+        assert_eq!(response.status(), expected_status);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("error body");
+        let envelope: serde_json::Value = serde_json::from_slice(&body).expect("JSON envelope");
+        assert_eq!(envelope["error"], expected_code);
+    }
+
+    #[tokio::test]
+    async fn hnsw_cache_seal_errors_fail_closed_with_stable_envelopes() {
+        assert_hnsw_cache_seal_error(
+            anyhow::Error::new(HnswCacheSealUnavailable("no graph".to_string())),
+            StatusCode::CONFLICT,
+            "planned_restart_cache_unavailable",
+        )
+        .await;
+        assert_hnsw_cache_seal_error(
+            anyhow::Error::new(HnswCacheSealInvalidated("graph changed".to_string())),
+            StatusCode::CONFLICT,
+            "planned_restart_cache_invalidated",
+        )
+        .await;
+        assert_hnsw_cache_seal_error(
+            anyhow::Error::new(RestartRequired("replay first".to_string())),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "restart_required",
+        )
+        .await;
+        assert_hnsw_cache_seal_error(
+            anyhow::Error::new(StorageFullError("disk full".to_string())),
+            StatusCode::INSUFFICIENT_STORAGE,
+            "storage_full",
+        )
+        .await;
+        assert_hnsw_cache_seal_error(
+            anyhow::Error::msg("cache write failed"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "planned_restart_cache_failed",
+        )
+        .await;
     }
 
     #[tokio::test]
