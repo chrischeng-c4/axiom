@@ -67,6 +67,16 @@ pub(super) struct RootWork {
     changed: Condvar,
 }
 
+/// One point-in-time view of the root-local merge scheduler. It is copied
+/// into the checkpoint diagnostic trace after a durable publication.
+#[derive(Clone, Copy)]
+pub(super) struct TraceState {
+    pub(super) queued: bool,
+    pub(super) running: bool,
+    pub(super) requested: bool,
+    pub(super) published_revision: u64,
+}
+
 pub(super) fn shared(root: &Path) -> Result<Arc<RootWork>> {
     // A loaded Engine may outlive all store handles. Keep its weak reader pins
     // discoverable by a later handle for the same canonical root.
@@ -86,6 +96,16 @@ pub(super) fn shared(root: &Path) -> Result<Arc<RootWork>> {
 }
 
 impl RootWork {
+    pub(super) fn trace_state(&self) -> TraceState {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        TraceState {
+            queued: state.queued,
+            running: state.running,
+            requested: state.requested,
+            published_revision: state.published_revision,
+        }
+    }
+
     fn has_live_ownership(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state
@@ -2360,11 +2380,7 @@ mod tests {
         // keeps that pause from blocking unrelated, parallel library tests.
         let mut output = tempfile::tempfile().unwrap();
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                test_name,
-                "--nocapture",
-            ])
+            .args(["--exact", test_name, "--nocapture"])
             .env(CHILD, "1")
             .stdout(std::process::Stdio::from(output.try_clone().unwrap()))
             .stderr(std::process::Stdio::from(output.try_clone().unwrap()))
@@ -2575,7 +2591,9 @@ mod tests {
                 panic!("capacity owner merge thread stopped before returning a result")
             }
         };
-        merge.join().expect("capacity owner merge thread must not panic");
+        merge
+            .join()
+            .expect("capacity owner merge thread must not panic");
         merge_result.expect("capacity owner merge must not fail");
         store
             .wait_for_merges(Duration::from_secs(10))
