@@ -1010,6 +1010,9 @@ mod durable_workload {
     const STATE_WRITE_LOCK_HISTOGRAM: &str = "lumen_engine_state_write_lock_wait_seconds";
     const HNSW_ADD_HISTOGRAM: &str = "lumen_hnsw_add_seconds";
     const CHECKPOINT_COUNTER: &str = "lumen_segment_checkpoint_completed_total";
+    const CHECKPOINT_ATTEMPT_STARTED_COUNTER: &str = "lumen_segment_checkpoint_started_total";
+    const CHECKPOINT_ATTEMPT_IN_FLIGHT: &str = "lumen_segment_checkpoint_in_flight";
+    const CHECKPOINT_ATTEMPT_FAILED_COUNTER: &str = "lumen_segment_checkpoint_failed_total";
     const MERGE_COUNTER: &str = "lumen_segment_merge_completed_total";
     const CHECKPOINT_DURATION_COUNT: &str = "lumen_segment_checkpoint_duration_seconds_count";
     const CHECKPOINT_DURATION_SUM: &str = "lumen_segment_checkpoint_duration_seconds_sum";
@@ -2457,6 +2460,9 @@ mod durable_workload {
         frozen: u64,
         total: u64,
         checkpoints: u64,
+        checkpoint_attempt_started: u64,
+        checkpoint_attempt_in_flight: u64,
+        checkpoint_attempt_failed: u64,
         merges: u64,
         state_write_lock: IntervalHistogram,
         hnsw_add: IntervalHistogram,
@@ -2465,6 +2471,8 @@ mod durable_workload {
     #[derive(Debug)]
     struct IntervalTraceDelta {
         checkpoints: u64,
+        checkpoint_attempt_started: u64,
+        checkpoint_attempt_failed: u64,
         merges: u64,
         state_write_lock: IntervalHistogram,
         hnsw_add: IntervalHistogram,
@@ -2598,6 +2606,7 @@ mod durable_workload {
                             "scrape_state": "not_sampled",
                             "pending": Value::Null,
                             "checkpoint": Value::Null,
+                            "checkpoint_attempt": Value::Null,
                             "merge": Value::Null,
                             "state_write_lock": Value::Null,
                             "state_write_lock_delta": Value::Null,
@@ -2668,6 +2677,9 @@ mod durable_workload {
                 frozen: prometheus_counter(metrics, "lumen_pending_change_frozen_bytes")?,
                 total: prometheus_counter(metrics, "lumen_pending_change_total_bytes")?,
                 checkpoints: prometheus_counter(metrics, CHECKPOINT_COUNTER)?,
+                checkpoint_attempt_started: prometheus_counter(metrics, CHECKPOINT_ATTEMPT_STARTED_COUNTER)?,
+                checkpoint_attempt_in_flight: prometheus_counter(metrics, CHECKPOINT_ATTEMPT_IN_FLIGHT)?,
+                checkpoint_attempt_failed: prometheus_counter(metrics, CHECKPOINT_ATTEMPT_FAILED_COUNTER)?,
                 merges: prometheus_counter(metrics, MERGE_COUNTER)?,
                 state_write_lock: IntervalHistogram::parse(metrics, STATE_WRITE_LOCK_HISTOGRAM)?,
                 hnsw_add: IntervalHistogram::parse(metrics, HNSW_ADD_HISTOGRAM)?,
@@ -2685,6 +2697,16 @@ mod durable_workload {
                     CHECKPOINT_COUNTER,
                     after.checkpoints,
                     before.checkpoints,
+                )?,
+                checkpoint_attempt_started: counter_delta(
+                    CHECKPOINT_ATTEMPT_STARTED_COUNTER,
+                    after.checkpoint_attempt_started,
+                    before.checkpoint_attempt_started,
+                )?,
+                checkpoint_attempt_failed: counter_delta(
+                    CHECKPOINT_ATTEMPT_FAILED_COUNTER,
+                    after.checkpoint_attempt_failed,
+                    before.checkpoint_attempt_failed,
                 )?,
                 merges: counter_delta(MERGE_COUNTER, after.merges, before.merges)?,
                 state_write_lock: after.state_write_lock.delta(&before.state_write_lock)?,
@@ -2828,6 +2850,13 @@ mod durable_workload {
             "scrape_state": sample.scrape_state,
             "pending": snapshot.map(|value| json!({"reserved_bytes": value.reserved, "active_bytes": value.active, "frozen_bytes": value.frozen, "total_bytes": value.total})),
             "checkpoint": snapshot.map(|value| json!({"total": value.checkpoints, "delta": delta.map(|value| value.checkpoints).unwrap_or(0)})),
+            "checkpoint_attempt": snapshot.map(|value| json!({
+                "started_total": value.checkpoint_attempt_started,
+                "started_delta": delta.map(|value| value.checkpoint_attempt_started).unwrap_or(0),
+                "in_flight": value.checkpoint_attempt_in_flight,
+                "failed_total": value.checkpoint_attempt_failed,
+                "failed_delta": delta.map(|value| value.checkpoint_attempt_failed).unwrap_or(0),
+            })),
             "merge": snapshot.map(|value| json!({"total": value.merges, "delta": delta.map(|value| value.merges).unwrap_or(0)})),
             "state_write_lock": snapshot.map(|value| value.state_write_lock.json(false)),
             "state_write_lock_delta": delta.map(|value| value.state_write_lock.json(true)),
@@ -7671,6 +7700,9 @@ mod durable_workload {
         [
             format!("lumen_process_rss_high_water_available {vmhwm_available}"),
             format!("{CHECKPOINT_COUNTER} 10"),
+            format!("{CHECKPOINT_ATTEMPT_STARTED_COUNTER} 10"),
+            format!("{CHECKPOINT_ATTEMPT_IN_FLIGHT} 0"),
+            format!("{CHECKPOINT_ATTEMPT_FAILED_COUNTER} 0"),
             format!("{MERGE_COUNTER} 5"),
             format!("{CHECKPOINT_DURATION_COUNT} 10"),
             format!("{CHECKPOINT_DURATION_SUM} 1.5"),
@@ -7768,6 +7800,33 @@ mod durable_workload {
     #[test]
     fn interval_trace_records_baseline_and_fixed_cadence_deltas() {
         let mut trace = IntervalTrace::default();
+        let second = complete_interval_trace_metrics(12, 7, 3, "0.003", 4, "0.008")
+            .replacen(
+                &format!("{CHECKPOINT_ATTEMPT_STARTED_COUNTER} 10"),
+                &format!("{CHECKPOINT_ATTEMPT_STARTED_COUNTER} 12"),
+                1,
+            )
+            .replacen(
+                &format!("{CHECKPOINT_ATTEMPT_IN_FLIGHT} 0"),
+                &format!("{CHECKPOINT_ATTEMPT_IN_FLIGHT} 1"),
+                1,
+            )
+            .replacen(
+                &format!("{CHECKPOINT_ATTEMPT_FAILED_COUNTER} 0"),
+                &format!("{CHECKPOINT_ATTEMPT_FAILED_COUNTER} 1"),
+                1,
+            );
+        let third = complete_interval_trace_metrics(14, 8, 5, "0.005", 6, "0.012")
+            .replacen(
+                &format!("{CHECKPOINT_ATTEMPT_STARTED_COUNTER} 10"),
+                &format!("{CHECKPOINT_ATTEMPT_STARTED_COUNTER} 14"),
+                1,
+            )
+            .replacen(
+                &format!("{CHECKPOINT_ATTEMPT_FAILED_COUNTER} 0"),
+                &format!("{CHECKPOINT_ATTEMPT_FAILED_COUNTER} 2"),
+                1,
+            );
         trace.record(
             Duration::ZERO,
             "pre_input",
@@ -7776,12 +7835,12 @@ mod durable_workload {
         trace.record(
             INTERVAL_TRACE_CADENCE,
             "input",
-            &complete_interval_trace_metrics(12, 7, 3, "0.003", 4, "0.008"),
+            &second,
         );
         trace.record(
             INTERVAL_TRACE_CADENCE * 2,
             "input",
-            &complete_interval_trace_metrics(14, 8, 5, "0.005", 6, "0.012"),
+            &third,
         );
         let rendered = trace.render(&RequestErrorJournal::default()).unwrap();
         let document: Value = serde_json::from_str(&rendered).unwrap();
@@ -7789,6 +7848,10 @@ mod durable_workload {
         assert_eq!(document["cadence_ms"], 5_000);
         assert_eq!(document["samples"].as_array().unwrap().len(), 3);
         assert_eq!(document["samples"][1]["checkpoint"]["delta"], 2);
+        assert_eq!(document["samples"][1]["checkpoint_attempt"]["started_delta"], 2);
+        assert_eq!(document["samples"][1]["checkpoint_attempt"]["in_flight"], 1);
+        assert_eq!(document["samples"][1]["checkpoint_attempt"]["failed_delta"], 1);
+        assert_eq!(document["samples"][2]["checkpoint_attempt"]["failed_total"], 2);
         assert_eq!(
             document["samples"][1]["state_write_lock_delta"]["sum_us"],
             2_000
