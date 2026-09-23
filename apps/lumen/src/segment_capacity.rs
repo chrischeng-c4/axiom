@@ -479,12 +479,45 @@ impl RelayTrace {
         }
     }
 
+    fn phase(&self, engine: &Engine, phase: &'static str) {
+        let state = RelayCapacityState::read(engine);
+        tracing::info!(
+            event = "segment_capacity_relay_diagnostic",
+            relay_cycle_id = self.cycle_id,
+            relay_phase = phase,
+            request_revision = self.start_request_revision.unwrap_or_default(),
+            request_pending = self.start_request_revision.is_some(),
+            capacity_request_revision = state.request_revision.unwrap_or_default(),
+            capacity_request_pending = state.request_revision.is_some(),
+            capacity_work_revision = state.work_revision,
+            active_bytes = state.active_bytes,
+            frozen_bytes = state.frozen_bytes,
+            pending_delta_bytes = state.pending_delta_bytes,
+            pending_delta_layers = state.pending_delta_layers,
+            merge_completed_total = state.merge_completed_total,
+            relay_elapsed_ns = u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            "segment capacity relay diagnostic phase"
+        );
+    }
+
     fn terminal(self, engine: &Engine, reason: &'static str, error: Option<&anyhow::Error>) {
         let end = RelayCapacityState::read(engine);
         let error = error.map_or_else(String::new, |error| format!("{error:#}"));
         tracing::info!(
             event = "segment_capacity_relay_diagnostic",
             relay_cycle_id = self.cycle_id,
+            relay_phase = "terminal",
+            request_revision = self.start_request_revision.unwrap_or_default(),
+            request_pending = self.start_request_revision.is_some(),
+            capacity_request_revision = end.request_revision.unwrap_or_default(),
+            capacity_request_pending = end.request_revision.is_some(),
+            capacity_work_revision = end.work_revision,
+            active_bytes = end.active_bytes,
+            frozen_bytes = end.frozen_bytes,
+            pending_delta_bytes = end.pending_delta_bytes,
+            pending_delta_layers = end.pending_delta_layers,
+            merge_completed_total = end.merge_completed_total,
+            relay_elapsed_ns = u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX),
             start_request_revision = self.start_request_revision.unwrap_or_default(),
             start_request_pending = self.start_request_revision.is_some(),
             start_capacity_request_revision = self.start.request_revision.unwrap_or_default(),
@@ -519,7 +552,11 @@ impl RelayTrace {
 fn relay_cycle(engine: &Engine, endpoint: &Endpoint, request_revision: Option<u64>) -> Result<()> {
     // A normal or qualifying relay pays only this opt-in check. It does not
     // sample metrics, time work, or emit a diagnostic record.
-    let mut trace = relay_diagnostic_enabled().then(|| RelayTrace::start(engine, request_revision));
+    let mut trace = relay_diagnostic_enabled().then(|| {
+        let trace = RelayTrace::start(engine, request_revision);
+        trace.phase(engine, "relay_started");
+        trace
+    });
 
     let checkpoint_started = trace.as_ref().map(|_| Instant::now());
     if let Err(error) = endpoint.wait_for(Work::Checkpoint) {
@@ -537,6 +574,7 @@ fn relay_cycle(engine: &Engine, endpoint: &Endpoint, request_revision: Option<u6
         trace.checkpoint_ns = checkpoint_started
             .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
         trace.checkpoint_result = "ok";
+        trace.phase(engine, "checkpoint_completed");
     }
 
     // A local capacity refusal needs both publication and compaction. The
@@ -558,6 +596,7 @@ fn relay_cycle(engine: &Engine, endpoint: &Endpoint, request_revision: Option<u6
         trace.merge_ns = merge_started
             .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
         trace.merge_result = "ok";
+        trace.phase(engine, "merge_completed");
     }
 
     if let Some(request_revision) = request_revision {
@@ -745,8 +784,23 @@ mod tests {
     fn relay_record(records: Vec<serde_json::Value>) -> serde_json::Value {
         records
             .into_iter()
-            .find(|record| record["fields"]["event"] == "segment_capacity_relay_diagnostic")
+            .find(|record| {
+                record["fields"]["event"] == "segment_capacity_relay_diagnostic"
+                    && record["fields"]["relay_phase"] == "terminal"
+            })
             .expect("relay must emit one terminal diagnostic event")
+    }
+
+    fn relay_phases(records: &[serde_json::Value]) -> Vec<&str> {
+        records
+            .iter()
+            .filter(|record| record["fields"]["event"] == "segment_capacity_relay_diagnostic")
+            .map(|record| {
+                record["fields"]["relay_phase"]
+                    .as_str()
+                    .expect("relay diagnostic event must include phase")
+            })
+            .collect()
     }
 
     fn engine() -> Arc<Engine> {
@@ -1100,9 +1154,42 @@ mod tests {
             .capacity_owner_state()
             .and_then(|state| state.checkpoint_request_revision)
             .unwrap();
-        let record = relay_record(relay_diagnostic_records(true, || {
+        let records = relay_diagnostic_records(true, || {
             relay_cycle(&engine, &owner.endpoint(), Some(revision)).unwrap();
-        }));
+        });
+        assert_eq!(
+            relay_phases(&records),
+            [
+                "relay_started",
+                "checkpoint_completed",
+                "merge_completed",
+                "terminal"
+            ]
+        );
+        let phase_records: Vec<_> = records
+            .iter()
+            .filter(|record| record["fields"]["event"] == "segment_capacity_relay_diagnostic")
+            .collect();
+        let cycle_id = phase_records[0]["fields"]["relay_cycle_id"].clone();
+        for record in phase_records {
+            let fields = record["fields"].as_object().unwrap();
+            assert_eq!(fields["relay_cycle_id"], cycle_id);
+            for field in [
+                "request_revision",
+                "active_bytes",
+                "frozen_bytes",
+                "pending_delta_bytes",
+                "pending_delta_layers",
+                "merge_completed_total",
+                "relay_elapsed_ns",
+            ] {
+                assert!(
+                    fields.contains_key(field),
+                    "missing relay phase field {field}"
+                );
+            }
+        }
+        let record = relay_record(records);
         let fields = record["fields"].as_object().unwrap();
         assert_eq!(fields["start_request_revision"], revision);
         assert_eq!(fields["checkpoint_result"], "ok");
@@ -1149,9 +1236,11 @@ mod tests {
                 token: 0,
             },
         };
-        let record = relay_record(relay_diagnostic_records(true, || {
+        let records = relay_diagnostic_records(true, || {
             assert!(relay_cycle(&engine, &endpoint, Some(revision)).is_err());
-        }));
+        });
+        assert_eq!(relay_phases(&records), ["relay_started", "terminal"]);
+        let record = relay_record(records);
         let fields = record["fields"].as_object().unwrap();
         assert_eq!(fields["checkpoint_result"], "error");
         assert_eq!(fields["merge_result"], "not_started");
@@ -1185,9 +1274,19 @@ mod tests {
             .capacity_owner_state()
             .and_then(|state| state.checkpoint_request_revision)
             .unwrap();
-        let record = relay_record(relay_diagnostic_records(true, || {
+        let records = relay_diagnostic_records(true, || {
             relay_cycle(&engine, &owner.endpoint(), Some(first)).unwrap();
-        }));
+        });
+        assert_eq!(
+            relay_phases(&records),
+            [
+                "relay_started",
+                "checkpoint_completed",
+                "merge_completed",
+                "terminal"
+            ]
+        );
+        let record = relay_record(records);
         let fields = record["fields"].as_object().unwrap();
         assert_eq!(fields["consume_attempted_revision"], first);
         assert_eq!(fields["consume_result"], "stale");
