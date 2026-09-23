@@ -27,6 +27,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 
+thread_local! {
+    // Committed apply serializes live HNSW mutations under the Engine writer
+    // lock. A thread-local handoff keeps timing state out of the index and
+    // lets the caller publish it only after that outer lock drops.
+    static HNSW_LAST_WRITE_LOCK_TIMING: std::cell::RefCell<Option<(Duration, Duration)>> =
+        const { std::cell::RefCell::new(None) };
+    /// A rebuild is a rare add-path event. Keep its timing separate from the
+    /// normal add interval so the caller can identify it without new shared
+    /// state on the index.
+    static HNSW_LAST_GRAPH_REBUILD_TIMING: std::cell::RefCell<Option<Duration>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 #[path = "vector_index/graph_cache.rs"]
 mod graph_cache;
 
@@ -52,6 +65,19 @@ pub trait VectorIndex: Send + Sync {
     }
     /// Insert (or overwrite) the vector associated with `external_id`.
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()>;
+
+    /// Consume the timings for the most recent HNSW write-lock acquisition on
+    /// this calling path. Other backends have no HNSW lock and return `None`.
+    /// The caller records this only after releasing its engine writer lock.
+    fn take_hnsw_write_lock_timing(&self) -> Option<(Duration, Duration)> {
+        None
+    }
+
+    /// Consume the graph-rebuild interval from the latest HNSW add on this
+    /// calling path. Other backends, and normal HNSW adds, return `None`.
+    fn take_hnsw_graph_rebuild_timing(&self) -> Option<Duration> {
+        None
+    }
 
     /// Remove the vector for `external_id`. No-op if it isn't present.
     /// Returns `true` if a vector was removed.
@@ -831,70 +857,107 @@ impl VectorIndex for HnswCpuIndex {
     }
 
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
+        HNSW_LAST_WRITE_LOCK_TIMING.with(|timing| *timing.borrow_mut() = None);
+        HNSW_LAST_GRAPH_REBUILD_TIMING.with(|timing| *timing.borrow_mut() = None);
+        let write_wait_started = Instant::now();
         let mut inner = self
             .inner
             .write()
             .map_err(|_| anyhow!("hnsw lock poisoned"))?;
-        if vector.len() != inner.store.spec.dim as usize {
-            bail!(
-                "vector dim mismatch on add: expected {}, got {}",
-                inner.store.spec.dim,
-                vector.len()
-            );
-        }
-        // Replace path: if the eid already has a vector, allocate a
-        // new internal id and orphan the old one. hnsw_rs 0.3 has no
-        // public "remove" — orphaning is the documented workaround.
-        // The forward map decides what is reachable.
-        let id = inner.next_id;
-        inner.next_id += 1;
-        inner.store.put(external_id, vector)?;
-        // We always feed the *decoded* vector to HNSW so the same graph
-        // works whether SQ is on or off. The codebook only affects
-        // storage and recall, not the graph topology.
-        if inner.store.codebook.is_some() {
-            let decoded = inner
-                .store
-                .get_decoded(external_id)
-                .ok_or_else(|| anyhow!("just-inserted vector vanished"))?;
-            inner.hnsw.insert(&decoded, id);
-        } else {
-            inner.hnsw.insert(vector, id);
-        }
-        if let Some(old_id) = inner.eid_to_id.insert(external_id.to_string(), id) {
-            inner.id_to_eid.remove(&old_id);
-        }
-        inner.id_to_eid.insert(id, external_id.to_string());
-
-        let live_len = inner.store.len();
-        if inner.next_id >= 2 * live_len && live_len > 0 {
-            let fresh_hnsw = HnswBackend::new(inner.store.spec.metric, HNSW_DEFAULT_MAX_ELEMENTS);
-            inner.eid_to_id.clear();
-            inner.id_to_eid.clear();
-            inner.next_id = 0;
-            let mut live_vecs: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
-            live_vecs.sort_by(|a, b| a.0.cmp(&b.0));
-            for (eid, v) in live_vecs {
-                let new_id = inner.next_id;
-                inner.next_id += 1;
-                fresh_hnsw.insert(&v, new_id);
-                inner.eid_to_id.insert(eid.clone(), new_id);
-                inner.id_to_eid.insert(new_id, eid);
+        let write_wait = write_wait_started.elapsed();
+        let write_hold_started = Instant::now();
+        let mut graph_rebuild = None;
+        let result = (|| {
+            if vector.len() != inner.store.spec.dim as usize {
+                bail!(
+                    "vector dim mismatch on add: expected {}, got {}",
+                    inner.store.spec.dim,
+                    vector.len()
+                );
             }
-            inner.hnsw = fresh_hnsw;
-        }
-        Ok(())
+            // Replace path: if the eid already has a vector, allocate a
+            // new internal id and orphan the old one. hnsw_rs 0.3 has no
+            // public "remove" — orphaning is the documented workaround.
+            // The forward map decides what is reachable.
+            let id = inner.next_id;
+            inner.next_id += 1;
+            inner.store.put(external_id, vector)?;
+            // We always feed the *decoded* vector to HNSW so the same graph
+            // works whether SQ is on or off. The codebook only affects
+            // storage and recall, not the graph topology.
+            if inner.store.codebook.is_some() {
+                let decoded = inner
+                    .store
+                    .get_decoded(external_id)
+                    .ok_or_else(|| anyhow!("just-inserted vector vanished"))?;
+                inner.hnsw.insert(&decoded, id);
+            } else {
+                inner.hnsw.insert(vector, id);
+            }
+            if let Some(old_id) = inner.eid_to_id.insert(external_id.to_string(), id) {
+                inner.id_to_eid.remove(&old_id);
+            }
+            inner.id_to_eid.insert(id, external_id.to_string());
+
+            let live_len = inner.store.len();
+            if inner.next_id >= 2 * live_len && live_len > 0 {
+                let rebuild_started = Instant::now();
+                let fresh_hnsw =
+                    HnswBackend::new(inner.store.spec.metric, HNSW_DEFAULT_MAX_ELEMENTS);
+                inner.eid_to_id.clear();
+                inner.id_to_eid.clear();
+                inner.next_id = 0;
+                let mut live_vecs: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
+                live_vecs.sort_by(|a, b| a.0.cmp(&b.0));
+                for (eid, v) in live_vecs {
+                    let new_id = inner.next_id;
+                    inner.next_id += 1;
+                    fresh_hnsw.insert(&v, new_id);
+                    inner.eid_to_id.insert(eid.clone(), new_id);
+                    inner.id_to_eid.insert(new_id, eid);
+                }
+                inner.hnsw = fresh_hnsw;
+                graph_rebuild = Some(rebuild_started.elapsed());
+            }
+            Ok(())
+        })();
+        drop(inner);
+        let write_hold = write_hold_started.elapsed();
+        HNSW_LAST_WRITE_LOCK_TIMING.with(|timing| {
+            *timing.borrow_mut() = Some((write_wait, write_hold));
+        });
+        HNSW_LAST_GRAPH_REBUILD_TIMING.with(|timing| {
+            *timing.borrow_mut() = graph_rebuild;
+        });
+        result
+    }
+
+    fn take_hnsw_write_lock_timing(&self) -> Option<(Duration, Duration)> {
+        HNSW_LAST_WRITE_LOCK_TIMING.with(|timing| timing.borrow_mut().take())
+    }
+
+    fn take_hnsw_graph_rebuild_timing(&self) -> Option<Duration> {
+        HNSW_LAST_GRAPH_REBUILD_TIMING.with(|timing| timing.borrow_mut().take())
     }
 
     fn remove(&self, external_id: &str) -> Result<bool> {
+        HNSW_LAST_WRITE_LOCK_TIMING.with(|timing| *timing.borrow_mut() = None);
+        let write_wait_started = Instant::now();
         let mut inner = self
             .inner
             .write()
             .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let write_wait = write_wait_started.elapsed();
+        let write_hold_started = Instant::now();
         let removed = inner.store.drop(external_id);
         if let Some(id) = inner.eid_to_id.remove(external_id) {
             inner.id_to_eid.remove(&id);
         }
+        drop(inner);
+        let write_hold = write_hold_started.elapsed();
+        HNSW_LAST_WRITE_LOCK_TIMING.with(|timing| {
+            *timing.borrow_mut() = Some((write_wait, write_hold));
+        });
         Ok(removed)
     }
 
@@ -1929,6 +1992,70 @@ mod tests {
             backend: crate::types::VectorBackend::HnswCpu,
             quantize: q,
         }
+    }
+
+    #[test]
+    fn hnsw_add_reports_one_consumable_write_lock_timing() {
+        let index = HnswCpuIndex::new(spec(3, VectorMetric::L2, None));
+        index.add("one", &[1.0, 0.0, 0.0]).unwrap();
+        let _timing = index
+            .take_hnsw_write_lock_timing()
+            .expect("HNSW add must report its lock split");
+        assert!(
+            index.take_hnsw_write_lock_timing().is_none(),
+            "committed apply must not publish the same HNSW add twice"
+        );
+        assert!(
+            index.take_hnsw_graph_rebuild_timing().is_none(),
+            "the first HNSW add does not rebuild the graph"
+        );
+    }
+
+    #[test]
+    fn hnsw_rebuild_reports_one_consumable_timing() {
+        let index = HnswCpuIndex::new(spec(3, VectorMetric::L2, None));
+        index.add("one", &[1.0, 0.0, 0.0]).unwrap();
+        let _ = index.take_hnsw_write_lock_timing();
+        index.remove("one").unwrap();
+        let _ = index.take_hnsw_write_lock_timing();
+        index.add("one", &[0.0, 1.0, 0.0]).unwrap();
+
+        assert!(
+            index.take_hnsw_graph_rebuild_timing().is_some(),
+            "replacing the only orphaned HNSW vector rebuilds the graph"
+        );
+        assert!(
+            index.take_hnsw_graph_rebuild_timing().is_none(),
+            "committed apply must not publish the same rebuild twice"
+        );
+    }
+
+    #[test]
+    fn hnsw_poisoned_write_operations_clear_stale_lock_timing() {
+        fn poison(index: &HnswCpuIndex) {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = index.inner.write().expect("fresh HNSW lock");
+                panic!("poison HNSW lock for timing test");
+            }));
+        }
+
+        let add_index = HnswCpuIndex::new(spec(3, VectorMetric::L2, None));
+        add_index.add("one", &[1.0, 0.0, 0.0]).unwrap();
+        poison(&add_index);
+        assert!(add_index.add("two", &[0.0, 1.0, 0.0]).is_err());
+        assert!(
+            add_index.take_hnsw_write_lock_timing().is_none(),
+            "a failed poisoned add must not expose timing from a prior write"
+        );
+
+        let remove_index = HnswCpuIndex::new(spec(3, VectorMetric::L2, None));
+        remove_index.add("one", &[1.0, 0.0, 0.0]).unwrap();
+        poison(&remove_index);
+        assert!(remove_index.remove("one").is_err());
+        assert!(
+            remove_index.take_hnsw_write_lock_timing().is_none(),
+            "a failed poisoned remove must not expose timing from a prior write"
+        );
     }
 
     #[test]

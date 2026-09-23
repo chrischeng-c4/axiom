@@ -877,6 +877,7 @@ impl Engine {
             let state_write = self.state.write();
             telemetry.record_state_write_lock_wait(state_write_wait_started.elapsed());
             let mut state = state_write.map_err(|_| anyhow!("state poisoned"))?;
+            telemetry.start_state_write_lock_hold();
             let matches = state.collections.get(collection).is_some_and(|coll| {
                 prepared.plan.matches(
                     &View {
@@ -895,6 +896,7 @@ impl Engine {
             });
             if !matches || capacity_changed {
                 drop(state);
+                telemetry.finish_state_write_lock_hold();
                 drop(apply);
                 drop(prepared); // private file owners and old views drop outside apply
                 reservation
@@ -1034,7 +1036,20 @@ impl Engine {
                     .fields
                     .get_mut(&cell.field)
                     .expect("matched Vector field");
+                let hnsw_write = matches!(
+                    &*index,
+                    FieldIndex::Vector { spec, .. }
+                        if matches!(spec.backend, crate::types::VectorBackend::HnswCpu)
+                );
                 index.drop_eid(cell.id, eid);
+                if hnsw_write {
+                    let FieldIndex::Vector { idx, .. } = index else {
+                        unreachable!("matched Vector kind")
+                    };
+                    if let Some((wait, held)) = idx.take_hnsw_write_lock_timing() {
+                        telemetry.record_hnsw_write_lock(wait, held);
+                    }
+                }
                 if let Some(row) = row {
                     let FieldIndex::Vector {
                         idx, bytes, spec, ..
@@ -1045,6 +1060,12 @@ impl Engine {
                     let add = if matches!(spec.backend, crate::types::VectorBackend::HnswCpu) {
                         let hnsw_add_started = Instant::now();
                         let add = idx.add(eid, row.raw.as_f32_slice());
+                        if let Some((wait, held)) = idx.take_hnsw_write_lock_timing() {
+                            telemetry.record_hnsw_write_lock(wait, held);
+                        }
+                        if let Some(elapsed) = idx.take_hnsw_graph_rebuild_timing() {
+                            telemetry.record_hnsw_graph_rebuild(elapsed);
+                        }
                         telemetry.record_hnsw_add(hnsw_add_started.elapsed());
                         add
                     } else {
@@ -1214,6 +1235,7 @@ impl Engine {
             };
             self.publish_storage_bytes(&state);
             drop(state);
+            telemetry.finish_state_write_lock_hold();
             complete(&apply, outcome);
             drop(apply);
             drop(prepared);
@@ -1225,3 +1247,86 @@ impl Engine {
 #[cfg(test)]
 #[path = "committed_index_apply_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+    use crate::log_entry::RaftLogEntry;
+    use crate::types::IndexItem;
+    use crate::wal::{fast_index_scanner::FastIndexScanner, WalRecord};
+
+    fn apply_committed_vector(engine: &Engine, vector: Vec<f32>, sequence: u64) {
+        let bytes = WalRecord::new(RaftLogEntry::Index {
+            collection_id: "docs".into(),
+            req: IndexRequest {
+                items: vec![IndexItem {
+                    external_id: "id".into(),
+                    field: "vec".into(),
+                    value: FieldValue::Vector(vector),
+                    version: Some(sequence),
+                }],
+                request_id: None,
+            },
+        })
+        .encode()
+        .unwrap();
+        let scanner = FastIndexScanner::parse(&bytes).unwrap();
+        let mut outcome = None;
+        assert!(
+            engine
+                .try_apply_committed_index(&scanner, sequence, |apply, result| {
+                    apply.advance_sequence(sequence);
+                    outcome = Some(result);
+                })
+                .unwrap()
+        );
+        assert!(matches!(outcome, Some(Ok(ApplyOutcome::Indexed(_)))));
+    }
+
+    #[test]
+    fn replacing_existing_hnsw_vector_records_remove_and_add_lock_observations() {
+        let engine = Engine::new();
+        engine
+            .create_collection_inner(
+                "docs",
+                CreateCollectionRequest {
+                    fields: serde_json::from_value(serde_json::json!({
+                        "vec": {
+                            "type": "vector",
+                            "dim": 3,
+                            "metric": "l2",
+                            "backend": "hnsw-cpu"
+                        }
+                    }))
+                    .unwrap(),
+                },
+            )
+            .unwrap();
+        apply_committed_vector(&engine, vec![0.0, 1.0, 2.0], 1);
+        let before = engine.metrics().hnsw_write_lock_wait_seconds_count.get();
+        let rebuilds_before = engine.metrics().hnsw_graph_rebuild_seconds_count.get();
+        assert_eq!(
+            before, 2,
+            "the initial committed HNSW write measures its no-op remove and add"
+        );
+        assert_eq!(rebuilds_before, 0, "the initial HNSW add does not rebuild");
+
+        apply_committed_vector(&engine, vec![2.0, 1.0, 0.0], 2);
+
+        for count in [
+            engine.metrics().hnsw_write_lock_wait_seconds_count.get(),
+            engine.metrics().hnsw_write_lock_held_seconds_count.get(),
+        ] {
+            assert_eq!(
+                count - before,
+                2,
+                "an existing-vector replace must record HNSW remove plus add"
+            );
+        }
+        assert_eq!(
+            engine.metrics().hnsw_graph_rebuild_seconds_count.get() - rebuilds_before,
+            1,
+            "the replacement add rebuilds the orphaned HNSW graph once"
+        );
+    }
+}

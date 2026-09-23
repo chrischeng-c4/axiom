@@ -914,12 +914,17 @@ mod borrowed_vector_apply_tests {
     }
 
     #[test]
-    fn normal_live_vector_index_and_replace_record_lock_wait_and_hnsw_add() {
-        for (backend, hnsw_adds_after_index, hnsw_adds_after_replace) in [
-            (VectorBackend::HnswCpu, 1, 2),
-            (VectorBackend::FlatCpu, 0, 0),
-        ]
-        {
+    fn normal_live_vector_index_and_replace_record_hnsw_timing_by_backend() {
+        for (
+            backend,
+            hnsw_adds_after_index,
+            hnsw_adds_after_replace,
+            hnsw_lock_observations_after_replace,
+            hnsw_rebuilds_after_replace,
+        ) in [
+            (VectorBackend::HnswCpu, 1, 2, 2, 1),
+            (VectorBackend::FlatCpu, 0, 0, 0, 0),
+        ] {
             let engine = vector_engine(backend, false);
             engine
                 .index(
@@ -948,6 +953,17 @@ mod borrowed_vector_apply_tests {
                 hnsw_adds_after_index,
                 "normal live Index records only HNSW graph-add work"
             );
+            let hnsw_adds_before_replace = engine.metrics().hnsw_add_seconds_count.get();
+            let hnsw_lock_waits_before_replace =
+                engine.metrics().hnsw_write_lock_wait_seconds_count.get();
+            let hnsw_lock_holds_before_replace =
+                engine.metrics().hnsw_write_lock_held_seconds_count.get();
+            let hnsw_rebuilds_before_replace =
+                engine.metrics().hnsw_graph_rebuild_seconds_count.get();
+            let engine_lock_holds_before_replace = engine
+                .metrics()
+                .engine_state_write_lock_held_seconds_count
+                .get();
 
             engine
                 .replace_docs(
@@ -973,9 +989,36 @@ mod borrowed_vector_apply_tests {
                 "normal live Replace acquires the state write lock once"
             );
             assert_eq!(
-                engine.metrics().hnsw_add_seconds_count.get(),
-                hnsw_adds_after_replace,
+                engine.metrics().hnsw_add_seconds_count.get() - hnsw_adds_before_replace,
+                hnsw_adds_after_replace - hnsw_adds_after_index,
                 "normal live Replace records only HNSW graph-add work"
+            );
+            assert_eq!(
+                engine.metrics().hnsw_write_lock_wait_seconds_count.get()
+                    - hnsw_lock_waits_before_replace,
+                hnsw_lock_observations_after_replace,
+                "replacing a live HNSW vector records its remove and add lock waits"
+            );
+            assert_eq!(
+                engine.metrics().hnsw_write_lock_held_seconds_count.get()
+                    - hnsw_lock_holds_before_replace,
+                hnsw_lock_observations_after_replace,
+                "replacing a live HNSW vector records its remove and add lock holds"
+            );
+            assert_eq!(
+                engine.metrics().hnsw_graph_rebuild_seconds_count.get()
+                    - hnsw_rebuilds_before_replace,
+                hnsw_rebuilds_after_replace,
+                "only the HNSW replacement records its graph rebuild"
+            );
+            assert_eq!(
+                engine
+                    .metrics()
+                    .engine_state_write_lock_held_seconds_count
+                    .get()
+                    - engine_lock_holds_before_replace,
+                1,
+                "normal live Replace records its engine writer hold once"
             );
         }
     }
