@@ -357,6 +357,24 @@ enum SaveAttempt {
     FreshCapture,
 }
 
+/// Identifies one manual checkpoint in diagnostic traces. This context is
+/// trace-only and never participates in save selection or ownership.
+#[derive(Clone, Copy)]
+pub(crate) struct CheckpointDiagnosticContext {
+    origin: &'static str,
+    attempt_id: Option<u64>,
+}
+
+impl CheckpointDiagnosticContext {
+    pub(crate) const fn new(origin: &'static str, attempt_id: Option<u64>) -> Self {
+        Self { origin, attempt_id }
+    }
+
+    fn manual_attempt_id(self) -> Option<u64> {
+        self.attempt_id
+    }
+}
+
 /// Timing that starts before a root save permit is requested. A checkpoint
 /// always takes this permit before it freezes a cut, so capture-to-gate wait is
 /// structurally zero and is emitted as such in the diagnostic event.
@@ -384,8 +402,95 @@ fn duration_ns(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-fn checkpoint_diagnostic_enabled() -> bool {
+pub(crate) fn checkpoint_diagnostic_enabled() -> bool {
     std::env::var("LUMEN_PERF_DIAGNOSTIC").as_deref() == Ok("1")
+}
+
+fn trace_save_gate_acquired(context: Option<CheckpointDiagnosticContext>, trace: SaveGateTrace) {
+    let Some(context) = context else {
+        return;
+    };
+    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
+        return;
+    };
+    tracing::info!(
+        event = "segment_checkpoint_diagnostic_phase",
+        phase = "save_gate_acquired",
+        checkpoint_attempt_id,
+        checkpoint_origin = context.origin,
+        save_gate_wait_ns = trace.wait_ns,
+        "segment checkpoint diagnostic phase"
+    );
+}
+
+fn trace_capacity_wait_begin(context: Option<CheckpointDiagnosticContext>, revision: u64) {
+    let Some(context) = context else {
+        return;
+    };
+    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
+        return;
+    };
+    tracing::info!(
+        event = "segment_checkpoint_diagnostic_phase",
+        phase = "capacity_wait_begin",
+        checkpoint_attempt_id,
+        checkpoint_origin = context.origin,
+        merge_revision = revision,
+        "segment checkpoint diagnostic phase"
+    );
+}
+
+fn trace_capacity_wait_end(
+    context: Option<CheckpointDiagnosticContext>,
+    revision: u64,
+    duration_ns: Option<u64>,
+    result: std::result::Result<&background::CapacityWait, &anyhow::Error>,
+) {
+    let Some(context) = context else {
+        return;
+    };
+    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
+        return;
+    };
+    let capacity_wait_result = match result {
+        Ok(background::CapacityWait::Published) => "published",
+        Ok(background::CapacityWait::Idle) => "idle",
+        Err(_) => "error",
+    };
+    tracing::info!(
+        event = "segment_checkpoint_diagnostic_phase",
+        phase = "capacity_wait_end",
+        checkpoint_attempt_id,
+        checkpoint_origin = context.origin,
+        merge_revision = revision,
+        capacity_wait_ns = duration_ns.unwrap_or_default(),
+        capacity_wait_result,
+        "segment checkpoint diagnostic phase"
+    );
+}
+
+fn trace_durable_save_end(
+    context: Option<CheckpointDiagnosticContext>,
+    sequence: u64,
+    revision: u64,
+    duration_ns: u64,
+) {
+    let Some(context) = context else {
+        return;
+    };
+    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
+        return;
+    };
+    tracing::info!(
+        event = "segment_checkpoint_diagnostic_phase",
+        phase = "durable_save_end",
+        checkpoint_attempt_id,
+        checkpoint_origin = context.origin,
+        checkpoint_sequence = sequence,
+        checkpoint_revision = revision,
+        durable_save_ns = duration_ns,
+        "segment checkpoint diagnostic phase"
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -700,14 +805,16 @@ impl SegmentRdbStore {
         engine: &Arc<Engine>,
         up_to_seq: u64,
         origin: &'static str,
+        attempt_id: Option<u64>,
     ) -> Result<u64> {
-        let trace_origin = checkpoint_diagnostic_enabled().then_some(origin);
+        let trace_context = checkpoint_diagnostic_enabled()
+            .then(|| CheckpointDiagnosticContext::new(origin, attempt_id));
         let name = self.save_inner_traced(
             engine,
             up_to_seq,
             false,
             StagingSelection::CurrentIfDurable,
-            trace_origin,
+            trace_context,
         )?;
         parse_revision_name(name.as_str())
             .map(|(sequence, _)| sequence)
@@ -739,10 +846,11 @@ impl SegmentRdbStore {
         up_to_seq: u64,
         required: bool,
         selection: StagingSelection,
-        trace_origin: Option<&'static str>,
+        trace_context: Option<CheckpointDiagnosticContext>,
     ) -> Result<GenerationName> {
-        let (permit, gate_trace) = if trace_origin.is_some() {
+        let (permit, gate_trace) = if trace_context.is_some() {
             let (permit, trace) = SaveGateTrace::acquire(&self.save_gate);
+            trace_save_gate_acquired(trace_context, trace);
             (permit, Some(trace))
         } else {
             (self.save_gate.lock_owned(), None)
@@ -755,7 +863,7 @@ impl SegmentRdbStore {
             SaveIntent::Ordinary,
             None,
             selection,
-            trace_origin,
+            trace_context,
             gate_trace,
         )
     }
@@ -791,7 +899,7 @@ impl SegmentRdbStore {
         intent: SaveIntent,
         mut archive_pin: Option<&mut Option<SegmentArchivePin>>,
         selection: StagingSelection,
-        trace_origin: Option<&'static str>,
+        trace_context: Option<CheckpointDiagnosticContext>,
         gate_trace: Option<SaveGateTrace>,
     ) -> Result<GenerationName> {
         let mut capacity_deadline = None;
@@ -813,7 +921,7 @@ impl SegmentRdbStore {
                 idle_revision,
                 capacity_deadline,
                 selection,
-                trace_origin,
+                trace_context,
                 attempt_gate_trace,
             )? {
                 SaveAttempt::Complete(name) => return Ok(name),
@@ -821,8 +929,9 @@ impl SegmentRdbStore {
                     // The pending cut was published. Its fresh successor can
                     // request work, while retaining any existing wait deadline.
                     idle_revision = None;
-                    if trace_origin.is_some() {
+                    if trace_context.is_some() {
                         let (next_permit, next_trace) = SaveGateTrace::acquire(&self.save_gate);
+                        trace_save_gate_acquired(trace_context, next_trace);
                         permit = Some(next_permit);
                         gate_trace = Some(next_trace);
                     } else {
@@ -832,15 +941,24 @@ impl SegmentRdbStore {
                 SaveAttempt::CapacityWait(revision) => {
                     let deadline = *capacity_deadline
                         .get_or_insert_with(|| Instant::now() + Duration::from_secs(60));
-                    match self
+                    let capacity_wait_started = trace_context.map(|_| Instant::now());
+                    trace_capacity_wait_begin(trace_context, revision);
+                    let capacity_wait = self
                         .background
-                        .wait_for_capacity_progress_after(revision, deadline)?
-                    {
+                        .wait_for_capacity_progress_after(revision, deadline);
+                    trace_capacity_wait_end(
+                        trace_context,
+                        revision,
+                        capacity_wait_started.map(|started| duration_ns(started.elapsed())),
+                        capacity_wait.as_ref(),
+                    );
+                    match capacity_wait? {
                         background::CapacityWait::Published => idle_revision = None,
                         background::CapacityWait::Idle => idle_revision = Some(revision),
                     }
-                    if trace_origin.is_some() {
+                    if trace_context.is_some() {
                         let (next_permit, next_trace) = SaveGateTrace::acquire(&self.save_gate);
+                        trace_save_gate_acquired(trace_context, next_trace);
                         permit = Some(next_permit);
                         gate_trace = Some(next_trace);
                     } else {
@@ -862,7 +980,7 @@ impl SegmentRdbStore {
         idle_revision: Option<u64>,
         capacity_deadline: Option<Instant>,
         selection: StagingSelection,
-        trace_origin: Option<&'static str>,
+        trace_context: Option<CheckpointDiagnosticContext>,
         gate_trace: Option<SaveGateTrace>,
     ) -> Result<SaveAttempt> {
         let requested_sequence = up_to_seq;
@@ -935,14 +1053,14 @@ impl SegmentRdbStore {
                     }
                 }
                 engine.prepare_checkpoint_namespace(&self.root, floor)?;
-                let frozen_before = trace_origin
+                let frozen_before = trace_context
                     .and_then(|_| engine.capacity_owner_state().map(|state| state.frozen));
                 let frozen = engine.freeze_checkpoint_collections(
                     current.as_ref().map(|record| record.path.as_path()),
                 )?;
                 let frozen_cut_bytes = frozen_before
                     .zip(
-                        trace_origin
+                        trace_context
                             .and_then(|_| engine.capacity_owner_state().map(|state| state.frozen)),
                     )
                     .map_or(0, |(before, after)| after.saturating_sub(before));
@@ -1134,7 +1252,7 @@ impl SegmentRdbStore {
         }
         // Retain owner exclusion through durable publication AND live binding.
         // A replacement owner never observes a half-installed catalog.
-        let publish_started = trace_origin.map(|_| Instant::now());
+        let publish_started = trace_context.map(|_| Instant::now());
         let mut owner_publication = None;
         let commit = staged.commit_with_publication_guard(&self.generations, || {
             owner_publication = self
@@ -1173,7 +1291,7 @@ impl SegmentRdbStore {
             Some((staged_record.name.clone(), serde_json::to_vec(&manifest)?));
         // Publication is durable. Bind only collections whose captured tuple
         // still matches; concurrent mutations retain their dirty state.
-        let acknowledge_started = trace_origin.map(|_| Instant::now());
+        let acknowledge_started = trace_context.map(|_| Instant::now());
         let binding = engine
             .capture_barrier
             .capture(up_to_seq)
@@ -1225,7 +1343,13 @@ impl SegmentRdbStore {
                 tracing::warn!(%error, "could not request segment merge after durable checkpoint");
             }
         }
-        if let Some(checkpoint_origin) = trace_origin {
+        trace_durable_save_end(
+            trace_context,
+            up_to_seq,
+            revision,
+            duration_ns(started.elapsed()),
+        );
+        if let Some(trace_context) = trace_context {
             let gate_trace = gate_trace.expect("diagnostic checkpoints time the save gate");
             let save_gate_hold_ns = duration_ns(gate_trace.acquired_at.elapsed());
             let capacity_request_revision = engine
@@ -1234,7 +1358,7 @@ impl SegmentRdbStore {
             let root_merge = self.background.trace_state();
             tracing::info!(
                 event = "segment_checkpoint_diagnostic",
-                checkpoint_origin,
+                checkpoint_origin = trace_context.origin,
                 checkpoint_sequence = up_to_seq,
                 checkpoint_revision = revision,
                 frozen_cut_bytes,
@@ -5961,7 +6085,11 @@ mod tests {
         );
     }
 
-    fn checkpoint_diagnostic_records(enabled: bool) -> Vec<serde_json::Value> {
+    fn checkpoint_diagnostic_records(
+        enabled: bool,
+        origin: &'static str,
+        attempt_id: Option<u64>,
+    ) -> Vec<serde_json::Value> {
         use tracing_subscriber::prelude::*;
 
         let _environment = DiagnosticEnvironment::set(enabled);
@@ -5981,7 +6109,7 @@ mod tests {
 
         assert_eq!(
             store
-                .save_with_sequence_diagnostic(&engine, 1, "periodic")
+                .save_with_sequence_diagnostic(&engine, 1, origin, attempt_id)
                 .unwrap(),
             1
         );
@@ -5991,7 +6119,7 @@ mod tests {
 
     #[test]
     fn checkpoint_diagnostic_trace_is_machine_readable() {
-        let record = checkpoint_diagnostic_records(true)
+        let record = checkpoint_diagnostic_records(true, "periodic", None)
             .into_iter()
             .find(|record| record["fields"]["event"] == "segment_checkpoint_diagnostic")
             .expect("durable checkpoint must emit its diagnostic trace");
@@ -6020,13 +6148,31 @@ mod tests {
 
     #[test]
     fn checkpoint_diagnostic_trace_is_absent_without_exact_environment_flag() {
-        let records = checkpoint_diagnostic_records(false);
+        let records = checkpoint_diagnostic_records(false, "periodic", None);
         assert!(
             !records
                 .iter()
                 .any(|record| record["fields"]["event"] == "segment_checkpoint_diagnostic"),
             "ordinary checkpoints must not emit a diagnostic trace"
         );
+    }
+
+    #[test]
+    fn manual_checkpoint_diagnostic_phases_keep_one_attempt_id() {
+        let records = checkpoint_diagnostic_records(true, "manual", Some(41));
+        let phases: Vec<_> = records
+            .iter()
+            .filter(|record| record["fields"]["event"] == "segment_checkpoint_diagnostic_phase")
+            .collect();
+        assert!(phases
+            .iter()
+            .any(|record| record["fields"]["phase"] == "save_gate_acquired"));
+        assert!(phases
+            .iter()
+            .any(|record| record["fields"]["phase"] == "durable_save_end"));
+        assert!(phases
+            .iter()
+            .all(|record| record["fields"]["checkpoint_attempt_id"] == 41));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use crate::storage::Engine;
 use anyhow::{Context, Result};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +14,7 @@ use tokio::time::Instant;
 use crate::change_budget::{BudgetWake, ChangeBudget, Snapshot};
 
 const WAITER_SHUTDOWN_POLL: Duration = Duration::from_millis(50);
+static NEXT_MANUAL_CHECKPOINT_ATTEMPT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Real [`crate::api::CheckpointSink`] wiring for segment-persistence mode
 /// (#1389): forces the same synchronous stage-then-rename checkpoint the
@@ -335,34 +336,70 @@ impl SegmentCheckpointSink {
         fence: Option<crate::segment_capacity::PublicationFence>,
         origin: CheckpointTraceOrigin,
     ) -> Result<bool> {
+        let diagnostic_attempt_id = (matches!(origin, CheckpointTraceOrigin::Manual)
+            && crate::segment_rdb::checkpoint_diagnostic_enabled())
+        .then(|| NEXT_MANUAL_CHECKPOINT_ATTEMPT_ID.fetch_add(1, Ordering::Relaxed));
+        let requested_writer_sequence = diagnostic_attempt_id.map(|_| self.writer.applied_seq());
+        let diagnostic_started = diagnostic_attempt_id.map(|checkpoint_attempt_id| {
+            let started = Instant::now();
+            tracing::info!(
+                event = "segment_checkpoint_diagnostic_phase",
+                phase = "started",
+                checkpoint_attempt_id,
+                checkpoint_origin = origin.label(),
+                requested_writer_sequence = requested_writer_sequence.unwrap_or_default(),
+                elapsed_ns = 0u64,
+                "segment checkpoint diagnostic phase"
+            );
+            started
+        });
         let sink_engine = self.engine.clone();
         let sink_store = self.store.clone();
         let sink_writer = self.writer.clone();
         let sink_aof = self.aof.clone();
+        let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
-            let sink = Arc::new(SegmentCheckpointSink {
-                engine: sink_engine,
-                store: sink_store,
-                writer: sink_writer,
-                aof: sink_aof,
-            });
-            // Capacity refusal can happen while a manual checkpoint is frozen.
-            // Register this sink first so relief uses the same root, rather than
-            // retaining another full capture in a temporary spill store. Keep
-            // the owner in the blocking task even if the async caller cancels.
-            let _manual_owner = if fence.is_none() {
-                crate::segment_capacity::Owner::start(sink.clone(), false)?
-            } else {
-                None
-            };
-            // Manual publication and its background merge may outlive this
-            // scoped owner. Only a persistent driver's supplied fence applies
-            // to them; a later manual request must not invalidate that merge.
-            let store = match fence {
-                Some(fence) => sink.store.as_ref().clone().with_publication_fence(fence),
-                None => sink.store.as_ref().clone(),
-            };
-            sink.checkpoint_sync_with_origin(&store, origin)
+            let _span = span.enter();
+            let result = (|| {
+                let sink = Arc::new(SegmentCheckpointSink {
+                    engine: sink_engine,
+                    store: sink_store,
+                    writer: sink_writer,
+                    aof: sink_aof,
+                });
+                // Capacity refusal can happen while a manual checkpoint is frozen.
+                // Register this sink first so relief uses the same root, rather than
+                // retaining another full capture in a temporary spill store. Keep
+                // the owner in the blocking task even if the async caller cancels.
+                let _manual_owner = if fence.is_none() {
+                    crate::segment_capacity::Owner::start(sink.clone(), false)?
+                } else {
+                    None
+                };
+                // Manual publication and its background merge may outlive this
+                // scoped owner. Only a persistent driver's supplied fence applies
+                // to them; a later manual request must not invalidate that merge.
+                let store = match fence {
+                    Some(fence) => sink.store.as_ref().clone().with_publication_fence(fence),
+                    None => sink.store.as_ref().clone(),
+                };
+                sink.checkpoint_sync_with_origin(&store, origin, diagnostic_attempt_id)
+            })();
+            if let Some(checkpoint_attempt_id) = diagnostic_attempt_id {
+                tracing::info!(
+                    event = "segment_checkpoint_diagnostic_phase",
+                    phase = "terminal",
+                    checkpoint_attempt_id,
+                    checkpoint_origin = origin.label(),
+                    elapsed_ns = diagnostic_started
+                        .map(|started| u64::try_from(started.elapsed().as_nanos())
+                            .unwrap_or(u64::MAX))
+                        .unwrap_or_default(),
+                    terminal_result = if result.is_ok() { "ok" } else { "error" },
+                    "segment checkpoint diagnostic phase"
+                );
+            }
+            result
         })
         .await
         .context("checkpoint task panicked")??;
@@ -378,13 +415,14 @@ impl SegmentCheckpointSink {
         } else {
             CheckpointTraceOrigin::Manual
         };
-        self.checkpoint_sync_with_origin(store, origin)
+        self.checkpoint_sync_with_origin(store, origin, None)
     }
 
     fn checkpoint_sync_with_origin(
         &self,
         store: &crate::segment_rdb::SegmentRdbStore,
         origin: CheckpointTraceOrigin,
+        diagnostic_attempt_id: Option<u64>,
     ) -> Result<()> {
         let mut attempt = CheckpointAttempt::start(self.engine.metrics());
         let result = (|| {
@@ -401,6 +439,7 @@ impl SegmentCheckpointSink {
                 &self.engine,
                 self.writer.applied_seq(),
                 origin.label(),
+                diagnostic_attempt_id,
             )?;
             store.prune(3)?;
             match store.disk_bytes() {
