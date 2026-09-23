@@ -6515,6 +6515,7 @@ impl Engine {
             let state_write = self.state.write();
             telemetry.record_state_write_lock_wait(state_write_wait_started.elapsed());
             let mut state = state_write.map_err(|_| anyhow!("state poisoned"))?;
+            telemetry.start_state_write_lock_hold();
             let outcome = {
                 let coll = state
                     .collections
@@ -6531,6 +6532,8 @@ impl Engine {
                 )
             };
             self.publish_storage_bytes(&state);
+            drop(state);
+            telemetry.finish_state_write_lock_hold();
             outcome
         };
         drop(telemetry);
@@ -6685,6 +6688,18 @@ impl Engine {
             if !item.fields.contains_key(f) {
                 if let Some(fi) = coll.fields.get_mut(f.as_str()) {
                     fi.drop_eid(id, &eid);
+                    if matches!(
+                        &*fi,
+                        FieldIndex::Vector { spec, .. }
+                            if matches!(spec.backend, crate::types::VectorBackend::HnswCpu)
+                    ) {
+                        let FieldIndex::Vector { idx, .. } = fi else {
+                            unreachable!("matched HNSW Vector field")
+                        };
+                        if let Some((wait, held)) = idx.take_hnsw_write_lock_timing() {
+                            telemetry.record_hnsw_write_lock(wait, held);
+                        }
+                    }
                 }
                 if let Err(error) = coll.mark_field_dirty_charged(f, &eid, charge) {
                     return (
@@ -6724,6 +6739,18 @@ impl Engine {
                 .expect("field presence validated above");
             if is_delta {
                 fi.drop_eid(id, &eid);
+                if matches!(
+                    &*fi,
+                    FieldIndex::Vector { spec, .. }
+                        if matches!(spec.backend, crate::types::VectorBackend::HnswCpu)
+                ) {
+                    let FieldIndex::Vector { idx, .. } = fi else {
+                        unreachable!("matched HNSW Vector field")
+                    };
+                    if let Some((wait, held)) = idx.take_hnsw_write_lock_timing() {
+                        telemetry.record_hnsw_write_lock(wait, held);
+                    }
+                }
             }
             let bytes = match apply_prepared_value(
                 fi,
@@ -8487,13 +8514,24 @@ fn apply_value(
                     v.len()
                 );
             }
-            let hnsw_add_started =
-                (spec.backend == crate::types::VectorBackend::HnswCpu).then(Instant::now);
-            let add = idx.add(eid, v);
-            if let (Some(started), Some(telemetry)) = (hnsw_add_started, telemetry) {
-                telemetry.record_hnsw_add(started.elapsed());
+            if matches!(spec.backend, crate::types::VectorBackend::HnswCpu) {
+                let hnsw_add_started = Instant::now();
+                let add = idx.add(eid, v);
+                let hnsw_write_lock_timing = idx.take_hnsw_write_lock_timing();
+                let hnsw_graph_rebuild_timing = idx.take_hnsw_graph_rebuild_timing();
+                if let Some(telemetry) = telemetry {
+                    if let Some((wait, held)) = hnsw_write_lock_timing {
+                        telemetry.record_hnsw_write_lock(wait, held);
+                    }
+                    if let Some(elapsed) = hnsw_graph_rebuild_timing {
+                        telemetry.record_hnsw_graph_rebuild(elapsed);
+                    }
+                    telemetry.record_hnsw_add(hnsw_add_started.elapsed());
+                }
+                add?;
+            } else {
+                idx.add(eid, v)?;
             }
-            add?;
             let approx = (spec.dim as u64) * 4 + eid.len() as u64;
             *bytes += approx;
             Ok(approx)

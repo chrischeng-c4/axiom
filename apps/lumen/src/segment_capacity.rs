@@ -559,6 +559,9 @@ fn relay_cycle(engine: &Engine, endpoint: &Endpoint, request_revision: Option<u6
     });
 
     let checkpoint_started = trace.as_ref().map(|_| Instant::now());
+    // Start immediately before the first blocking maintenance operation. The
+    // interval excludes optional diagnostic setup and ends after the merge.
+    let checkpoint_merge_started = Instant::now();
     if let Err(error) = endpoint.wait_for(Work::Checkpoint) {
         if let Some(trace) = trace.as_mut() {
             trace.checkpoint_ns = checkpoint_started
@@ -598,6 +601,9 @@ fn relay_cycle(engine: &Engine, endpoint: &Endpoint, request_revision: Option<u6
         trace.merge_result = "ok";
         trace.phase(engine, "merge_completed");
     }
+    engine
+        .metrics()
+        .observe_capacity_relief_checkpoint_merge_cycle(checkpoint_merge_started.elapsed());
 
     if let Some(request_revision) = request_revision {
         let consume_started = trace.as_ref().map(|_| Instant::now());
@@ -1090,6 +1096,14 @@ mod tests {
         assert_eq!(requests.completed, 2);
         assert_eq!(requests.operations, [Work::Checkpoint, Work::Merge]);
         drop(requests);
+        assert_eq!(
+            engine
+                .metrics()
+                .segment_capacity_relief_checkpoint_merge_seconds_count
+                .get(),
+            1,
+            "one successful relay cycle records one checkpoint-plus-merge interval"
+        );
         owner.join().unwrap();
     }
 
@@ -1147,6 +1161,14 @@ mod tests {
                 .capacity_owner_state()
                 .and_then(|state| state.checkpoint_request_revision),
             Some(revision)
+        );
+        assert_eq!(
+            engine
+                .metrics()
+                .segment_capacity_relief_checkpoint_merge_seconds_count
+                .get(),
+            0,
+            "a failed checkpoint must not publish a successful-cycle observation"
         );
     }
 

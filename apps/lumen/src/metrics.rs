@@ -512,11 +512,33 @@ pub struct Metrics {
     pub engine_state_write_lock_wait_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
     pub engine_state_write_lock_wait_seconds_us_sum: Counter,
     pub engine_state_write_lock_wait_seconds_count: Counter,
+    /// Exclusive finite-bucket observations for time the committed-apply
+    /// engine state write lock is held. Published after the guard drops.
+    pub engine_state_write_lock_held_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
+    pub engine_state_write_lock_held_seconds_us_sum: Counter,
+    pub engine_state_write_lock_held_seconds_count: Counter,
     /// Exclusive finite-bucket observations for live HNSW graph additions in
     /// committed apply. Flat CPU additions do not record this family.
     pub hnsw_add_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
     pub hnsw_add_seconds_us_sum: Counter,
     pub hnsw_add_seconds_count: Counter,
+    /// HNSW graph rebuild time. Normal additions do not record this family.
+    pub hnsw_graph_rebuild_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
+    pub hnsw_graph_rebuild_seconds_us_sum: Counter,
+    pub hnsw_graph_rebuild_seconds_count: Counter,
+    /// HNSW graph write-lock acquisition time, excluding the work while held.
+    pub hnsw_write_lock_wait_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
+    pub hnsw_write_lock_wait_seconds_us_sum: Counter,
+    pub hnsw_write_lock_wait_seconds_count: Counter,
+    /// HNSW graph write-lock hold time, excluding the time waiting to acquire it.
+    pub hnsw_write_lock_held_seconds_buckets: [Counter; APPLY_SECONDS_BUCKET_COUNT],
+    pub hnsw_write_lock_held_seconds_us_sum: Counter,
+    pub hnsw_write_lock_held_seconds_count: Counter,
+    /// Completed capacity-relief cycles that ran checkpoint then merge.
+    pub segment_capacity_relief_checkpoint_merge_seconds_buckets:
+        [Counter; APPLY_SECONDS_BUCKET_COUNT],
+    pub segment_capacity_relief_checkpoint_merge_seconds_us_sum: Counter,
+    pub segment_capacity_relief_checkpoint_merge_seconds_count: Counter,
     /// Linux `/proc/self/status` `VmHWM` in bytes at the latest scrape. This
     /// is meaningful only while `process_rss_high_water_available` is `1`.
     pub process_rss_high_water_bytes: Gauge,
@@ -552,7 +574,11 @@ struct PendingChangeAccounting {
 pub(crate) struct CommittedApplyTelemetry<'a> {
     metrics: &'a Metrics,
     state_write_lock_wait: Option<Duration>,
+    state_write_lock_held_started: Option<std::time::Instant>,
     hnsw_adds: ApplyDurationObservations,
+    hnsw_graph_rebuilds: ApplyDurationObservations,
+    hnsw_write_lock_waits: ApplyDurationObservations,
+    hnsw_write_lock_holds: ApplyDurationObservations,
 }
 
 impl CommittedApplyTelemetry<'_> {
@@ -562,9 +588,36 @@ impl CommittedApplyTelemetry<'_> {
         self.state_write_lock_wait = Some(elapsed);
     }
 
+    /// Begin the engine writer hold interval after the guard is acquired.
+    pub(crate) fn start_state_write_lock_hold(&mut self) {
+        debug_assert!(self.state_write_lock_held_started.is_none());
+        self.state_write_lock_held_started = Some(std::time::Instant::now());
+    }
+
+    /// Finish the writer interval immediately after dropping the state guard.
+    /// On an early return, [`Drop`] runs after that guard and finishes it.
+    pub(crate) fn finish_state_write_lock_hold(&mut self) {
+        if let Some(started) = self.state_write_lock_held_started.take() {
+            self.metrics
+                .observe_engine_state_write_lock_hold(started.elapsed());
+        }
+    }
+
     /// Record one HNSW graph-add duration without touching global metrics.
     pub(crate) fn record_hnsw_add(&mut self, elapsed: Duration) {
         self.hnsw_adds.record(elapsed);
+    }
+
+    /// Store a rare HNSW rebuild interval without publishing atomics under the
+    /// Engine writer lock.
+    pub(crate) fn record_hnsw_graph_rebuild(&mut self, elapsed: Duration) {
+        self.hnsw_graph_rebuilds.record(elapsed);
+    }
+
+    /// Store an HNSW lock split without publishing atomics under Engine lock.
+    pub(crate) fn record_hnsw_write_lock(&mut self, wait: Duration, held: Duration) {
+        self.hnsw_write_lock_waits.record(wait);
+        self.hnsw_write_lock_holds.record(held);
     }
 }
 
@@ -573,7 +626,14 @@ impl Drop for CommittedApplyTelemetry<'_> {
         if let Some(elapsed) = self.state_write_lock_wait {
             self.metrics.observe_engine_state_write_lock_wait(elapsed);
         }
+        self.finish_state_write_lock_hold();
         self.metrics.observe_hnsw_add_observations(&self.hnsw_adds);
+        self.metrics
+            .observe_hnsw_graph_rebuild_observations(&self.hnsw_graph_rebuilds);
+        self.metrics
+            .observe_hnsw_write_lock_wait_observations(&self.hnsw_write_lock_waits);
+        self.metrics
+            .observe_hnsw_write_lock_hold_observations(&self.hnsw_write_lock_holds);
     }
 }
 
@@ -770,11 +830,58 @@ impl Metrics {
         );
     }
 
+    /// Record the engine writer interval only after the state guard drops.
+    pub fn observe_engine_state_write_lock_hold(&self, elapsed: Duration) {
+        observe_apply_duration_histogram(
+            &self.engine_state_write_lock_held_seconds_buckets,
+            &self.engine_state_write_lock_held_seconds_us_sum,
+            &self.engine_state_write_lock_held_seconds_count,
+            elapsed,
+        );
+    }
+
     /// Record only one live HNSW graph-add call in committed apply.
     pub fn observe_hnsw_add(&self, elapsed: Duration) {
         let mut observations = ApplyDurationObservations::default();
         observations.record(elapsed);
         self.observe_hnsw_add_observations(&observations);
+    }
+
+    /// Record one HNSW graph rebuild apart from the containing add call.
+    pub fn observe_hnsw_graph_rebuild(&self, elapsed: Duration) {
+        let mut observations = ApplyDurationObservations::default();
+        observations.record(elapsed);
+        self.observe_hnsw_graph_rebuild_observations(&observations);
+    }
+
+    /// Record only the wait to acquire the HNSW graph write lock.
+    pub fn observe_hnsw_write_lock_wait(&self, elapsed: Duration) {
+        observe_apply_duration_histogram(
+            &self.hnsw_write_lock_wait_seconds_buckets,
+            &self.hnsw_write_lock_wait_seconds_us_sum,
+            &self.hnsw_write_lock_wait_seconds_count,
+            elapsed,
+        );
+    }
+
+    /// Record only the interval the HNSW graph write lock is held.
+    pub fn observe_hnsw_write_lock_hold(&self, elapsed: Duration) {
+        observe_apply_duration_histogram(
+            &self.hnsw_write_lock_held_seconds_buckets,
+            &self.hnsw_write_lock_held_seconds_us_sum,
+            &self.hnsw_write_lock_held_seconds_count,
+            elapsed,
+        );
+    }
+
+    /// Record a successful capacity-relief checkpoint-plus-merge cycle.
+    pub fn observe_capacity_relief_checkpoint_merge_cycle(&self, elapsed: Duration) {
+        observe_apply_duration_histogram(
+            &self.segment_capacity_relief_checkpoint_merge_seconds_buckets,
+            &self.segment_capacity_relief_checkpoint_merge_seconds_us_sum,
+            &self.segment_capacity_relief_checkpoint_merge_seconds_count,
+            elapsed,
+        );
     }
 
     /// Start a state-writing apply telemetry scope. Its [`Drop`] publishes only
@@ -783,7 +890,11 @@ impl Metrics {
         CommittedApplyTelemetry {
             metrics: self,
             state_write_lock_wait: None,
+            state_write_lock_held_started: None,
             hnsw_adds: ApplyDurationObservations::default(),
+            hnsw_graph_rebuilds: ApplyDurationObservations::default(),
+            hnsw_write_lock_waits: ApplyDurationObservations::default(),
+            hnsw_write_lock_holds: ApplyDurationObservations::default(),
         }
     }
 
@@ -797,6 +908,33 @@ impl Metrics {
             &self.hnsw_add_seconds_buckets,
             &self.hnsw_add_seconds_us_sum,
             &self.hnsw_add_seconds_count,
+            observations,
+        );
+    }
+
+    fn observe_hnsw_write_lock_wait_observations(&self, observations: &ApplyDurationObservations) {
+        observe_apply_duration_observations(
+            &self.hnsw_write_lock_wait_seconds_buckets,
+            &self.hnsw_write_lock_wait_seconds_us_sum,
+            &self.hnsw_write_lock_wait_seconds_count,
+            observations,
+        );
+    }
+
+    fn observe_hnsw_graph_rebuild_observations(&self, observations: &ApplyDurationObservations) {
+        observe_apply_duration_observations(
+            &self.hnsw_graph_rebuild_seconds_buckets,
+            &self.hnsw_graph_rebuild_seconds_us_sum,
+            &self.hnsw_graph_rebuild_seconds_count,
+            observations,
+        );
+    }
+
+    fn observe_hnsw_write_lock_hold_observations(&self, observations: &ApplyDurationObservations) {
+        observe_apply_duration_observations(
+            &self.hnsw_write_lock_held_seconds_buckets,
+            &self.hnsw_write_lock_held_seconds_us_sum,
+            &self.hnsw_write_lock_held_seconds_count,
             observations,
         );
     }
@@ -1318,11 +1456,51 @@ impl Metrics {
         );
         render_apply_duration_histogram(
             &mut out,
+            "lumen_engine_state_write_lock_held_seconds",
+            "Time the committed-apply engine state write lock was held, in seconds.",
+            &self.engine_state_write_lock_held_seconds_buckets,
+            &self.engine_state_write_lock_held_seconds_us_sum,
+            &self.engine_state_write_lock_held_seconds_count,
+        );
+        render_apply_duration_histogram(
+            &mut out,
             "lumen_hnsw_add_seconds",
             "Time spent in live HNSW graph additions during committed apply, in seconds.",
             &self.hnsw_add_seconds_buckets,
             &self.hnsw_add_seconds_us_sum,
             &self.hnsw_add_seconds_count,
+        );
+        render_apply_duration_histogram(
+            &mut out,
+            "lumen_hnsw_graph_rebuild_seconds",
+            "Time spent rebuilding an HNSW graph during a live add, in seconds.",
+            &self.hnsw_graph_rebuild_seconds_buckets,
+            &self.hnsw_graph_rebuild_seconds_us_sum,
+            &self.hnsw_graph_rebuild_seconds_count,
+        );
+        render_apply_duration_histogram(
+            &mut out,
+            "lumen_hnsw_write_lock_wait_seconds",
+            "Time spent waiting to acquire an HNSW graph write lock, in seconds.",
+            &self.hnsw_write_lock_wait_seconds_buckets,
+            &self.hnsw_write_lock_wait_seconds_us_sum,
+            &self.hnsw_write_lock_wait_seconds_count,
+        );
+        render_apply_duration_histogram(
+            &mut out,
+            "lumen_hnsw_write_lock_held_seconds",
+            "Time an HNSW graph write lock was held, in seconds.",
+            &self.hnsw_write_lock_held_seconds_buckets,
+            &self.hnsw_write_lock_held_seconds_us_sum,
+            &self.hnsw_write_lock_held_seconds_count,
+        );
+        render_apply_duration_histogram(
+            &mut out,
+            "lumen_segment_capacity_relief_checkpoint_merge_seconds",
+            "Time for successful capacity-relief checkpoint-plus-merge cycles, in seconds.",
+            &self.segment_capacity_relief_checkpoint_merge_seconds_buckets,
+            &self.segment_capacity_relief_checkpoint_merge_seconds_us_sum,
+            &self.segment_capacity_relief_checkpoint_merge_seconds_count,
         );
         out
     }
@@ -1680,6 +1858,32 @@ mod tests {
                 out.contains(expected),
                 "missing observed {expected:?} in:\n{out}"
             );
+        }
+    }
+
+    #[test]
+    fn capacity_timing_histograms_split_lock_wait_hold_and_relief_cycle() {
+        let metrics = Metrics::new();
+        metrics.observe_engine_state_write_lock_hold(Duration::from_millis(3));
+        metrics.observe_hnsw_write_lock_wait(Duration::from_millis(5));
+        metrics.observe_hnsw_write_lock_hold(Duration::from_millis(7));
+        metrics.observe_hnsw_graph_rebuild(Duration::from_millis(9));
+        metrics.observe_capacity_relief_checkpoint_merge_cycle(Duration::from_millis(11));
+
+        let out = metrics.render();
+        for expected in [
+            "lumen_engine_state_write_lock_held_seconds_sum 0.003",
+            "lumen_engine_state_write_lock_held_seconds_count 1",
+            "lumen_hnsw_write_lock_wait_seconds_sum 0.005",
+            "lumen_hnsw_write_lock_wait_seconds_count 1",
+            "lumen_hnsw_write_lock_held_seconds_sum 0.007",
+            "lumen_hnsw_write_lock_held_seconds_count 1",
+            "lumen_hnsw_graph_rebuild_seconds_sum 0.009",
+            "lumen_hnsw_graph_rebuild_seconds_count 1",
+            "lumen_segment_capacity_relief_checkpoint_merge_seconds_sum 0.011",
+            "lumen_segment_capacity_relief_checkpoint_merge_seconds_count 1",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?} in:\n{out}");
         }
     }
 
