@@ -1766,6 +1766,16 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "hnsw_cache_seal_uses_remaining_post_input_deadline_for_delayed_response"
+                        .into(),
+                    false,
+                ),
+                (
+                    "hnsw_cache_seal_never_response_fails_at_remaining_post_input_deadline"
+                        .into(),
+                    false,
+                ),
+                (
                     "input_window_deadline_returns_promptly_with_the_timed_out_stage".into(),
                     false,
                 ),
