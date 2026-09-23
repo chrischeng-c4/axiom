@@ -57,6 +57,13 @@ const OUTCOME_WINDOW: u64 = 8192;
 const SUBMIT_TIMEOUT_SECS: u64 = 30;
 const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(SUBMIT_TIMEOUT_SECS);
 
+fn claim_diagnostic_refusal_revision(last_seen: &AtomicU64, revision: u64) -> bool {
+    // Store revision + 1, leaving zero as the unclaimed sentinel. This also
+    // lets the bounded unlinked event use its required numeric revision 0.
+    let claimed = revision.saturating_add(1);
+    last_seen.fetch_max(claimed, Ordering::AcqRel) < claimed
+}
+
 struct PendingApply {
     seq: u64,
     delivery: WalDelivery,
@@ -321,6 +328,11 @@ pub struct WriteCoordinator {
     has_local_aof: bool,
     /// A refused local request can need source relief without an apply waiter.
     capacity_relief_requested: AtomicBool,
+    /// The last capacity-request revision reported by optional diagnostics.
+    /// This is telemetry-only and does not take part in admission or retry.
+    diagnostic_refusal_revision: AtomicU64,
+    #[cfg(test)]
+    diagnostic_capture: Mutex<Option<crate::segment_rdb::DiagnosticCaptureToken>>,
     layer_capacity_owner: Mutex<Option<crate::segment_capacity::Fallback>>,
     applied: AtomicU64,
     completions: Mutex<CompletionState>,
@@ -355,6 +367,49 @@ impl WriteCoordinator {
             .lock()
             .map_err(|_| anyhow::anyhow!("capacity owner poisoned"))?;
         crate::segment_capacity::Fallback::ensure(&mut owner, &self.engine, None)
+    }
+
+    fn trace_admission_refusal(
+        &self,
+        revision: Option<u64>,
+        requested_bytes: usize,
+        used_bytes: usize,
+        hard_limit_bytes: usize,
+    ) {
+        let capacity_request_present = revision.is_some();
+        let revision = revision.unwrap_or_default();
+        #[cfg(test)]
+        let capture = self.diagnostic_capture.lock().ok().and_then(|token| *token);
+        if !(crate::segment_rdb::checkpoint_diagnostic_enabled()
+            || cfg!(test) && {
+                #[cfg(test)] { capture.is_some() }
+                #[cfg(not(test))] { false }
+            })
+            || !claim_diagnostic_refusal_revision(&self.diagnostic_refusal_revision, revision)
+        {
+            return;
+        }
+        #[cfg(test)]
+        if let Some(token) = capture {
+            crate::segment_rdb::send_numeric_event(token, crate::segment_rdb::NumericCanonicalEvent::Refusal {
+                revision, present: capacity_request_present, requested: requested_bytes,
+                used: used_bytes, hard_limit: hard_limit_bytes,
+            });
+        }
+        tracing::info!(
+            event = "segment_capacity_admission_refusal",
+            capacity_request_revision = revision,
+            capacity_request_present,
+            requested_bytes,
+            used_bytes,
+            hard_limit_bytes,
+            "segment capacity admission refusal"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_diagnostic_capture(&self, token: crate::segment_rdb::DiagnosticCaptureToken) {
+        *self.diagnostic_capture.lock().unwrap() = Some(token);
     }
 
     /// Spawn the apply loop and return the coordinator. The loop tails
@@ -401,6 +456,9 @@ impl WriteCoordinator {
             local_reservations: AsyncMutex::new(FxHashMap::default()),
             has_local_aof: aof.is_some(),
             capacity_relief_requested: AtomicBool::new(false),
+            diagnostic_refusal_revision: AtomicU64::new(0),
+            #[cfg(test)]
+            diagnostic_capture: Mutex::new(None),
             layer_capacity_owner: Mutex::new(None),
             applied: AtomicU64::new(from_seq),
             completions: Mutex::new(CompletionState {
@@ -465,7 +523,11 @@ impl WriteCoordinator {
                                     // acknowledge a later sequence as if that head had applied.
                                     engine.capture_barrier.apply().mark_uncertain();
                                     loop_coord.mutation_gate.require_restart();
-                                    tracing::error!(seq, expected, "WAL replay did not return its capacity-blocked head; restart required");
+                                    tracing::error!(
+                                        seq,
+                                        expected,
+                                        "WAL replay did not return its capacity-blocked head; restart required"
+                                    );
                                     return;
                                 }
                                 (Some(reservation), None)
@@ -523,16 +585,26 @@ impl WriteCoordinator {
                                 if let Some(request) = request {
                                     match engine.try_reserve_record_ram(&request) {
                                         Ok(admitted) => reservation = Some(admitted),
-                                        Err(RecordAdmissionError::Capacity(AdmissionError::Full { .. })) => {
+                                        Err(RecordAdmissionError::Capacity(
+                                            AdmissionError::Full { .. },
+                                        )) => {
                                             // The current MemWal delivery is not acknowledged
                                             // until another poll. Pin the unchanged applied cut
                                             // before dropping that subscription and working copy.
                                             let replay = loop {
-                                                match wal.subscribe_admitted(loop_coord.applied.load(Ordering::Acquire)).await {
+                                                match wal
+                                                    .subscribe_admitted(
+                                                        loop_coord.applied.load(Ordering::Acquire),
+                                                    )
+                                                    .await
+                                                {
                                                     Ok(replay) => break replay,
                                                     Err(error) => {
                                                         tracing::warn!(seq, %error, "could not pin committed WAL head for capacity retry");
-                                                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                                        tokio::time::sleep(
+                                                            std::time::Duration::from_millis(200),
+                                                        )
+                                                        .await;
                                                     }
                                                 }
                                             };
@@ -549,11 +621,19 @@ impl WriteCoordinator {
                                                     None,
                                                 );
                                                 futures::future::pending::<()>().await;
-                                                unreachable!("failed committed head remains pinned");
+                                                unreachable!(
+                                                    "failed committed head remains pinned"
+                                                );
                                             }
                                             let eng = engine.clone();
-                                            match tokio::task::spawn_blocking(move || eng.wait_reserve_record_ram(&request)).await {
-                                                Ok(Ok(admitted)) => replay_reservation = Some((seq, admitted)),
+                                            match tokio::task::spawn_blocking(move || {
+                                                eng.wait_reserve_record_ram(&request)
+                                            })
+                                            .await
+                                            {
+                                                Ok(Ok(admitted)) => {
+                                                    replay_reservation = Some((seq, admitted))
+                                                }
                                                 result => {
                                                     engine.capture_barrier.apply().mark_uncertain();
                                                     loop_coord.mutation_gate.require_restart();
@@ -566,7 +646,11 @@ impl WriteCoordinator {
                                         // Oversized raw records still need the streaming source
                                         // adapter. This branch retains the established dispatch
                                         // until that distinct preparation route is installed.
-                                        Err(error) => tracing::warn!(seq, ?error, "committed WAL raw record requires streaming preparation"),
+                                        Err(error) => tracing::warn!(
+                                            seq,
+                                            ?error,
+                                            "committed WAL raw record requires streaming preparation"
+                                        ),
                                     }
                                 }
                             }
@@ -1215,10 +1299,12 @@ impl WriteCoordinator {
             // Unknown schema/context preparation is likewise not a reason to
             // discard a valid record; apply returns its original domain outcome.
             Err(error) => {
-                if matches!(
-                    error,
-                    RecordAdmissionError::Capacity(AdmissionError::Full { .. })
-                ) {
+                if let RecordAdmissionError::Capacity(AdmissionError::Full {
+                    requested,
+                    used,
+                    hard_limit,
+                }) = &error
+                {
                     // A local pre-publication refusal does not create a
                     // committed capacity waiter. Start the same independent
                     // checkpoint owner used by committed/replayed records,
@@ -1231,7 +1317,8 @@ impl WriteCoordinator {
                             "could not start local capacity maintenance"
                         );
                     }
-                    self.engine.request_pending_checkpoint();
+                    let revision = self.engine.request_pending_checkpoint_revision();
+                    self.trace_admission_refusal(revision, *requested, *used, *hard_limit);
                     self.capacity_relief_requested
                         .store(true, Ordering::Release);
                 }
@@ -1425,7 +1512,7 @@ impl WriteCoordinator {
             Err(_) => {
                 return Err(anyhow::anyhow!(
                     "publish task stopped before registering a waiter"
-                ))
+                ));
             }
         };
         match tokio::time::timeout(SUBMIT_TIMEOUT, rx).await {
@@ -1820,8 +1907,10 @@ mod tests {
             assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
         }
         assert!(budget.high_water_bytes() <= hard);
-        assert!(completed_without_reservation_discard,
-            "future local reservation blocked the earlier external record despite a running checkpoint worker");
+        assert!(
+            completed_without_reservation_discard,
+            "future local reservation blocked the earlier external record despite a running checkpoint worker"
+        );
     }
 
     async fn wait_for_reserved(budget: &ChangeBudget) {
@@ -2082,7 +2171,8 @@ mod tests {
             .bytes();
         assert!(requested > base);
 
-        let budget = ChangeBudget::with_hard_limit(requested.checked_mul(2).unwrap());
+        let hard_limit = requested.checked_mul(2).unwrap();
+        let budget = ChangeBudget::with_hard_limit(hard_limit);
         let engine = Arc::new(Engine::with_change_budget(budget.clone()));
         engine.create_collection("u", keyword_schema()).unwrap();
         let remaining = requested.checked_mul(2).unwrap() - budget.snapshot().total;
@@ -2100,6 +2190,66 @@ mod tests {
         );
         assert_eq!(wal.latest_seq().await.unwrap(), 0);
         assert_eq!(coord.applied_seq(), 0);
+        assert!(
+            budget.high_water_bytes() <= hard_limit,
+            "a refused record must not push high water above the hard limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn full_local_refusal_emits_one_numeric_diagnostic_without_wal_publish() {
+        use crate::segment_rdb::{DiagnosticCapture, NumericCanonicalEvent as Event};
+
+        let capture = DiagnosticCapture::new();
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal.clone(), engine);
+        coord.set_diagnostic_capture(capture.token());
+        let filler = budget.owner();
+        let _held = filler.try_reserve(1024 * 1024 - budget.snapshot().total).unwrap();
+        for _ in 0..2 {
+            let error = coord.submit(admitted_index_entry()).await.unwrap_err();
+            assert!(error.downcast_ref::<PendingChangeCapacity>().is_some());
+        }
+        assert_eq!(wal.latest_seq().await.unwrap(), 0);
+        let numeric = capture.drain();
+        assert_eq!(numeric.len(), 1, "real repeated Full refusals share one request revision");
+        assert!(matches!(numeric[0], Event::Refusal { revision: 1.., present: true, requested: 1.., hard_limit, .. } if hard_limit == 1024 * 1024));
+    }
+
+    #[tokio::test]
+    async fn foreign_budget_full_without_local_work_has_unlinked_numeric_refusal() {
+        use crate::segment_rdb::{DiagnosticCapture, NumericCanonicalEvent as Event};
+
+        let capture = DiagnosticCapture::new();
+        let budget = ChangeBudget::with_hard_limit(1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal.clone(), engine);
+        coord.set_diagnostic_capture(capture.token());
+        let foreign = budget.owner();
+        let _held = foreign.try_reserve(1024 * 1024).unwrap();
+        let error = coord.submit(RaftLogEntry::CreateCollection {
+            collection_id: "new".into(), req: keyword_schema(),
+        }).await.unwrap_err();
+        assert!(error.downcast_ref::<PendingChangeCapacity>().is_some());
+        assert_eq!(wal.latest_seq().await.unwrap(), 0);
+        let events = capture.drain();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Event::Refusal { revision: 0, present: false, requested: 1.., hard_limit, .. } if hard_limit == 1024 * 1024));
+    }
+
+    #[test]
+    fn diagnostic_admission_refusal_claims_each_request_revision_once() {
+        let last_seen = AtomicU64::new(0);
+        assert!(claim_diagnostic_refusal_revision(&last_seen, 17));
+        assert!(
+            !claim_diagnostic_refusal_revision(&last_seen, 17),
+            "two Full refusals for one pending request must produce one event"
+        );
+        assert!(claim_diagnostic_refusal_revision(&last_seen, 18));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
