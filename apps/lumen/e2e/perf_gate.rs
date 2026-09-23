@@ -726,6 +726,14 @@ fn median_statistic_and_ignored_inventory() {
                 false,
             ),
             (
+                "hnsw_cache_seal_uses_remaining_post_input_deadline_for_delayed_response",
+                false,
+            ),
+            (
+                "hnsw_cache_seal_never_response_fails_at_remaining_post_input_deadline",
+                false,
+            ),
+            (
                 "input_window_deadline_returns_promptly_with_the_timed_out_stage",
                 false,
             ),
@@ -5150,7 +5158,6 @@ mod durable_workload {
     ) -> Result<HnswCacheSealReceipt> {
         let response = client
             .post(format!("{base}/admin/restart:seal-hnsw-cache"))
-            .timeout(REQUEST_TIMEOUT)
             .send()
             .await
             .map_err(HarnessError::request_failure)?;
@@ -7211,11 +7218,15 @@ mod durable_workload {
         .await?;
         if config.vector_backend.requires_hnsw_cache_seal() {
             eprintln!("PERF_STAGE_BEGIN hnsw_cache_seal");
+            // This administrative request is governed by the shared absolute
+            // post-input deadline below.  Do not reuse the workload client:
+            // its five-second default can expire before that remaining budget.
+            let cache_seal_client = reqwest::Client::new();
             let receipt = post_input_step(
                 post_input_deadline,
                 POST_INPUT_TIMEOUT,
                 "hnsw_cache_seal",
-                seal_hnsw_cache(&server.client, &server.base),
+                seal_hnsw_cache(&cache_seal_client, &server.base),
             )
             .await?;
             eprintln!("PERF_CACHE_SEAL_RECEIPT {}", cache_seal_receipt_line(&receipt));
@@ -8358,6 +8369,47 @@ mod durable_workload {
         (format!("http://{address}"), bodies, task)
     }
 
+    #[cfg(test)]
+    async fn fake_delayed_hnsw_cache_seal_server(
+        delay: Duration,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = axum::Router::new().route(
+            "/admin/restart:seal-hnsw-cache",
+            axum::routing::post(move || async move {
+                tokio::time::sleep(delay).await;
+                axum::Json(json!({
+                    "sealed": true,
+                    "cache_fields": 1,
+                    "durability": "checkpoint_committed",
+                    "mutation_stamp": {"epoch": 9, "apply_revision": 43},
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), task)
+    }
+
+    #[cfg(test)]
+    async fn fake_never_responding_hnsw_cache_seal_server() ->
+        (String, tokio::task::JoinHandle<()>) {
+        let app = axum::Router::new().route(
+            "/admin/restart:seal-hnsw-cache",
+            axum::routing::post(|| async {
+                std::future::pending::<axum::response::Response>().await
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), task)
+    }
+
     #[test]
     fn hnsw_cache_seal_requires_a_strict_hnsw_receipt_and_sends_no_body() {
         assert!(!VectorBackend::FlatCpu.requires_hnsw_cache_seal());
@@ -8572,6 +8624,51 @@ mod durable_workload {
                 } => assert_eq!(observed, timeout),
                 other => panic!("expected a typed workload-drain timeout, got {other:?}"),
             }
+        });
+    }
+
+    #[test]
+    fn hnsw_cache_seal_uses_remaining_post_input_deadline_for_delayed_response() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build post-input deadline unit-test runtime");
+        runtime.block_on(async {
+            let (base, task) = fake_delayed_hnsw_cache_seal_server(Duration::from_secs(5) + Duration::from_millis(250)).await;
+            let timeout = Duration::from_secs(6);
+            let result = post_input_step(
+                tokio::time::Instant::now() + timeout,
+                timeout,
+                "hnsw_cache_seal",
+                seal_hnsw_cache(&reqwest::Client::new(), &base),
+            )
+            .await;
+            task.abort();
+            assert!(result.is_ok(), "seal must succeed before the outer deadline: {result:?}");
+        });
+    }
+
+    #[test]
+    fn hnsw_cache_seal_never_response_fails_at_remaining_post_input_deadline() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build post-input deadline unit-test runtime");
+        runtime.block_on(async {
+            let (base, task) = fake_never_responding_hnsw_cache_seal_server().await;
+            let timeout = Duration::from_millis(25);
+            let result = post_input_step(
+                tokio::time::Instant::now() + timeout,
+                timeout,
+                "hnsw_cache_seal",
+                seal_hnsw_cache(&reqwest::Client::new(), &base),
+            )
+            .await;
+            task.abort();
+            assert!(
+                matches!(result, Err(HarnessError::PostInputTimeout { stage: "hnsw_cache_seal", timeout: observed }) if observed == timeout),
+                "seal must fail at the outer deadline: {result:?}"
+            );
         });
     }
 
