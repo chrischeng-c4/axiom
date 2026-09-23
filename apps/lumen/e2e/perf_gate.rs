@@ -642,6 +642,8 @@ fn median_statistic_and_ignored_inventory() {
                 "docker_run_forwards_diagnostic_environment_only_for_diagnostic_mode",
                 false,
             ),
+            ("recovery_observation_is_bounded_and_diagnostic_only", false),
+            ("diagnostic_restart_extends_only_its_outer_watchdog", false),
             (
                 "restart_command_timeout_kills_and_reaps_a_stuck_child",
                 false,
@@ -761,6 +763,10 @@ fn median_statistic_and_ignored_inventory() {
             ),
             (
                 "restart_diagnostics_emit_complete_record_after_not_ready_polls",
+                false,
+            ),
+            (
+                "recovery_observation_can_find_late_ready_but_restart_still_fails",
                 false,
             ),
             (
@@ -964,6 +970,7 @@ mod durable_workload {
     const SNAPSHOT_SECONDS: &str = "15";
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+    const RECOVERY_OBSERVATION_ENV: &str = "LUMEN_PERF_RECOVERY_OBSERVATION_SECS";
     const RESTART_DIAGNOSTIC_PREFIX: &str = "PERF_RESTART_DIAGNOSTIC";
     const READYZ_READINESS_TRACE_FILE: &str = "readyz-readiness-trace.txt";
     const READYZ_READINESS_TRACE_MAX_ROWS: usize = 512;
@@ -1322,6 +1329,7 @@ mod durable_workload {
         backend: Option<String>,
         diagnostic: Option<String>,
         qualifying: Option<String>,
+        recovery_observation_secs: Option<String>,
     }
 
     impl SelectionInput {
@@ -1332,6 +1340,7 @@ mod durable_workload {
                 backend: optional_env("LUMEN_PERF_BACKEND")?,
                 diagnostic: optional_env("LUMEN_PERF_DIAGNOSTIC")?,
                 qualifying: optional_env("LUMEN_PERF_QUALIFYING_CELL")?,
+                recovery_observation_secs: optional_env(RECOVERY_OBSERVATION_ENV)?,
             })
         }
     }
@@ -1350,6 +1359,10 @@ mod durable_workload {
             let qualifying = exact_flag(
                 selection.qualifying.as_deref(),
                 "LUMEN_PERF_QUALIFYING_CELL",
+            )?;
+            diagnostic_recovery_observation(
+                selection.recovery_observation_secs.as_deref(),
+                diagnostic,
             )?;
             if diagnostic && qualifying {
                 return Err(HarnessError::InvalidSelection(
@@ -1465,6 +1478,30 @@ mod durable_workload {
         }
     }
 
+    fn diagnostic_recovery_observation(
+        raw: Option<&str>,
+        diagnostic: bool,
+    ) -> Result<Option<Duration>> {
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        if !diagnostic {
+            return Err(HarnessError::InvalidSelection(format!(
+                "{RECOVERY_OBSERVATION_ENV} needs LUMEN_PERF_DIAGNOSTIC=1"
+            )));
+        }
+        let seconds = raw
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| (31..=120).contains(seconds))
+            .ok_or_else(|| {
+                HarnessError::InvalidSelection(format!(
+                    "{RECOVERY_OBSERVATION_ENV} must be an integer from 31 through 120"
+                ))
+            })?;
+        Ok(Some(Duration::from_secs(seconds)))
+    }
+
     fn endpoint_name(endpoint: Endpoint) -> &'static str {
         match endpoint {
             Endpoint::Index => "index",
@@ -1512,6 +1549,7 @@ mod durable_workload {
         image_reference: String,
         image_id: String,
         cleanup_armed: bool,
+        recovery_observation: Option<Duration>,
         // Shared across every `send_*` task the request pump spawns for
         // this server so a failed durable cell's evidence bundle can name
         // why, not only that, each counted `Outcome::Failed`/`TimedOut`.
@@ -3045,6 +3083,8 @@ mod durable_workload {
                 "LUMEN_PERF_DIAGNOSTIC=1".to_owned(),
                 "-e".to_owned(),
                 "LUMEN_LOG_FORMAT=json".to_owned(),
+                "-e".to_owned(),
+                "RUST_LOG=info,http.access=warn".to_owned(),
             ]);
         }
         args.extend([
@@ -3082,7 +3122,11 @@ mod durable_workload {
     #[test]
     fn docker_run_forwards_diagnostic_environment_only_for_diagnostic_mode() {
         let diagnostic = docker_run_args("container", "volume", "image", None, true);
-        for environment in ["LUMEN_PERF_DIAGNOSTIC=1", "LUMEN_LOG_FORMAT=json"] {
+        for environment in [
+            "LUMEN_PERF_DIAGNOSTIC=1",
+            "LUMEN_LOG_FORMAT=json",
+            "RUST_LOG=info,http.access=warn",
+        ] {
             assert!(
                 diagnostic
                     .windows(2)
@@ -3092,7 +3136,11 @@ mod durable_workload {
         }
 
         let qualifying = docker_run_args("container", "volume", "image", None, false);
-        for environment in ["LUMEN_PERF_DIAGNOSTIC=1", "LUMEN_LOG_FORMAT=json"] {
+        for environment in [
+            "LUMEN_PERF_DIAGNOSTIC=1",
+            "LUMEN_LOG_FORMAT=json",
+            "RUST_LOG=info,http.access=warn",
+        ] {
             assert!(
                 !qualifying
                     .windows(2)
@@ -3102,12 +3150,51 @@ mod durable_workload {
         }
     }
 
+    #[test]
+    fn recovery_observation_is_bounded_and_diagnostic_only() {
+        assert_eq!(
+            diagnostic_recovery_observation(Some("120"), true).unwrap(),
+            Some(Duration::from_secs(120))
+        );
+        assert_eq!(
+            diagnostic_recovery_observation(Some("31"), true).unwrap(),
+            Some(Duration::from_secs(31))
+        );
+        for value in ["30", "121", "0", "invalid"] {
+            assert!(
+                diagnostic_recovery_observation(Some(value), true).is_err(),
+                "{value} must not extend the diagnostic observation window"
+            );
+        }
+        assert!(diagnostic_recovery_observation(Some("120"), false).is_err());
+    }
+
+    #[test]
+    fn diagnostic_restart_extends_only_its_outer_watchdog() {
+        let shared_deadline = tokio::time::Instant::now() + POST_INPUT_TIMEOUT;
+        let (qualifying_deadline, qualifying_timeout) =
+            restart_post_input_window(shared_deadline, None).unwrap();
+        assert_eq!(qualifying_deadline, shared_deadline);
+        assert_eq!(qualifying_timeout, POST_INPUT_TIMEOUT);
+
+        let (diagnostic_deadline, diagnostic_timeout) =
+            restart_post_input_window(shared_deadline, Some(Duration::from_secs(120))).unwrap();
+        let extension = Duration::from_secs(120) - STARTUP_TIMEOUT;
+        assert_eq!(diagnostic_deadline, shared_deadline + extension);
+        assert_eq!(diagnostic_timeout, POST_INPUT_TIMEOUT + extension);
+    }
+
     impl DockerLumen {
         async fn start() -> Result<Self> {
             let image = required_env("LUMEN_PERF_IMAGE")?;
             if !is_immutable_image_reference(&image) {
                 return Err(HarnessError::UnpinnedImage(image));
             }
+            let diagnostic = env::var("LUMEN_PERF_DIAGNOSTIC").ok().as_deref() == Some("1");
+            let recovery_observation = diagnostic_recovery_observation(
+                optional_env(RECOVERY_OBSERVATION_ENV)?.as_deref(),
+                diagnostic,
+            )?;
             let nonce = format!(
                 "{}-{}",
                 std::process::id(),
@@ -3126,7 +3213,7 @@ mod durable_workload {
                     &volume,
                     &image,
                     env::var("LUMEN_RECOVERY_PROFILE").ok().as_deref(),
-                    env::var("LUMEN_PERF_DIAGNOSTIC").ok().as_deref() == Some("1"),
+                    diagnostic,
                 );
                 docker_owned(&run_args)?;
                 let image_id = verify_image_identity(&image)?;
@@ -3143,6 +3230,7 @@ mod durable_workload {
                     image_reference: image.clone(),
                     image_id,
                     cleanup_armed: true,
+                    recovery_observation,
                     request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                     interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                     restart_failure_trace: Arc::new(Mutex::new(None)),
@@ -3415,13 +3503,9 @@ mod durable_workload {
             &mut self,
             deadline: tokio::time::Instant,
         ) -> Result<Duration> {
-            post_input_step(
-                deadline,
-                POST_INPUT_TIMEOUT,
-                "restart",
-                self.restart_and_wait_ready(),
-            )
-            .await
+            let (deadline, timeout) =
+                restart_post_input_window(deadline, self.recovery_observation)?;
+            post_input_step(deadline, timeout, "restart", self.restart_and_wait_ready()).await
         }
 
         async fn post_input_restart_step_with<R: RestartCommandRunner + Send>(
@@ -3494,6 +3578,43 @@ mod durable_workload {
                 },
                 elapsed,
             ));
+        }
+
+        async fn observe_recovery_after_readyz_timeout(&self, started: Instant) {
+            let Some(limit) = self.recovery_observation else {
+                return;
+            };
+            let deadline = started + limit;
+            let mut attempts = 0_u64;
+            while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+                if remaining.is_zero() {
+                    break;
+                }
+                attempts += 1;
+                if let Ok(Ok(response)) = tokio::time::timeout(
+                    remaining.min(REQUEST_TIMEOUT),
+                    self.client.get(format!("{}/readyz", self.base)).send(),
+                )
+                .await
+                {
+                    if response.status().is_success() {
+                        eprintln!(
+                            "PERF_RECOVERY_OBSERVATION outcome=ready observed_elapsed_ms={} attempts={} official_timeout_ms={} observation_limit_ms={}",
+                            started.elapsed().as_millis(), attempts, STARTUP_TIMEOUT.as_millis(), limit.as_millis()
+                        );
+                        return;
+                    }
+                }
+                tokio::time::sleep(
+                    Duration::from_millis(100)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                )
+                .await;
+            }
+            eprintln!(
+                "PERF_RECOVERY_OBSERVATION outcome=not_ready observed_elapsed_ms={} attempts={} official_timeout_ms={} observation_limit_ms={}",
+                started.elapsed().as_millis(), attempts, STARTUP_TIMEOUT.as_millis(), limit.as_millis()
+            );
         }
 
         async fn refresh_restart_endpoint<R: RestartCommandRunner>(
@@ -3663,6 +3784,7 @@ mod durable_workload {
                         diagnostics,
                     )
                     .await;
+                    self.observe_recovery_after_readyz_timeout(started).await;
                     return Err(HarnessError::Startup(format!(
                         "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
                         STARTUP_TIMEOUT.as_secs()
@@ -3765,6 +3887,7 @@ mod durable_workload {
                         diagnostics,
                     )
                     .await;
+                    self.observe_recovery_after_readyz_timeout(started).await;
                     return Err(HarnessError::Startup(format!(
                         "GET /readyz did not become successful within {} seconds; retained docker-logs.txt has the bounded container tail",
                         STARTUP_TIMEOUT.as_secs()
@@ -5744,6 +5867,22 @@ mod durable_workload {
             .map_err(|_| HarnessError::PostInputTimeout { stage, timeout })?
     }
 
+    fn restart_post_input_window(
+        deadline: tokio::time::Instant,
+        recovery_observation: Option<Duration>,
+    ) -> Result<(tokio::time::Instant, Duration)> {
+        let extension = recovery_observation
+            .unwrap_or_default()
+            .saturating_sub(STARTUP_TIMEOUT);
+        let deadline = deadline.checked_add(extension).ok_or_else(|| {
+            HarnessError::DataInvariant("diagnostic restart deadline overflowed".to_owned())
+        })?;
+        let timeout = POST_INPUT_TIMEOUT.checked_add(extension).ok_or_else(|| {
+            HarnessError::DataInvariant("diagnostic restart timeout overflowed".to_owned())
+        })?;
+        Ok((deadline, timeout))
+    }
+
     fn setup_timeout() -> HarnessError {
         HarnessError::SetupTimeout { stage: "seed" }
     }
@@ -7203,6 +7342,7 @@ mod durable_workload {
             image_reference: "fake-readback".to_owned(),
             image_id: "fake-readback".to_owned(),
             cleanup_armed: false,
+            recovery_observation: None,
             request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
             interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
             restart_failure_trace: Arc::new(Mutex::new(None)),
@@ -7264,6 +7404,11 @@ mod durable_workload {
             SelectedMode::from_selection(&qualifying),
             Ok(SelectedMode::Qualifying(_))
         ));
+        qualifying.recovery_observation_secs = Some("120".to_owned());
+        assert!(
+            SelectedMode::from_selection(&qualifying).is_err(),
+            "qualifying cells must reject diagnostic recovery observation"
+        );
 
         let no_mode = selected_cell("unindex", "1", "flat-cpu");
         assert!(SelectedMode::from_selection(&no_mode).is_err());
@@ -7888,6 +8033,7 @@ mod durable_workload {
                 image_reference: "fake-setup".to_owned(),
                 image_id: "fake-setup".to_owned(),
                 cleanup_armed: false,
+                recovery_observation: None,
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                 interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                 restart_failure_trace: Arc::new(Mutex::new(None)),
@@ -8839,6 +8985,7 @@ mod durable_workload {
                 image_reference: "restart-test-image-reference".to_owned(),
                 image_id: "restart-test-image-id".to_owned(),
                 cleanup_armed: false,
+                recovery_observation: None,
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                 interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                 restart_failure_trace: Arc::new(Mutex::new(None)),
@@ -8894,6 +9041,7 @@ mod durable_workload {
                 image_reference: "restart-test-image-reference".to_owned(),
                 image_id: "restart-test-image-id".to_owned(),
                 cleanup_armed: false,
+                recovery_observation: None,
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                 interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                 restart_failure_trace: Arc::new(Mutex::new(None)),
@@ -8951,6 +9099,7 @@ mod durable_workload {
                 image_reference: "restart-test-image-reference".to_owned(),
                 image_id: "restart-test-image-id".to_owned(),
                 cleanup_armed: false,
+                recovery_observation: None,
                 request_error_journal: Arc::new(Mutex::new(RequestErrorJournal::default())),
                 interval_trace: Arc::new(Mutex::new(IntervalTrace::default())),
                 restart_failure_trace: Arc::new(Mutex::new(None)),
@@ -9184,6 +9333,58 @@ mod durable_workload {
             assert!(first_ready <= elapsed);
             assert!(diagnostics.readyz_wait_elapsed.unwrap() <= elapsed);
             assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 3);
+            task.abort();
+        });
+    }
+
+    #[test]
+    fn recovery_observation_can_find_late_ready_but_restart_still_fails() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build late recovery observation runtime");
+        runtime.block_on(async {
+            let (mut server, requests, task) = fake_ready_lumen_with_statuses(vec![
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                axum::http::StatusCode::OK,
+            ])
+            .await;
+            server.recovery_observation = Some(Duration::from_millis(500));
+            let mut runner = DiagnosticRestartRunner {
+                restart_result: Some(Ok(())),
+                restart_delay: Duration::ZERO,
+                port_result: Some(Ok(server.base.strip_prefix("http://").unwrap().to_owned())),
+                port_delay: Duration::ZERO,
+            };
+            let mut records = Vec::new();
+            let shared_deadline = tokio::time::Instant::now() + Duration::from_millis(80);
+            let (outer_deadline, outer_timeout) = restart_post_input_window(
+                shared_deadline,
+                Some(Duration::from_secs(120)),
+            )
+            .unwrap();
+            let result = post_input_step(
+                outer_deadline,
+                outer_timeout,
+                "restart",
+                server.restart_and_wait_ready_with_diagnostic_observer(
+                    &mut runner,
+                    Instant::now() + Duration::from_millis(80),
+                    |record, _| records.push(record.to_owned()),
+                ),
+            )
+            .await;
+            assert!(
+                matches!(result, Err(HarnessError::Startup(ref message)) if message.contains("30 seconds")),
+                "late readiness must not change the official restart result: {result:?}"
+            );
+            assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 2);
+            assert_eq!(records.len(), 1);
+            assert!(records[0].starts_with("PERF_RESTART_DIAGNOSTIC phase=readyz outcome=timeout"));
+            let trace = server.restart_failure_trace.lock().await;
+            let trace = trace.expect("retain official restart failure trace");
+            assert!(matches!(trace.phase, RestartFailureTracePhase::Readyz));
+            assert!(matches!(trace.outcome, RestartFailureTraceOutcome::Timeout));
             task.abort();
         });
     }
