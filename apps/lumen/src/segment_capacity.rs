@@ -6,9 +6,9 @@ use crate::segment_checkpoint::SegmentCheckpointSink;
 use crate::segment_rdb::SegmentRdbStore;
 use crate::storage::Engine;
 use anyhow::{Result, anyhow};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[path = "segment_save_gate.rs"]
 mod publication_gate;
@@ -417,14 +417,167 @@ fn run_budget_relay(
     }
 }
 
+fn relay_diagnostic_enabled() -> bool {
+    std::env::var("LUMEN_PERF_DIAGNOSTIC").as_deref() == Ok("1")
+}
+
+#[derive(Clone, Copy)]
+struct RelayCapacityState {
+    active_bytes: usize,
+    frozen_bytes: usize,
+    request_revision: Option<u64>,
+    work_revision: u64,
+    pending_delta_bytes: u64,
+    pending_delta_layers: u64,
+    merge_completed_total: u64,
+}
+
+impl RelayCapacityState {
+    fn read(engine: &Engine) -> Self {
+        let owner = engine.capacity_owner_state();
+        Self {
+            active_bytes: owner.map_or(0, |state| state.active),
+            frozen_bytes: owner.map_or(0, |state| state.frozen),
+            request_revision: owner.and_then(|state| state.checkpoint_request_revision),
+            work_revision: owner.map_or(0, |state| state.work_revision),
+            pending_delta_bytes: engine.metrics().segment_pending_delta_bytes.get(),
+            pending_delta_layers: engine.metrics().segment_pending_delta_layers.get(),
+            // This counter is the safely available root merge progress view.
+            // It never claims scheduler queue or ownership state.
+            merge_completed_total: engine.metrics().segment_merge_completed_total.get(),
+        }
+    }
+}
+
+struct RelayTrace {
+    cycle_id: u64,
+    start_request_revision: Option<u64>,
+    start: RelayCapacityState,
+    started: Instant,
+    checkpoint_ns: Option<u64>,
+    checkpoint_result: &'static str,
+    merge_ns: Option<u64>,
+    merge_result: &'static str,
+    consume_ns: Option<u64>,
+    consume_result: &'static str,
+}
+
+impl RelayTrace {
+    fn start(engine: &Engine, request_revision: Option<u64>) -> Self {
+        static NEXT_RELAY_CYCLE_ID: AtomicU64 = AtomicU64::new(1);
+        Self {
+            cycle_id: NEXT_RELAY_CYCLE_ID.fetch_add(1, Ordering::Relaxed),
+            start_request_revision: request_revision,
+            start: RelayCapacityState::read(engine),
+            started: Instant::now(),
+            checkpoint_ns: None,
+            checkpoint_result: "not_started",
+            merge_ns: None,
+            merge_result: "not_started",
+            consume_ns: None,
+            consume_result: "not_attempted",
+        }
+    }
+
+    fn terminal(self, engine: &Engine, reason: &'static str, error: Option<&anyhow::Error>) {
+        let end = RelayCapacityState::read(engine);
+        let error = error.map_or_else(String::new, |error| format!("{error:#}"));
+        tracing::info!(
+            event = "segment_capacity_relay_diagnostic",
+            relay_cycle_id = self.cycle_id,
+            start_request_revision = self.start_request_revision.unwrap_or_default(),
+            start_request_pending = self.start_request_revision.is_some(),
+            start_capacity_request_revision = self.start.request_revision.unwrap_or_default(),
+            start_capacity_request_pending = self.start.request_revision.is_some(),
+            start_capacity_work_revision = self.start.work_revision,
+            start_active_bytes = self.start.active_bytes,
+            start_frozen_bytes = self.start.frozen_bytes,
+            checkpoint_result = self.checkpoint_result,
+            checkpoint_ns = self.checkpoint_ns.unwrap_or_default(),
+            merge_result = self.merge_result,
+            merge_ns = self.merge_ns.unwrap_or_default(),
+            consume_attempted_revision = self.start_request_revision.unwrap_or_default(),
+            consume_attempted = self.start_request_revision.is_some(),
+            consume_result = self.consume_result,
+            consume_ns = self.consume_ns.unwrap_or_default(),
+            end_reason = reason,
+            end_capacity_request_revision = end.request_revision.unwrap_or_default(),
+            end_capacity_request_pending = end.request_revision.is_some(),
+            end_capacity_work_revision = end.work_revision,
+            end_active_bytes = end.active_bytes,
+            end_frozen_bytes = end.frozen_bytes,
+            end_pending_delta_bytes = end.pending_delta_bytes,
+            end_pending_delta_layers = end.pending_delta_layers,
+            end_merge_completed_total = end.merge_completed_total,
+            relay_total_ns = u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            error = %error,
+            "segment capacity relay diagnostic"
+        );
+    }
+}
+
 fn relay_cycle(engine: &Engine, endpoint: &Endpoint, request_revision: Option<u64>) -> Result<()> {
-    endpoint.wait_for(Work::Checkpoint)?;
+    // A normal or qualifying relay pays only this opt-in check. It does not
+    // sample metrics, time work, or emit a diagnostic record.
+    let mut trace = relay_diagnostic_enabled().then(|| RelayTrace::start(engine, request_revision));
+
+    let checkpoint_started = trace.as_ref().map(|_| Instant::now());
+    if let Err(error) = endpoint.wait_for(Work::Checkpoint) {
+        if let Some(trace) = trace.as_mut() {
+            trace.checkpoint_ns = checkpoint_started
+                .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
+            trace.checkpoint_result = "error";
+        }
+        if let Some(trace) = trace {
+            trace.terminal(engine, "checkpoint_error", Some(&error));
+        }
+        return Err(error);
+    }
+    if let Some(trace) = trace.as_mut() {
+        trace.checkpoint_ns = checkpoint_started
+            .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
+        trace.checkpoint_result = "ok";
+    }
+
     // A local capacity refusal needs both publication and compaction. The
     // checkpoint frees only the frozen layer; without the merge, repeated
     // refusals can fill the segment budget again before the next request.
-    endpoint.wait_for(Work::Merge)?;
+    let merge_started = trace.as_ref().map(|_| Instant::now());
+    if let Err(error) = endpoint.wait_for(Work::Merge) {
+        if let Some(trace) = trace.as_mut() {
+            trace.merge_ns = merge_started
+                .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
+            trace.merge_result = "error";
+        }
+        if let Some(trace) = trace {
+            trace.terminal(engine, "merge_error", Some(&error));
+        }
+        return Err(error);
+    }
+    if let Some(trace) = trace.as_mut() {
+        trace.merge_ns = merge_started
+            .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
+        trace.merge_result = "ok";
+    }
+
     if let Some(request_revision) = request_revision {
+        let consume_started = trace.as_ref().map(|_| Instant::now());
         engine.consume_checkpoint_request(request_revision);
+        if let Some(trace) = trace.as_mut() {
+            trace.consume_ns = consume_started
+                .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
+            trace.consume_result = match engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision)
+            {
+                None => "consumed",
+                Some(current) if current == request_revision => "unchanged",
+                Some(_) => "stale",
+            };
+        }
+    }
+    if let Some(trace) = trace {
+        trace.terminal(engine, "complete", None);
     }
     Ok(())
 }
@@ -498,9 +651,103 @@ impl Drop for Fallback {
 mod tests {
     use super::*;
     use crate::change_budget::ChangeBudget;
+    use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
     use storage_durable::{CommitStep, FailureInjector, FailurePoint};
+
+    struct DiagnosticEnvironment {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl DiagnosticEnvironment {
+        fn set(enabled: bool) -> Self {
+            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            let lock = LOCK
+                .get_or_init(Default::default)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var_os("LUMEN_PERF_DIAGNOSTIC");
+            if enabled {
+                std::env::set_var("LUMEN_PERF_DIAGNOSTIC", "1");
+            } else {
+                std::env::remove_var("LUMEN_PERF_DIAGNOSTIC");
+            }
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for DiagnosticEnvironment {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var("LUMEN_PERF_DIAGNOSTIC", previous);
+            } else {
+                std::env::remove_var("LUMEN_PERF_DIAGNOSTIC");
+            }
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct DiagnosticTraceWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct DiagnosticTraceWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for DiagnosticTraceWriterGuard {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for DiagnosticTraceWriter {
+        type Writer = DiagnosticTraceWriterGuard;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            DiagnosticTraceWriterGuard(self.0.clone())
+        }
+    }
+
+    impl DiagnosticTraceWriter {
+        fn records(&self) -> Vec<serde_json::Value> {
+            String::from_utf8(self.0.lock().unwrap().clone())
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        }
+    }
+
+    fn relay_diagnostic_records(enabled: bool, run: impl FnOnce()) -> Vec<serde_json::Value> {
+        use tracing_subscriber::prelude::*;
+
+        let _environment = DiagnosticEnvironment::set(enabled);
+        let writer = DiagnosticTraceWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .with_writer(writer.clone()),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+        run();
+        drop(_guard);
+        writer.records()
+    }
+
+    fn relay_record(records: Vec<serde_json::Value>) -> serde_json::Value {
+        records
+            .into_iter()
+            .find(|record| record["fields"]["event"] == "segment_capacity_relay_diagnostic")
+            .expect("relay must emit one terminal diagnostic event")
+    }
 
     fn engine() -> Arc<Engine> {
         let engine = Arc::new(Engine::new());
@@ -838,6 +1085,145 @@ mod tests {
                 .and_then(|state| state.checkpoint_request_revision),
             Some(revision)
         );
+    }
+
+    #[test]
+    fn diagnostic_relay_success_emits_one_ordered_terminal_record() {
+        let engine = engine();
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(root.path()).unwrap());
+        let mut owner = Owner::start(sink(engine.clone(), store), true)
+            .unwrap()
+            .unwrap();
+        engine.request_pending_checkpoint();
+        let revision = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        let record = relay_record(relay_diagnostic_records(true, || {
+            relay_cycle(&engine, &owner.endpoint(), Some(revision)).unwrap();
+        }));
+        let fields = record["fields"].as_object().unwrap();
+        assert_eq!(fields["start_request_revision"], revision);
+        assert_eq!(fields["checkpoint_result"], "ok");
+        assert_eq!(fields["merge_result"], "ok");
+        assert_eq!(fields["consume_attempted_revision"], revision);
+        assert_eq!(fields["consume_result"], "consumed");
+        assert_eq!(fields["end_reason"], "complete");
+        for field in [
+            "relay_cycle_id",
+            "checkpoint_ns",
+            "merge_ns",
+            "consume_ns",
+            "end_active_bytes",
+            "end_frozen_bytes",
+            "end_pending_delta_bytes",
+            "end_pending_delta_layers",
+            "end_merge_completed_total",
+        ] {
+            assert!(
+                fields.contains_key(field),
+                "missing relay diagnostic field {field}"
+            );
+        }
+        owner.join().unwrap();
+    }
+
+    #[test]
+    fn diagnostic_relay_error_preserves_request_and_emits_terminal_record() {
+        let engine = engine();
+        engine.request_pending_checkpoint();
+        let revision = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        let endpoint = Endpoint {
+            requests: Mutex::new(Requests {
+                completed: 1,
+                error: Some("terminal checkpoint failure".into()),
+                ..Requests::default()
+            }),
+            changed: Condvar::new(),
+            fence: PublicationFence {
+                registry: Weak::new(),
+                token: 0,
+            },
+        };
+        let record = relay_record(relay_diagnostic_records(true, || {
+            assert!(relay_cycle(&engine, &endpoint, Some(revision)).is_err());
+        }));
+        let fields = record["fields"].as_object().unwrap();
+        assert_eq!(fields["checkpoint_result"], "error");
+        assert_eq!(fields["merge_result"], "not_started");
+        assert_eq!(fields["consume_result"], "not_attempted");
+        assert_eq!(fields["end_reason"], "checkpoint_error");
+        assert_eq!(fields["end_capacity_request_revision"], revision);
+        assert_eq!(
+            engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision),
+            Some(revision)
+        );
+    }
+
+    #[test]
+    fn diagnostic_relay_stale_request_preserves_successor_and_records_stale_consume() {
+        let engine = engine();
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(root.path()).unwrap());
+        let mut owner = Owner::start(sink(engine.clone(), store), true)
+            .unwrap()
+            .unwrap();
+        engine.request_pending_checkpoint();
+        let first = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        engine.consume_checkpoint_request(first);
+        engine.request_pending_checkpoint();
+        let successor = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        let record = relay_record(relay_diagnostic_records(true, || {
+            relay_cycle(&engine, &owner.endpoint(), Some(first)).unwrap();
+        }));
+        let fields = record["fields"].as_object().unwrap();
+        assert_eq!(fields["consume_attempted_revision"], first);
+        assert_eq!(fields["consume_result"], "stale");
+        assert_eq!(fields["end_capacity_request_revision"], successor);
+        assert_eq!(
+            engine
+                .capacity_owner_state()
+                .and_then(|state| state.checkpoint_request_revision),
+            Some(successor)
+        );
+        owner.join().unwrap();
+    }
+
+    #[test]
+    fn relay_emits_no_diagnostic_record_without_exact_flag() {
+        let engine = engine();
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(root.path()).unwrap());
+        let mut owner = Owner::start(sink(engine.clone(), store), true)
+            .unwrap()
+            .unwrap();
+        engine.request_pending_checkpoint();
+        let revision = engine
+            .capacity_owner_state()
+            .and_then(|state| state.checkpoint_request_revision)
+            .unwrap();
+        let records = relay_diagnostic_records(false, || {
+            relay_cycle(&engine, &owner.endpoint(), Some(revision)).unwrap();
+        });
+        assert!(
+            !records
+                .iter()
+                .any(|record| record["fields"]["event"] == "segment_capacity_relay_diagnostic"),
+            "ordinary and qualifying relays must not emit a diagnostic record"
+        );
+        owner.join().unwrap();
     }
 
     #[test]
