@@ -330,6 +330,88 @@
         }
       }
     },
+    "/admin/restart:seal-hnsw-cache": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "`POST /admin/restart:seal-hnsw-cache`: publish the optional HNSW graph",
+        "description": "bytes that a planned restart may use after it replays the authoritative\ncheckpoint and AOF. It takes no request body. The response is deliberately\nstrict because the performance harness treats any missing field as a failed\nrestart preparation rather than guessing that a cache is usable.",
+        "operationId": "admin_restart_seal_hnsw_cache",
+        "responses": {
+          "200": {
+            "description": "HNSW graph cache sealed at a durable mutation boundary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HnswCacheSealResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing admin role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No current HNSW graph is sealable or the graph changed during sealing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "HNSW cache sealing failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Restart required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Node storage is full",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/restore": {
       "post": {
         "tags": [
@@ -1972,6 +2054,49 @@
           },
           "query": {
             "$ref": "#/components/schemas/QueryNode"
+          }
+        }
+      },
+      "HnswCacheSealMutationStamp": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "apply_revision"
+        ],
+        "properties": {
+          "apply_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HnswCacheSealResponse": {
+        "type": "object",
+        "required": [
+          "sealed",
+          "cache_fields",
+          "durability",
+          "mutation_stamp"
+        ],
+        "properties": {
+          "cache_fields": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "durability": {
+            "type": "string"
+          },
+          "mutation_stamp": {
+            "$ref": "#/components/schemas/HnswCacheSealMutationStamp"
+          },
+          "sealed": {
+            "type": "boolean"
           }
         }
       },

@@ -70,6 +70,63 @@ fn cache_graphs(root: &Path) -> Vec<PathBuf> {
     found
 }
 
+fn post_without_body(process: &LumenProcess, path: &str) -> (u16, String) {
+    let url = format!("http://127.0.0.1:{}{path}", process.port);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build restart-cache-seal HTTP runtime")
+        .block_on(async move {
+            let response = reqwest::Client::new()
+                .post(url)
+                .send()
+                .await
+                .expect("send body-free restart-cache-seal request");
+            let status = response.status().as_u16();
+            let body = response.text().await.expect("read restart-cache-seal response");
+            (status, body)
+        })
+}
+
+#[test]
+fn admin_restart_cache_seal_writes_a_usable_hnsw_cache_without_a_request_body() {
+    let root = tempfile::tempdir().unwrap();
+    let mut live = start(root.path());
+    seed(&live);
+
+    let (status, raw_body) = post_without_body(&live, "/admin/restart:seal-hnsw-cache");
+    assert_eq!(status, 200, "{raw_body}");
+    let body: Value = serde_json::from_str(&raw_body)
+        .unwrap_or_else(|_| panic!("restart-cache-seal response must be JSON: {raw_body}"));
+    assert_eq!(body["sealed"], true, "{body}");
+    assert!(
+        body["cache_fields"].as_u64().is_some_and(|fields| fields >= 1),
+        "the seal receipt must name at least one HNSW field: {body}"
+    );
+    assert!(
+        matches!(
+            body["durability"].as_str(),
+            Some("aof_synced") | Some("checkpoint_committed")
+        ),
+        "the seal receipt must name a durable mutation boundary: {body}"
+    );
+    let stamp = body["mutation_stamp"]
+        .as_object()
+        .expect("the seal receipt must include a mutation stamp");
+    assert_eq!(stamp.len(), 2, "unexpected mutation stamp shape: {body}");
+    for field in ["epoch", "apply_revision"] {
+        assert!(
+            stamp[field].as_u64().is_some(),
+            "mutation stamp must include numeric {field}: {body}"
+        );
+    }
+    assert!(
+        !cache_graphs(root.path()).is_empty(),
+        "a successful seal must persist usable HNSW graph bytes before restart"
+    );
+    live.stop_and_logs();
+}
+
 #[test]
 fn shutdown_cache_reopens_real_graph_and_replays_a_later_unclean_tail() {
     let root = tempfile::tempdir().unwrap();

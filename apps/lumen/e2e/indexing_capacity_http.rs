@@ -16,7 +16,7 @@ use lumen::coordinator::{SharedAof, WriteCoordinator, WriteSink};
 use lumen::log_entry::RaftLogEntry;
 use lumen::segment_rdb::SegmentRdbStore;
 use lumen::storage::Engine;
-use lumen::wal::{MemWal, SharedWal, WalLog};
+use lumen::wal::{MemWal, SharedWal, WalLog, WalRecord};
 
 mod capacity_http_contract {
     //! # Facets
@@ -870,6 +870,121 @@ mod capacity_http_contract {
         } else {
             run_isolated_capacity_case(LOCAL_CAPACITY_CHILD_CASE, LOCAL_CAPACITY_TEST_NAME).await;
         }
+    }
+
+    async fn http_checkpoint_releases_pending_capacity_relay_body() {
+        let fixture = capacity_fixture(true);
+        fixture
+            .server
+            .put(&format!("/collections/{CAPACITY_COLLECTION}"))
+            .json(&json!({ "fields": { "kw": { "type": "keyword" } } }))
+            .await
+            .assert_status_ok();
+        fixture
+            .server
+            .post(&format!("/collections/{CAPACITY_COLLECTION}/index"))
+            .json(&json!({ "items": [{
+                "external_id": "http-checkpoint-base",
+                "field": "kw",
+                "value": "http-checkpoint-base",
+            }] }))
+            .await
+            .assert_status_ok();
+        assert!(CheckpointSink::checkpoint_now(fixture.checkpoint.as_ref())
+            .await
+            .expect("publish HTTP checkpoint baseline"));
+
+        let (seed_status, _) = capacity_index_bounded(&fixture.server, 0)
+            .await
+            .expect("seed capacity record");
+        assert_eq!(seed_status, StatusCode::OK);
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        fixture.hold.arm(entered_tx, release_rx);
+        let mut release = SyncRelease(Some(release_tx));
+        let mut first_checkpoint = tokio::spawn({
+            let checkpoint = fixture.checkpoint.clone();
+            async move { CheckpointSink::checkpoint_now(checkpoint.as_ref()).await }
+        });
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(REQUEST_TIMEOUT))
+            .await
+            .expect("checkpoint readiness task")
+            .expect("first checkpoint must enter its real SyncFile pause");
+
+        let mut refusal = None;
+        for ordinal in FROZEN_VALUE_COUNT..MAX_LARGE_VALUE_COUNT {
+            let result = capacity_index_bounded(&fixture.server, ordinal)
+                .await
+                .expect("capacity request must finish");
+            if result.0 == StatusCode::TOO_MANY_REQUESTS {
+                refusal = Some(ordinal);
+                break;
+            }
+            assert_eq!(result.0, StatusCode::OK);
+        }
+        let filler = tokio::time::timeout(
+            FILL_SETUP_TIMEOUT,
+            fill_checkpointable_budget_until_external_value_cannot_fit(&fixture.server),
+        )
+        .await
+        .expect("capacity filler setup deadline")
+        .expect("capacity filler setup");
+        let ordinal = refusal.expect("fixture must enter the public capacity boundary");
+        let entry = RaftLogEntry::Index {
+            collection_id: CAPACITY_COLLECTION.to_owned(),
+            req: serde_json::from_value(capacity_index_request(ordinal))
+                .expect("construct committed capacity index record"),
+        };
+        let sequence = fixture
+            .wal
+            .publish(WalRecord::new(entry))
+            .await
+            .expect("publish committed record behind capacity relay");
+
+        release.release();
+        let first_result = tokio::time::timeout(REQUEST_TIMEOUT, &mut first_checkpoint)
+            .await
+            .expect("first checkpoint completion deadline")
+            .expect("first checkpoint task")
+            .expect("first checkpoint result");
+        assert!(first_result, "first checkpoint must publish");
+
+        let response = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            fixture.server.post("/admin/checkpoint").json(&json!({})),
+        )
+        .await
+        .expect("HTTP checkpoint deadline");
+        response.assert_status_ok();
+        tokio::time::timeout(REQUEST_TIMEOUT, async {
+            while fixture.writer.applied_seq() < sequence {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("HTTP checkpoint must let the pending committed record leave capacity relay");
+        assert_eq!(
+            capacity_term_ids(&fixture.server, &capacity_value(ordinal)).await,
+            vec![capacity_external_id(ordinal).to_owned()]
+        );
+        let _ = filler;
+
+        let cold = fixture
+            .store
+            .load_current_generation()
+            .expect("load CURRENT after HTTP checkpoint")
+            .expect("CURRENT after HTTP checkpoint");
+        let cold_server = TestServer::new(router(AppState::open(cold.engine)))
+            .expect("cold HTTP checkpoint server");
+        assert_eq!(
+            capacity_term_ids(&cold_server, &capacity_value(ordinal)).await,
+            vec![capacity_external_id(ordinal).to_owned()]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn http_checkpoint_releases_pending_capacity_relay() {
+        http_checkpoint_releases_pending_capacity_relay_body().await;
     }
 
     mod committed_external_wal_capacity_contract {

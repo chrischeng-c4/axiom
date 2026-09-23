@@ -1649,6 +1649,14 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "recovery_observation_is_bounded_and_diagnostic_only".into(),
+                    false,
+                ),
+                (
+                    "diagnostic_restart_extends_only_its_outer_watchdog".into(),
+                    false,
+                ),
+                (
                     "restart_command_timeout_kills_and_reaps_a_stuck_child".into(),
                     false,
                 ),
@@ -1737,6 +1745,11 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "hnsw_cache_seal_requires_a_strict_hnsw_receipt_and_sends_no_body"
+                        .into(),
+                    false,
+                ),
+                (
                     "seed_checkpoint_requires_one_persisted_drained_publication".into(),
                     false,
                 ),
@@ -1795,6 +1808,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                 ),
                 (
                     "restart_diagnostics_emit_complete_record_after_not_ready_polls".into(),
+                    false,
+                ),
+                (
+                    "recovery_observation_can_find_late_ready_but_restart_still_fails".into(),
                     false,
                 ),
                 (
