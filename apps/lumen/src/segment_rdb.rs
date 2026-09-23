@@ -357,21 +357,241 @@ enum SaveAttempt {
     FreshCapture,
 }
 
-/// Identifies one manual checkpoint in diagnostic traces. This context is
-/// trace-only and never participates in save selection or ownership.
+/// Identifies one diagnostic checkpoint attempt. This context is trace-only
+/// and never participates in save selection or ownership.
 #[derive(Clone, Copy)]
 pub(crate) struct CheckpointDiagnosticContext {
     origin: &'static str,
     attempt_id: Option<u64>,
+    started: Instant,
+    #[cfg(test)]
+    capture: Option<DiagnosticCaptureToken>,
+}
+
+/// A copyable test address. The registry owns the sender, so production
+/// checkpoint contexts remain small and copyable across blocking tasks.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct DiagnosticCaptureToken(u64);
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NumericCanonicalEvent {
+    Phase {
+        attempt_id: u64,
+        phase: &'static str,
+        pass: u8,
+        reused: bool,
+        frozen_bytes: u64,
+    },
+    Selected {
+        attempt_id: u64,
+        reason: &'static str,
+        source: &'static str,
+        pending_total: usize,
+    },
+    Refusal {
+        revision: u64,
+        present: bool,
+        requested: usize,
+        used: usize,
+        hard_limit: usize,
+    },
+}
+
+#[cfg(test)]
+type CaptureSenders = Mutex<HashMap<DiagnosticCaptureToken, std::sync::mpsc::SyncSender<NumericCanonicalEvent>>>;
+
+#[cfg(test)]
+fn capture_senders() -> &'static CaptureSenders {
+    static SENDERS: OnceLock<CaptureSenders> = OnceLock::new();
+    SENDERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+pub(crate) fn send_numeric_event(token: DiagnosticCaptureToken, event: NumericCanonicalEvent) {
+    // Never hold the registry lock while delivering. A full or closed test
+    // channel must not change the checkpoint or refusal path.
+    let sender = capture_senders()
+        .lock()
+        .ok()
+        .and_then(|senders| senders.get(&token).cloned());
+    if let Some(sender) = sender {
+        let _ = sender.try_send(event);
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct DiagnosticCapture {
+    token: DiagnosticCaptureToken,
+    receiver: std::sync::mpsc::Receiver<NumericCanonicalEvent>,
+}
+
+#[cfg(test)]
+impl DiagnosticCapture {
+    pub(crate) fn new() -> Self {
+        static NEXT_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let token = DiagnosticCaptureToken(NEXT_TOKEN
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |next| next.checked_add(1),
+            )
+            .expect("diagnostic capture tokens exhausted"));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+        capture_senders().lock().unwrap().insert(token, sender);
+        Self { token, receiver }
+    }
+
+    pub(crate) fn token(&self) -> DiagnosticCaptureToken { self.token }
+
+    pub(crate) fn drain(&self) -> Vec<NumericCanonicalEvent> {
+        self.receiver.try_iter().collect()
+    }
+}
+
+#[cfg(test)]
+impl Drop for DiagnosticCapture {
+    fn drop(&mut self) {
+        if let Ok(mut senders) = capture_senders().lock() {
+            senders.remove(&self.token);
+        }
+    }
 }
 
 impl CheckpointDiagnosticContext {
-    pub(crate) const fn new(origin: &'static str, attempt_id: Option<u64>) -> Self {
-        Self { origin, attempt_id }
+    pub(crate) fn new(origin: &'static str, attempt_id: Option<u64>) -> Self {
+        Self {
+            origin,
+            attempt_id,
+            started: Instant::now(),
+            #[cfg(test)]
+            capture: None,
+        }
     }
 
-    fn manual_attempt_id(self) -> Option<u64> {
+    #[cfg(test)]
+    pub(crate) fn with_capture(mut self, token: DiagnosticCaptureToken) -> Self {
+        self.capture = Some(token);
+        self
+    }
+
+    #[cfg(test)]
+    fn capture_event(self, event: NumericCanonicalEvent) {
+        if let Some(token) = self.capture {
+            send_numeric_event(token, event);
+        }
+    }
+
+    fn attempt_id(self) -> Option<u64> {
         self.attempt_id
+    }
+
+    /// Emit one bounded, machine-readable lifecycle phase. A missing attempt
+    /// id is intentionally silent, so ordinary saves keep their existing path.
+    pub(crate) fn trace_phase(self, phase: &'static str) {
+        let Some(checkpoint_attempt_id) = self.attempt_id() else {
+            return;
+        };
+        #[cfg(test)]
+        self.capture_event(NumericCanonicalEvent::Phase { attempt_id: checkpoint_attempt_id, phase, pass: 0, reused: false, frozen_bytes: 0 });
+        tracing::info!(
+            event = "segment_checkpoint_diagnostic_phase",
+            phase,
+            checkpoint_attempt_id,
+            checkpoint_origin = self.origin,
+            elapsed_ns = duration_ns(self.started.elapsed()),
+            "segment checkpoint diagnostic phase"
+        );
+    }
+
+    /// Record the scheduler branch that actually selected this checkpoint.
+    /// This has no wake-lag field because a coalesced channel notice cannot
+    /// provide a precise wake timestamp.
+    pub(crate) fn trace_scheduler_selected(
+        self,
+        reason: &'static str,
+        resample_source: &'static str,
+        pending: crate::change_budget::Snapshot,
+    ) {
+        let Some(checkpoint_attempt_id) = self.attempt_id() else {
+            return;
+        };
+        #[cfg(test)]
+        self.capture_event(NumericCanonicalEvent::Selected { attempt_id: checkpoint_attempt_id, reason, source: resample_source, pending_total: pending.total });
+        tracing::info!(
+            event = "segment_checkpoint_diagnostic_phase",
+            phase = "scheduler_selected",
+            checkpoint_attempt_id,
+            checkpoint_origin = self.origin,
+            scheduler_reason = reason,
+            resample_source,
+            elapsed_ns = duration_ns(self.started.elapsed()),
+            pending_total_bytes = pending.total,
+            pending_reserved_bytes = pending.reserved,
+            pending_active_bytes = pending.active,
+            pending_frozen_bytes = pending.frozen,
+            checkpoint_trigger_bytes = crate::change_budget::CHECKPOINT_TRIGGER,
+            "segment checkpoint diagnostic phase"
+        );
+    }
+
+    pub(crate) fn trace_freeze_completed(
+        self,
+        checkpoint_pass: u8,
+        frozen_cut_reused: bool,
+        frozen_cut_bytes: u64,
+    ) {
+        let Some(checkpoint_attempt_id) = self.attempt_id() else {
+            return;
+        };
+        #[cfg(test)]
+        self.capture_event(NumericCanonicalEvent::Phase { attempt_id: checkpoint_attempt_id, phase: "freeze_completed", pass: checkpoint_pass, reused: frozen_cut_reused, frozen_bytes: frozen_cut_bytes });
+        tracing::info!(
+            event = "segment_checkpoint_diagnostic_phase",
+            phase = "freeze_completed",
+            checkpoint_attempt_id,
+            checkpoint_origin = self.origin,
+            checkpoint_pass,
+            frozen_cut_reused,
+            frozen_cut_bytes,
+            elapsed_ns = duration_ns(self.started.elapsed()),
+            "segment checkpoint diagnostic phase"
+        );
+    }
+
+    pub(crate) fn trace_publish_completed(self, checkpoint_pass: u8) {
+        let Some(checkpoint_attempt_id) = self.attempt_id() else {
+            return;
+        };
+        #[cfg(test)]
+        self.capture_event(NumericCanonicalEvent::Phase { attempt_id: checkpoint_attempt_id, phase: "publish_completed", pass: checkpoint_pass, reused: false, frozen_bytes: 0 });
+        tracing::info!(
+            event = "segment_checkpoint_diagnostic_phase",
+            phase = "publish_completed",
+            checkpoint_attempt_id,
+            checkpoint_origin = self.origin,
+            checkpoint_pass,
+            elapsed_ns = duration_ns(self.started.elapsed()),
+            "segment checkpoint diagnostic phase"
+        );
+    }
+
+    pub(crate) fn trace_terminal(self, result: &Result<()>) {
+        let Some(checkpoint_attempt_id) = self.attempt_id() else {
+            return;
+        };
+        #[cfg(test)]
+        self.capture_event(NumericCanonicalEvent::Phase { attempt_id: checkpoint_attempt_id, phase: "terminal", pass: 0, reused: false, frozen_bytes: 0 });
+        tracing::info!(
+            event = "segment_checkpoint_diagnostic_phase",
+            phase = "terminal",
+            checkpoint_attempt_id,
+            checkpoint_origin = self.origin,
+            elapsed_ns = duration_ns(self.started.elapsed()),
+            terminal_result = if result.is_ok() { "ok" } else { "error" },
+            "segment checkpoint diagnostic phase"
+        );
     }
 }
 
@@ -407,37 +627,13 @@ pub(crate) fn checkpoint_diagnostic_enabled() -> bool {
 }
 
 fn trace_save_gate_acquired(context: Option<CheckpointDiagnosticContext>, trace: SaveGateTrace) {
-    let Some(context) = context else {
-        return;
-    };
-    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
-        return;
-    };
-    tracing::info!(
-        event = "segment_checkpoint_diagnostic_phase",
-        phase = "save_gate_acquired",
-        checkpoint_attempt_id,
-        checkpoint_origin = context.origin,
-        save_gate_wait_ns = trace.wait_ns,
-        "segment checkpoint diagnostic phase"
-    );
+    // Gate timing remains in the one bounded completion record. It is not a
+    // lifecycle phase, so one checkpoint never emits duplicate phase paths.
+    let _ = (context, trace);
 }
 
 fn trace_capacity_wait_begin(context: Option<CheckpointDiagnosticContext>, revision: u64) {
-    let Some(context) = context else {
-        return;
-    };
-    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
-        return;
-    };
-    tracing::info!(
-        event = "segment_checkpoint_diagnostic_phase",
-        phase = "capacity_wait_begin",
-        checkpoint_attempt_id,
-        checkpoint_origin = context.origin,
-        merge_revision = revision,
-        "segment checkpoint diagnostic phase"
-    );
+    let _ = (context, revision);
 }
 
 fn trace_capacity_wait_end(
@@ -446,27 +642,7 @@ fn trace_capacity_wait_end(
     duration_ns: Option<u64>,
     result: std::result::Result<&background::CapacityWait, &anyhow::Error>,
 ) {
-    let Some(context) = context else {
-        return;
-    };
-    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
-        return;
-    };
-    let capacity_wait_result = match result {
-        Ok(background::CapacityWait::Published) => "published",
-        Ok(background::CapacityWait::Idle) => "idle",
-        Err(_) => "error",
-    };
-    tracing::info!(
-        event = "segment_checkpoint_diagnostic_phase",
-        phase = "capacity_wait_end",
-        checkpoint_attempt_id,
-        checkpoint_origin = context.origin,
-        merge_revision = revision,
-        capacity_wait_ns = duration_ns.unwrap_or_default(),
-        capacity_wait_result,
-        "segment checkpoint diagnostic phase"
-    );
+    let _ = (context, revision, duration_ns, result);
 }
 
 fn trace_durable_save_end(
@@ -475,22 +651,7 @@ fn trace_durable_save_end(
     revision: u64,
     duration_ns: u64,
 ) {
-    let Some(context) = context else {
-        return;
-    };
-    let Some(checkpoint_attempt_id) = context.manual_attempt_id() else {
-        return;
-    };
-    tracing::info!(
-        event = "segment_checkpoint_diagnostic_phase",
-        phase = "durable_save_end",
-        checkpoint_attempt_id,
-        checkpoint_origin = context.origin,
-        checkpoint_sequence = sequence,
-        checkpoint_revision = revision,
-        durable_save_ns = duration_ns,
-        "segment checkpoint diagnostic phase"
-    );
+    let _ = (context, sequence, revision, duration_ns);
 }
 
 #[derive(Clone, Copy)]
@@ -809,6 +970,15 @@ impl SegmentRdbStore {
     ) -> Result<u64> {
         let trace_context = checkpoint_diagnostic_enabled()
             .then(|| CheckpointDiagnosticContext::new(origin, attempt_id));
+        self.save_with_sequence_diagnostic_context(engine, up_to_seq, trace_context)
+    }
+
+    pub(crate) fn save_with_sequence_diagnostic_context(
+        &self,
+        engine: &Arc<Engine>,
+        up_to_seq: u64,
+        trace_context: Option<CheckpointDiagnosticContext>,
+    ) -> Result<u64> {
         let name = self.save_inner_traced(
             engine,
             up_to_seq,
@@ -906,6 +1076,7 @@ impl SegmentRdbStore {
         let mut permit = Some(permit);
         let mut gate_trace = gate_trace;
         let mut idle_revision = None;
+        let mut checkpoint_pass = 1u8;
         loop {
             let guard = permit
                 .take()
@@ -923,12 +1094,14 @@ impl SegmentRdbStore {
                 selection,
                 trace_context,
                 attempt_gate_trace,
+                checkpoint_pass,
             )? {
                 SaveAttempt::Complete(name) => return Ok(name),
                 SaveAttempt::FreshCapture => {
                     // The pending cut was published. Its fresh successor can
                     // request work, while retaining any existing wait deadline.
                     idle_revision = None;
+                    checkpoint_pass = 2;
                     if trace_context.is_some() {
                         let (next_permit, next_trace) = SaveGateTrace::acquire(&self.save_gate);
                         trace_save_gate_acquired(trace_context, next_trace);
@@ -982,6 +1155,7 @@ impl SegmentRdbStore {
         selection: StagingSelection,
         trace_context: Option<CheckpointDiagnosticContext>,
         gate_trace: Option<SaveGateTrace>,
+        checkpoint_pass: u8,
     ) -> Result<SaveAttempt> {
         let requested_sequence = up_to_seq;
         let started = std::time::Instant::now();
@@ -1085,6 +1259,13 @@ impl SegmentRdbStore {
                     u64::try_from(frozen_cut_bytes).unwrap_or(u64::MAX),
                 )
             };
+        if let Some(context) = trace_context {
+            context.trace_freeze_completed(
+                checkpoint_pass,
+                retried_pending,
+                frozen_cut_bytes,
+            );
+        }
         capture_hold_ns.fetch_add(
             pending.pending().detached_capture_ns,
             std::sync::atomic::Ordering::Relaxed,
@@ -1283,6 +1464,9 @@ impl SegmentRdbStore {
                 format!("activate segment generation seq {up_to_seq} revision {revision}")
             });
         }
+        if let Some(context) = trace_context {
+            context.trace_publish_completed(checkpoint_pass);
+        }
         let publish_ns = publish_started.map(|started| duration_ns(started.elapsed()));
         *self
             .verified_catalog
@@ -1361,6 +1545,7 @@ impl SegmentRdbStore {
                 checkpoint_origin = trace_context.origin,
                 checkpoint_sequence = up_to_seq,
                 checkpoint_revision = revision,
+                checkpoint_pass,
                 frozen_cut_bytes,
                 frozen_cut_reused = retried_pending,
                 // The root gate is deliberately acquired before the capture
@@ -1898,7 +2083,9 @@ impl SegmentRdbStore {
                     );
                 }
                 if inventory.has_graph_cache {
-                    bail!("CURRENT is missing beside an optional HNSW graph cache; refusing initialization or cleanup without durable authority");
+                    bail!(
+                        "CURRENT is missing beside an optional HNSW graph cache; refusing initialization or cleanup without durable authority"
+                    );
                 }
                 let recovered_legacy_aside = self.reconcile_legacy_asides()?;
                 let staging_cleaned = self.sweep_abandoned_staging()?;
@@ -5568,6 +5755,79 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_reused_cut_then_fresh_successor_uses_ordered_passes() {
+        use tracing_subscriber::prelude::*;
+
+        let _environment = DiagnosticEnvironment::set(true);
+        let writer = DiagnosticTraceWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .with_writer(writer.clone()),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "doc", "old");
+        SegmentRdbStore::new(dir.path())
+            .unwrap()
+            .save(&engine, 1)
+            .unwrap();
+        index_kw(&engine, "doc", "captured");
+        let store = SegmentRdbStore::new_with_failure_injector(
+            dir.path(),
+            Arc::new(FailOnce(Mutex::new(Some(
+                storage_durable::CommitStep::SyncFile,
+            )))),
+        )
+        .unwrap();
+        assert!(store.save(&engine, 2).is_err());
+        index_kw(&engine, "doc", "newer");
+        let context = CheckpointDiagnosticContext::new("periodic", Some(81));
+        assert_eq!(
+            store
+                .save_with_sequence_diagnostic_context(&engine, 3, Some(context))
+                .unwrap(),
+            3
+        );
+        drop(_guard);
+
+        let phases: Vec<_> = writer
+            .records()
+            .into_iter()
+            .filter(|record| record["fields"]["event"] == "segment_checkpoint_diagnostic_phase")
+            .filter(|record| {
+                matches!(
+                    record["fields"]["phase"].as_str(),
+                    Some("freeze_completed" | "publish_completed")
+                )
+            })
+            .collect();
+        assert_eq!(
+            phases
+                .iter()
+                .map(|record| record["fields"]["phase"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "freeze_completed",
+                "publish_completed",
+                "freeze_completed",
+                "publish_completed",
+            ]
+        );
+        assert_eq!(phases[0]["fields"]["checkpoint_pass"], 1);
+        assert_eq!(phases[0]["fields"]["frozen_cut_reused"], true);
+        assert_eq!(phases[0]["fields"]["frozen_cut_bytes"], 0);
+        assert_eq!(phases[1]["fields"]["checkpoint_pass"], 1);
+        assert_eq!(phases[2]["fields"]["checkpoint_pass"], 2);
+        assert_eq!(phases[2]["fields"]["frozen_cut_reused"], false);
+        assert!(phases[2]["fields"]["frozen_cut_bytes"].as_u64().is_some());
+        assert_eq!(phases[3]["fields"]["checkpoint_pass"], 2);
+    }
+
+    #[test]
     fn restored_epoch_discards_old_pending_before_foreign_engine_can_save() {
         let dir = tempfile::tempdir().unwrap();
         let old = Arc::new(Engine::new());
@@ -5902,8 +6162,11 @@ mod tests {
                 .iter()
                 .filter(|segment| matches!(segment.kind, SegmentKind::Delta))
                 .count();
-            assert!(deltas < 4,
-                "every ready field must receive compaction work before the worker becomes idle: {} still has {deltas}", collection.collection_id);
+            assert!(
+                deltas < 4,
+                "every ready field must receive compaction work before the worker becomes idle: {} still has {deltas}",
+                collection.collection_id
+            );
         }
     }
 
@@ -6147,6 +6410,24 @@ mod tests {
     }
 
     #[test]
+    fn numeric_capture_tokens_isolate_parallel_subscribers_and_expire_on_drop() {
+        let first = DiagnosticCapture::new();
+        let second = DiagnosticCapture::new();
+        assert_ne!(first.token(), second.token());
+        let event = NumericCanonicalEvent::Phase {
+            attempt_id: 7, phase: "terminal", pass: 0, reused: false, frozen_bytes: 0,
+        };
+        send_numeric_event(first.token(), event);
+        assert_eq!(first.drain(), [event]);
+        assert!(second.drain().is_empty());
+        let old = first.token();
+        drop(first);
+        send_numeric_event(old, event);
+        send_numeric_event(second.token(), event);
+        assert_eq!(second.drain(), [event]);
+    }
+
+    #[test]
     fn checkpoint_diagnostic_trace_is_absent_without_exact_environment_flag() {
         let records = checkpoint_diagnostic_records(false, "periodic", None);
         assert!(
@@ -6166,13 +6447,90 @@ mod tests {
             .collect();
         assert!(phases
             .iter()
-            .any(|record| record["fields"]["phase"] == "save_gate_acquired"));
+            .any(|record| record["fields"]["phase"] == "freeze_completed"));
         assert!(phases
             .iter()
-            .any(|record| record["fields"]["phase"] == "durable_save_end"));
+            .any(|record| record["fields"]["phase"] == "publish_completed"));
         assert!(phases
             .iter()
             .all(|record| record["fields"]["checkpoint_attempt_id"] == 41));
+    }
+
+    #[test]
+    fn periodic_checkpoint_lifecycle_phases_are_ordered_and_share_one_attempt_id() {
+        use tracing_subscriber::prelude::*;
+
+        let _environment = DiagnosticEnvironment::set(true);
+        let writer = DiagnosticTraceWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .with_writer(writer.clone()),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let context = CheckpointDiagnosticContext::new("periodic", Some(73));
+        let pending = crate::change_budget::Snapshot {
+            reserved: 11,
+            active: 22,
+            frozen: 33,
+            total: crate::change_budget::CHECKPOINT_TRIGGER,
+            work_revision: 1,
+            checkpoint_request_revision: None,
+        };
+        context.trace_scheduler_selected("threshold", "initial_sample", pending);
+        context.trace_phase("checkpoint_started");
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine, "one", "trace-value");
+        SegmentRdbStore::new(dir.path())
+            .unwrap()
+            .save_with_sequence_diagnostic_context(&engine, 1, Some(context))
+            .unwrap();
+        let terminal: Result<()> = Ok(());
+        context.trace_terminal(&terminal);
+        drop(_guard);
+
+        let phases: Vec<_> = writer
+            .records()
+            .into_iter()
+            .filter(|record| record["fields"]["event"] == "segment_checkpoint_diagnostic_phase")
+            .collect();
+        assert_eq!(
+            phases
+                .iter()
+                .map(|record| record["fields"]["phase"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "scheduler_selected",
+                "checkpoint_started",
+                "freeze_completed",
+                "publish_completed",
+                "terminal",
+            ]
+        );
+        assert!(phases
+            .iter()
+            .all(|record| record["fields"]["checkpoint_attempt_id"] == 73));
+        assert!(phases.windows(2).all(|pair| {
+            pair[0]["fields"]["elapsed_ns"].as_u64() <= pair[1]["fields"]["elapsed_ns"].as_u64()
+        }));
+        let selected = &phases[0]["fields"];
+        assert_eq!(
+            selected["pending_total_bytes"],
+            crate::change_budget::CHECKPOINT_TRIGGER
+        );
+        assert_eq!(selected["pending_reserved_bytes"], 11);
+        assert_eq!(selected["pending_active_bytes"], 22);
+        assert_eq!(selected["pending_frozen_bytes"], 33);
+        assert_eq!(selected["scheduler_reason"], "threshold");
+        assert_eq!(selected["resample_source"], "initial_sample");
+        assert!(selected.get("wake_lag_ns").is_none());
+        let frozen = &phases[2]["fields"];
+        assert_eq!(frozen["checkpoint_pass"], 1);
+        assert_eq!(frozen["frozen_cut_reused"], false);
+        assert!(frozen["frozen_cut_bytes"].as_u64().is_some());
     }
 
     #[test]
@@ -7783,8 +8141,11 @@ mod tests {
         let reference = logical_snapshot(&engine);
         release_tx.send(()).unwrap();
         writer.join().unwrap();
-        assert_eq!(engine.segment_field_probe("v", "vec").unwrap().0, 2,
-            "first vector base publication must release acknowledged payloads while preserving newer writes");
+        assert_eq!(
+            engine.segment_field_probe("v", "vec").unwrap().0,
+            2,
+            "first vector base publication must release acknowledged payloads while preserving newer writes"
+        );
         assert_eq!(logical_snapshot(&engine), reference);
         store.save(&engine, 2).unwrap();
         assert_eq!(engine.segment_field_probe("v", "vec").unwrap().0, 0);

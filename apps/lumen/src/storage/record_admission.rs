@@ -256,6 +256,10 @@ impl RecordApplyGuard<'_> {
 }
 
 impl Engine {
+    #[cfg(test)]
+    pub(crate) fn test_retained_owner_charge(&self, bytes: usize) -> RetainedCharge {
+        self.changes.owner.try_reserve(bytes).unwrap().commit_retained().unwrap()
+    }
     /// The caller owns apply and has rechecked its borrowed plan. No source or
     /// codec workspace remains in this reservation, only attached metadata.
     pub(super) fn retain_borrowed_reservation(
@@ -286,7 +290,13 @@ impl Engine {
     }
 
     pub(crate) fn request_pending_checkpoint(&self) {
-        self.changes.owner.request_checkpoint();
+        let _ = self.request_pending_checkpoint_revision();
+    }
+
+    /// Request relief for this Engine and return the revision atomically with
+    /// the request. `None` means it had no active or frozen local work.
+    pub(crate) fn request_pending_checkpoint_revision(&self) -> Option<u64> {
+        self.changes.owner.request_checkpoint_revision()
     }
 
     #[cfg(test)]

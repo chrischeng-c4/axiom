@@ -402,15 +402,23 @@ impl ChangeBudget {
     /// checkpointable work. This never makes a reservation or pre-apply RAM
     /// eligible by itself, and it does not advance the work revision.
     pub fn request_checkpoint(&self) -> bool {
+        self.request_checkpoint_revision().is_some()
+    }
+
+    /// Return the pending checkpoint request revision from the same lock
+    /// acquisition that creates or observes it. Callers that emit a refusal
+    /// diagnostic must not take a later snapshot, because another checkpoint
+    /// can consume the request between those two operations.
+    pub fn request_checkpoint_revision(&self) -> Option<u64> {
         let mut state = self.0.state.lock().expect("change budget lock poisoned");
         let pending = snapshot(&state);
         if pending.active == 0 && pending.frozen == 0 {
-            return false;
+            return None;
         }
         let work_revision = state.next_work_revision;
-        request_revision(&mut state, work_revision);
+        let revision = request_revision(&mut state, work_revision);
         self.0.wake.signal();
-        true
+        Some(revision)
     }
 
     fn reserve(
@@ -537,6 +545,13 @@ impl Owner {
     }
 
     pub(crate) fn request_checkpoint(&self) -> bool {
+        self.request_checkpoint_revision().is_some()
+    }
+
+    /// Return this owner's active/frozen checkpoint request revision while
+    /// the accounting lock is held. This is the only revision that a local
+    /// admission refusal may report.
+    pub(crate) fn request_checkpoint_revision(&self) -> Option<u64> {
         let mut state = self
             .budget
             .0
@@ -544,7 +559,7 @@ impl Owner {
             .lock()
             .expect("change budget lock poisoned");
         let Some(owner) = state.owners.get(&self.id) else {
-            return false;
+            return None;
         };
         let resident_active = owner
             .resident
@@ -558,7 +573,7 @@ impl Owner {
             .any(|(_, bytes)| *bytes != 0);
         if owner.active == 0 && owner.frozen.is_empty() && resident_active == 0 && !resident_frozen
         {
-            return false;
+            return None;
         }
         let work_revision = owner.work_revision;
         let revision = request_revision(&mut state, work_revision);
@@ -568,7 +583,7 @@ impl Owner {
             .expect("owner checked above")
             .checkpoint_request_revision = Some(revision);
         self.budget.0.wake.signal();
-        true
+        Some(revision)
     }
 
     pub(crate) fn consume_checkpoint_request(&self, revision: Option<u64>) {
@@ -1609,6 +1624,20 @@ mod tests {
         assert!(owner.request_checkpoint());
         let second = owner.capacity_state().unwrap().checkpoint_request_revision;
         assert!(second > first);
+    }
+
+    #[test]
+    fn owner_checkpoint_request_returns_revision_before_an_immediate_consume() {
+        let budget = ChangeBudget::with_hard_limit(64);
+        let owner = budget.owner();
+        let _charge = owner.try_reserve(16).unwrap().commit().unwrap();
+
+        let revision = owner
+            .request_checkpoint_revision()
+            .expect("active local work must get a request revision");
+        owner.consume_checkpoint_request(Some(revision));
+        assert_eq!(owner.capacity_state().unwrap().checkpoint_request_revision, None);
+        assert_eq!(revision, 1, "caller retains the atomic returned revision");
     }
 
     #[test]

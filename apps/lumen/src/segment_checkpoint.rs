@@ -15,7 +15,7 @@ use tokio::time::Instant;
 use crate::change_budget::{BudgetWake, ChangeBudget, Snapshot};
 
 const WAITER_SHUTDOWN_POLL: Duration = Duration::from_millis(50);
-static NEXT_MANUAL_CHECKPOINT_ATTEMPT_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_CHECKPOINT_ATTEMPT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A successfully sealed cache is valid only for this exact live engine and
 /// store allocation. Weak references prevent a dropped test/server allocation
@@ -190,6 +190,44 @@ struct CheckpointSchedule {
     last_request_revision: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CheckpointSelectionReason {
+    Threshold,
+    Deadline,
+    Successor,
+    CapacityRequest,
+}
+
+impl CheckpointSelectionReason {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Threshold => "threshold",
+            Self::Deadline => "deadline",
+            Self::Successor => "successor",
+            Self::CapacityRequest => "capacity_request",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CheckpointResampleSource {
+    InitialSample,
+    BudgetNotice,
+    DeadlineTick,
+    PostCheckpoint,
+}
+
+impl CheckpointResampleSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::InitialSample => "initial_sample",
+            Self::BudgetNotice => "budget_notice",
+            Self::DeadlineTick => "deadline_tick",
+            Self::PostCheckpoint => "post_checkpoint",
+        }
+    }
+}
+
 // Do not re-arm on a brief dip below the 128 MiB trigger. A real drain must
 // leave enough headroom before the next crossing can schedule an immediate
 // checkpoint. Successful publications and new capacity requests are separate
@@ -208,6 +246,34 @@ impl CheckpointSchedule {
     }
 
     fn should_attempt(&mut self, now: Instant, pending: Snapshot, _work_revision: u64) -> bool {
+        self.select_ordinary_attempt(now, pending).is_some()
+    }
+
+    /// Select the actual scheduler branch. This is deliberately the one
+    /// stateful decision point, so diagnostics cannot describe a different
+    /// branch from the one that starts a checkpoint.
+    fn select_attempt(
+        &mut self,
+        now: Instant,
+        pending: Snapshot,
+        owner: Option<crate::change_budget::OwnerCapacityState>,
+    ) -> Option<CheckpointSelectionReason> {
+        // Preserve the established order exactly: even when a successor
+        // selects this iteration, the ordinary selector must run to consume
+        // a capacity request and update the pressure epoch for the next one.
+        let successor = self.take_successor(owner);
+        let ordinary = self.select_ordinary_attempt(now, pending);
+        if successor {
+            return Some(CheckpointSelectionReason::Successor);
+        }
+        ordinary
+    }
+
+    fn select_ordinary_attempt(
+        &mut self,
+        now: Instant,
+        pending: Snapshot,
+    ) -> Option<CheckpointSelectionReason> {
         let newer_capacity_request = pending
             .checkpoint_request_revision
             .filter(|revision| {
@@ -221,7 +287,7 @@ impl CheckpointSchedule {
                 }
             });
         if newer_capacity_request {
-            return true;
+            return Some(CheckpointSelectionReason::CapacityRequest);
         }
         if pending.total < CHECKPOINT_REARM_THRESHOLD {
             self.early_attempted = false;
@@ -233,13 +299,13 @@ impl CheckpointSchedule {
             if pending.total >= CHECKPOINT_REARM_THRESHOLD {
                 self.early_attempted = true;
             }
-            return true;
+            return Some(CheckpointSelectionReason::Deadline);
         }
         let early = !self.early_attempted && pending.checkpoint_needed();
         if early {
             self.early_attempted = true;
         }
-        early
+        early.then_some(CheckpointSelectionReason::Threshold)
     }
 
     fn completed(&mut self, now: Instant, pending: Snapshot) {
@@ -490,24 +556,21 @@ impl SegmentCheckpointSink {
         &self,
         fence: Option<crate::segment_capacity::PublicationFence>,
         origin: CheckpointTraceOrigin,
+        diagnostic_context: Option<crate::segment_rdb::CheckpointDiagnosticContext>,
     ) -> Result<bool> {
-        let diagnostic_attempt_id = (matches!(origin, CheckpointTraceOrigin::Manual)
-            && crate::segment_rdb::checkpoint_diagnostic_enabled())
-        .then(|| NEXT_MANUAL_CHECKPOINT_ATTEMPT_ID.fetch_add(1, Ordering::Relaxed));
-        let requested_writer_sequence = diagnostic_attempt_id.map(|_| self.writer.applied_seq());
-        let diagnostic_started = diagnostic_attempt_id.map(|checkpoint_attempt_id| {
-            let started = Instant::now();
-            tracing::info!(
-                event = "segment_checkpoint_diagnostic_phase",
-                phase = "started",
-                checkpoint_attempt_id,
-                checkpoint_origin = origin.label(),
-                requested_writer_sequence = requested_writer_sequence.unwrap_or_default(),
-                elapsed_ns = 0u64,
-                "segment checkpoint diagnostic phase"
-            );
-            started
+        let diagnostic_context = diagnostic_context.or_else(|| {
+            (matches!(origin, CheckpointTraceOrigin::Manual)
+                && crate::segment_rdb::checkpoint_diagnostic_enabled())
+            .then(|| {
+                crate::segment_rdb::CheckpointDiagnosticContext::new(
+                    origin.label(),
+                    Some(NEXT_CHECKPOINT_ATTEMPT_ID.fetch_add(1, Ordering::Relaxed)),
+                )
+            })
         });
+        if let Some(context) = diagnostic_context {
+            context.trace_phase("checkpoint_started");
+        }
         let sink_engine = self.engine.clone();
         let sink_store = self.store.clone();
         let sink_writer = self.writer.clone();
@@ -538,21 +601,10 @@ impl SegmentCheckpointSink {
                     Some(fence) => sink.store.as_ref().clone().with_publication_fence(fence),
                     None => sink.store.as_ref().clone(),
                 };
-                sink.checkpoint_sync_with_origin(&store, origin, diagnostic_attempt_id)
+                sink.checkpoint_sync_with_origin(&store, origin, diagnostic_context)
             })();
-            if let Some(checkpoint_attempt_id) = diagnostic_attempt_id {
-                tracing::info!(
-                    event = "segment_checkpoint_diagnostic_phase",
-                    phase = "terminal",
-                    checkpoint_attempt_id,
-                    checkpoint_origin = origin.label(),
-                    elapsed_ns = diagnostic_started
-                        .map(|started| u64::try_from(started.elapsed().as_nanos())
-                            .unwrap_or(u64::MAX))
-                        .unwrap_or_default(),
-                    terminal_result = if result.is_ok() { "ok" } else { "error" },
-                    "segment checkpoint diagnostic phase"
-                );
+            if let Some(context) = diagnostic_context {
+                context.trace_terminal(&result);
             }
             result
         })
@@ -576,8 +628,8 @@ impl SegmentCheckpointSink {
     fn checkpoint_sync_with_origin(
         &self,
         store: &crate::segment_rdb::SegmentRdbStore,
-        origin: CheckpointTraceOrigin,
-        diagnostic_attempt_id: Option<u64>,
+        _origin: CheckpointTraceOrigin,
+        diagnostic_context: Option<crate::segment_rdb::CheckpointDiagnosticContext>,
     ) -> Result<()> {
         let mut attempt = CheckpointAttempt::start(self.engine.metrics());
         let result = (|| {
@@ -590,11 +642,10 @@ impl SegmentCheckpointSink {
                     "checkpoint refused: restart required".into(),
                 )));
             }
-            let sequence = store.save_with_sequence_diagnostic(
+            let sequence = store.save_with_sequence_diagnostic_context(
                 &self.engine,
                 self.writer.applied_seq(),
-                origin.label(),
-                diagnostic_attempt_id,
+                diagnostic_context,
             )?;
             store.prune(3)?;
             match store.disk_bytes() {
@@ -654,6 +705,30 @@ impl SegmentCheckpointSink {
         budget: ChangeBudget,
         configured: bool,
     ) -> SegmentCheckpointDriver {
+        #[cfg(test)]
+        { self.spawn_driver_inner(period, budget, configured, None) }
+        #[cfg(not(test))]
+        { self.spawn_driver_inner(period, budget, configured) }
+    }
+
+    #[cfg(test)]
+    fn spawn_driver_with_capture(
+        self: Arc<Self>,
+        period: Duration,
+        budget: ChangeBudget,
+        token: crate::segment_rdb::DiagnosticCaptureToken,
+    ) -> (SegmentCheckpointDriver, oneshot::Receiver<()>) {
+        let (idle_tx, idle_rx) = oneshot::channel();
+        (self.spawn_driver_inner(period, budget, true, Some((token, idle_tx))), idle_rx)
+    }
+
+    fn spawn_driver_inner(
+        self: Arc<Self>,
+        period: Duration,
+        budget: ChangeBudget,
+        configured: bool,
+        #[cfg(test)] diagnostic: Option<(crate::segment_rdb::DiagnosticCaptureToken, oneshot::Sender<()>)>,
+    ) -> SegmentCheckpointDriver {
         let capacity_owner = crate::segment_capacity::Owner::start(self.clone(), configured)
             .expect("start native layer capacity owner");
         let periodic_fence = capacity_owner.as_ref().map(|owner| owner.fence());
@@ -673,8 +748,14 @@ impl SegmentCheckpointSink {
         let waiter = spawn_budget_waiter(wake, notices, stop.clone(), observed);
         let (shutdown, mut shutdown_rx) = oneshot::channel();
         let task_stop = stop.clone();
+        #[cfg(test)]
+        let (capture_token, mut idle_signal) = match diagnostic {
+            Some((token, signal)) => (Some(token), Some(signal)),
+            None => (None, None),
+        };
         let checkpoint_task = tokio::spawn(async move {
             let mut schedule = CheckpointSchedule::new(period, Instant::now());
+            let mut resample_source = CheckpointResampleSource::InitialSample;
             loop {
                 if task_stop.load(Ordering::Acquire) {
                     return;
@@ -683,15 +764,31 @@ impl SegmentCheckpointSink {
                 // if it predates creation of the waiter.
                 let now = Instant::now();
                 let pending = budget.snapshot();
-                let work_revision = pending.work_revision;
                 let owner_before = self.engine.capacity_owner_state();
-                let successor_attempt = schedule.take_successor(owner_before);
-                let ordinary_attempt = schedule.should_attempt(now, pending, work_revision);
-                if successor_attempt || ordinary_attempt {
+                if let Some(reason) = schedule.select_attempt(now, pending, owner_before) {
+                    #[cfg(not(test))]
+                    let diagnostic_context = crate::segment_rdb::checkpoint_diagnostic_enabled().then(|| {
+                        crate::segment_rdb::CheckpointDiagnosticContext::new(
+                            CheckpointTraceOrigin::Periodic.label(),
+                            Some(NEXT_CHECKPOINT_ATTEMPT_ID.fetch_add(1, Ordering::Relaxed)),
+                        )
+                    });
+                    #[cfg(test)]
+                    let diagnostic_context = (capture_token.is_some() || crate::segment_rdb::checkpoint_diagnostic_enabled()).then(|| {
+                        let context = crate::segment_rdb::CheckpointDiagnosticContext::new(
+                            CheckpointTraceOrigin::Periodic.label(),
+                            Some(NEXT_CHECKPOINT_ATTEMPT_ID.fetch_add(1, Ordering::Relaxed)),
+                        );
+                        if let Some(token) = capture_token { context.with_capture(token) } else { context }
+                    });
+                    if let Some(context) = diagnostic_context {
+                        context.trace_scheduler_selected(reason.label(), resample_source.label(), pending);
+                    }
                     match self
                         .checkpoint_with_fence(
                             periodic_fence.clone(),
                             CheckpointTraceOrigin::Periodic,
+                            diagnostic_context,
                         )
                         .await
                     {
@@ -715,15 +812,32 @@ impl SegmentCheckpointSink {
                             schedule.completed(Instant::now(), pending);
                         }
                     }
-                    while notices_rx.try_recv().is_ok() {}
+                    let mut saw_budget_notice = false;
+                    while notices_rx.try_recv().is_ok() {
+                        saw_budget_notice = true;
+                    }
+                    resample_source = if saw_budget_notice {
+                        CheckpointResampleSource::BudgetNotice
+                    } else {
+                        // This immediate loop is a fresh sample after the
+                        // completed checkpoint, not a deadline wake.
+                        CheckpointResampleSource::PostCheckpoint
+                    };
                     continue;
                 }
+                #[cfg(test)]
+                if let Some(signal) = idle_signal.take() {
+                    let _ = signal.send(());
+                }
                 tokio::select! {
-                    _ = tokio::time::sleep_until(schedule.next_deadline) => {}
+                    _ = tokio::time::sleep_until(schedule.next_deadline) => {
+                        resample_source = CheckpointResampleSource::DeadlineTick;
+                    }
                     _ = &mut shutdown_rx => return,
                     notice = notices_rx.recv() => {
-                        if notice.is_none() {
-                            return;
+                        match notice {
+                            Some(_) => resample_source = CheckpointResampleSource::BudgetNotice,
+                            None => return,
                         }
                     }
                 }
@@ -741,7 +855,7 @@ impl SegmentCheckpointSink {
 
 fn spawn_budget_waiter(
     wake: Arc<BudgetWake>,
-    notices: mpsc::Sender<()>,
+    notices: mpsc::Sender<Instant>,
     stop: Arc<AtomicBool>,
     mut observed: u64,
 ) -> std::thread::JoinHandle<()> {
@@ -755,7 +869,7 @@ fn spawn_budget_waiter(
                 continue;
             }
             observed = current;
-            match notices.try_send(()) {
+            match notices.try_send(Instant::now()) {
                 Ok(()) | Err(TrySendError::Full(_)) => {}
                 Err(TrySendError::Closed(_)) => return,
             }
@@ -766,7 +880,7 @@ fn spawn_budget_waiter(
 #[async_trait::async_trait]
 impl crate::api::CheckpointSink for SegmentCheckpointSink {
     async fn checkpoint_now(&self) -> Result<bool> {
-        self.checkpoint_with_fence(None, CheckpointTraceOrigin::Manual)
+        self.checkpoint_with_fence(None, CheckpointTraceOrigin::Manual, None)
             .await
     }
 
@@ -1818,6 +1932,64 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_selection_reports_the_real_branch_reason() {
+        let now = Instant::now();
+        let high = snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 1, None);
+
+        let mut threshold = CheckpointSchedule::new(Duration::from_secs(30), now);
+        assert_eq!(
+            threshold.select_attempt(now, high, None),
+            Some(CheckpointSelectionReason::Threshold)
+        );
+
+        let mut deadline = CheckpointSchedule::new(Duration::from_secs(30), now);
+        assert_eq!(
+            deadline.select_attempt(now + Duration::from_secs(30), snapshot(0, 1, None), None),
+            Some(CheckpointSelectionReason::Deadline)
+        );
+
+        let mut successor = CheckpointSchedule::new(Duration::from_secs(30), now);
+        successor.immediate_successor = Some(1);
+        assert_eq!(
+            successor.select_attempt(
+                now,
+                high,
+                Some(crate::change_budget::OwnerCapacityState {
+                    active: crate::change_budget::CHECKPOINT_TRIGGER,
+                    frozen: 0,
+                    work_revision: 1,
+                    checkpoint_request_revision: None,
+                }),
+            ),
+            Some(CheckpointSelectionReason::Successor)
+        );
+
+        let mut successor_with_request = CheckpointSchedule::new(Duration::from_secs(30), now);
+        successor_with_request.immediate_successor = Some(1);
+        assert_eq!(
+            successor_with_request.select_attempt(
+                now,
+                snapshot(crate::change_budget::CHECKPOINT_TRIGGER, 1, Some(7)),
+                Some(crate::change_budget::OwnerCapacityState {
+                    active: crate::change_budget::CHECKPOINT_TRIGGER,
+                    frozen: 0,
+                    work_revision: 1,
+                    checkpoint_request_revision: None,
+                }),
+            ),
+            Some(CheckpointSelectionReason::Successor)
+        );
+        assert_eq!(successor_with_request.last_request_revision, Some(7));
+        assert!(!successor_with_request.early_attempted);
+
+        let mut capacity_request = CheckpointSchedule::new(Duration::from_secs(30), now);
+        assert_eq!(
+            capacity_request.select_attempt(now, snapshot(high.total, 1, Some(7)), None),
+            Some(CheckpointSelectionReason::CapacityRequest)
+        );
+    }
+
+    #[test]
     fn high_work_does_not_recheckpoint_for_every_new_revision() {
         let now = Instant::now();
         let mut schedule = CheckpointSchedule::new(Duration::from_secs(30), now);
@@ -2205,6 +2377,207 @@ mod tests {
         })
         .await
         .expect("actual checkpoint driver made no progress");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn real_driver_budget_notice_has_one_ordered_numeric_attempt() {
+        use crate::segment_rdb::{DiagnosticCapture, NumericCanonicalEvent as Event};
+
+        let capture = DiagnosticCapture::new();
+        let budget = ChangeBudget::new();
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("captured", spill_keyword_schema()).unwrap();
+        admitted_keyword(&engine, "kept", "kept");
+        let root = tempfile::tempdir().unwrap();
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store: Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap()),
+            writer: Arc::new(EngineWatermarkSink::new(engine.clone())),
+            aof: None,
+        });
+        let (mut driver, idle) = sink.spawn_driver_with_capture(
+            Duration::from_secs(3600), budget.clone(), capture.token(),
+        );
+        tokio::time::timeout(Duration::from_secs(3), idle).await.unwrap().unwrap();
+        assert!(capture.drain().is_empty());
+        let filler = budget.owner();
+        let _held = filler.try_reserve(
+            crate::change_budget::CHECKPOINT_TRIGGER - budget.snapshot().total,
+        ).unwrap().commit_retained().unwrap();
+        wait_for_checkpoint_count(&engine, 1).await;
+        driver.shutdown().await.unwrap();
+        let events = capture.drain();
+        let (attempt, pending) = events.iter().find_map(|event| match event {
+            Event::Selected { attempt_id, reason: "threshold", source: "budget_notice", pending_total } => Some((*attempt_id, *pending_total)),
+            _ => None,
+        }).expect("real driver must select threshold after a budget notice");
+        assert!(pending >= crate::change_budget::CHECKPOINT_TRIGGER);
+        let phases: Vec<_> = events.iter().filter_map(|event| match event {
+            Event::Phase { attempt_id, phase, pass, reused, frozen_bytes } if *attempt_id == attempt => Some((*phase, *pass, *reused, *frozen_bytes)),
+            _ => None,
+        }).collect();
+        assert_eq!(phases.iter().map(|item| item.0).collect::<Vec<_>>(), [
+            "checkpoint_started", "freeze_completed", "publish_completed", "terminal",
+        ]);
+        assert_eq!(phases[1].1, 1);
+        assert!(!phases[1].2);
+        assert!(phases[1].3 > 0, "the real local cut must report its bytes");
+        assert_eq!(phases[2].1, 1);
+        assert!(events.iter().filter(|event| matches!(event, Event::Selected { .. })).count() == 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn real_driver_zero_period_reports_deadline_tick() {
+        use crate::segment_rdb::{DiagnosticCapture, NumericCanonicalEvent as Event};
+
+        let capture = DiagnosticCapture::new();
+        let budget = ChangeBudget::new();
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        let root = tempfile::tempdir().unwrap();
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store: Arc::new(crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap()),
+            writer: Arc::new(EngineWatermarkSink::new(engine.clone())),
+            aof: None,
+        });
+        let (mut driver, _) = sink.spawn_driver_with_capture(Duration::ZERO, budget, capture.token());
+        wait_for_checkpoint_count(&engine, 1).await;
+        driver.shutdown().await.unwrap();
+        let events = capture.drain();
+        assert!(matches!(events.first(), Some(Event::Selected { reason: "deadline", source: "initial_sample", .. })));
+        assert!(events.iter().any(|event| matches!(event, Event::Phase { phase: "terminal", .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn real_driver_reports_successor_after_blocked_first_publication() {
+        use crate::segment_rdb::{DiagnosticCapture, NumericCanonicalEvent as Event};
+
+        struct BlockFirstWrite {
+            armed: AtomicBool,
+            entered: std::sync::mpsc::Sender<()>,
+            released: (Mutex<bool>, std::sync::Condvar),
+        }
+        impl storage_durable::FailureInjector for BlockFirstWrite {
+            fn check(&self, point: &storage_durable::FailurePoint) -> std::io::Result<()> {
+                if point.step == storage_durable::CommitStep::SyncFile
+                    && self.armed.swap(false, Ordering::AcqRel)
+                {
+                    self.entered.send(()).unwrap();
+                    let (lock, wake) = &self.released;
+                    let mut released = lock.lock().unwrap();
+                    while !*released { released = wake.wait(released).unwrap(); }
+                }
+                Ok(())
+            }
+        }
+        struct Release(Arc<BlockFirstWrite>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.released.0.lock().unwrap() = true;
+                self.0.released.1.notify_all();
+            }
+        }
+
+        let capture = DiagnosticCapture::new();
+        let budget = ChangeBudget::new();
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("captured", spill_keyword_schema()).unwrap();
+        admitted_keyword(&engine, "kept", "kept");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let block = Arc::new(BlockFirstWrite {
+            armed: AtomicBool::new(true), entered: entered_tx,
+            released: (Mutex::new(false), std::sync::Condvar::new()),
+        });
+        let release = Release(block.clone());
+        let root = tempfile::tempdir().unwrap();
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store: Arc::new(crate::segment_rdb::SegmentRdbStore::new_with_failure_injector(root.path(), block).unwrap()),
+            writer: Arc::new(EngineWatermarkSink::new(engine.clone())),
+            aof: None,
+        });
+        let (mut driver, idle) = sink.spawn_driver_with_capture(Duration::from_secs(3600), budget.clone(), capture.token());
+        tokio::time::timeout(Duration::from_secs(3), idle).await.unwrap().unwrap();
+        let foreign = budget.owner();
+        let first_charge = foreign.try_reserve(crate::change_budget::CHECKPOINT_TRIGGER - budget.snapshot().total)
+            .unwrap().commit_retained().unwrap();
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(Duration::from_secs(5)))
+            .await.unwrap().expect("first real publication must reach SyncFile");
+        drop(first_charge);
+        let local_active = engine.capacity_owner_state().unwrap().active;
+        let _late_charge = engine.test_retained_owner_charge(
+            crate::change_budget::CHECKPOINT_TRIGGER - local_active,
+        );
+        drop(release);
+        wait_for_checkpoint_count(&engine, 2).await;
+        driver.shutdown().await.unwrap();
+        let events = capture.drain();
+        let selected: Vec<_> = events.iter().filter_map(|event| match event {
+            Event::Selected { attempt_id, reason, source, .. } => Some((*attempt_id, *reason, *source)),
+            _ => None,
+        }).collect();
+        assert_eq!(selected.len(), 2, "one blocked save must schedule one successor");
+        assert_eq!(selected[0].1, "threshold");
+        assert_eq!(selected[0].2, "budget_notice");
+        assert_eq!(selected[1].1, "successor");
+        assert_eq!(selected[1].2, "budget_notice");
+        assert_ne!(selected[0].0, selected[1].0);
+        for (attempt, _, _) in selected {
+            assert!(events.iter().any(|event| matches!(event, Event::Phase { attempt_id, phase: "terminal", .. } if *attempt_id == attempt)));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn real_driver_retries_frozen_pass_then_captures_fresh_pass() {
+        use crate::segment_rdb::{DiagnosticCapture, NumericCanonicalEvent as Event};
+
+        let capture = DiagnosticCapture::new();
+        let budget = ChangeBudget::with_hard_limit(8 * 1024 * 1024);
+        let engine = Arc::new(Engine::with_change_budget(budget.clone()));
+        engine.create_collection("captured", spill_keyword_schema()).unwrap();
+        admitted_keyword(&engine, "old", "old");
+        let root = tempfile::tempdir().unwrap();
+        crate::segment_rdb::SegmentRdbStore::new(root.path()).unwrap()
+            .save_with_sequence(&engine, 1).unwrap();
+        let apply = engine.capture_barrier.apply();
+        apply.initialize_sequence(1);
+        drop(apply);
+        admitted_keyword(&engine, "frozen", "frozen");
+        let store = Arc::new(crate::segment_rdb::SegmentRdbStore::new_with_failure_injector(
+            root.path(), Arc::new(FailOnce(Mutex::new(Some(storage_durable::CommitStep::SyncFile)))),
+        ).unwrap());
+        let sink = Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(), store: store.clone(),
+            writer: Arc::new(EngineWatermarkSink::new(engine.clone())), aof: None,
+        });
+        assert!(sink.checkpoint_now().await.is_err());
+        admitted_keyword(&engine, "fresh", "fresh");
+        let apply = engine.capture_barrier.apply();
+        apply.advance_sequence(2);
+        drop(apply);
+        let completed_before = engine.metrics().segment_checkpoint_completed_total.get();
+        let (mut driver, _) = sink.spawn_driver_with_capture(Duration::ZERO, budget, capture.token());
+        wait_for_checkpoint_count(&engine, completed_before + 1).await;
+        driver.shutdown().await.unwrap();
+        let events = capture.drain();
+        let attempt = events.iter().find_map(|event| match event {
+            Event::Selected { attempt_id, .. } => Some(*attempt_id), _ => None,
+        }).unwrap();
+        let freezes: Vec<_> = events.iter().filter_map(|event| match event {
+            Event::Phase { attempt_id, phase: "freeze_completed", pass, reused, frozen_bytes }
+                if *attempt_id == attempt => Some((*pass, *reused, *frozen_bytes)),
+            _ => None,
+        }).collect();
+        assert_eq!(freezes.len(), 2);
+        assert_eq!((freezes[0].0, freezes[0].1), (1, true));
+        assert_eq!((freezes[1].0, freezes[1].1), (2, false));
+        assert_eq!(freezes[0].2, 0, "a reused cut has no newly frozen bytes");
+        assert!(freezes[1].2 > 0, "the fresh pass freezes the newer local change");
+        assert!(events.iter().any(|event| matches!(event,
+            Event::Phase { attempt_id, phase: "publish_completed", pass: 2, .. } if *attempt_id == attempt)));
+        let (cold, sequence) = store.load_latest().unwrap().unwrap();
+        assert_eq!(sequence, 2);
+        assert!(contains_keyword(&cold, "fresh"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
