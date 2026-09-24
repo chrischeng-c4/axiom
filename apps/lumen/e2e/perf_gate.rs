@@ -746,6 +746,10 @@ fn median_statistic_and_ignored_inventory() {
                 false,
             ),
             (
+                "request_pump_records_body_start_and_completion_latency",
+                false,
+            ),
+            (
                 "post_restart_backend_residency_rejects_flat_and_hnsw_coercion",
                 false,
             ),
@@ -935,7 +939,6 @@ mod durable_workload {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
     use std::sync::Arc;
-    #[cfg(test)]
     use std::sync::Mutex as StdMutex;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -4577,22 +4580,196 @@ mod durable_workload {
         }
     }
 
+    #[derive(Default, Clone, Copy)]
+    struct PumpSecond {
+        attempts: u64,
+        in_flight_high_water: usize,
+        blocked_pushes: u64,
+        blocked_push_us: u64,
+        blocked_push_max_us: u64,
+        task_start_lag_us: u64,
+        task_start_lag_samples: u64,
+        task_start_lag_max_us: u64,
+        ledger_body_start_lag_us: u64,
+        ledger_body_start_lag_samples: u64,
+        ledger_body_start_lag_max_us: u64,
+        send_call_lag_us: u64,
+        send_call_lag_samples: u64,
+        send_call_lag_max_us: u64,
+        completed: u64,
+        latency_us: u64,
+        latency_max_us: u64,
+    }
+
+    #[derive(Default)]
+    struct PumpTrace {
+        seconds: BTreeMap<(u64, &'static str), PumpSecond>,
+    }
+
+    impl PumpTrace {
+        fn record(&mut self, second: u64, endpoint: &'static str) -> &mut PumpSecond {
+            self.seconds
+                .entry((second.min(INPUT_SECONDS + POST_INPUT_TIMEOUT.as_secs()), endpoint))
+                .or_default()
+        }
+
+        fn emit(&self) {
+            for ((second, endpoint), sample) in &self.seconds {
+                eprintln!(
+                    "PERF_REQUEST_PUMP second={second} endpoint={endpoint} attempts={} inflight_hwm={} blocked_pushes={} blocked_push_us={} blocked_push_max_us={} task_start_lag_avg_us={} task_start_lag_max_us={} ledger_body_start_lag_avg_us={} ledger_body_start_lag_max_us={} send_call_lag_avg_us={} send_call_lag_max_us={} completed={} send_call_to_response_completion_avg_us={} send_call_to_response_completion_max_us={}",
+                    sample.attempts,
+                    sample.in_flight_high_water,
+                    sample.blocked_pushes,
+                    sample.blocked_push_us,
+                    sample.blocked_push_max_us,
+                    if sample.task_start_lag_samples == 0 {
+                        0
+                    } else {
+                        sample.task_start_lag_us / sample.task_start_lag_samples
+                    },
+                    sample.task_start_lag_max_us,
+                    if sample.ledger_body_start_lag_samples == 0 { 0 } else { sample.ledger_body_start_lag_us / sample.ledger_body_start_lag_samples },
+                    sample.ledger_body_start_lag_max_us,
+                    if sample.send_call_lag_samples == 0 { 0 } else { sample.send_call_lag_us / sample.send_call_lag_samples },
+                    sample.send_call_lag_max_us,
+                    sample.completed,
+                    if sample.completed == 0 {
+                        0
+                    } else {
+                        sample.latency_us / sample.completed
+                    },
+                    sample.latency_max_us,
+                );
+            }
+        }
+
+        fn record_ledger_body_start(
+            &mut self,
+            elapsed: Duration,
+            endpoint: &'static str,
+            lag: Duration,
+        ) {
+            let lag_us = lag.as_micros().min(u64::MAX as u128) as u64;
+            let sample = self.record(elapsed.as_secs(), endpoint);
+            sample.ledger_body_start_lag_us += lag_us;
+            sample.ledger_body_start_lag_samples += 1;
+            sample.ledger_body_start_lag_max_us =
+                sample.ledger_body_start_lag_max_us.max(lag_us);
+        }
+
+        fn record_send_call(&mut self, elapsed: Duration, endpoint: &'static str, lag: Duration) {
+            let lag_us = lag.as_micros().min(u64::MAX as u128) as u64;
+            let sample = self.record(elapsed.as_secs(), endpoint);
+            sample.send_call_lag_us += lag_us;
+            sample.send_call_lag_samples += 1;
+            sample.send_call_lag_max_us = sample.send_call_lag_max_us.max(lag_us);
+        }
+
+        fn record_completion(
+            &mut self,
+            elapsed: Duration,
+            endpoint: &'static str,
+            latency: Duration,
+        ) {
+            let latency_us = latency.as_micros().min(u64::MAX as u128) as u64;
+            let sample = self.record(elapsed.as_secs(), endpoint);
+            sample.completed += 1;
+            sample.latency_us += latency_us;
+            sample.latency_max_us = sample.latency_max_us.max(latency_us);
+        }
+    }
+
+    fn record_pump_ledger_body_start(
+        trace: &Option<Arc<StdMutex<PumpTrace>>>,
+        endpoint: &'static str,
+        scheduled_at: Duration,
+        body_started: Duration,
+    ) {
+        if let Some(trace) = trace {
+            trace
+                .lock()
+                .expect("request pump trace mutex poisoned")
+                .record_ledger_body_start(
+                    body_started,
+                    endpoint,
+                    body_started.saturating_sub(scheduled_at),
+                );
+        }
+    }
+
+    fn record_pump_send_call(
+        trace: &Option<Arc<StdMutex<PumpTrace>>>,
+        endpoint: &'static str,
+        scheduled_at: Duration,
+        send_called_at: Duration,
+    ) {
+        if let Some(trace) = trace {
+            trace
+                .lock()
+                .expect("request pump trace mutex poisoned")
+                .record_send_call(
+                    send_called_at,
+                    endpoint,
+                    send_called_at.saturating_sub(scheduled_at),
+                );
+        }
+    }
+
+    fn record_pump_completion(
+        trace: &Option<Arc<StdMutex<PumpTrace>>>,
+        endpoint: &'static str,
+        send_called_at: Duration,
+        completed_at: Duration,
+    ) {
+        if let Some(trace) = trace {
+            trace
+                .lock()
+                .expect("request pump trace mutex poisoned")
+                .record_completion(
+                    completed_at,
+                    endpoint,
+                    completed_at.saturating_sub(send_called_at),
+                );
+        }
+    }
+
+    struct PumpTraceOnDrop(Arc<StdMutex<PumpTrace>>);
+
+    impl Drop for PumpTraceOnDrop {
+        fn drop(&mut self) {
+            match self.0.lock() {
+                Ok(trace) => trace.emit(),
+                Err(poisoned) => poisoned.into_inner().emit(),
+            }
+        }
+    }
+
     struct RequestPump {
         tasks: JoinSet<()>,
         max_in_flight: usize,
+        clock: Clock,
+        trace: Option<Arc<StdMutex<PumpTrace>>>,
     }
 
     impl RequestPump {
-        fn new(max_in_flight: usize) -> Self {
+        fn new(
+            max_in_flight: usize,
+            clock: Clock,
+            trace: Option<Arc<StdMutex<PumpTrace>>>,
+        ) -> Self {
             Self {
                 tasks: JoinSet::new(),
                 max_in_flight,
+                clock,
+                trace,
             }
         }
 
         async fn push<F>(
             &mut self,
             future: F,
+            endpoint: &'static str,
+            scheduled_at: Duration,
             input_deadline: tokio::time::Instant,
             input_timeout: Duration,
         ) -> Result<()>
@@ -4600,20 +4777,93 @@ mod durable_workload {
             F: Future<Output = ()> + Send + 'static,
         {
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
-            while self.tasks.len() >= self.max_in_flight {
-                tokio::time::timeout_at(input_deadline, self.tasks.join_next())
-                    .await
-                    .map_err(|_| HarnessError::InputWindowTimeout {
-                        stage: "input_workload",
-                        timeout: input_timeout,
-                    })?
-                    .ok_or_else(|| HarnessError::Task("request pump lost a task".to_owned()))?
-                    .map_err(|error| HarnessError::Task(error.to_string()))?;
-                check_input_deadline(input_deadline, input_timeout, "input_workload")?;
+            let attempt_second = self.clock.elapsed().as_secs();
+            let blocked_at = if self.tasks.len() >= self.max_in_flight {
+                Some(Instant::now())
+            } else {
+                None
+            };
+            if let Some(trace) = &self.trace {
+                let mut trace = trace.lock().expect("request pump trace mutex poisoned");
+                trace.record(attempt_second, endpoint).attempts += 1;
             }
+            while self.tasks.len() >= self.max_in_flight {
+                let joined = tokio::time::timeout_at(input_deadline, self.tasks.join_next()).await;
+                match joined {
+                    Err(_) => {
+                        self.record_blocked_push(attempt_second, endpoint, blocked_at);
+                        return Err(HarnessError::InputWindowTimeout {
+                            stage: "input_workload",
+                            timeout: input_timeout,
+                        });
+                    }
+                    Ok(None) => {
+                        self.record_blocked_push(attempt_second, endpoint, blocked_at);
+                        return Err(HarnessError::Task("request pump lost a task".to_owned()));
+                    }
+                    Ok(Some(Err(error))) => {
+                        self.record_blocked_push(attempt_second, endpoint, blocked_at);
+                        return Err(HarnessError::Task(error.to_string()));
+                    }
+                    Ok(Some(Ok(()))) => {}
+                }
+                if let Err(error) =
+                    check_input_deadline(input_deadline, input_timeout, "input_workload")
+                {
+                    self.record_blocked_push(attempt_second, endpoint, blocked_at);
+                    return Err(error);
+                }
+            }
+            self.record_blocked_push(attempt_second, endpoint, blocked_at);
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
-            self.tasks.spawn(future);
+            if let Some(trace) = &self.trace {
+                let clock = self.clock.clone();
+                let trace = trace.clone();
+                self.tasks.spawn(async move {
+                    let task_started = clock.elapsed();
+                    let task_start_lag = task_started.saturating_sub(scheduled_at);
+                    let task_start_lag_us =
+                        task_start_lag.as_micros().min(u64::MAX as u128) as u64;
+                    {
+                        let mut trace_guard =
+                            trace.lock().expect("request pump trace mutex poisoned");
+                        let sample = trace_guard.record(task_started.as_secs(), endpoint);
+                        sample.task_start_lag_us += task_start_lag_us;
+                        sample.task_start_lag_samples += 1;
+                        sample.task_start_lag_max_us =
+                            sample.task_start_lag_max_us.max(task_start_lag_us);
+                    }
+                    future.await;
+                });
+                let mut trace = self
+                    .trace
+                    .as_ref()
+                    .expect("trace is enabled in this branch")
+                    .lock()
+                    .expect("request pump trace mutex poisoned");
+                let sample = trace.record(self.clock.elapsed().as_secs(), endpoint);
+                sample.in_flight_high_water = sample.in_flight_high_water.max(self.tasks.len());
+            } else {
+                self.tasks.spawn(future);
+            }
             Ok(())
+        }
+
+        fn record_blocked_push(
+            &self,
+            second: u64,
+            endpoint: &'static str,
+            blocked_at: Option<Instant>,
+        ) {
+            let (Some(blocked_at), Some(trace)) = (blocked_at, &self.trace) else {
+                return;
+            };
+            let blocked_us = blocked_at.elapsed().as_micros().min(u64::MAX as u128) as u64;
+            let mut trace = trace.lock().expect("request pump trace mutex poisoned");
+            let sample = trace.record(second, endpoint);
+            sample.blocked_pushes += 1;
+            sample.blocked_push_us += blocked_us;
+            sample.blocked_push_max_us = sample.blocked_push_max_us.max(blocked_us);
         }
 
         async fn drain(mut self, label: &'static str) -> Result<()> {
@@ -4702,6 +4952,7 @@ mod durable_workload {
         journal: Arc<Mutex<RequestErrorJournal>>,
         request_id: u64,
         scheduled_at: Duration,
+        pump_trace: Option<Arc<StdMutex<PumpTrace>>>,
         entries: Vec<IndexedField>,
     ) {
         let items = entries
@@ -4719,6 +4970,7 @@ mod durable_workload {
         // `post_json(request)` calls `send` immediately after this scope.
         let mut ledger_guard = ledger.lock().await;
         let body_started = clock.elapsed();
+        record_pump_ledger_body_start(&pump_trace, "index", scheduled_at, body_started);
         ledger_guard.submit_request(Request::new(
             request_id,
             Endpoint::Index,
@@ -4727,7 +4979,17 @@ mod durable_workload {
             items,
         ));
         drop(ledger_guard);
-        let outcome = match post_json(request).await {
+        let send_called_at = clock.elapsed();
+        let response = post_json(request).await;
+        let response_completed_at = clock.elapsed();
+        record_pump_send_call(&pump_trace, "index", scheduled_at, send_called_at);
+        record_pump_completion(
+            &pump_trace,
+            "index",
+            send_called_at,
+            response_completed_at,
+        );
+        let outcome = match response {
             Ok(response) if response["indexed"].as_u64() == Some(entries.len() as u64) => {
                 Outcome::Succeeded
             }
@@ -4743,11 +5005,12 @@ mod durable_workload {
                 .await
             }
         };
+        let completed_at = clock.elapsed();
         let mut ledger = ledger.lock().await;
         for entry in &entries {
             ledger.record_item_result(request_id, entry.operation, &entry.field, outcome);
         }
-        ledger.finish_request(request_id, clock.elapsed(), outcome);
+        ledger.finish_request(request_id, completed_at, outcome);
     }
 
     async fn send_replace(
@@ -4758,6 +5021,7 @@ mod durable_workload {
         journal: Arc<Mutex<RequestErrorJournal>>,
         request_id: u64,
         scheduled_at: Duration,
+        pump_trace: Option<Arc<StdMutex<PumpTrace>>>,
         entries: Vec<Replacement>,
     ) {
         let items = entries
@@ -4772,6 +5036,7 @@ mod durable_workload {
             .json(&body);
         let mut ledger_guard = ledger.lock().await;
         let body_started = clock.elapsed();
+        record_pump_ledger_body_start(&pump_trace, "replace", scheduled_at, body_started);
         ledger_guard.submit_request(Request::new(
             request_id,
             Endpoint::Replace,
@@ -4780,7 +5045,17 @@ mod durable_workload {
             items,
         ));
         drop(ledger_guard);
-        let outcome = match post_json(request).await {
+        let send_called_at = clock.elapsed();
+        let response = post_json(request).await;
+        let response_completed_at = clock.elapsed();
+        record_pump_send_call(&pump_trace, "replace", scheduled_at, send_called_at);
+        record_pump_completion(
+            &pump_trace,
+            "replace",
+            send_called_at,
+            response_completed_at,
+        );
+        let outcome = match response {
             Ok(response)
                 if response["results"].as_array().is_some_and(|results| {
                     results.len() == entries.len()
@@ -4801,11 +5076,12 @@ mod durable_workload {
                 .await
             }
         };
+        let completed_at = clock.elapsed();
         let mut ledger = ledger.lock().await;
         for entry in &entries {
             ledger.record_item_result(request_id, entry.operation, "$document", outcome);
         }
-        ledger.finish_request(request_id, clock.elapsed(), outcome);
+        ledger.finish_request(request_id, completed_at, outcome);
     }
 
     async fn send_unindex(
@@ -4816,6 +5092,7 @@ mod durable_workload {
         journal: Arc<Mutex<RequestErrorJournal>>,
         request_id: u64,
         scheduled_at: Duration,
+        pump_trace: Option<Arc<StdMutex<PumpTrace>>>,
         entries: Vec<Removal>,
     ) {
         let items = entries
@@ -4833,6 +5110,7 @@ mod durable_workload {
             .json(&body);
         let mut ledger_guard = ledger.lock().await;
         let body_started = clock.elapsed();
+        record_pump_ledger_body_start(&pump_trace, "unindex", scheduled_at, body_started);
         ledger_guard.submit_request(Request::new(
             request_id,
             Endpoint::Unindex,
@@ -4843,7 +5121,17 @@ mod durable_workload {
         drop(ledger_guard);
         let unindex_endpoint = format!("POST /collections/{HOT_COLLECTION}/docs:unindex");
         let unindex_identifier = format!("request_id={request_id}");
-        let outcome = match tokio::time::timeout(REQUEST_TIMEOUT, request.send()).await {
+        let send_called_at = clock.elapsed();
+        let response = tokio::time::timeout(REQUEST_TIMEOUT, request.send()).await;
+        let response_completed_at = clock.elapsed();
+        record_pump_send_call(&pump_trace, "unindex", scheduled_at, send_called_at);
+        record_pump_completion(
+            &pump_trace,
+            "unindex",
+            send_called_at,
+            response_completed_at,
+        );
+        let outcome = match response {
             Ok(Ok(response)) if response.status().as_u16() == 204 => Outcome::Succeeded,
             Ok(Ok(response)) => {
                 let status = response.status();
@@ -4902,11 +5190,12 @@ mod durable_workload {
                 .await
             }
         };
+        let completed_at = clock.elapsed();
         let mut ledger = ledger.lock().await;
         for entry in &entries {
             ledger.record_item_result(request_id, entry.operation, "$external_id", outcome);
         }
-        ledger.finish_request(request_id, clock.elapsed(), outcome);
+        ledger.finish_request(request_id, completed_at, outcome);
     }
 
     async fn send_query(
@@ -4916,6 +5205,7 @@ mod durable_workload {
         clock: Clock,
         journal: Arc<Mutex<RequestErrorJournal>>,
         scheduled_at: Duration,
+        pump_trace: Option<Arc<StdMutex<PumpTrace>>>,
         class: QueryClass,
         collection: String,
         body: Value,
@@ -4927,7 +5217,18 @@ mod durable_workload {
             .post(format!("{base}/collections/{collection}/search"))
             .json(&body);
         let body_started = clock.elapsed();
-        let outcome = match post_json(request).await {
+        record_pump_ledger_body_start(&pump_trace, "query", scheduled_at, body_started);
+        let send_called_at = clock.elapsed();
+        let response = post_json(request).await;
+        let response_completed_at = clock.elapsed();
+        record_pump_send_call(&pump_trace, "query", scheduled_at, send_called_at);
+        record_pump_completion(
+            &pump_trace,
+            "query",
+            send_called_at,
+            response_completed_at,
+        );
+        let outcome = match response {
             Ok(response)
                 if response["hits"]
                     .as_array()
@@ -4947,11 +5248,12 @@ mod durable_workload {
                 .await
             }
         };
+        let completed_at = clock.elapsed();
         ledger.lock().await.record_classified_query(
             class,
             scheduled_at,
             body_started,
-            Some(clock.elapsed()),
+            Some(completed_at),
             outcome,
         );
     }
@@ -6217,8 +6519,14 @@ mod durable_workload {
         });
         let sampler_abort = sampler.abort_handle();
 
-        let mut mutations = RequestPump::new(REQUEST_CONCURRENCY);
-        let mut queries = RequestPump::new(QUERY_CONCURRENCY);
+        let diagnostic = env::var("LUMEN_PERF_DIAGNOSTIC").ok().as_deref() == Some("1");
+        let pump_trace = diagnostic.then(|| Arc::new(StdMutex::new(PumpTrace::default())));
+        let _pump_trace_on_drop = pump_trace
+            .as_ref()
+            .map(|trace| PumpTraceOnDrop(trace.clone()));
+        let mut mutations =
+            RequestPump::new(REQUEST_CONCURRENCY, clock.clone(), pump_trace.clone());
+        let mut queries = RequestPump::new(QUERY_CONCURRENCY, clock.clone(), pump_trace.clone());
         let mut index_batch = Batcher::new(config.batch_size_for(Endpoint::Index));
         let mut replace_batch = Batcher::new(config.batch_size_for(Endpoint::Replace));
         let mut unindex_batch = Batcher::new(config.batch_size_for(Endpoint::Unindex));
@@ -6347,7 +6655,6 @@ mod durable_workload {
                 eprintln!("PERF_STAGE_BEGIN query_drain");
                 queries.drain("query requests").await?;
                 eprintln!("PERF_STAGE_END query_drain");
-
                 eprintln!("PERF_STAGE_BEGIN post_drain_metrics");
                 let metrics_after = server.metrics().await?;
                 eprintln!("PERF_STAGE_END post_drain_metrics");
@@ -6586,8 +6893,11 @@ mod durable_workload {
                     server.request_error_journal.clone(),
                     id,
                     scheduled_at,
+                    pump.trace.clone(),
                     entries,
                 ),
+                endpoint_name(Endpoint::Index),
+                scheduled_at,
                 input_deadline,
                 input_timeout,
             )
@@ -6620,8 +6930,11 @@ mod durable_workload {
                     server.request_error_journal.clone(),
                     id,
                     scheduled_at,
+                    pump.trace.clone(),
                     entries,
                 ),
+                endpoint_name(Endpoint::Replace),
+                scheduled_at,
                 input_deadline,
                 input_timeout,
             )
@@ -6654,8 +6967,11 @@ mod durable_workload {
                     server.request_error_journal.clone(),
                     id,
                     scheduled_at,
+                    pump.trace.clone(),
                     entries,
                 ),
+                endpoint_name(Endpoint::Unindex),
+                scheduled_at,
                 input_deadline,
                 input_timeout,
             )
@@ -6682,6 +6998,7 @@ mod durable_workload {
             let ledger = ledger.clone();
             let clock = clock.clone();
             let journal = server.request_error_journal.clone();
+            let pump_trace = pump.trace.clone();
             pump.push(
                 async move {
                     tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
@@ -6692,12 +7009,15 @@ mod durable_workload {
                         clock,
                         journal,
                         scheduled_at,
+                        pump_trace,
                         class,
                         collection,
                         body,
                     )
                     .await;
                 },
+                "query",
+                scheduled_at,
                 input_deadline,
                 input_timeout,
             )
@@ -8635,7 +8955,8 @@ mod durable_workload {
             .expect("build post-input deadline unit-test runtime");
         runtime.block_on(async {
             let (base, task) = fake_delayed_hnsw_cache_seal_server(Duration::from_secs(5) + Duration::from_millis(250)).await;
-            let timeout = Duration::from_secs(6);
+            let timeout = Duration::from_secs(8);
+            let started = Instant::now();
             let result = post_input_step(
                 tokio::time::Instant::now() + timeout,
                 timeout,
@@ -8645,6 +8966,11 @@ mod durable_workload {
             .await;
             task.abort();
             assert!(result.is_ok(), "seal must succeed before the outer deadline: {result:?}");
+            assert!(
+                started.elapsed() > Duration::from_secs(5),
+                "delayed response must prove acceptance beyond the five-second request bound: {:?}",
+                started.elapsed()
+            );
         });
     }
 
@@ -8768,13 +9094,17 @@ mod durable_workload {
             .build()
             .expect("build request-pump deadline unit-test runtime");
         runtime.block_on(async {
-            let mut pump = RequestPump::new(1);
+            let clock = Clock::new();
+            let trace = Arc::new(StdMutex::new(PumpTrace::default()));
+            let mut pump = RequestPump::new(1, clock.clone(), Some(trace.clone()));
             let timeout = Duration::from_millis(25);
             let deadline = tokio::time::Instant::now() + timeout;
             pump.push(
                 async {
                     tokio::time::sleep(Duration::from_secs(30)).await;
                 },
+                "index",
+                Duration::ZERO,
                 deadline,
                 timeout,
             )
@@ -8783,7 +9113,7 @@ mod durable_workload {
 
             let started = Instant::now();
             let error = pump
-                .push(async {}, deadline, timeout)
+                .push(async {}, "index", Duration::ZERO, deadline, timeout)
                 .await
                 .expect_err("a full request pump must honor the input deadline");
             assert!(
@@ -8801,6 +9131,75 @@ mod durable_workload {
                 ),
                 "capacity wait must return the typed input-window timeout: {error:?}"
             );
+            let trace = trace.lock().expect("request pump trace mutex poisoned");
+            let sample = trace.seconds.values().next().expect("attempts are recorded");
+            assert_eq!(sample.attempts, 2);
+            assert_eq!(sample.in_flight_high_water, 1);
+            assert_eq!(sample.blocked_pushes, 1);
+            assert!(sample.blocked_push_us > 0);
+        });
+    }
+
+    #[test]
+    fn request_pump_records_body_start_and_completion_latency() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build request-pump telemetry unit-test runtime");
+        runtime.block_on(async {
+            let clock = Clock::new();
+            let trace = Arc::new(StdMutex::new(PumpTrace::default()));
+            let mut pump = RequestPump::new(1, clock.clone(), Some(trace.clone()));
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+            let body_clock = clock.clone();
+            let body_trace = Some(trace.clone());
+            pump.push(
+                async move {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                    let ledger_started = body_clock.elapsed();
+                    record_pump_ledger_body_start(
+                        &body_trace,
+                        "index",
+                        Duration::ZERO,
+                        ledger_started,
+                    );
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                    let send_called_at = body_clock.elapsed();
+                    record_pump_send_call(
+                        &body_trace,
+                        "index",
+                        Duration::ZERO,
+                        send_called_at,
+                    );
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                    record_pump_completion(
+                        &body_trace,
+                        "index",
+                        send_called_at,
+                        body_clock.elapsed(),
+                    );
+                },
+                "index",
+                Duration::ZERO,
+                deadline,
+                Duration::from_secs(1),
+            )
+            .await
+            .expect("the request fits within capacity");
+            pump.drain("telemetry test").await.expect("request completes");
+
+            let trace = trace.lock().expect("request pump trace mutex poisoned");
+            let sample = trace.seconds.values().next().expect("telemetry sample exists");
+            assert_eq!(sample.attempts, 1);
+            assert_eq!(sample.in_flight_high_water, 1);
+            assert_eq!(sample.task_start_lag_samples, 1);
+            assert_eq!(sample.ledger_body_start_lag_samples, 1);
+            assert_eq!(sample.send_call_lag_samples, 1);
+            assert!(sample.task_start_lag_us <= sample.ledger_body_start_lag_us);
+            assert!(sample.ledger_body_start_lag_us <= sample.send_call_lag_us);
+            assert_eq!(sample.completed, 1);
+            assert!(sample.latency_us > 0);
+            assert!(sample.latency_max_us > 0);
         });
     }
 

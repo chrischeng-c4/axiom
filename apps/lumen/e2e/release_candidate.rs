@@ -1788,6 +1788,10 @@ fn validate_perf_gate_source(source: &str) -> Result<(), Finding> {
                     false,
                 ),
                 (
+                    "request_pump_records_body_start_and_completion_latency".into(),
+                    false,
+                ),
+                (
                     "post_restart_backend_residency_rejects_flat_and_hnsw_coercion".into(),
                     false,
                 ),
