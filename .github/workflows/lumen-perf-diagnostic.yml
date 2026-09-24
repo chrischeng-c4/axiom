@@ -152,20 +152,28 @@ jobs:
           cargo test --release --locked -p lumen --test perf_gate -- --ignored --exact durable_workload::approved_30_minute_durable_workload --test-threads=1 --nocapture 2>&1 | tee diagnostic/test-output.full.log
           test_status=${PIPESTATUS[0]}
           set -e
-          # Keep all bounded one-second pump rows as a separate artifact file.
-          awk '$1 == "PERF_REQUEST_PUMP" { print }' diagnostic/test-output.full.log > diagnostic/request-pump-telemetry.log
+          # Keep bounded pump rows and first-120-second index-1 stage/server
+          # rows together. The full runner log remains local to this job.
+          awk '$1 == "PERF_REQUEST_PUMP" || $1 == "PERF_INDEX_STAGE" || $1 == "PERF_INDEX_SERVER" { print }' diagnostic/test-output.full.log > diagnostic/request-pump-telemetry.log
           telemetry_rows=$(wc -l < diagnostic/request-pump-telemetry.log | tr -d ' ')
           telemetry_bytes=$(wc -c < diagnostic/request-pump-telemetry.log | tr -d ' ')
           telemetry_input_seconds=$(awk '$1 == "PERF_REQUEST_PUMP" { split($2, item, "="); second = item[2] + 0; if (second >= 0 && second < 1800) seen[second] = 1 } END { for (second = 0; second < 1800; second++) if (second in seen) count++; print count + 0 }' diagnostic/request-pump-telemetry.log)
           telemetry_index_seconds=$(awk -v scenario="$SCENARIO" '$1 == "PERF_REQUEST_PUMP" { split($2, second_item, "="); split($3, endpoint_item, "="); second = second_item[2] + 0; endpoint = endpoint_item[2]; if (endpoint == "index" && second >= 0 && second < 1800 && (scenario != "index-1-flat-cpu" || second % 3 == 0)) seen[second] = 1 } END { for (second in seen) count++; print count + 0 }' diagnostic/request-pump-telemetry.log)
+          telemetry_stage_rows=$(awk '$1 == "PERF_INDEX_STAGE" { split($2, item, "="); second = item[2] + 0; if (item[1] != "second" || second < 0 || second >= 120 || second % 3 != 0 || seen[second]++) bad = 1; delete value; for (i = 3; i <= NF; i++) { split($i, item, "="); value[item[1]] = item[2] } split("slot_wait slot_wake document_offer push_entry push_admission task_start response", phase, " "); for (i = 1; i <= 7; i++) { expected = i <= 3 ? 100 : 1400; prefix = phase[i]; if (value[prefix "_count"] != expected || value[prefix "_p95_us"] == "" || value[prefix "_max_us"] == "" || value[prefix "_p95_us"] + 0 > value[prefix "_max_us"] + 0) bad = 1 } count++ } END { if (bad) print -1; else print count + 0 }' diagnostic/request-pump-telemetry.log)
+          telemetry_server_rows=$(awk '$1 == "PERF_INDEX_SERVER" { split($2, item, "="); second = item[2] + 0; if (item[1] != "second" || second < 0 || second >= 120 || seen[second]++) bad = 1; delete value; for (i = 3; i <= NF; i++) { split($i, item, "="); value[item[1]] = item[2] } if (value["elapsed_ms"] == "" || int(value["elapsed_ms"] / 1000) != second || value["pending_reserved_bytes"] == "" || value["pending_active_bytes"] == "" || value["pending_frozen_bytes"] == "" || value["pending_total_bytes"] == "" || value["checkpoint_started_total"] == "" || value["checkpoint_completed_total"] == "" || value["checkpoint_in_flight"] == "" || value["checkpoint_duration_count"] == "" || value["checkpoint_duration_sum_s"] == "") bad = 1; count++ } END { if (bad) print -1; else print count + 0 }' diagnostic/request-pump-telemetry.log)
           [[ "$telemetry_rows" -le 8000 ]] || { echo 'pump telemetry row count exceeds its fixed bound' >&2; exit 1; }
           [[ "$telemetry_bytes" -le 4194304 ]] || { echo 'pump telemetry exceeds its 4 MiB bound' >&2; exit 1; }
+          [[ "$telemetry_stage_rows" -ge 0 && "$telemetry_stage_rows" -le 40 ]] || { echo 'index stage telemetry rows are invalid or exceed 40' >&2; exit 1; }
+          [[ "$telemetry_server_rows" -ge 0 && "$telemetry_server_rows" -le 120 ]] || { echo 'index server telemetry rows are invalid or exceed 120' >&2; exit 1; }
           if [[ "$test_status" == 0 ]]; then
             [[ "$telemetry_input_seconds" == 1800 ]] || { echo 'successful diagnostic did not retain telemetry for all 1800 input seconds' >&2; exit 1; }
             if [[ "$SCENARIO" == index-1-flat-cpu ]]; then
               [[ "$telemetry_index_seconds" == 600 ]] || { echo 'successful index-1 diagnostic did not retain index telemetry for all 600 index seconds' >&2; exit 1; }
+              [[ "$telemetry_stage_rows" == 40 ]] || { echo 'successful index-1 diagnostic did not retain all 40 complete scheduled bursts' >&2; exit 1; }
+              [[ "$telemetry_server_rows" == 120 ]] || { echo 'successful index-1 diagnostic did not retain all 120 server samples' >&2; exit 1; }
             else
               [[ "$telemetry_index_seconds" -ge 1 ]] || { echo 'successful batch-1000 diagnostic did not retain an index telemetry row' >&2; exit 1; }
+              [[ "$telemetry_stage_rows" == 0 && "$telemetry_server_rows" == 0 ]] || { echo 'batch-1000 diagnostic emitted index-1-only stage telemetry' >&2; exit 1; }
             fi
           fi
           # The full runner log remains in GitHub Actions. Keep only a bounded

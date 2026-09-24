@@ -56,6 +56,9 @@ const OUTCOME_WINDOW: u64 = 8192;
 /// retryable 5xx.
 const SUBMIT_TIMEOUT_SECS: u64 = 30;
 const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(SUBMIT_TIMEOUT_SECS);
+// Admission must leave time for an already admitted record to publish and
+// apply inside the same 30-second submit deadline.
+const LOCAL_CAPACITY_APPLY_RESERVE: std::time::Duration = std::time::Duration::from_secs(1);
 
 fn claim_diagnostic_refusal_revision(last_seen: &AtomicU64, revision: u64) -> bool {
     // Store revision + 1, leaving zero as the unclaimed sentinel. This also
@@ -1276,29 +1279,48 @@ impl WriteCoordinator {
     /// admission error `PendingChangeCapacity` does not classify at all
     /// (e.g. `RecordAdmissionError::WrongEngine`), which cannot occur for a
     /// same-Engine local submit today.
+    #[cfg(test)]
     fn try_admit_local_record(
         &self,
         entry: &RaftLogEntry,
     ) -> Result<Option<LocalRecordReservation>> {
+        self.try_admit_local_record_once(entry)
+            .0
+            .map_err(|error| self.finalize_prepublication_error(error))
+    }
+
+    /// Return the shared pending revision with a Full result. Only the final
+    /// result is counted as backpressure when submit waits for relief.
+    fn try_admit_local_record_once(
+        &self,
+        entry: &RaftLogEntry,
+    ) -> (Result<Option<LocalRecordReservation>>, Option<u64>) {
         let raw = match Engine::record_owned_bytes(entry) {
             Ok(raw) => raw,
             Err(RecordAdmissionError::Overflow) => {
-                return Err(self.prepublication_backpressure(PendingChangeCapacity::Overflow));
+                return (
+                    Err(anyhow::Error::new(PendingChangeCapacity::Overflow)),
+                    None,
+                );
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return (Err(error.into()), None),
         };
         let copies = if self.has_local_aof { 4 } else { 2 };
         let Some(extra_owned) = raw.checked_mul(copies) else {
-            return Err(self.prepublication_backpressure(PendingChangeCapacity::Overflow));
+            return (
+                Err(anyhow::Error::new(PendingChangeCapacity::Overflow)),
+                None,
+            );
         };
         match self.engine.try_reserve_record(entry, extra_owned) {
             Ok(reservation) => {
                 let (apply, transient) = reservation.split_transport();
-                Ok(Some(LocalRecordReservation { apply, transient }))
+                (Ok(Some(LocalRecordReservation { apply, transient })), None)
             }
             // Unknown schema/context preparation is likewise not a reason to
             // discard a valid record; apply returns its original domain outcome.
             Err(error) => {
+                let mut revision = None;
                 if let RecordAdmissionError::Capacity(AdmissionError::Full {
                     requested,
                     used,
@@ -1317,24 +1339,66 @@ impl WriteCoordinator {
                             "could not start local capacity maintenance"
                         );
                     }
-                    let revision = self.engine.request_pending_checkpoint_revision();
+                    revision = self.engine.request_pending_checkpoint_revision();
                     self.trace_admission_refusal(revision, *requested, *used, *hard_limit);
                     self.capacity_relief_requested
                         .store(true, Ordering::Release);
                 }
                 match PendingChangeCapacity::from_record_prepublication(&error) {
-                    Some(pending) => Err(self.prepublication_backpressure(pending)),
-                    None => Ok(None),
+                    Some(pending) => (Err(anyhow::Error::new(pending)), revision),
+                    None => (Ok(None), None),
                 }
             }
         }
     }
 
-    /// Count only a final local refusal before this process publishes a WAL
-    /// record. Committed replay and ordinary domain errors do not pass here.
-    fn prepublication_backpressure(&self, pending: PendingChangeCapacity) -> anyhow::Error {
-        self.engine.metrics().incr_segment_backpressure();
-        anyhow::Error::new(pending)
+    async fn admit_local_record_with_relief(
+        &self,
+        entry: &RaftLogEntry,
+        admission_deadline: tokio::time::Instant,
+    ) -> Result<Option<LocalRecordReservation>> {
+        let wake = self.engine.checkpoint_wake();
+        loop {
+            let (result, revision) = self.try_admit_local_record_once(entry);
+            match result {
+                Ok(reservation) => return Ok(reservation),
+                Err(error) => {
+                    let Some(revision) = revision else {
+                        return Err(self.finalize_prepublication_error(error));
+                    };
+                    if tokio::time::Instant::now() >= admission_deadline {
+                        return Err(self.finalize_prepublication_error(error));
+                    }
+                    // Observe after this request's hint. If publication
+                    // already consumed the revision, retry without sleeping.
+                    let observed = wake.epoch();
+                    if self
+                        .engine
+                        .capacity_owner_state()
+                        .and_then(|state| state.checkpoint_request_revision)
+                        != Some(revision)
+                    {
+                        continue;
+                    }
+                    let remaining = admission_deadline
+                        .checked_duration_since(tokio::time::Instant::now())
+                        .unwrap_or_default();
+                    if !wake.wait_for_change_async(observed, remaining).await {
+                        return Err(self.finalize_prepublication_error(error));
+                    }
+                    if tokio::time::Instant::now() >= admission_deadline {
+                        return Err(self.finalize_prepublication_error(error));
+                    }
+                }
+            }
+        }
+    }
+
+    fn finalize_prepublication_error(&self, error: anyhow::Error) -> anyhow::Error {
+        if error.downcast_ref::<PendingChangeCapacity>().is_some() {
+            self.engine.metrics().incr_segment_backpressure();
+        }
+        error
     }
 
     fn complete(&self, seq: u64, outcome: Result<ApplyOutcome>) {
@@ -1445,22 +1509,34 @@ impl WriteCoordinator {
 
     /// Publish `entry`, wait for local apply, and return its outcome.
     ///
-    /// Bounded by [`SUBMIT_TIMEOUT`] (#1486 R2, defense-in-depth): a stray
-    /// sequence-domain mismatch (the class R1 fixes) or any other apply-loop
-    /// stall must surface as a retryable 5xx to the caller, never an
-    /// unbounded hang that leaks a server task per request.
+    /// Admission and local apply share [`SUBMIT_TIMEOUT`]. A stray sequence
+    /// mismatch or apply-loop stall surfaces as a retryable 5xx instead of
+    /// retaining a server task without a deadline.
     pub async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
         // Full local admission is a retryable refusal before this record can
         // consume a WAL sequence. Oversized and context-dependent records
         // preserve the old path until root wires durable preparation.
         let kind = crate::metrics::ApplyKind::from_entry(&entry);
         let admission_started_at = std::time::Instant::now();
-        let reservation = self.try_admit_local_record(&entry)?;
+        let submit_deadline = tokio::time::Instant::now() + SUBMIT_TIMEOUT;
+        let admission_deadline = submit_deadline - LOCAL_CAPACITY_APPLY_RESERVE;
+        let reservation = self
+            .admit_local_record_with_relief(&entry, admission_deadline)
+            .await?;
+        if tokio::time::Instant::now() >= admission_deadline {
+            return Err(anyhow::Error::new(SubmitStalled(
+                "local admission used the submit deadline before WAL publication".into(),
+            )));
+        }
         // Keep the shared permit through publish AND local apply. An exclusive
         // restore fence can therefore observe one exact applied/WAL boundary:
         // no earlier submit remains in flight and no later submit has obtained
         // a sequence yet.
-        let mutation_permit = self.mutation_gate.shared().await?;
+        let mutation_permit = tokio::time::timeout_at(admission_deadline, self.mutation_gate.shared())
+            .await
+            .map_err(|_| anyhow::Error::new(SubmitStalled(
+                "mutation permit was unavailable before the submit deadline".into(),
+            )))??;
         self.engine.metrics().observe_coordinator_stage(
             kind,
             crate::metrics::CoordinatorStage::AdmissionToMutationGate,
@@ -1476,7 +1552,11 @@ impl WriteCoordinator {
             // This task owns the shared permit from before WAL publication. A
             // caller may cancel after the WAL accepts its record, but it cannot
             // release the restore fence before sequence ownership is installed.
-            let result = if let Some(reservation) = reservation {
+            let result = if tokio::time::Instant::now() >= admission_deadline {
+                Err(anyhow::Error::new(SubmitStalled(
+                    "submit deadline expired before WAL publication".into(),
+                )))
+            } else if let Some(reservation) = reservation {
                 // The subscriber cannot take this ledger while publication is
                 // still returning, so it sees the reservation for this exact
                 // sequence before it can start local apply.
@@ -1515,7 +1595,7 @@ impl WriteCoordinator {
                 ));
             }
         };
-        match tokio::time::timeout(SUBMIT_TIMEOUT, rx).await {
+        match tokio::time::timeout_at(submit_deadline, rx).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(_)) => Err(anyhow::anyhow!(
                 "apply loop stopped before sequence {seq} was applied"
@@ -1526,7 +1606,7 @@ impl WriteCoordinator {
                 // receiver and drop the result) — nothing to clean up here beyond
                 // returning the bounded error.
                 Err(anyhow::Error::new(SubmitStalled(format!(
-                    "timed out after {SUBMIT_TIMEOUT_SECS}s waiting for sequence {seq} to apply"
+                    "timed out after {SUBMIT_TIMEOUT_SECS}s total waiting for sequence {seq} to apply"
                 ))))
             }
         }
@@ -2286,20 +2366,20 @@ mod tests {
         let before = budget.snapshot().total;
         let filler_owner = budget.owner();
         let filler = filler_owner.try_reserve(LIMIT - before).unwrap();
+        let checkpoint_before = engine.metrics().segment_checkpoint_completed_total.get();
+        let merge_before = engine.metrics().segment_merge_completed_total.get();
 
-        let refused = coord
-            .submit(RaftLogEntry::CreateCollection {
-                collection_id: "refused".into(),
-                req: hnsw_schema(),
-            })
-            .await
-            .unwrap_err();
+        let refused = match coord.try_admit_local_record(&RaftLogEntry::CreateCollection {
+            collection_id: "refused".into(),
+            req: hnsw_schema(),
+        }) {
+            Err(error) => error,
+            Ok(_) => panic!("forced Full pre-WAL admission must refuse"),
+        };
         assert!(refused.downcast_ref::<PendingChangeCapacity>().is_some());
         assert_eq!(wal.latest_seq().await.unwrap(), 2);
         assert_eq!(coord.applied_seq(), 2);
 
-        let checkpoint_before = engine.metrics().segment_checkpoint_completed_total.get();
-        let merge_before = engine.metrics().segment_merge_completed_total.get();
         // The refusal starts the relief owner. It must complete checkpoint
         // publication while the filler remains held. A base-only one-item
         // HNSW fixture has no merge candidate, so merge stays unchanged.
@@ -2324,18 +2404,22 @@ mod tests {
         let top_up = top_up_owner
             .try_reserve(LIMIT - budget.snapshot().total)
             .expect("restore the forced-full condition for the negative control");
-        let second_refused = coord
-            .submit(RaftLogEntry::CreateCollection {
-                collection_id: "refused".into(),
-                req: hnsw_schema(),
-            })
-            .await
-            .unwrap_err();
+        let second_refused = match coord.try_admit_local_record(&RaftLogEntry::CreateCollection {
+            collection_id: "refused".into(),
+            req: hnsw_schema(),
+        }) {
+            Err(error) => error,
+            Ok(_) => panic!("restored Full pre-WAL admission must refuse"),
+        };
         assert!(second_refused
             .downcast_ref::<PendingChangeCapacity>()
             .is_some());
         assert_eq!(wal.latest_seq().await.unwrap(), 2);
         assert_eq!(coord.applied_seq(), 2);
+        assert!(
+            engine.stats("refused").is_err(),
+            "refused pre-WAL input must not create a collection"
+        );
         drop(filler);
         drop(top_up);
 
@@ -3476,13 +3560,13 @@ mod tests {
                 "capacity relief must stage an applied source held by a slow subscriber"
             );
         } else {
-            let error = coord
-                .submit(RaftLogEntry::CreateCollection {
-                    collection_id: "refused".into(),
-                    req: keyword_schema(),
-                })
-                .await
-                .unwrap_err();
+            let error = match coord.try_admit_local_record(&RaftLogEntry::CreateCollection {
+                collection_id: "refused".into(),
+                req: keyword_schema(),
+            }) {
+                Err(error) => error,
+                Ok(_) => panic!("forced Full pre-WAL admission must refuse"),
+            };
             assert!(error.downcast_ref::<PendingChangeCapacity>().is_some());
             assert_eq!(coord.applied_seq(), 2);
             assert!(!budget.has_capacity_waiters());

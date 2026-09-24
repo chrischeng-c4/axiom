@@ -1012,6 +1012,7 @@ mod durable_workload {
     const QUERY_CONCURRENCY: usize = 64;
     const MUTATION_SLOT: Duration = Duration::from_millis(10);
     const QUERY_SLOT: Duration = Duration::from_millis(100);
+    const EARLY_INDEX_TRACE_SECONDS: u64 = 120;
     const INTERVAL_TRACE_CADENCE: Duration = Duration::from_secs(5);
     const INTERVAL_TRACE_MAX_SAMPLES: usize = 362;
     const INTERVAL_TRACE_MAX_BYTES: usize = 512 * 1024;
@@ -4604,9 +4605,70 @@ mod durable_workload {
     #[derive(Default)]
     struct PumpTrace {
         seconds: BTreeMap<(u64, &'static str), PumpSecond>,
+        early_index_enabled: bool,
+        early_index_bursts: BTreeMap<u64, EarlyIndexBurst>,
+    }
+
+    #[derive(Default)]
+    struct EarlyIndexBurst {
+        slot_wait: Vec<u64>,
+        slot_wake_lag: Vec<u64>,
+        document_offer_lag: Vec<u64>,
+        push_entry_lag: Vec<u64>,
+        push_entry_to_admission: Vec<u64>,
+        admission_to_task_start: Vec<u64>,
+        send_to_response: Vec<u64>,
+    }
+
+    #[derive(Clone, Copy)]
+    enum EarlyIndexPhase {
+        SlotWait,
+        SlotWakeLag,
+        DocumentOfferLag,
+        PushEntryLag,
+        PushEntryToAdmission,
+        AdmissionToTaskStart,
+        SendToResponse,
+    }
+
+    fn early_index_summary(samples: &[u64]) -> (usize, u64, u64) {
+        if samples.is_empty() {
+            return (0, 0, 0);
+        }
+        let mut sorted = samples.to_vec();
+        sorted.sort_unstable();
+        let p95 = (sorted.len() * 95).div_ceil(100) - 1;
+        (sorted.len(), sorted[p95], *sorted.last().expect("non-empty samples"))
     }
 
     impl PumpTrace {
+        fn record_early_index(
+            &mut self,
+            scheduled_at: Duration,
+            phase: EarlyIndexPhase,
+            duration: Duration,
+        ) {
+            let second = scheduled_at.as_secs();
+            if !self.early_index_enabled
+                || second >= EARLY_INDEX_TRACE_SECONDS
+                || second % 3 != 0
+            {
+                return;
+            }
+            let sample = duration.as_micros().min(u64::MAX as u128) as u64;
+            let burst = self.early_index_bursts.entry(second).or_default();
+            match phase {
+                EarlyIndexPhase::SlotWait => &mut burst.slot_wait,
+                EarlyIndexPhase::SlotWakeLag => &mut burst.slot_wake_lag,
+                EarlyIndexPhase::DocumentOfferLag => &mut burst.document_offer_lag,
+                EarlyIndexPhase::PushEntryLag => &mut burst.push_entry_lag,
+                EarlyIndexPhase::PushEntryToAdmission => &mut burst.push_entry_to_admission,
+                EarlyIndexPhase::AdmissionToTaskStart => &mut burst.admission_to_task_start,
+                EarlyIndexPhase::SendToResponse => &mut burst.send_to_response,
+            }
+            .push(sample);
+        }
+
         fn record(&mut self, second: u64, endpoint: &'static str) -> &mut PumpSecond {
             self.seconds
                 .entry((second.min(INPUT_SECONDS + POST_INPUT_TIMEOUT.as_secs()), endpoint))
@@ -4639,6 +4701,25 @@ mod durable_workload {
                         sample.latency_us / sample.completed
                     },
                     sample.latency_max_us,
+                );
+            }
+            for (second, burst) in &self.early_index_bursts {
+                let (slot_wait_count, slot_wait_p95_us, slot_wait_max_us) =
+                    early_index_summary(&burst.slot_wait);
+                let (slot_wake_count, slot_wake_p95_us, slot_wake_max_us) =
+                    early_index_summary(&burst.slot_wake_lag);
+                let (document_offer_count, document_offer_p95_us, document_offer_max_us) =
+                    early_index_summary(&burst.document_offer_lag);
+                let (push_entry_count, push_entry_p95_us, push_entry_max_us) =
+                    early_index_summary(&burst.push_entry_lag);
+                let (push_admission_count, push_admission_p95_us, push_admission_max_us) =
+                    early_index_summary(&burst.push_entry_to_admission);
+                let (task_start_count, task_start_p95_us, task_start_max_us) =
+                    early_index_summary(&burst.admission_to_task_start);
+                let (response_count, response_p95_us, response_max_us) =
+                    early_index_summary(&burst.send_to_response);
+                eprintln!(
+                    "PERF_INDEX_STAGE second={second} slot_wait_count={slot_wait_count} slot_wait_p95_us={slot_wait_p95_us} slot_wait_max_us={slot_wait_max_us} slot_wake_count={slot_wake_count} slot_wake_p95_us={slot_wake_p95_us} slot_wake_max_us={slot_wake_max_us} document_offer_count={document_offer_count} document_offer_p95_us={document_offer_p95_us} document_offer_max_us={document_offer_max_us} push_entry_count={push_entry_count} push_entry_p95_us={push_entry_p95_us} push_entry_max_us={push_entry_max_us} push_admission_count={push_admission_count} push_admission_p95_us={push_admission_p95_us} push_admission_max_us={push_admission_max_us} task_start_count={task_start_count} task_start_p95_us={task_start_p95_us} task_start_max_us={task_start_max_us} response_count={response_count} response_p95_us={response_p95_us} response_max_us={response_max_us}"
                 );
             }
         }
@@ -4777,7 +4858,8 @@ mod durable_workload {
             F: Future<Output = ()> + Send + 'static,
         {
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
-            let attempt_second = self.clock.elapsed().as_secs();
+            let entered_at = self.clock.elapsed();
+            let attempt_second = entered_at.as_secs();
             let blocked_at = if self.tasks.len() >= self.max_in_flight {
                 Some(Instant::now())
             } else {
@@ -4786,6 +4868,13 @@ mod durable_workload {
             if let Some(trace) = &self.trace {
                 let mut trace = trace.lock().expect("request pump trace mutex poisoned");
                 trace.record(attempt_second, endpoint).attempts += 1;
+                if endpoint == "index" {
+                    trace.record_early_index(
+                        scheduled_at,
+                        EarlyIndexPhase::PushEntryLag,
+                        entered_at.saturating_sub(scheduled_at),
+                    );
+                }
             }
             while self.tasks.len() >= self.max_in_flight {
                 let joined = tokio::time::timeout_at(input_deadline, self.tasks.join_next()).await;
@@ -4816,6 +4905,7 @@ mod durable_workload {
             }
             self.record_blocked_push(attempt_second, endpoint, blocked_at);
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
+            let admitted_at = self.clock.elapsed();
             if let Some(trace) = &self.trace {
                 let clock = self.clock.clone();
                 let trace = trace.clone();
@@ -4832,6 +4922,13 @@ mod durable_workload {
                         sample.task_start_lag_samples += 1;
                         sample.task_start_lag_max_us =
                             sample.task_start_lag_max_us.max(task_start_lag_us);
+                        if endpoint == "index" {
+                            trace_guard.record_early_index(
+                                scheduled_at,
+                                EarlyIndexPhase::AdmissionToTaskStart,
+                                task_started.saturating_sub(admitted_at),
+                            );
+                        }
                     }
                     future.await;
                 });
@@ -4843,6 +4940,13 @@ mod durable_workload {
                     .expect("request pump trace mutex poisoned");
                 let sample = trace.record(self.clock.elapsed().as_secs(), endpoint);
                 sample.in_flight_high_water = sample.in_flight_high_water.max(self.tasks.len());
+                if endpoint == "index" {
+                    trace.record_early_index(
+                        scheduled_at,
+                        EarlyIndexPhase::PushEntryToAdmission,
+                        admitted_at.saturating_sub(entered_at),
+                    );
+                }
             } else {
                 self.tasks.spawn(future);
             }
@@ -4989,6 +5093,16 @@ mod durable_workload {
             send_called_at,
             response_completed_at,
         );
+        if let Some(trace) = &pump_trace {
+            trace
+                .lock()
+                .expect("request pump trace mutex poisoned")
+                .record_early_index(
+                    scheduled_at,
+                    EarlyIndexPhase::SendToResponse,
+                    response_completed_at.saturating_sub(send_called_at),
+                );
+        }
         let outcome = match response {
             Ok(response) if response["indexed"].as_u64() == Some(entries.len() as u64) => {
                 Outcome::Succeeded
@@ -6450,6 +6564,23 @@ mod durable_workload {
         )
     }
 
+    fn early_index_server_sample(elapsed: Duration, metrics: &str) -> Result<String> {
+        let reserved = prometheus_counter(metrics, "lumen_pending_change_reserved_bytes")?;
+        let active = prometheus_counter(metrics, "lumen_pending_change_active_bytes")?;
+        let frozen = prometheus_counter(metrics, "lumen_pending_change_frozen_bytes")?;
+        let total = prometheus_counter(metrics, "lumen_pending_change_total_bytes")?;
+        let checkpoint_started = prometheus_counter(metrics, CHECKPOINT_ATTEMPT_STARTED_COUNTER)?;
+        let checkpoint_completed = prometheus_counter(metrics, CHECKPOINT_COUNTER)?;
+        let checkpoint_in_flight = prometheus_counter(metrics, CHECKPOINT_ATTEMPT_IN_FLIGHT)?;
+        let checkpoint_duration_count = prometheus_counter(metrics, CHECKPOINT_DURATION_COUNT)?;
+        let checkpoint_duration_sum_s = prometheus_float(metrics, CHECKPOINT_DURATION_SUM)?;
+        Ok(format!(
+            "PERF_INDEX_SERVER second={} elapsed_ms={} pending_reserved_bytes={reserved} pending_active_bytes={active} pending_frozen_bytes={frozen} pending_total_bytes={total} checkpoint_started_total={checkpoint_started} checkpoint_completed_total={checkpoint_completed} checkpoint_in_flight={checkpoint_in_flight} checkpoint_duration_count={checkpoint_duration_count} checkpoint_duration_sum_s={checkpoint_duration_sum_s:.6}",
+            elapsed.as_secs(),
+            elapsed.as_millis(),
+        ))
+    }
+
     async fn drive_workload(
         server: &DockerLumen,
         config: CaseConfig,
@@ -6468,6 +6599,11 @@ mod durable_workload {
         let sampler_base = server.base.clone();
         let sampler_clock = clock.clone();
         let sampler_trace = server.interval_trace.clone();
+        let diagnostic = env::var("LUMEN_PERF_DIAGNOSTIC").ok().as_deref() == Some("1");
+        let early_index_diagnostic = diagnostic
+            && config.primary_endpoint == Endpoint::Index
+            && config.primary_batch_size == 1
+            && matches!(config.vector_backend, VectorBackend::FlatCpu);
         let sampler = tokio::spawn(async move {
             let mut first = None;
             let mut last = None;
@@ -6493,6 +6629,9 @@ mod durable_workload {
                 // Reuse the required scrape. These bounded diagnostic lines
                 // survive a failed ledger gate and do not affect its decision.
                 let elapsed = sampler_clock.elapsed();
+                if early_index_diagnostic && elapsed.as_secs() < EARLY_INDEX_TRACE_SECONDS {
+                    eprintln!("{}", early_index_server_sample(elapsed, &metrics)?);
+                }
                 if elapsed >= next_log {
                     eprintln!("{}", runtime_sample(elapsed, counters, &metrics));
                     next_log = elapsed + Duration::from_secs(10);
@@ -6519,8 +6658,12 @@ mod durable_workload {
         });
         let sampler_abort = sampler.abort_handle();
 
-        let diagnostic = env::var("LUMEN_PERF_DIAGNOSTIC").ok().as_deref() == Some("1");
-        let pump_trace = diagnostic.then(|| Arc::new(StdMutex::new(PumpTrace::default())));
+        let pump_trace = diagnostic.then(|| {
+            Arc::new(StdMutex::new(PumpTrace {
+                early_index_enabled: early_index_diagnostic,
+                ..PumpTrace::default()
+            }))
+        });
         let _pump_trace_on_drop = pump_trace
             .as_ref()
             .map(|trace| PumpTraceOnDrop(trace.clone()));
@@ -6737,18 +6880,43 @@ mod durable_workload {
         let add_base = second / 3 * DOCOPS_PER_SECOND as u64;
         for offset in 0..DOCOPS_PER_SECOND {
             let scheduled_at = mutation_slot(second, offset);
+            let wait_started = clock.elapsed();
             tokio::time::sleep_until(clock.deadline(scheduled_at)).await;
+            let woke_at = clock.elapsed();
             check_input_deadline(input_deadline, input_timeout, "input_workload")?;
+            if let Some(trace) = &pump.trace {
+                let mut trace = trace.lock().expect("request pump trace mutex poisoned");
+                trace.record_early_index(
+                    scheduled_at,
+                    EarlyIndexPhase::SlotWait,
+                    woke_at.saturating_sub(wait_started),
+                );
+                trace.record_early_index(
+                    scheduled_at,
+                    EarlyIndexPhase::SlotWakeLag,
+                    woke_at.saturating_sub(scheduled_at),
+                );
+            }
             let operation = *operation_id;
             *operation_id += 1;
             let external_id = format!("hot-added-{:06}", add_base + offset as u64);
             let fields = document_fields(HOT_DOCUMENTS + add_base as usize + offset, "hot");
             let operation_record =
                 approved_index_operation(operation, external_id.clone(), &fields)?;
-            ledger
-                .lock()
-                .await
-                .begin_operation(clock.elapsed(), operation_record);
+            let mut ledger_guard = ledger.lock().await;
+            let offered_at = clock.elapsed();
+            ledger_guard.begin_operation(offered_at, operation_record);
+            drop(ledger_guard);
+            if let Some(trace) = &pump.trace {
+                trace
+                    .lock()
+                    .expect("request pump trace mutex poisoned")
+                    .record_early_index(
+                        scheduled_at,
+                        EarlyIndexPhase::DocumentOfferLag,
+                        offered_at.saturating_sub(scheduled_at),
+                    );
+            }
             for (field, value) in fields {
                 check_input_deadline(input_deadline, input_timeout, "input_workload")?;
                 batch.push(IndexedField {
@@ -8453,6 +8621,13 @@ mod durable_workload {
         assert!(!sample.contains("# HELP"));
         assert!(!sample.contains("unrelated_metric"));
         assert!(!sample.contains('\n'));
+        let early = early_index_server_sample(Duration::from_millis(10_250), &metrics).unwrap();
+        assert!(early.starts_with("PERF_INDEX_SERVER second=10 elapsed_ms=10250 "));
+        assert!(early.contains("pending_total_bytes=31"));
+        assert!(early.contains("checkpoint_started_total=10 checkpoint_completed_total=10"));
+        assert!(early.contains("checkpoint_duration_count=10 checkpoint_duration_sum_s=1.500000"));
+        assert!(!early.contains("unrelated_metric"));
+        assert!(!early.contains('\n'));
     }
 
     #[test]
@@ -9148,11 +9323,22 @@ mod durable_workload {
             .expect("build request-pump telemetry unit-test runtime");
         runtime.block_on(async {
             let clock = Clock::new();
-            let trace = Arc::new(StdMutex::new(PumpTrace::default()));
+            let trace = Arc::new(StdMutex::new(PumpTrace {
+                early_index_enabled: true,
+                ..PumpTrace::default()
+            }));
             let mut pump = RequestPump::new(1, clock.clone(), Some(trace.clone()));
             let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
             let body_clock = clock.clone();
             let body_trace = Some(trace.clone());
+            trace
+                .lock()
+                .expect("request pump trace mutex poisoned")
+                .record_early_index(
+                    Duration::ZERO,
+                    EarlyIndexPhase::SlotWakeLag,
+                    Duration::from_micros(7),
+                );
             pump.push(
                 async move {
                     tokio::time::sleep(Duration::from_millis(2)).await;
@@ -9172,12 +9358,23 @@ mod durable_workload {
                         send_called_at,
                     );
                     tokio::time::sleep(Duration::from_millis(2)).await;
+                    let completed_at = body_clock.elapsed();
                     record_pump_completion(
                         &body_trace,
                         "index",
                         send_called_at,
-                        body_clock.elapsed(),
+                        completed_at,
                     );
+                    body_trace
+                        .as_ref()
+                        .expect("trace enabled")
+                        .lock()
+                        .expect("request pump trace mutex poisoned")
+                        .record_early_index(
+                            Duration::ZERO,
+                            EarlyIndexPhase::SendToResponse,
+                            completed_at.saturating_sub(send_called_at),
+                        );
                 },
                 "index",
                 Duration::ZERO,
@@ -9188,7 +9385,7 @@ mod durable_workload {
             .expect("the request fits within capacity");
             pump.drain("telemetry test").await.expect("request completes");
 
-            let trace = trace.lock().expect("request pump trace mutex poisoned");
+            let mut trace = trace.lock().expect("request pump trace mutex poisoned");
             let sample = trace.seconds.values().next().expect("telemetry sample exists");
             assert_eq!(sample.attempts, 1);
             assert_eq!(sample.in_flight_high_water, 1);
@@ -9200,6 +9397,28 @@ mod durable_workload {
             assert_eq!(sample.completed, 1);
             assert!(sample.latency_us > 0);
             assert!(sample.latency_max_us > 0);
+            let burst = trace
+                .early_index_bursts
+                .get(&0)
+                .expect("scheduled index burst retained separately");
+            assert_eq!(burst.slot_wake_lag, vec![7]);
+            assert_eq!(burst.push_entry_lag.len(), 1);
+            assert_eq!(burst.push_entry_to_admission.len(), 1);
+            assert_eq!(burst.admission_to_task_start.len(), 1);
+            assert_eq!(burst.send_to_response.len(), 1);
+            assert_eq!(early_index_summary(&[1, 2, 3, 4, 100]), (5, 100, 100));
+            trace.record_early_index(
+                Duration::from_secs(3),
+                EarlyIndexPhase::SendToResponse,
+                Duration::from_micros(11),
+            );
+            trace.record_early_index(
+                Duration::from_secs(EARLY_INDEX_TRACE_SECONDS),
+                EarlyIndexPhase::SendToResponse,
+                Duration::from_micros(13),
+            );
+            assert_eq!(trace.early_index_bursts.len(), 2);
+            assert_eq!(trace.early_index_bursts[&3].send_to_response, vec![11]);
         });
     }
 

@@ -80,9 +80,11 @@ mod capacity_http_contract {
     const FILLER_VALUE_STAGES: [usize; 2] = [1024 * 1024, 64 * 1024];
     const MAX_FILLER_VALUE_COUNT_PER_STAGE: usize = 256;
     const FILLER_RETRY_DELAY: Duration = Duration::from_millis(30);
-    const MAX_FILLER_RETRIES_PER_ORDINAL: usize = 32;
     const MAX_WITNESS_SCRAPE_RETRIES: usize = 8;
-    const FILL_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
+    // A Full filler can use the existing 30-second submit wait while the
+    // checkpoint is held. Allow one such probe for each of the two legal
+    // value sizes, plus bounded setup work; never extend a single request.
+    const FILL_SETUP_TIMEOUT: Duration = Duration::from_secs(90);
     // With one frozen value, this gives the active side enough unique requests
     // to cross the actual 256 MiB payload limit if the implementation never
     // applies admission. It is a finite ~270 MiB source-payload fixture.
@@ -469,6 +471,12 @@ mod capacity_http_contract {
         budget
     }
 
+    async fn public_checkpoint_counter(server: &TestServer, name: &str) -> u64 {
+        let response = server.get("/metrics").await;
+        response.assert_status_ok();
+        metric_u64(&response.text(), name)
+    }
+
     fn external_value_cannot_fit_checkpointable_budget(budget: PendingBudget) -> bool {
         budget
             .checkpointable_bytes()
@@ -488,39 +496,32 @@ mod capacity_http_contract {
                     ordinal,
                     value_bytes,
                 };
-                for retry in 0..=MAX_FILLER_RETRIES_PER_ORDINAL {
-                    let before =
-                        public_pending_budget(server, "before capacity filler request").await;
-                    if external_value_cannot_fit_checkpointable_budget(before) {
-                        return Ok(last_accepted);
+                let before = public_pending_budget(server, "before capacity filler request").await;
+                if external_value_cannot_fit_checkpointable_budget(before) {
+                    return Ok(last_accepted);
+                }
+                match capacity_filler_index_bounded(server, record).await? {
+                    (StatusCode::OK, _) => {
+                        last_accepted = Some(record);
                     }
-                    match capacity_filler_index_bounded(server, record).await? {
-                        (StatusCode::OK, _) => {
-                            last_accepted = Some(record);
-                            break;
+                    (StatusCode::TOO_MANY_REQUESTS, retry_after) => {
+                        let after = public_pending_budget(
+                            server,
+                            "after transient capacity filler refusal",
+                        )
+                        .await;
+                        if external_value_cannot_fit_checkpointable_budget(after) {
+                            return Ok(last_accepted);
                         }
-                        (StatusCode::TOO_MANY_REQUESTS, retry_after) => {
-                            let after = public_pending_budget(
-                                server,
-                                "after transient capacity filler refusal",
-                            )
-                            .await;
-                            if external_value_cannot_fit_checkpointable_budget(after) {
-                                return Ok(last_accepted);
-                            }
-                            last_local_refusal = Some((record, retry_after, after));
-                            if retry == MAX_FILLER_RETRIES_PER_ORDINAL {
-                                // This size cannot consume the remaining gap.
-                                // Move to the next legal value size rather than
-                                // retrying an identical admission price forever.
-                                continue 'stage;
-                            }
-                            tokio::time::sleep(FILLER_RETRY_DELAY).await;
-                        }
-                        (status, retry_after) => anyhow::bail!(
-                            "legal capacity filler {record:?} returned {status}, retry-after={retry_after:?}"
-                        ),
+                        last_local_refusal = Some((record, retry_after, after));
+                        // The held SyncFile cannot publish capacity relief.
+                        // A second probe at the same size would wait for the
+                        // same deadline; try the next smaller legal value.
+                        continue 'stage;
                     }
+                    (status, retry_after) => anyhow::bail!(
+                        "legal capacity filler {record:?} returned {status}, retry-after={retry_after:?}"
+                    ),
                 }
             }
         }
@@ -550,6 +551,12 @@ mod capacity_http_contract {
     const CAPACITY_CHILD_HANDSHAKE_ENV: &str = "LUMEN_CAPACITY_CHILD_HANDSHAKE";
     const LOCAL_CAPACITY_CHILD_CASE: &str = "local-http-capacity";
     const LOCAL_CAPACITY_TEST_NAME: &str = "capacity_http_contract::pending_capacity_refuses_precommit_http_index_until_paused_checkpoint_publishes";
+    const LOCAL_RELIEF_CHILD_CASE: &str = "local-http-capacity-relief";
+    const LOCAL_RELIEF_TEST_NAME: &str =
+        "capacity_http_contract::two_local_full_requests_wait_for_one_checkpoint_then_commit_once";
+    const LOCAL_EXPIRY_CHILD_CASE: &str = "local-http-capacity-expiry";
+    const LOCAL_EXPIRY_TEST_NAME: &str =
+        "capacity_http_contract::local_full_wait_expiry_refuses_before_wal_publication";
     const EXTERNAL_CAPACITY_CHILD_CASE: &str = "externally-committed-capacity";
     const EXTERNAL_CAPACITY_TEST_NAME: &str = "capacity_http_contract::committed_external_wal_capacity_contract::externally_committed_record_waits_at_full_pending_capacity_then_survives_cold_reopen";
 
@@ -869,6 +876,261 @@ mod capacity_http_contract {
                 .await;
         } else {
             run_isolated_capacity_case(LOCAL_CAPACITY_CHILD_CASE, LOCAL_CAPACITY_TEST_NAME).await;
+        }
+    }
+
+    /// Fill only with accepted, distinct HTTP writes. The last accepted row
+    /// gives a public retained price for the next equal-size row. A local AOF
+    /// request also owns four raw transport copies during admission. Stop
+    /// before the first Full so the concurrent requests own that event.
+    async fn fill_until_next_large_request_is_full(fixture: &CapacityFixture) -> usize {
+        let mut previous = public_pending_budget(&fixture.server, "before local Full fill").await;
+        for ordinal in 0..MAX_LARGE_VALUE_COUNT {
+            let (status, retry_after) = capacity_index_bounded(&fixture.server, ordinal)
+                .await
+                .expect("bounded local Full fixture fill");
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "fixture must stop before its first Full request, ordinal={ordinal}, retry-after={retry_after:?}",
+            );
+            let current = public_pending_budget(&fixture.server, "after local Full fill").await;
+            let price = current.total.checked_sub(previous.total).expect(
+                "accepted distinct capacity row must not reduce public pending bytes before Full",
+            );
+            assert!(
+                price > 0,
+                "accepted capacity row must have a public pending price"
+            );
+            let next_admission_floor = price + 4 * LARGE_KEYWORD_VALUE_BYTES as u64;
+            if current.total + next_admission_floor > PENDING_HARD_LIMIT_BYTES as u64 {
+                return ordinal + 1;
+            }
+            previous = current;
+        }
+        panic!("distinct legal HTTP rows did not approach the 256 MiB public pending limit");
+    }
+
+    async fn local_full_fixture() -> (CapacityFixture, usize, SyncRelease) {
+        assert_eq!(PENDING_HARD_LIMIT_BYTES, 256 * 1024 * 1024);
+        let fixture = capacity_fixture(true);
+        fixture
+            .server
+            .put(&format!("/collections/{CAPACITY_COLLECTION}"))
+            .json(&json!({ "fields": { "kw": { "type": "keyword" } } }))
+            .await
+            .assert_status_ok();
+        fixture
+            .server
+            .post(&format!("/collections/{CAPACITY_COLLECTION}/index"))
+            .json(&json!({ "items": [{
+                "external_id": "local-relief-base",
+                "field": "kw",
+                "value": "local-relief-base",
+            }] }))
+            .await
+            .assert_status_ok();
+        assert!(
+            CheckpointSink::checkpoint_now(fixture.checkpoint.as_ref())
+                .await
+                .expect("publish local Full baseline"),
+            "local Full baseline must be durable before filling active capacity",
+        );
+        // The configured driver starts its first capacity checkpoint at the
+        // 128 MiB trigger. Hold that real save while later local writes bring
+        // the public ledger to Full. Both refused requests then name the same
+        // outstanding checkpoint revision.
+        let (entered_rx, release) = held_local_checkpoint(&fixture);
+        let next = fill_until_next_large_request_is_full(&fixture).await;
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(REQUEST_TIMEOUT))
+            .await
+            .expect("local Full checkpoint readiness task")
+            .expect("first capacity checkpoint must reach its real SyncFile hold");
+        (fixture, next, release)
+    }
+
+    fn held_local_checkpoint(fixture: &CapacityFixture) -> (mpsc::Receiver<()>, SyncRelease) {
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        fixture.hold.arm(entered_tx, release_rx);
+        (entered_rx, SyncRelease(Some(release_tx)))
+    }
+
+    async fn two_local_full_requests_wait_for_one_checkpoint_then_commit_once_body() {
+        let (fixture, first_ordinal, mut release) = local_full_fixture().await;
+        let second_ordinal = first_ordinal + 1;
+        let applied_before = fixture.writer.applied_seq();
+        let wal_before = fixture
+            .wal
+            .latest_seq()
+            .await
+            .expect("read local Full WAL baseline");
+        let completed_before =
+            public_checkpoint_counter(&fixture.server, "lumen_segment_checkpoint_completed_total")
+                .await;
+        let first = capacity_index_bounded(&fixture.server, first_ordinal);
+        let second = capacity_index_bounded(&fixture.server, second_ordinal);
+        tokio::pin!(first, second);
+        tokio::select! {
+            result = &mut first => panic!("first Full request returned while SyncFile stayed held: {result:?}"),
+            result = &mut second => panic!("second Full request returned while SyncFile stayed held: {result:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {},
+        }
+        assert_eq!(
+            fixture.writer.applied_seq(),
+            applied_before,
+            "neither waiting local request may advance apply before checkpoint publication",
+        );
+        assert_eq!(
+            public_checkpoint_counter(&fixture.server, "lumen_segment_checkpoint_completed_total")
+                .await,
+            completed_before,
+            "held SyncFile must prevent checkpoint completion",
+        );
+        assert_eq!(
+            fixture
+                .wal
+                .latest_seq()
+                .await
+                .expect("read WAL while SyncFile is held"),
+            wal_before,
+            "neither waiting local request may publish WAL before checkpoint relief",
+        );
+        release.release();
+        let (first_result, second_result) = tokio::join!(&mut first, &mut second);
+        let (first_status, first_retry) = first_result.expect("first local Full request deadline");
+        let (second_status, second_retry) =
+            second_result.expect("second local Full request deadline");
+        assert_eq!(
+            first_status,
+            StatusCode::OK,
+            "first waiting request: {first_retry:?}"
+        );
+        assert_eq!(
+            second_status,
+            StatusCode::OK,
+            "second waiting request: {second_retry:?}"
+        );
+        assert_eq!(fixture.writer.applied_seq(), applied_before + 2);
+        assert_eq!(
+            fixture
+                .wal
+                .latest_seq()
+                .await
+                .expect("read WAL after local relief"),
+            wal_before + 2,
+            "the two responses must commit exactly one WAL record each",
+        );
+        assert_eq!(
+            public_checkpoint_counter(&fixture.server, "lumen_segment_checkpoint_completed_total")
+                .await,
+            completed_before + 1,
+            "one published capacity revision must release both waiting requests",
+        );
+        for ordinal in [first_ordinal, second_ordinal] {
+            assert_eq!(
+                capacity_term_ids(&fixture.server, &capacity_value(ordinal)).await,
+                vec![capacity_external_id(ordinal)],
+                "each distinct waiting request must be visible exactly once",
+            );
+        }
+        assert!(CheckpointSink::checkpoint_now(fixture.checkpoint.as_ref())
+            .await
+            .expect("publish both relieved local requests"),);
+        let cold = fixture
+            .store
+            .load_current_generation()
+            .expect("cold-open local relief CURRENT")
+            .expect("local relief CURRENT exists");
+        let cold_server = TestServer::new(router(AppState::open(cold.engine)))
+            .expect("cold local relief HTTP server");
+        for ordinal in [first_ordinal, second_ordinal] {
+            assert_eq!(
+                capacity_term_ids(&cold_server, &capacity_value(ordinal)).await,
+                vec![capacity_external_id(ordinal)],
+                "cold reopen must contain each waiting request exactly once",
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn two_local_full_requests_wait_for_one_checkpoint_then_commit_once() {
+        if capacity_child_enters(LOCAL_RELIEF_CHILD_CASE) {
+            two_local_full_requests_wait_for_one_checkpoint_then_commit_once_body().await;
+        } else {
+            run_isolated_capacity_case(LOCAL_RELIEF_CHILD_CASE, LOCAL_RELIEF_TEST_NAME).await;
+        }
+    }
+
+    async fn local_full_wait_expiry_refuses_before_wal_publication_body() {
+        let (fixture, ordinal, mut release) = local_full_fixture().await;
+        let applied_before = fixture.writer.applied_seq();
+        let wal_before = fixture
+            .wal
+            .latest_seq()
+            .await
+            .expect("read local expiry WAL baseline");
+        let request = async {
+            let response = fixture
+                .server
+                .post(&format!("/collections/{CAPACITY_COLLECTION}/index"))
+                .json(&capacity_index_request(ordinal))
+                .await;
+            let status = response.status_code();
+            let retry_after = response
+                .maybe_header(RETRY_AFTER)
+                .and_then(|value| value.to_str().ok().map(ToOwned::to_owned));
+            (status, retry_after, response.json::<Value>())
+        };
+        tokio::pin!(request);
+        tokio::select! {
+            result = &mut request => panic!("local Full expiry control returned before held SyncFile wait: {result:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {},
+        }
+        let (status, retry_after, body) = tokio::time::timeout(REQUEST_TIMEOUT, &mut request)
+            .await
+            .expect("bounded local Full expiry");
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "expired local Full status"
+        );
+        assert_eq!(
+            retry_after.as_deref(),
+            Some("1"),
+            "expired local Full Retry-After"
+        );
+        assert_eq!(body["error"], "pending_change_capacity");
+        assert_eq!(body["retryable"], true);
+        assert_eq!(body["retry_after_seconds"], 1);
+        assert_eq!(
+            fixture.writer.applied_seq(),
+            applied_before,
+            "expired request must not apply"
+        );
+        assert_eq!(
+            fixture
+                .wal
+                .latest_seq()
+                .await
+                .expect("read WAL after local expiry"),
+            wal_before,
+            "expired request must not publish WAL",
+        );
+        release.release();
+        let value = capacity_value(ordinal);
+        assert_eq!(
+            capacity_term_ids(&fixture.server, &value).await,
+            Vec::<String>::new()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_full_wait_expiry_refuses_before_wal_publication() {
+        if capacity_child_enters(LOCAL_EXPIRY_CHILD_CASE) {
+            local_full_wait_expiry_refuses_before_wal_publication_body().await;
+        } else {
+            run_isolated_capacity_case(LOCAL_EXPIRY_CHILD_CASE, LOCAL_EXPIRY_TEST_NAME).await;
         }
     }
 
