@@ -119,6 +119,7 @@ pub struct BudgetWake {
     epoch: AtomicU64,
     lock: Mutex<()>,
     changed: Condvar,
+    async_changed: tokio::sync::Notify,
 }
 impl BudgetWake {
     pub fn epoch(&self) -> u64 {
@@ -156,12 +157,25 @@ impl BudgetWake {
         true
     }
 
+    /// Wait without occupying a blocking thread. Register before checking the
+    /// epoch so a publication between those operations cannot be missed.
+    pub async fn wait_for_change_async(&self, observed: u64, timeout: Duration) -> bool {
+        let notified = self.async_changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.epoch() != observed {
+            return true;
+        }
+        tokio::time::timeout(timeout, notified).await.is_ok() || self.epoch() != observed
+    }
+
     fn signal(&self) {
         // This shares the waiter predicate mutex, so notify cannot race a
         // predicate check immediately before Condvar::wait.
         let _guard = self.lock.lock().expect("budget wake lock poisoned");
         self.epoch.fetch_add(1, Ordering::Release);
         self.changed.notify_all();
+        self.async_changed.notify_waiters();
     }
 }
 
@@ -320,6 +334,7 @@ impl ChangeBudget {
                 epoch: AtomicU64::new(0),
                 lock: Mutex::new(()),
                 changed: Condvar::new(),
+                async_changed: tokio::sync::Notify::new(),
             }),
         }))
     }
@@ -416,8 +431,11 @@ impl ChangeBudget {
             return None;
         }
         let work_revision = state.next_work_revision;
+        let previous = state.checkpoint_request_revision;
         let revision = request_revision(&mut state, work_revision);
-        self.0.wake.signal();
+        if previous != Some(revision) {
+            self.0.wake.signal();
+        }
         Some(revision)
     }
 
@@ -576,13 +594,16 @@ impl Owner {
             return None;
         }
         let work_revision = owner.work_revision;
+        let previous = owner.checkpoint_request_revision;
         let revision = request_revision(&mut state, work_revision);
         state
             .owners
             .get_mut(&self.id)
             .expect("owner checked above")
             .checkpoint_request_revision = Some(revision);
-        self.budget.0.wake.signal();
+        if previous != Some(revision) {
+            self.budget.0.wake.signal();
+        }
         Some(revision)
     }
 
@@ -604,6 +625,7 @@ impl Owner {
         if state.checkpoint_request_revision == Some(revision) {
             state.checkpoint_request_revision = None;
         }
+        self.budget.0.wake.signal();
     }
 
     pub fn try_reserve(&self, bytes: usize) -> Result<Reservation, AdmissionError> {
@@ -2151,6 +2173,20 @@ mod tests {
         let observed = wake.epoch();
         wake.signal();
         assert!(wake.wait_for_change_timeout(observed, Duration::from_millis(1)));
+    }
+
+    #[tokio::test]
+    async fn shared_checkpoint_revision_wakes_async_waiter_once_on_completion() {
+        let budget = ChangeBudget::with_hard_limit(64);
+        let owner = budget.owner();
+        let _charge = owner.try_reserve(16).unwrap().commit().unwrap();
+        let wake = budget.checkpoint_wake();
+        let revision = owner.request_checkpoint_revision().unwrap();
+        let observed = wake.epoch();
+        assert_eq!(owner.request_checkpoint_revision(), Some(revision));
+        assert_eq!(wake.epoch(), observed, "same revision must not wake peers in a loop");
+        owner.consume_checkpoint_request(Some(revision));
+        assert!(wake.wait_for_change_async(observed, Duration::from_millis(1)).await);
     }
 
     #[test]
